@@ -34,11 +34,17 @@ struct TerminalHostView: NSViewRepresentable {
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
     var onLayout: (() -> Void)?
+    private let contentInset: CGFloat = 14
+    private var leadingConstraint: NSLayoutConstraint?
+    private var trailingConstraint: NSLayoutConstraint?
+    private var topConstraint: NSLayoutConstraint?
+    private var bottomConstraint: NSLayoutConstraint?
 
     init(terminalView: LocalProcessTerminalView) {
         self.terminalView = terminalView
         super.init(frame: .zero)
         wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
         install(terminalView)
     }
 
@@ -54,12 +60,15 @@ final class TerminalContainerView: NSView {
         self.terminalView = terminalView
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(terminalView)
-        NSLayoutConstraint.activate([
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            terminalView.topAnchor.constraint(equalTo: topAnchor),
-            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
+        let leading = terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: contentInset)
+        let trailing = terminalView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -contentInset)
+        let top = terminalView.topAnchor.constraint(equalTo: topAnchor, constant: contentInset)
+        let bottom = terminalView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -contentInset)
+        leadingConstraint = leading
+        trailingConstraint = trailing
+        topConstraint = top
+        bottomConstraint = bottom
+        NSLayoutConstraint.activate([leading, trailing, top, bottom])
     }
 
     override func layout() {
@@ -70,8 +79,10 @@ final class TerminalContainerView: NSView {
 
     func forceTerminalResize() {
         guard bounds.width > 40, bounds.height > 40 else { return }
-        terminalView.frame = bounds
-        terminalView.setFrameSize(bounds.size)
+        let terminalFrame = bounds.insetBy(dx: contentInset, dy: contentInset)
+        guard terminalFrame.width > 40, terminalFrame.height > 40 else { return }
+        terminalView.frame = terminalFrame
+        terminalView.setFrameSize(terminalFrame.size)
         terminalView.resizeSubviews(withOldSize: .zero)
         terminalView.needsDisplay = true
     }
