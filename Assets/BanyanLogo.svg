@@ -1,101 +1,80 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
   <title id="title">Banyan app logo</title>
-  <desc id="desc">A polished banyan tree mark with a terminal prompt on a green macOS app icon tile.</desc>
+  <desc id="desc">An artistic banyan tree mark on a green macOS app icon tile.</desc>
   <defs>
     <linearGradient id="tile" x1="164" y1="92" x2="858" y2="936" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#DCFCE7"/>
       <stop offset="0.42" stop-color="#34D399"/>
       <stop offset="1" stop-color="#047857"/>
     </linearGradient>
-    <radialGradient id="lift" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(336 210) rotate(50) scale(720 520)">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.44"/>
-      <stop offset="0.54" stop-color="#FFFFFF" stop-opacity="0.06"/>
+    <radialGradient id="lift" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(330 205) rotate(50) scale(740 530)">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.42"/>
+      <stop offset="0.56" stop-color="#FFFFFF" stop-opacity="0.05"/>
       <stop offset="1" stop-color="#064E3B" stop-opacity="0.18"/>
     </radialGradient>
-    <linearGradient id="canopy" x1="512" y1="214" x2="512" y2="640" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#065F46"/>
-      <stop offset="1" stop-color="#064E3B"/>
-    </linearGradient>
-    <linearGradient id="leaf" x1="512" y1="294" x2="512" y2="590" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#34D399"/>
-      <stop offset="1" stop-color="#10B981"/>
-    </linearGradient>
-    <linearGradient id="wood" x1="512" y1="430" x2="512" y2="838" gradientUnits="userSpaceOnUse">
+    <linearGradient id="tree" x1="512" y1="250" x2="512" y2="842" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#F7FEE7"/>
-      <stop offset="0.52" stop-color="#ECFCCB"/>
-      <stop offset="1" stop-color="#A3E635"/>
+      <stop offset="0.6" stop-color="#ECFCCB"/>
+      <stop offset="1" stop-color="#C7F26D"/>
     </linearGradient>
-    <filter id="drop" x="-16%" y="-18%" width="132%" height="140%">
-      <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#064E3B" flood-opacity="0.30"/>
+    <filter id="shadow" x="-18%" y="-18%" width="136%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#064E3B" flood-opacity="0.28"/>
     </filter>
   </defs>
 
   <rect width="1024" height="1024" rx="228" fill="url(#tile)"/>
   <rect width="1024" height="1024" rx="228" fill="url(#lift)"/>
-  <rect x="48" y="48" width="928" height="928" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="10"/>
+  <rect x="48" y="48" width="928" height="928" rx="190" fill="none" stroke="#FFFFFF" stroke-opacity="0.24" stroke-width="10"/>
 
-  <g filter="url(#drop)">
-    <path
-      d="M202 500C202 350 320 242 464 242C536 242 582 267 623 306C647 294 676 288 710 288C805 288 876 363 876 459C876 578 779 654 648 654H377C274 654 202 593 202 500Z"
-      fill="url(#canopy)"/>
-    <path
-      d="M270 486C270 380 354 305 460 305C527 305 570 329 606 373C631 355 662 345 698 345C762 345 810 394 810 458C810 537 748 586 649 586H386C317 586 270 546 270 486Z"
-      fill="url(#leaf)"/>
-    <path
-      d="M346 452C346 401 386 366 443 366C510 366 551 405 569 469C593 429 636 406 688 406C729 406 756 431 756 467C756 513 718 539 647 539H414C371 539 346 507 346 452Z"
-      fill="#A7F3D0"
-      fill-opacity="0.84"/>
+  <g filter="url(#shadow)">
+    <g fill="none" stroke="url(#tree)" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M512 555C451 495 374 454 282 432" stroke-width="28"/>
+      <path d="M512 552C575 493 651 454 742 432" stroke-width="28"/>
+      <path d="M504 607C426 582 344 590 266 638" stroke-width="24"/>
+      <path d="M520 607C598 582 680 590 758 638" stroke-width="24"/>
+      <path d="M506 520C485 440 450 365 400 300" stroke-width="24"/>
+      <path d="M520 520C548 436 598 366 666 306" stroke-width="24"/>
+      <path d="M462 470C428 420 387 382 338 356" stroke-width="18"/>
+      <path d="M562 468C600 420 646 384 700 360" stroke-width="18"/>
+      <path d="M382 590C352 558 318 538 280 532" stroke-width="18"/>
+      <path d="M642 590C672 558 706 538 744 532" stroke-width="18"/>
+    </g>
 
-    <path
-      d="M458 446C458 416 482 392 512 392C542 392 566 416 566 446V675C566 722 596 759 642 773C669 781 700 797 735 820C663 834 592 820 530 779C473 819 398 833 289 817C337 792 379 775 416 765C444 757 458 724 458 675V446Z"
-      fill="url(#wood)"/>
-    <path
-      d="M512 624V836"
-      fill="none"
-      stroke="#065F46"
-      stroke-width="30"
-      stroke-linecap="round"
-      opacity="0.70"/>
-    <path
-      d="M456 690C411 721 373 759 342 806"
-      fill="none"
-      stroke="#065F46"
-      stroke-width="26"
-      stroke-linecap="round"
-      opacity="0.70"/>
-    <path
-      d="M568 690C613 721 651 759 682 806"
-      fill="none"
-      stroke="#065F46"
-      stroke-width="26"
-      stroke-linecap="round"
-      opacity="0.70"/>
+    <g fill="none" stroke="#F7FEE7" stroke-linecap="round" opacity="0.9">
+      <path d="M372 566C376 625 374 681 366 734" stroke-width="15"/>
+      <path d="M430 585C433 642 431 690 424 736" stroke-width="14"/>
+      <path d="M594 585C591 642 593 690 600 736" stroke-width="14"/>
+      <path d="M652 566C648 625 650 681 658 734" stroke-width="15"/>
+    </g>
 
     <path
-      d="M332 686H692"
-      fill="none"
-      stroke="#ECFCCB"
-      stroke-width="32"
-      stroke-linecap="round"
-      opacity="0.84"/>
+      d="M456 800C481 745 490 676 482 594C477 545 457 505 422 474C462 482 493 504 512 538C535 493 570 460 620 438C573 493 548 548 542 604C534 682 545 748 572 800C535 787 493 787 456 800Z"
+      fill="url(#tree)"/>
     <path
-      d="M392 590V722"
-      fill="none"
-      stroke="#F7FEE7"
-      stroke-width="22"
-      stroke-linecap="round"
-      opacity="0.78"/>
-    <path
-      d="M632 590V722"
-      fill="none"
-      stroke="#F7FEE7"
-      stroke-width="22"
-      stroke-linecap="round"
-      opacity="0.78"/>
+      d="M448 575C471 531 493 504 512 493C532 504 556 531 582 575C552 560 528 566 512 592C496 566 474 560 448 575Z"
+      fill="url(#tree)"/>
+    <path d="M336 834C386 812 445 801 512 801C579 801 638 812 688 834H336Z" fill="url(#tree)"/>
 
-    <g fill="none" stroke="#064E3B" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M366 451L402 481L366 511"/>
-      <path d="M438 506H514"/>
+    <g fill="#F7FEE7">
+      <ellipse cx="400" cy="300" rx="14" ry="34" transform="rotate(-34 400 300)"/>
+      <ellipse cx="666" cy="306" rx="14" ry="34" transform="rotate(40 666 306)"/>
+      <ellipse cx="338" cy="356" rx="13" ry="32" transform="rotate(-58 338 356)"/>
+      <ellipse cx="700" cy="360" rx="13" ry="32" transform="rotate(58 700 360)"/>
+      <ellipse cx="282" cy="432" rx="16" ry="38" transform="rotate(-74 282 432)"/>
+      <ellipse cx="742" cy="432" rx="16" ry="38" transform="rotate(74 742 432)"/>
+      <ellipse cx="280" cy="532" rx="14" ry="34" transform="rotate(-78 280 532)"/>
+      <ellipse cx="744" cy="532" rx="14" ry="34" transform="rotate(78 744 532)"/>
+      <ellipse cx="266" cy="638" rx="16" ry="38" transform="rotate(72 266 638)"/>
+      <ellipse cx="758" cy="638" rx="16" ry="38" transform="rotate(-72 758 638)"/>
+    </g>
+
+    <g fill="#D9F99D">
+      <ellipse cx="456" cy="306" rx="11" ry="28" transform="rotate(-18 456 306)"/>
+      <ellipse cx="594" cy="312" rx="11" ry="28" transform="rotate(20 594 312)"/>
+      <ellipse cx="364" cy="468" rx="12" ry="30" transform="rotate(-66 364 468)"/>
+      <ellipse cx="660" cy="468" rx="12" ry="30" transform="rotate(66 660 468)"/>
+      <ellipse cx="352" cy="654" rx="11" ry="28" transform="rotate(58 352 654)"/>
+      <ellipse cx="672" cy="654" rx="11" ry="28" transform="rotate(-58 672 654)"/>
     </g>
   </g>
 </svg>
