@@ -131,6 +131,8 @@ struct ContentView: View {
                     fontFamily: store.terminalFontFamily,
                     fontSize: store.terminalFontSize
                 )
+                    .padding(12)
+                    .background(.black)
                     .id(session.id)
                     .ignoresSafeArea(edges: .bottom)
             }
