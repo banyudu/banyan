@@ -138,8 +138,10 @@ struct ContentView: View {
     private var detail: some View {
         if let session = store.selectedSession {
             VStack(spacing: 0) {
-                TerminalHeader(session: session)
-                Divider()
+                if session.isRestored || !session.isProcessStarted {
+                    TerminalReconnectBanner(session: session)
+                    Divider()
+                }
                 TerminalHostView(
                     session: session,
                     theme: store.terminalTheme,
@@ -306,44 +308,29 @@ private struct SessionRow: View {
     }
 }
 
-private struct TerminalHeader: View {
+private struct TerminalReconnectBanner: View {
     @EnvironmentObject private var store: SessionStore
     @ObservedObject var session: BanyanSession
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: session.status.systemImage)
+            Image(systemName: "arrow.clockwise.circle")
                 .foregroundStyle(Color(nsColor: session.tone.nsColor))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.displayTitle)
-                    .font(.headline)
-                    .accessibilityIdentifier(AccessibilityID.terminalHeaderTitle)
-                Text(session.cwd)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .accessibilityIdentifier(AccessibilityID.terminalHeaderDirectory)
-            }
+            Text("Session is detached")
+                .font(.callout)
             Spacer()
-            Text(session.command.isEmpty ? "shell" : session.command)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .accessibilityIdentifier(AccessibilityID.terminalHeaderCommand)
-            if session.isRestored || !session.isProcessStarted {
-                Button {
-                    try? store.respawn(id: session.id)
-                } label: {
-                    Label("Attach", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .accessibilityIdentifier(AccessibilityID.terminalAttachButton)
+            Button {
+                try? store.respawn(id: session.id)
+            } label: {
+                Label("Attach", systemImage: "arrow.clockwise")
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .accessibilityIdentifier(AccessibilityID.terminalAttachButton)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .background(.bar)
-        .accessibilityIdentifier(AccessibilityID.terminalHeader)
+        .accessibilityIdentifier(AccessibilityID.terminalReconnectBanner)
     }
 }

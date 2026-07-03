@@ -28,11 +28,8 @@ These identifiers are defined in `Sources/Banyan/AccessibilityIdentifiers.swift`
 | Detail area | `banyan.detail` |
 | Empty detail area | `banyan.detail.empty` |
 | Terminal container, including text selection, copy/paste, and wheel scrolling | `banyan.terminal` |
-| Terminal header | `banyan.terminal.header` |
-| Terminal title | `banyan.terminal.header.title` |
-| Terminal directory | `banyan.terminal.header.directory` |
-| Terminal command | `banyan.terminal.header.command` |
-| Terminal attach button | `banyan.terminal.header.attach` |
+| Terminal reconnect banner | `banyan.terminal.reconnect-banner` |
+| Terminal attach button | `banyan.terminal.reconnect-banner.attach` |
 | Add session sheet | `banyan.sheet.add-session` |
 | Edit session sheet | `banyan.sheet.edit-session` |
 | Preferences sheet | `banyan.sheet.preferences` |
