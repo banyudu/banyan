@@ -30,6 +30,8 @@ struct BanyanCtl {
                 try post("/screenshot", payload: parseScreenshotPayload(Array(arguments.dropFirst())))
             case "list":
                 try get("/list")
+            case "window-state":
+                try get("/window-state")
             case "help", "--help", "-h":
                 printHelp()
             default:
@@ -143,6 +145,7 @@ struct BanyanCtl {
           banyanctl respawn --id ID
           banyanctl remove --id ID
           banyanctl screenshot --output PATH
+          banyanctl window-state
           banyanctl list
         """)
     }

@@ -261,8 +261,23 @@ private struct WindowTitleConfigurator: NSViewRepresentable {
 }
 
 private final class TitlebarConfigurationView: NSView {
+    private var timer: Timer?
+
+    deinit {
+        timer?.invalidate()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        timer?.invalidate()
+        guard window != nil else { return }
+        configureTitlebar()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.configureTitlebar()
+        }
+    }
+
+    private func configureTitlebar() {
         DispatchQueue.main.async { [weak self] in
             WindowTitleConfigurator.configure(window: self?.window)
         }

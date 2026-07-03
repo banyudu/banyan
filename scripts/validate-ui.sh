@@ -68,6 +68,55 @@ verify_png() {
   fi
 }
 
+assert_native_title_blank() {
+  local state
+  local attempt
+  for attempt in {1..20}; do
+    state="$("$CTL" window-state)"
+    if grep -q '"title" : " "' <<<"$state"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "Expected native window title text to remain blank, got:" >&2
+  echo "$state" >&2
+  return 1
+}
+
+json_number() {
+  local key="$1"
+  awk -F': ' -v key="\"$key\"" '$1 ~ key {
+    gsub(/[ ,]/, "", $2)
+    print $2
+    exit
+  }'
+}
+
+assert_toolbar_actions_trailing() {
+  local state
+  local attempt
+  local min_x
+  local max_x
+  local window_width
+  for attempt in {1..20}; do
+    state="$("$CTL" window-state)"
+    if grep -q '"toolbarActionsFound" : true' <<<"$state"; then
+      min_x="$(json_number toolbarActionsMinX <<<"$state")"
+      max_x="$(json_number toolbarActionsMaxX <<<"$state")"
+      window_width="$(json_number windowWidth <<<"$state")"
+      if awk -v min_x="$min_x" -v max_x="$max_x" -v window_width="$window_width" 'BEGIN {
+        exit !(min_x > window_width * 0.70 && max_x > window_width - 180 && max_x <= window_width + 5)
+      }'; then
+        return 0
+      fi
+    fi
+    sleep 0.25
+  done
+  echo "Expected titlebar actions to be trailing, got:" >&2
+  echo "$state" >&2
+  return 1
+}
+
 wait_for_tmux_session() {
   local name="$1"
   local attempt
@@ -97,6 +146,8 @@ fi
 
 wait_for_control_server
 activate_app
+assert_native_title_blank
+assert_toolbar_actions_trailing
 
 "$CTL" spawn \
   --id "$SESSION_ID" \
@@ -119,6 +170,8 @@ open -n "$APP"
 STARTED_APP=1
 wait_for_control_server
 activate_app
+assert_native_title_blank
+assert_toolbar_actions_trailing
 
 "$CTL" list | grep -q "$SESSION_ID"
 wait_for_tmux_session "$TMUX_SESSION"

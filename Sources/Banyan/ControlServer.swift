@@ -1,4 +1,5 @@
 import BanyanCore
+import AppKit
 import Foundation
 import Network
 
@@ -82,6 +83,9 @@ final class ControlServer {
             switch route {
             case .list:
                 return (200, ["sessions": store.sessions.map(summary)], nil)
+
+            case .windowState:
+                return (200, windowState(), nil)
 
             case .spawn:
                 let body = try request.decode(ControlPayload.self)
@@ -173,6 +177,55 @@ final class ControlServer {
             throw ControlError.badRequest("unknown tone '\(raw)'")
         }
         return tone
+    }
+
+    @MainActor
+    private func windowState() -> [String: Any] {
+        let window = NSApp.windows.first { $0.isVisible } ?? NSApp.mainWindow
+        var state: [String: Any] = [
+            "title": window?.title ?? "",
+            "titleVisibility": window?.titleVisibility == .hidden ? "hidden" : "visible"
+        ]
+        if let window {
+            state["windowWidth"] = window.frame.width
+            let actionFrames = [
+                viewFrame(window: window, identifier: AccessibilityID.toolbarAddSession),
+                viewFrame(window: window, identifier: AccessibilityID.toolbarPreferences)
+            ].compactMap(\.self)
+            if !actionFrames.isEmpty {
+                let actionsFrame = actionFrames.dropFirst().reduce(actionFrames[0]) { $0.union($1) }
+                state["toolbarActionsFound"] = true
+                state["toolbarActionsMinX"] = actionsFrame.minX
+                state["toolbarActionsMaxX"] = actionsFrame.maxX
+                state["toolbarActionsWidth"] = actionsFrame.width
+            } else {
+                state["toolbarActionsFound"] = false
+            }
+        }
+        return state
+    }
+
+    @MainActor
+    private func viewFrame(window: NSWindow, identifier: String) -> NSRect? {
+        let roots = [window.contentView, window.contentView?.superview].compactMap(\.self)
+        for root in roots {
+            if let view = firstSubview(in: root, identifier: identifier) {
+                return view.convert(view.bounds, to: nil)
+            }
+        }
+        return nil
+    }
+
+    private func firstSubview(in view: NSView, identifier: String) -> NSView? {
+        if view.identifier?.rawValue == identifier || view.accessibilityIdentifier() == identifier {
+            return view
+        }
+        for subview in view.subviews {
+            if let match = firstSubview(in: subview, identifier: identifier) {
+                return match
+            }
+        }
+        return nil
     }
 
     @MainActor

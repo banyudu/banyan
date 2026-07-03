@@ -52,6 +52,11 @@ import Testing
     #expect(ControlRoute.resolve(method: "POST", path: "/unknown") == nil)
 }
 
+@Test func windowStateRouteIsReadOnly() {
+    #expect(ControlRoute.resolve(method: "GET", path: "/window-state") == .windowState)
+    #expect(ControlRoute.resolve(method: "POST", path: "/window-state") == nil)
+}
+
 @Test func missingRequiredIDIsRejected() throws {
     let payload = ControlPayload(apiVersion: "v1", id: nil)
 
