@@ -137,7 +137,6 @@ struct ContentView: View {
                     fontFamily: store.terminalFontFamily,
                     fontSize: store.terminalFontSize
                 )
-                    .id(session.id)
                     .ignoresSafeArea(edges: .bottom)
             }
             .accessibilityIdentifier(AccessibilityID.detail)

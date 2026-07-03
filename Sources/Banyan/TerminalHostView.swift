@@ -20,16 +20,15 @@ struct TerminalHostView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: TerminalContainerView, context: Context) {
-        session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+        let didInstall = nsView.install(session.terminalView)
         nsView.apply(theme: theme)
-        nsView.install(session.terminalView)
         nsView.onLayout = {
             session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         }
-        nsView.needsLayout = true
-        DispatchQueue.main.async {
-            nsView.layoutSubtreeIfNeeded()
-            nsView.forceTerminalResize()
+        session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+        if didInstall {
+            nsView.needsLayout = true
+            nsView.syncTerminalFrameIfNeeded(markNeedsDisplay: true)
         }
     }
 }
@@ -69,10 +68,17 @@ final class TerminalContainerView: NSView {
         }
     }
 
-    func install(_ terminalView: LocalProcessTerminalView) {
+    @discardableResult
+    func install(_ terminalView: LocalProcessTerminalView) -> Bool {
         guard terminalView !== self.terminalView || terminalView.superview !== self else {
-            return
+            return false
         }
+        NSLayoutConstraint.deactivate([
+            leadingConstraint,
+            trailingConstraint,
+            topConstraint,
+            bottomConstraint
+        ].compactMap { $0 })
         self.terminalView.removeFromSuperview()
         self.terminalView = terminalView
         terminalView.translatesAutoresizingMaskIntoConstraints = false
@@ -86,6 +92,7 @@ final class TerminalContainerView: NSView {
         topConstraint = top
         bottomConstraint = bottom
         NSLayoutConstraint.activate([leading, trailing, top, bottom])
+        return true
     }
 
     func apply(theme: TerminalTheme) {
@@ -94,18 +101,29 @@ final class TerminalContainerView: NSView {
 
     override func layout() {
         super.layout()
-        forceTerminalResize()
+        syncTerminalFrameIfNeeded(markNeedsDisplay: false)
         onLayout?()
     }
 
-    func forceTerminalResize() {
+    func syncTerminalFrameIfNeeded(markNeedsDisplay: Bool) {
         guard bounds.width > 40, bounds.height > 40 else { return }
         let terminalFrame = bounds.insetBy(dx: contentInset, dy: contentInset)
         guard terminalFrame.width > 40, terminalFrame.height > 40 else { return }
+        guard !terminalView.frame.equalTo(terminalFrame) else {
+            if markNeedsDisplay {
+                terminalView.needsDisplay = true
+            }
+            return
+        }
+        let oldSize = terminalView.bounds.size
         terminalView.frame = terminalFrame
         terminalView.setFrameSize(terminalFrame.size)
-        terminalView.resizeSubviews(withOldSize: .zero)
-        terminalView.needsDisplay = true
+        if oldSize != terminalFrame.size {
+            terminalView.resizeSubviews(withOldSize: oldSize)
+        }
+        if markNeedsDisplay {
+            terminalView.needsDisplay = true
+        }
     }
 
     private func installScrollEventMonitor() {

@@ -29,6 +29,9 @@ final class BanyanSession: ObservableObject, Identifiable {
     var onOutput: ((String) -> Void)?
     var onStatusSignal: ((SessionStatus) -> Void)?
     private var didRenderRestoredMessage = false
+    private var appliedTheme: TerminalTheme?
+    private var appliedFontFamily: String?
+    private var appliedFontSize: Double?
 
     var displayTitle: String {
         if isTitlePinned {
@@ -75,7 +78,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.isProcessStarted = !isRestored
         self.terminalView = DetectingLocalProcessTerminalView(frame: .zero)
 
-        theme.apply(to: terminalView, fontFamily: fontFamily, fontSize: fontSize)
+        apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
 
         let delegate = TerminalSessionDelegate(sessionID: id)
         delegate.onTitle = { [weak self] title in
@@ -131,7 +134,13 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func apply(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13) {
+        guard appliedTheme != theme || appliedFontFamily != fontFamily || appliedFontSize != fontSize else {
+            return
+        }
         theme.apply(to: terminalView, fontFamily: fontFamily, fontSize: fontSize)
+        appliedTheme = theme
+        appliedFontFamily = fontFamily
+        appliedFontSize = fontSize
         terminalView.needsDisplay = true
     }
 
