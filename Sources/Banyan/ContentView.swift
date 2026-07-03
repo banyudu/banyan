@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -14,6 +15,9 @@ struct ContentView: View {
             detail
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                TitleBarLogo()
+            }
             ToolbarItemGroup {
                 Button {
                     store.forkSelectedSession()
@@ -50,6 +54,7 @@ struct ContentView: View {
                 store.spawn(title: "Shell", cwd: NSHomeDirectory())
             }
         }
+        .background(WindowTitleConfigurator())
         .accessibilityIdentifier(AccessibilityID.root)
     }
 
@@ -152,6 +157,86 @@ struct ContentView: View {
                 description: Text("Spawn a session from the toolbar or with banyanctl.")
             )
             .accessibilityIdentifier(AccessibilityID.emptyDetail)
+        }
+    }
+}
+
+private struct TitleBarLogo: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 86, height: 28))
+        container.identifier = NSUserInterfaceItemIdentifier(AccessibilityID.toolbarLogo)
+        container.setAccessibilityElement(true)
+        container.setAccessibilityLabel("Banyan")
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+
+        let iconView = NSImageView(image: Self.logoImage)
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(iconView)
+
+        let label = NSTextField(labelWithString: "Banyan")
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .secondaryLabelColor
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        container.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: 86),
+            container.heightAnchor.constraint(equalToConstant: 28),
+            iconView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 7),
+            iconView.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 18),
+            iconView.heightAnchor.constraint(equalToConstant: 18),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -8)
+        ])
+
+        return container
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let iconView = nsView.subviews.first as? NSImageView {
+            iconView.image = Self.logoImage
+        }
+    }
+
+    private static var logoImage: NSImage {
+        if let url = Bundle.main.url(forResource: "Banyan", withExtension: "icns"),
+           let bundled = NSImage(contentsOf: url) {
+            return bundled
+        }
+        if let bundled = NSImage(named: "Banyan") {
+            return bundled
+        }
+        return NSApp.applicationIconImage
+    }
+}
+
+private struct WindowTitleConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        TitlebarConfigurationView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            Self.configure(window: nsView.window)
+        }
+    }
+
+    fileprivate static func configure(window: NSWindow?) {
+        guard let window else { return }
+        window.title = ""
+    }
+}
+
+private final class TitlebarConfigurationView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        DispatchQueue.main.async { [weak self] in
+            WindowTitleConfigurator.configure(window: self?.window)
         }
     }
 }

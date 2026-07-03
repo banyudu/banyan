@@ -19,6 +19,7 @@ These identifiers are defined in `Sources/Banyan/AccessibilityIdentifiers.swift`
 | Sidebar options menu | `banyan.sidebar.options` |
 | Sidebar edit selected button | `banyan.sidebar.edit-selected` |
 | Sidebar close selected button | `banyan.sidebar.close-selected` |
+| Toolbar logo | `banyan.toolbar.logo` |
 | Toolbar add button | `banyan.toolbar.add-session` |
 | Toolbar preferences button | `banyan.toolbar.preferences` |
 | Session row | `banyan.sidebar.session-row.<session-id>` |

@@ -13,6 +13,7 @@ enum AccessibilityID {
     static let terminalAttachButton = "banyan.terminal.header.attach"
     static let toolbarAddSession = "banyan.toolbar.add-session"
     static let toolbarPreferences = "banyan.toolbar.preferences"
+    static let toolbarLogo = "banyan.toolbar.logo"
     static let sidebarAddSession = "banyan.sidebar.add-session"
     static let sidebarOptions = "banyan.sidebar.options"
     static let sidebarEditSelected = "banyan.sidebar.edit-selected"
