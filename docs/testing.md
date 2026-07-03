@@ -26,7 +26,7 @@ These identifiers are defined in `Sources/Banyan/AccessibilityIdentifiers.swift`
 | Session row status | `banyan.sidebar.session-row.<session-id>.status` |
 | Detail area | `banyan.detail` |
 | Empty detail area | `banyan.detail.empty` |
-| Terminal container | `banyan.terminal` |
+| Terminal container, including text selection, copy/paste, and wheel scrolling | `banyan.terminal` |
 | Terminal header | `banyan.terminal.header` |
 | Terminal title | `banyan.terminal.header.title` |
 | Terminal directory | `banyan.terminal.header.directory` |
@@ -49,9 +49,15 @@ Automation should describe Banyan in product terms:
 - `relaunchApp`
 - `assertTmuxSessionExists(id:)`
 - `assertTmuxSessionMissing(id:)`
+- `selectTerminalText(from:to:)`
+- `copyTerminalSelection()`
+- `pasteIntoTerminal(text:)`
+- `scrollTerminal(direction:amount:)`
 - `captureMainWindowScreenshot(name:)`
 
 Coordinate clicks should be reserved for visual debugging. Routine tests should prefer the control API, tmux assertions, and accessibility identifiers.
+
+Terminal text selection, clipboard shortcuts, and wheel scrolling are intentionally modeled as actions on `banyan.terminal` rather than separate controls. Selection and copy/paste are AppKit interactions against the embedded SwiftTerm view; wheel events may become SwiftTerm scrollback actions or tmux mouse-wheel reports depending on the terminal mode.
 
 ## Visual Validation
 
