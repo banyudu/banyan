@@ -72,7 +72,7 @@ struct ContentView: View {
                         }
                     )
                         .tag(session.id)
-                        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+                        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
                 }
             }
             .listStyle(.sidebar)
@@ -277,7 +277,7 @@ private struct SessionRow: View {
         }
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
         .padding(.vertical, 2)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 4)
         .background(rowBackground)
         .contentShape(Rectangle())
         .simultaneousGesture(singleClickSelectGesture)
