@@ -133,11 +133,18 @@ final class ControlServer {
                 try route.validate(body)
                 try store.remove(id: body.id!)
                 return (200, ["ok": true], nil)
+
+            case .screenshot:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let url = try VisualSnapshotter.captureMainWindow(to: body.path!)
+                return (200, ["path": url.path], nil)
             }
         } catch let error as ControlError {
             return (error.httpStatus, nil, ControlErrorBody(code: error.code, message: error.localizedDescription))
         } catch let error as ControlValidationError {
-            return (400, nil, ControlErrorBody(code: "missing_id", message: error.localizedDescription))
+            return (400, nil, ControlErrorBody(code: "missing_required_field", message: error.localizedDescription))
         } catch is DecodingError {
             return (400, nil, ControlErrorBody(code: "malformed_json", message: "malformed JSON request body"))
         } catch {

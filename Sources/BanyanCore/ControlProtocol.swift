@@ -93,6 +93,7 @@ public struct ControlPayload: Codable {
     public let command: String?
     public let status: String?
     public let tone: String?
+    public let path: String?
 
     public init(
         apiVersion: String? = ControlProtocol.version,
@@ -101,7 +102,8 @@ public struct ControlPayload: Codable {
         cwd: String? = nil,
         command: String? = nil,
         status: String? = nil,
-        tone: String? = nil
+        tone: String? = nil,
+        path: String? = nil
     ) {
         self.apiVersion = apiVersion
         self.id = id
@@ -110,6 +112,7 @@ public struct ControlPayload: Codable {
         self.command = command
         self.status = status
         self.tone = tone
+        self.path = path
     }
 }
 
@@ -120,6 +123,7 @@ public enum ControlRoute: Equatable {
     case close
     case respawn
     case remove
+    case screenshot
 
     public static func resolve(method: String, path: String) -> ControlRoute? {
         switch (method, path) {
@@ -129,6 +133,7 @@ public enum ControlRoute: Equatable {
         case ("POST", "/close"): return .close
         case ("POST", "/respawn"): return .respawn
         case ("POST", "/remove"): return .remove
+        case ("POST", "/screenshot"): return .screenshot
         default: return nil
         }
     }
@@ -136,7 +141,7 @@ public enum ControlRoute: Equatable {
     public var requiresID: Bool {
         switch self {
         case .mark, .close, .respawn, .remove: return true
-        case .list, .spawn: return false
+        case .list, .spawn, .screenshot: return false
         }
     }
 
@@ -144,15 +149,20 @@ public enum ControlRoute: Equatable {
         if requiresID, payload.id?.isEmpty != false {
             throw ControlValidationError.missingID
         }
+        if self == .screenshot, payload.path?.isEmpty != false {
+            throw ControlValidationError.missingPath
+        }
     }
 }
 
 public enum ControlValidationError: LocalizedError, Equatable {
     case missingID
+    case missingPath
 
     public var errorDescription: String? {
         switch self {
         case .missingID: return "request requires id"
+        case .missingPath: return "request requires path"
         }
     }
 }

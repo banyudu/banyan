@@ -48,3 +48,13 @@ import Testing
         try ControlRoute.close.validate(payload)
     }
 }
+
+@Test func screenshotRouteRequiresPath() throws {
+    #expect(ControlRoute.resolve(method: "POST", path: "/screenshot") == .screenshot)
+
+    #expect(throws: ControlValidationError.missingPath) {
+        try ControlRoute.screenshot.validate(ControlPayload(apiVersion: "v1", path: nil))
+    }
+
+    try ControlRoute.screenshot.validate(ControlPayload(apiVersion: "v1", path: "/tmp/banyan.png"))
+}

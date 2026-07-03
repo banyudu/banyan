@@ -44,12 +44,27 @@ activate_app() {
 
 capture() {
   local name="$1"
+  local path="$ARTIFACT_DIR/$name.png"
   activate_app
-  if screencapture -x "$ARTIFACT_DIR/$name.png"; then
-    echo "Captured $ARTIFACT_DIR/$name.png"
+  if "$CTL" screenshot --output "$path" >/dev/null 2>&1 && [[ -s "$path" ]]; then
+    echo "Captured $path"
+  elif screencapture -x "$path"; then
+    echo "Captured $path"
   else
     echo "screencapture failed for $name" >"$ARTIFACT_DIR/$name.capture-failed.txt"
     echo "Screen capture unavailable; wrote $ARTIFACT_DIR/$name.capture-failed.txt" >&2
+  fi
+}
+
+verify_png() {
+  local path="$1"
+  local width
+  local height
+  width="$(sips -g pixelWidth "$path" 2>/dev/null | awk '/pixelWidth/ {print $2}')"
+  height="$(sips -g pixelHeight "$path" 2>/dev/null | awk '/pixelHeight/ {print $2}')"
+  if [[ -z "$width" || -z "$height" || "$width" -lt 600 || "$height" -lt 400 ]]; then
+    echo "Invalid visual artifact: $path (${width:-unknown}x${height:-unknown})" >&2
+    return 1
   fi
 }
 
@@ -93,6 +108,7 @@ activate_app
 
 wait_for_tmux_session "$TMUX_SESSION"
 capture "01-session-marked"
+verify_png "$ARTIFACT_DIR/01-session-marked.png"
 
 osascript -e 'tell application "Banyan" to quit' >/dev/null
 sleep 1
@@ -107,6 +123,7 @@ activate_app
 "$CTL" list | grep -q "$SESSION_ID"
 wait_for_tmux_session "$TMUX_SESSION"
 capture "02-after-relaunch"
+verify_png "$ARTIFACT_DIR/02-after-relaunch.png"
 
 "$CTL" remove --id "$SESSION_ID" >/dev/null
 if tmux -L banyan has-session -t "$TMUX_SESSION" >/dev/null 2>&1; then

@@ -26,6 +26,8 @@ struct BanyanCtl {
                 try post("/respawn", payload: parsePayload(Array(arguments.dropFirst())))
             case "remove":
                 try post("/remove", payload: parsePayload(Array(arguments.dropFirst())))
+            case "screenshot":
+                try post("/screenshot", payload: parseScreenshotPayload(Array(arguments.dropFirst())))
             case "list":
                 try get("/list")
             case "help", "--help", "-h":
@@ -57,6 +59,17 @@ struct BanyanCtl {
             }
             result[key] = args[index + 1]
             index += 2
+        }
+        return result
+    }
+
+    private func parseScreenshotPayload(_ args: [String]) throws -> [String: String] {
+        var result = try parsePayload(args)
+        if let output = result.removeValue(forKey: "output") {
+            result["path"] = output
+        }
+        guard result["path"]?.isEmpty == false else {
+            throw CLIError.message("screenshot requires --output PATH or --path PATH")
         }
         return result
     }
@@ -121,6 +134,7 @@ struct BanyanCtl {
           banyanctl close  --id ID
           banyanctl respawn --id ID
           banyanctl remove --id ID
+          banyanctl screenshot --output PATH
           banyanctl list
         """)
     }

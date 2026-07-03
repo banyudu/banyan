@@ -57,6 +57,14 @@ Coordinate clicks should be reserved for visual debugging. Routine tests should 
 
 Use `scripts/validate-ui.sh` to exercise the packaged app and write screenshots to `artifacts/ui-validation/`.
 
+The script captures visual artifacts through Banyan itself:
+
+```sh
+dist/bin/banyanctl screenshot --output artifacts/ui-validation/main.png
+```
+
+This asks the running app to render its own main window content to PNG, which avoids relying on macOS Screen Recording permission. The script falls back to `screencapture` only if the internal capture route fails.
+
 The script verifies:
 
 - the packaged app launches
