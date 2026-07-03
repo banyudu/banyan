@@ -179,6 +179,7 @@ final class ControlServer {
             "id": session.id,
             "tmuxSessionName": session.tmuxSessionName,
             "title": session.title,
+            "displayTitle": session.displayTitle,
             "reportedTitle": session.reportedTitle ?? "",
             "cwd": session.cwd,
             "command": session.command,

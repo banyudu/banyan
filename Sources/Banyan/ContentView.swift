@@ -167,7 +167,7 @@ private struct SessionRow: View {
                 .frame(width: isSelected ? 9 : 7, height: isSelected ? 9 : 7)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(session.title)
+                Text(session.displayTitle)
                     .font(.system(size: isSelected ? 13 : 12.5, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1)
                     .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
@@ -175,10 +175,6 @@ private struct SessionRow: View {
                 HStack(spacing: 6) {
                     Image(systemName: session.status.systemImage)
                     Text(session.isRestored ? "Restorable" : session.status.label)
-                    if let reportedTitle = session.reportedTitle, !reportedTitle.isEmpty {
-                        Text("·")
-                        Text(reportedTitle)
-                    }
                 }
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
@@ -217,7 +213,7 @@ private struct TerminalHeader: View {
             Image(systemName: session.status.systemImage)
                 .foregroundStyle(Color(nsColor: session.tone.nsColor))
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.title)
+                Text(session.displayTitle)
                     .font(.headline)
                     .accessibilityIdentifier(AccessibilityID.terminalHeaderTitle)
                 Text(session.cwd)

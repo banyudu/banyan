@@ -1,4 +1,5 @@
 import AppKit
+import BanyanCore
 import Foundation
 import SwiftTerm
 
@@ -8,6 +9,8 @@ final class BanyanSession: ObservableObject, Identifiable {
     let tmuxSessionName: String
     let createdAt: Date
     let terminalView: DetectingLocalProcessTerminalView
+    private let displayProject: String
+    private let displayBranch: String?
 
     @Published var title: String
     @Published var reportedTitle: String?
@@ -26,6 +29,16 @@ final class BanyanSession: ObservableObject, Identifiable {
     var onStatusSignal: ((SessionStatus) -> Void)?
     private var didRenderRestoredMessage = false
 
+    var displayTitle: String {
+        SessionDisplayLabel.make(
+            project: displayProject,
+            branch: displayBranch,
+            title: title,
+            id: id,
+            command: command
+        )
+    }
+
     init(
         id: String,
         tmuxSessionName: String? = nil,
@@ -41,11 +54,14 @@ final class BanyanSession: ObservableObject, Identifiable {
         fontFamily: String? = nil,
         fontSize: Double = 13
     ) {
+        let displayContext = SessionDisplayLabel.context(cwd: cwd)
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
         self.title = title
         self.cwd = cwd
         self.command = command
+        self.displayProject = displayContext.project
+        self.displayBranch = displayContext.branch
         self.status = status
         self.tone = tone
         self.createdAt = createdAt
@@ -182,6 +198,16 @@ final class BanyanSession: ObservableObject, Identifiable {
 
 final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        changeScrollback(20_000)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        changeScrollback(20_000)
+    }
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
         if let text = String(bytes: slice, encoding: .utf8) {

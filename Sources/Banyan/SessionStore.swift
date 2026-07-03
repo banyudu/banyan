@@ -85,7 +85,7 @@ final class SessionStore: ObservableObject {
         case .updated:
             return active.sorted { $0.updatedAt > $1.updatedAt }
         case .title:
-            return active.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            return active.sorted { $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending }
         }
     }
 

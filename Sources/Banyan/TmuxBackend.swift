@@ -73,7 +73,11 @@ struct TmuxBackend {
 
     private func configureSession(named name: String) {
         _ = try? run(["set-option", "-g", "status", "off"])
+        _ = try? run(["set-option", "-g", "mouse", "on"])
+        _ = try? run(["set-option", "-g", "history-limit", "20000"])
         _ = try? run(["set-option", "-t", name, "status", "off"])
+        _ = try? run(["set-option", "-t", name, "mouse", "on"])
+        _ = try? run(["set-option", "-t", name, "history-limit", "20000"])
     }
 
     private var baseArguments: [String] {
