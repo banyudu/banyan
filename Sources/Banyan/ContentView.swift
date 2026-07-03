@@ -1,4 +1,5 @@
 import AppKit
+import BanyanCore
 import SwiftUI
 
 struct ContentView: View {
@@ -306,6 +307,11 @@ private struct SessionRow: View {
                 .accessibilityLabel(session.isRestored ? "Restorable" : session.status.label)
                 .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
 
+            if let provider = session.agentProvider {
+                AgentProviderIcon(provider: provider)
+                    .accessibilityLabel(provider.displayName)
+            }
+
             if isRenaming {
                 TextField("Session title", text: $renameDraft)
                     .textFieldStyle(.plain)
@@ -379,8 +385,7 @@ private struct SessionRow: View {
     }
 
     private var displayTitle: String {
-        let emoji = session.isRestored ? "🔄" : session.status.emoji
-        return "\(emoji) \(session.displayTitle)"
+        session.displayTitle
     }
 
     private var statusColor: Color {
@@ -421,6 +426,172 @@ private struct SessionRow: View {
             if !isRenaming {
                 onSelect()
             }
+        }
+    }
+}
+
+private struct AgentProviderIcon: View {
+    let provider: CodingAgentProvider
+
+    var body: some View {
+        Group {
+            if let modelIcon = modelIcon {
+                Image(nsImage: modelIcon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 20, height: 20)
+            } else if let templateIcon = templateIcon {
+                Image(nsImage: templateIcon)
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundStyle(.primary)
+                    .frame(width: 18, height: 18)
+            } else if let appIcon = installedAppIcon {
+                Image(nsImage: appIcon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 18, height: 18)
+            } else {
+                Text(provider.badgeText)
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1)
+                    )
+            }
+        }
+        .frame(width: 20, height: 20)
+        .help(provider.displayName)
+    }
+
+    private var modelIcon: NSImage? {
+        guard let resourceName = modelIconResourceName,
+              let url = Bundle.module.url(forResource: resourceName, withExtension: "svg"),
+              let image = NSImage(contentsOf: url)
+        else {
+            return provider == .codex ? codexColorIcon : nil
+        }
+        image.size = NSSize(width: 20, height: 20)
+        return image
+    }
+
+    private var modelIconResourceName: String? {
+        switch provider {
+        case .claude:
+            return "ClaudeLogo"
+        case .codex:
+            return "ChatGPTLogo"
+        case .deepseek:
+            return "DeepSeekLogo"
+        case .gemini:
+            return "GeminiLogo"
+        case .minimax:
+            return "MiniMaxLogo"
+        case .opencode:
+            return nil
+        case .xiaomiMiMo:
+            return "XiaomiMiMoLogo"
+        case .zai:
+            return "ZAILogo"
+        }
+    }
+
+    private var codexColorIcon: NSImage? {
+        guard provider == .codex else { return nil }
+        for path in codexColorIconPaths where FileManager.default.fileExists(atPath: path) {
+            guard let image = NSImage(contentsOfFile: path),
+                  let cropped = cropCodexInnerMark(from: image)
+            else {
+                continue
+            }
+            return cropped
+        }
+        return nil
+    }
+
+    private var templateIcon: NSImage? {
+        guard provider == .codex else { return nil }
+        for path in codexTemplatePaths where FileManager.default.fileExists(atPath: path) {
+            guard let image = NSImage(contentsOfFile: path) else { continue }
+            image.isTemplate = true
+            image.size = NSSize(width: 18, height: 18)
+            return image
+        }
+        return nil
+    }
+
+    private func cropCodexInnerMark(from image: NSImage) -> NSImage? {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return nil
+        }
+        let side = min(cgImage.width, cgImage.height)
+        let cropSize = Int(Double(side) * 0.72)
+        let originX = (cgImage.width - cropSize) / 2
+        let originY = Int(Double(cgImage.height - cropSize) * 0.48)
+        let cropRect = CGRect(x: originX, y: originY, width: cropSize, height: cropSize)
+        guard let cropped = cgImage.cropping(to: cropRect) else {
+            return nil
+        }
+        return NSImage(cgImage: cropped, size: NSSize(width: 20, height: 20))
+    }
+
+    private var installedAppIcon: NSImage? {
+        for path in candidateAppPaths where FileManager.default.fileExists(atPath: path) {
+            let icon = NSWorkspace.shared.icon(forFile: path)
+            icon.size = NSSize(width: 18, height: 18)
+            return icon
+        }
+        return nil
+    }
+
+    private var codexTemplatePaths: [String] {
+        let home = NSHomeDirectory()
+        return [
+            "/Applications/Codex.app/Contents/Resources/codexTemplate@2x.png",
+            "/Applications/Codex.app/Contents/Resources/codexTemplate.png",
+            "\(home)/Applications/Codex.app/Contents/Resources/codexTemplate@2x.png",
+            "\(home)/Applications/Codex.app/Contents/Resources/codexTemplate.png"
+        ]
+    }
+
+    private var codexColorIconPaths: [String] {
+        let home = NSHomeDirectory()
+        return [
+            "/Applications/Codex.app/Contents/Resources/icon-codex-dark-color.png",
+            "/Applications/Codex.app/Contents/Resources/icon-codex-light.png",
+            "\(home)/Applications/Codex.app/Contents/Resources/icon-codex-dark-color.png",
+            "\(home)/Applications/Codex.app/Contents/Resources/icon-codex-light.png"
+        ]
+    }
+
+    private var candidateAppPaths: [String] {
+        let home = NSHomeDirectory()
+        switch provider {
+        case .claude:
+            return [
+                "/Applications/Claude.app",
+                "\(home)/Applications/Claude.app"
+            ]
+        case .codex:
+            return [
+                "/Applications/Codex.app",
+                "\(home)/Applications/Codex.app"
+            ]
+        case .deepseek:
+            return [
+                "/Applications/DeepSeek.app",
+                "\(home)/Applications/DeepSeek.app"
+            ]
+        case .gemini, .minimax, .xiaomiMiMo, .zai:
+            return []
+        case .opencode:
+            return [
+                "/Applications/OpenCode.app",
+                "\(home)/Applications/OpenCode.app"
+            ]
         }
     }
 }

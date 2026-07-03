@@ -23,6 +23,9 @@ let package = Package(
             dependencies: [
                 "BanyanCore",
                 .product(name: "SwiftTerm", package: "SwiftTerm")
+            ],
+            resources: [
+                .process("Resources")
             ]
         ),
         .executableTarget(

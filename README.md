@@ -67,7 +67,7 @@ Session and workspace state are saved to SQLite:
 
 On first launch after upgrading, Banyan migrates legacy session metadata from `sessions.json` when the SQLite database has no sessions.
 
-Persisted state currently includes session metadata, tmux session names, sidebar order, selected session, sort mode, terminal theme, and terminal font settings.
+Persisted state currently includes session metadata, tmux session names, generated titles, sidebar order, selected session, sort mode, terminal theme, and terminal font settings.
 
 ## Package
 
@@ -155,6 +155,14 @@ Built-in themes:
 ## Agent State Detection
 
 Banyan watches terminal output for common agent states and can mark sessions as `need-input`, `review`, `failed`, or `completed`. It sends macOS notifications for attention states.
+
+Coding-agent sessions launched through `claude`, `codex`, `deepseek`, or `opencode` get a compact provider badge in the sidebar. If a session has a manual title, Banyan keeps it. Otherwise it derives a title from the terminal-reported title, the prompt passed to the agent command, or a provider/project/session fallback.
+
+For local model or cheap hosted title generation, set `BANYAN_TITLE_COMMAND` before launching Banyan. The command receives a JSON object on stdin and should print one short title on the first stdout line:
+
+```sh
+BANYAN_TITLE_COMMAND=/path/to/title-script swift run Banyan
+```
 
 Global detector rules can be overridden with:
 

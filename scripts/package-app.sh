@@ -27,6 +27,10 @@ SWIFTTERM_BUNDLE="$(find "$ROOT_DIR/.build" -path '*release*' -name '*SwiftTerm*
 if [[ -n "$SWIFTTERM_BUNDLE" ]]; then
   cp -R "$SWIFTTERM_BUNDLE" "$RESOURCES_DIR/"
 fi
+BANYAN_RESOURCE_BUNDLE="$(find "$ROOT_DIR/.build" -path '*release*' -name 'Banyan_Banyan.bundle' -type d | head -n 1 || true)"
+if [[ -n "$BANYAN_RESOURCE_BUNDLE" ]]; then
+  cp -R "$BANYAN_RESOURCE_BUNDLE" "$RESOURCES_DIR/"
+fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

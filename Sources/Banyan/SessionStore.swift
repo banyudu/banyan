@@ -144,6 +144,7 @@ final class SessionStore: ObservableObject {
                 id: uniqueID(snapshot.id, avoidingLiveTmuxSessions: false),
                 tmuxSessionName: tmuxSessionName,
                 title: restoredTitle(from: snapshot),
+                generatedTitle: snapshot.generatedTitle,
                 isTitlePinned: snapshot.isTitlePinned,
                 cwd: snapshot.cwd,
                 command: snapshot.command,
@@ -234,8 +235,9 @@ final class SessionStore: ObservableObject {
         let session = BanyanSession(
             id: id,
             tmuxSessionName: TmuxBackend.sessionName(for: id),
-            title: title,
-            isTitlePinned: hasExplicitTitle,
+                title: title,
+                generatedTitle: nil,
+                isTitlePinned: hasExplicitTitle,
             cwd: cwd,
             command: command,
             tone: tone,
@@ -358,6 +360,7 @@ final class SessionStore: ObservableObject {
                 tmuxSessionName: $0.tmuxSessionName,
                 title: $0.title,
                 reportedTitle: $0.reportedTitle,
+                generatedTitle: $0.generatedTitle,
                 isTitlePinned: $0.isTitlePinned,
                 cwd: $0.cwd,
                 command: $0.command,
@@ -408,6 +411,9 @@ final class SessionStore: ObservableObject {
                 currentStatus: session.status
             ) else {
                 continue
+            }
+            if session.detectedAgentProvider != result.provider {
+                session.markDetectedAgentProvider(result.provider)
             }
             if session.status != result.status || session.tone != result.tone {
                 session.mark(status: result.status, tone: result.tone)

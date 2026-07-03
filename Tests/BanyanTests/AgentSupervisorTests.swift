@@ -158,6 +158,24 @@ import Testing
 
     #expect(result?.status == .needInput)
     #expect(result?.tone == .yellow)
+    #expect(result?.provider?.rawValue == "opencode")
+}
+
+@Test func supervisorDetectsCodexProviderFromNodeWrappedProcess() {
+    let result = makeSupervisor(
+        pane: pane(currentCommand: "node"),
+        processes: [
+            process(commandName: "node", arguments: "node /Users/banyudu/.nvm/versions/node/v24.4.1/bin/codex", elapsed: 5)
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+    #expect(result?.provider?.rawValue == "codex")
 }
 
 @Test func supervisorCanDetectAgentFromPaneRootProcessArguments() {
@@ -181,6 +199,7 @@ import Testing
 @Test func supportedAgentCommandParsingAcceptsPathsAndRejectsNearMatches() {
     #expect(AgentSupervisor.isSupportedAgentCommand("codex --ask-for-approval never"))
     #expect(AgentSupervisor.isSupportedAgentCommand("/opt/homebrew/bin/claude"))
+    #expect(AgentSupervisor.isSupportedAgentCommand("deepseek --model deepseek-chat"))
     #expect(AgentSupervisor.isSupportedAgentCommand("opencode"))
     #expect(!AgentSupervisor.isSupportedAgentCommand("my-codex-wrapper"))
     #expect(!AgentSupervisor.isSupportedAgentCommand(""))

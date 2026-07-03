@@ -1,3 +1,4 @@
+import BanyanCore
 import Foundation
 
 protocol AgentSupervisorBackend {
@@ -11,6 +12,7 @@ struct AgentSupervisor {
     struct Result {
         let status: SessionStatus
         let tone: SessionTone
+        let provider: CodingAgentProvider?
     }
 
     private let backend: any AgentSupervisorBackend
@@ -32,22 +34,24 @@ struct AgentSupervisor {
     func inspect(tmuxSessionName: String, launchCommand: String, currentStatus: SessionStatus) -> Result? {
         guard currentStatus != .closed else { return nil }
         guard let pane = backend.primaryPaneSnapshot(named: tmuxSessionName), !pane.isDead else {
-            return currentStatus == .closed ? nil : Result(status: .closed, tone: .neutral)
+            return currentStatus == .closed ? nil : Result(status: .closed, tone: .neutral, provider: nil)
         }
 
         let descendants = processDescendants(pane.rootPID)
-        let isAgent = Self.isSupportedAgentCommand(launchCommand)
-            || Self.isSupportedAgentCommand(pane.currentCommand)
-            || descendants.contains { $0.isSupportedAgent }
+        let provider = Self.detectProvider(
+            launchCommand: launchCommand,
+            paneCommand: pane.currentCommand,
+            descendants: descendants
+        )
 
-        guard isAgent else {
-            return Result(status: .running, tone: .blue)
+        guard let provider else {
+            return Result(status: .running, tone: .blue, provider: nil)
         }
 
         let rootAgentProcessCount = Self.isSupportedAgentCommand(pane.currentCommand) ? 1 : 0
         let agentProcesses = descendants.filter(\.isSupportedAgent)
         if rootAgentProcessCount + agentProcesses.count > 1 {
-            return Result(status: .subagents, tone: .purple)
+            return Result(status: .subagents, tone: .purple, provider: provider)
         }
 
         let externalProcesses = descendants.filter { process in
@@ -58,35 +62,40 @@ struct AgentSupervisor {
         }
 
         if externalProcesses.contains(where: { $0.elapsed >= longRunningThreshold }) {
-            return Result(status: .longRunningShell, tone: .yellow)
+            return Result(status: .longRunningShell, tone: .yellow, provider: provider)
         }
 
         if !externalProcesses.isEmpty {
-            return Result(status: .executing, tone: .blue)
+            return Result(status: .executing, tone: .blue, provider: provider)
         }
 
         let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: 60)
         if Self.looksLikeAgentQuestion(visibleText) {
-            return Result(status: .asking, tone: .yellow)
+            return Result(status: .asking, tone: .yellow, provider: provider)
         }
         if Self.looksLikeAgentExecuting(visibleText) {
-            return Result(status: .executing, tone: .blue)
+            return Result(status: .executing, tone: .blue, provider: provider)
         }
 
-        return Result(status: .needInput, tone: .yellow)
+        return Result(status: .needInput, tone: .yellow, provider: provider)
     }
 
     static func isSupportedAgentCommand(_ command: String) -> Bool {
-        let normalized = command
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard !normalized.isEmpty else { return false }
-        let firstToken = normalized
-            .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-            .first
-            .map(String.init) ?? normalized
-        let executable = URL(fileURLWithPath: firstToken).lastPathComponent
-        return ["claude", "codex", "opencode"].contains(executable)
+        CodingAgentProvider.isSupportedCommand(command)
+    }
+
+    static func detectProvider(
+        launchCommand: String,
+        paneCommand: String,
+        descendants: [ProcessInfoRow]
+    ) -> CodingAgentProvider? {
+        if let provider = CodingAgentProvider.detect(in: launchCommand) {
+            return provider
+        }
+        if let provider = CodingAgentProvider.detect(in: paneCommand) {
+            return provider
+        }
+        return descendants.compactMap(\.supportedAgentProvider).first
     }
 
     private static func looksLikeAgentQuestion(_ text: String) -> Bool {
@@ -175,12 +184,17 @@ struct ProcessInfoRow {
     let arguments: String
 
     var isSupportedAgent: Bool {
-        AgentSupervisor.isSupportedAgentCommand(commandName)
-            || AgentSupervisor.isSupportedAgentCommand(arguments)
-            || arguments
+        supportedAgentProvider != nil
+    }
+
+    var supportedAgentProvider: CodingAgentProvider? {
+        CodingAgentProvider.detect(in: commandName)
+            ?? CodingAgentProvider.detect(in: arguments)
+            ?? arguments
                 .lowercased()
                 .split(whereSeparator: { $0 == " " || $0 == "/" })
-                .contains { ["claude", "codex", "opencode"].contains(String($0)) }
+                .compactMap { CodingAgentProvider.detect(in: String($0)) }
+                .first
     }
 
     var isShellOrWrapper: Bool {

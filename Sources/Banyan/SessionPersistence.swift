@@ -6,6 +6,7 @@ struct SessionSnapshot: Codable {
     let tmuxSessionName: String?
     let title: String
     let reportedTitle: String?
+    let generatedTitle: String?
     let isTitlePinned: Bool
     let cwd: String
     let command: String
@@ -20,6 +21,7 @@ struct SessionSnapshot: Codable {
         tmuxSessionName: String?,
         title: String,
         reportedTitle: String?,
+        generatedTitle: String? = nil,
         isTitlePinned: Bool = false,
         cwd: String,
         command: String,
@@ -33,6 +35,7 @@ struct SessionSnapshot: Codable {
         self.tmuxSessionName = tmuxSessionName
         self.title = title
         self.reportedTitle = reportedTitle
+        self.generatedTitle = generatedTitle
         self.isTitlePinned = isTitlePinned
         self.cwd = cwd
         self.command = command
@@ -48,6 +51,7 @@ struct SessionSnapshot: Codable {
         case tmuxSessionName
         case title
         case reportedTitle
+        case generatedTitle
         case isTitlePinned
         case cwd
         case command
@@ -65,6 +69,7 @@ struct SessionSnapshot: Codable {
             tmuxSessionName: try container.decodeIfPresent(String.self, forKey: .tmuxSessionName),
             title: try container.decode(String.self, forKey: .title),
             reportedTitle: try container.decodeIfPresent(String.self, forKey: .reportedTitle),
+            generatedTitle: try container.decodeIfPresent(String.self, forKey: .generatedTitle),
             isTitlePinned: try container.decodeIfPresent(Bool.self, forKey: .isTitlePinned) ?? false,
             cwd: try container.decode(String.self, forKey: .cwd),
             command: try container.decode(String.self, forKey: .command),
@@ -105,7 +110,7 @@ struct SessionPersistence {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, reported_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at
+            SELECT id, tmux_session_name, title, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -120,14 +125,14 @@ struct SessionPersistence {
                 guard
                     let id = columnText(statement, 0),
                     let title = columnText(statement, 2),
-                    let cwd = columnText(statement, 5),
-                    let command = columnText(statement, 6),
-                    let rawStatus = columnText(statement, 7),
+                    let cwd = columnText(statement, 6),
+                    let command = columnText(statement, 7),
+                    let rawStatus = columnText(statement, 8),
                     let status = SessionStatus(rawValue: rawStatus),
-                    let rawTone = columnText(statement, 8),
+                    let rawTone = columnText(statement, 9),
                     let tone = SessionTone(rawValue: rawTone),
-                    let createdAt = decodeDate(columnText(statement, 10)),
-                    let updatedAt = decodeDate(columnText(statement, 11))
+                    let createdAt = decodeDate(columnText(statement, 11)),
+                    let updatedAt = decodeDate(columnText(statement, 12))
                 else {
                     continue
                 }
@@ -137,12 +142,13 @@ struct SessionPersistence {
                         tmuxSessionName: columnText(statement, 1),
                         title: title,
                         reportedTitle: columnText(statement, 3),
-                        isTitlePinned: sqlite3_column_int(statement, 4) != 0,
+                        generatedTitle: columnText(statement, 4),
+                        isTitlePinned: sqlite3_column_int(statement, 5) != 0,
                         cwd: cwd,
                         command: command,
                         status: status,
                         tone: tone,
-                        parentSessionID: columnText(statement, 9),
+                        parentSessionID: columnText(statement, 10),
                         createdAt: createdAt,
                         updatedAt: updatedAt
                     )
@@ -250,6 +256,7 @@ struct SessionPersistence {
             tmux_session_name TEXT,
             title TEXT NOT NULL,
             reported_title TEXT,
+            generated_title TEXT,
             is_title_pinned INTEGER NOT NULL DEFAULT 0,
             cwd TEXT NOT NULL,
             command TEXT NOT NULL,
@@ -261,6 +268,7 @@ struct SessionPersistence {
             sort_order INTEGER NOT NULL DEFAULT 0
         )
         """)
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN generated_title TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN is_title_pinned INTEGER NOT NULL DEFAULT 0")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
         try execute(database, """
@@ -283,12 +291,13 @@ struct SessionPersistence {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, reported_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
             reported_title = excluded.reported_title,
+            generated_title = excluded.generated_title,
             is_title_pinned = excluded.is_title_pinned,
             cwd = excluded.cwd,
             command = excluded.command,
@@ -309,15 +318,16 @@ struct SessionPersistence {
         bindText(statement, 2, snapshot.tmuxSessionName)
         bindText(statement, 3, snapshot.title)
         bindText(statement, 4, snapshot.reportedTitle)
-        sqlite3_bind_int(statement, 5, snapshot.isTitlePinned ? 1 : 0)
-        bindText(statement, 6, snapshot.cwd)
-        bindText(statement, 7, snapshot.command)
-        bindText(statement, 8, snapshot.status.rawValue)
-        bindText(statement, 9, snapshot.tone.rawValue)
-        bindText(statement, 10, snapshot.parentSessionID)
-        bindText(statement, 11, encodeDate(snapshot.createdAt))
-        bindText(statement, 12, encodeDate(snapshot.updatedAt))
-        sqlite3_bind_int64(statement, 13, Int64(sortOrder))
+        bindText(statement, 5, snapshot.generatedTitle)
+        sqlite3_bind_int(statement, 6, snapshot.isTitlePinned ? 1 : 0)
+        bindText(statement, 7, snapshot.cwd)
+        bindText(statement, 8, snapshot.command)
+        bindText(statement, 9, snapshot.status.rawValue)
+        bindText(statement, 10, snapshot.tone.rawValue)
+        bindText(statement, 11, snapshot.parentSessionID)
+        bindText(statement, 12, encodeDate(snapshot.createdAt))
+        bindText(statement, 13, encodeDate(snapshot.updatedAt))
+        sqlite3_bind_int64(statement, 14, Int64(sortOrder))
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw databaseError(database)

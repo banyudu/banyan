@@ -245,6 +245,8 @@ final class ControlServer {
             "title": session.title,
             "displayTitle": session.displayTitle,
             "reportedTitle": session.reportedTitle ?? "",
+            "generatedTitle": session.generatedTitle ?? "",
+            "agentProvider": session.agentProvider?.rawValue ?? "",
             "cwd": session.cwd,
             "command": session.command,
             "status": session.status.rawValue,

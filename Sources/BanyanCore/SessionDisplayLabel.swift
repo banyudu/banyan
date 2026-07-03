@@ -43,13 +43,13 @@ public enum SessionDisplayLabel {
     ) -> String {
         if prefersReportedTitle,
            let reported = reportedTitle.map(clean),
-           !isGenericTitle(reported),
-           !looksLikeHostTitle(reported) {
+           SessionTitleGenerator.isUsefulTitle(reported) {
             return reported
         }
 
         let cleanedTitle = clean(title)
-        if !isGenericTitle(cleanedTitle), !looksLikeHostTitle(cleanedTitle) {
+        if !SessionTitleGenerator.isGenericTitle(cleanedTitle),
+           !SessionTitleGenerator.looksLikeHostTitle(cleanedTitle) {
             return cleanedTitle
         }
 
@@ -59,7 +59,8 @@ public enum SessionDisplayLabel {
         }
 
         let cleanedID = clean(id)
-        if !isGenericTitle(cleanedID), !looksLikeHostTitle(cleanedID) {
+        if !SessionTitleGenerator.isGenericTitle(cleanedID),
+           !SessionTitleGenerator.looksLikeHostTitle(cleanedID) {
             return cleanedID
         }
 
@@ -72,31 +73,15 @@ public enum SessionDisplayLabel {
             return "shell"
         }
 
-        for agent in ["codex", "claude"] {
-            guard command == agent || command.hasPrefix("\(agent) ") else { continue }
-            let suffix = clean(String(command.dropFirst(agent.count)))
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
-            return suffix.isEmpty ? agent : suffix
+        if let provider = CodingAgentProvider.detect(in: command) {
+            if let prompt = CodingAgentProvider.promptCandidate(in: command, provider: provider),
+               let title = SessionTitleGenerator.titleFromPrompt(prompt) {
+                return title
+            }
+            return provider.displayName
         }
 
         return command
-    }
-
-    private static func isGenericTitle(_ value: String) -> Bool {
-        let lowercased = value.lowercased()
-        return lowercased.isEmpty
-            || lowercased == "shell"
-            || lowercased.hasPrefix("shell-")
-            || lowercased == "session"
-            || lowercased.hasPrefix("session-")
-            || lowercased == "codex"
-            || lowercased == "claude"
-    }
-
-    private static func looksLikeHostTitle(_ value: String) -> Bool {
-        let parts = value.split(separator: "@", maxSplits: 1)
-        guard parts.count == 2 else { return false }
-        return !parts[0].contains(" ") && !parts[1].contains(" ")
     }
 
     private static func clean(_ value: String) -> String {

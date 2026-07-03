@@ -14,6 +14,8 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     @Published var title: String
     @Published var reportedTitle: String?
+    @Published var generatedTitle: String?
+    @Published var detectedAgentProvider: CodingAgentProvider?
     @Published var isTitlePinned: Bool
     @Published var cwd: String
     @Published var command: String
@@ -33,23 +35,34 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var appliedTheme: TerminalTheme?
     private var appliedFontFamily: String?
     private var appliedFontSize: Double?
+    private var externalTitleSignature: String?
+    private var externalTitleTask: Task<Void, Never>?
 
     var displayTitle: String {
-        if isTitlePinned {
+        if hasUsefulPinnedTitle {
             return title
         }
 
-        if isAgentCommand, let agentTitle = usefulAgentTitle {
+        if agentProvider != nil, let agentTitle = usefulAgentTitle {
             return agentTitle
         }
 
+        if let generatedTitle = generatedTitle.flatMap(SessionTitleGenerator.sanitizeTitle) {
+            return generatedTitle
+        }
+
         return title
+    }
+
+    var agentProvider: CodingAgentProvider? {
+        CodingAgentProvider.detect(in: command) ?? detectedAgentProvider
     }
 
     init(
         id: String,
         tmuxSessionName: String? = nil,
         title: String,
+        generatedTitle: String? = nil,
         isTitlePinned: Bool = false,
         cwd: String,
         command: String,
@@ -67,6 +80,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
         self.title = title
+        self.generatedTitle = generatedTitle
+        self.detectedAgentProvider = nil
         self.isTitlePinned = isTitlePinned
         self.cwd = cwd
         self.command = command
@@ -85,8 +100,10 @@ final class BanyanSession: ObservableObject, Identifiable {
 
         let delegate = TerminalSessionDelegate(sessionID: id)
         delegate.onTitle = { [weak self] title in
-            self?.reportedTitle = title
-            self?.touch()
+            guard let self else { return }
+            self.reportedTitle = title
+            self.refreshGeneratedTitle()
+            self.touch()
         }
         delegate.onTerminate = { [weak self] exitCode in
             guard let self else { return }
@@ -105,6 +122,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             self?.onOutput?(text)
         }
 
+        refreshGeneratedTitle()
     }
 
     func renderRestoredMessageIfNeeded(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13) {
@@ -162,43 +180,79 @@ final class BanyanSession: ObservableObject, Identifiable {
             self.title = title
             isTitlePinned = true
         }
+        refreshGeneratedTitle()
         touch()
     }
 
-    private var isAgentCommand: Bool {
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return trimmed == "codex"
-            || trimmed.hasPrefix("codex ")
-            || trimmed == "claude"
-            || trimmed.hasPrefix("claude ")
-            || trimmed == "opencode"
-            || trimmed.hasPrefix("opencode ")
+    func markDetectedAgentProvider(_ provider: CodingAgentProvider?) {
+        guard detectedAgentProvider != provider else { return }
+        detectedAgentProvider = provider
+        refreshGeneratedTitle()
+        touch()
     }
 
     private var usefulAgentTitle: String? {
-        guard let value = reportedTitle.map(normalizedForDisplay), !value.isEmpty else {
+        guard let value = reportedTitle.flatMap(SessionTitleGenerator.sanitizeTitle), !value.isEmpty else {
             return nil
         }
-        let lowercased = value.lowercased()
-        guard lowercased != "codex", lowercased != "claude" else {
-            return nil
-        }
-        guard !looksLikeHostTitle(value) else {
+        guard SessionTitleGenerator.isUsefulTitle(value) else {
             return nil
         }
         return value
     }
 
-    private func normalizedForDisplay(_ value: String) -> String {
-        value.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+    private var hasUsefulPinnedTitle: Bool {
+        guard isTitlePinned else { return false }
+        let cleanedTitle = SessionTitleGenerator.sanitizeTitle(title) ?? ""
+        guard SessionTitleGenerator.isUsefulTitle(cleanedTitle) else { return false }
+        let defaultTitle = PathDisplayName.make(path: cwd)
+        return cleanedTitle != defaultTitle
     }
 
-    private func looksLikeHostTitle(_ value: String) -> Bool {
-        let parts = value.split(separator: "@", maxSplits: 1)
-        guard parts.count == 2 else { return false }
-        return !parts[0].contains(" ") && !parts[1].contains(" ")
+    private func refreshGeneratedTitle() {
+        guard !hasUsefulPinnedTitle else { return }
+        guard agentProvider != nil else {
+            generatedTitle = nil
+            return
+        }
+        let context = SessionTitleContext(
+            id: id,
+            baseTitle: title,
+            isTitlePinned: hasUsefulPinnedTitle,
+            cwd: cwd,
+            project: displayProject,
+            branch: displayBranch,
+            command: command,
+            reportedTitle: reportedTitle,
+            provider: agentProvider
+        )
+        if let localTitle = SessionTitleGenerator.automaticTitle(for: context), localTitle != generatedTitle {
+            generatedTitle = localTitle
+        }
+        requestExternalGeneratedTitleIfNeeded(context: context)
+    }
+
+    private func requestExternalGeneratedTitleIfNeeded(context: SessionTitleContext) {
+        guard ExternalSessionTitleGenerator.isConfigured else { return }
+        let signature = [
+            context.id,
+            context.command,
+            context.cwd,
+            context.reportedTitle ?? "",
+            context.provider?.rawValue ?? ""
+        ].joined(separator: "\u{1f}")
+        guard signature != externalTitleSignature else { return }
+        externalTitleSignature = signature
+        externalTitleTask?.cancel()
+
+        externalTitleTask = Task.detached(priority: .utility) { [weak self] in
+            guard let title = ExternalSessionTitleGenerator.generateTitle(for: context) else { return }
+            await MainActor.run { [weak self] in
+                guard let self, !self.hasUsefulPinnedTitle, self.agentProvider != nil else { return }
+                self.generatedTitle = title
+                self.touch()
+            }
+        }
     }
 
     func terminate(markClosed: Bool = true) {
