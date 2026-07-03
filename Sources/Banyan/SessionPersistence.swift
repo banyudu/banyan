@@ -192,7 +192,7 @@ struct SessionPersistence {
             return WorkspaceSnapshot(
                 selectedSessionID: state["selectedSessionID"] ?? defaults.selectedSessionID,
                 sortMode: state["sortMode"].flatMap(SortMode.init(rawValue:)) ?? defaults.sortMode,
-                terminalTheme: state["terminalTheme"].flatMap(TerminalTheme.init(rawValue:)) ?? defaults.terminalTheme,
+                terminalTheme: TerminalTheme.fromPersistedRawValue(state["terminalTheme"]) ?? defaults.terminalTheme,
                 terminalFontFamily: state["terminalFontFamily"] ?? defaults.terminalFontFamily,
                 terminalFontSize: state["terminalFontSize"].flatMap(Double.init) ?? defaults.terminalFontSize
             )

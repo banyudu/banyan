@@ -12,7 +12,7 @@ The first screen is the working surface:
 The toolbar is intentionally small:
 
 - `+` forks the selected session's working directory into a new default shell.
-- `slider.horizontal.3` opens Preferences for terminal appearance.
+- `slider.horizontal.3` opens Preferences for app theme and terminal font.
 - Sidebar options, including sort order and custom session creation, live behind the small sidebar menu.
 - Restored sessions attach to existing `tmux` sessions when possible.
 
@@ -152,18 +152,17 @@ purple
 
 ## Terminal Rendering
 
-Banyan embeds SwiftTerm, so terminal applications can use ANSI, 256-color, and truecolor escape sequences for syntax highlighting and colorized output. Banyan exposes theme and font controls in Preferences.
+Banyan embeds SwiftTerm, so terminal applications can use ANSI, 256-color, and truecolor escape sequences for syntax highlighting and colorized output. Banyan exposes app theme and terminal font controls in Preferences.
 
 The embedded terminal supports normal desktop text selection and clipboard shortcuts. Drag to select visible terminal text, use `Cmd+C` to copy the selection, and use `Cmd+V` to paste into the active tmux-backed session.
 
-Built-in themes:
+Theme options:
 
 - System
 - Dark
 - Light
-- Solarized Dark
-- Solarized Light
-- Dracula
+
+The selected theme applies to both the SwiftUI chrome, such as the sidebar, and the embedded terminal.
 
 ## Agent State Detection
 

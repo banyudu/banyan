@@ -1,13 +1,11 @@
 import AppKit
+import SwiftUI
 import SwiftTerm
 
 enum TerminalTheme: String, CaseIterable, Identifiable {
     case system
     case dark
     case light
-    case solarizedDark
-    case solarizedLight
-    case dracula
 
     var id: String { rawValue }
 
@@ -16,9 +14,29 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
         case .system: return "System"
         case .dark: return "Dark"
         case .light: return "Light"
-        case .solarizedDark: return "Solarized Dark"
-        case .solarizedLight: return "Solarized Light"
-        case .dracula: return "Dracula"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .dark: return .dark
+        case .light: return .light
+        }
+    }
+
+    static func fromPersistedRawValue(_ rawValue: String?) -> TerminalTheme? {
+        guard let rawValue else { return nil }
+        if let theme = TerminalTheme(rawValue: rawValue) {
+            return theme
+        }
+        switch rawValue {
+        case "solarizedDark", "dracula":
+            return .dark
+        case "solarizedLight":
+            return .light
+        default:
+            return nil
         }
     }
 
@@ -30,12 +48,6 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
             return NSColor(red: 0.055, green: 0.060, blue: 0.070, alpha: 1)
         case .light:
             return NSColor(red: 0.980, green: 0.980, blue: 0.960, alpha: 1)
-        case .solarizedDark:
-            return NSColor(red: 0.000, green: 0.169, blue: 0.212, alpha: 1)
-        case .solarizedLight:
-            return NSColor(red: 0.992, green: 0.965, blue: 0.890, alpha: 1)
-        case .dracula:
-            return NSColor(red: 0.157, green: 0.165, blue: 0.212, alpha: 1)
         }
     }
 
@@ -47,12 +59,6 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
             return NSColor(red: 0.870, green: 0.885, blue: 0.900, alpha: 1)
         case .light:
             return NSColor(red: 0.090, green: 0.095, blue: 0.110, alpha: 1)
-        case .solarizedDark:
-            return NSColor(red: 0.514, green: 0.580, blue: 0.588, alpha: 1)
-        case .solarizedLight:
-            return NSColor(red: 0.396, green: 0.482, blue: 0.514, alpha: 1)
-        case .dracula:
-            return NSColor(red: 0.973, green: 0.973, blue: 0.949, alpha: 1)
         }
     }
 
@@ -119,44 +125,6 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
                 Self.color(0x66, 0x37, 0xba),
                 Self.color(0x0e, 0x6e, 0x75),
                 Self.color(0x24, 0x29, 0x2f)
-            ]
-        case .solarizedDark, .solarizedLight:
-            return [
-                Self.color(0x07, 0x36, 0x42),
-                Self.color(0xdc, 0x32, 0x2f),
-                Self.color(0x85, 0x99, 0x00),
-                Self.color(0xb5, 0x89, 0x00),
-                Self.color(0x26, 0x8b, 0xd2),
-                Self.color(0xd3, 0x36, 0x82),
-                Self.color(0x2a, 0xa1, 0x98),
-                Self.color(0xee, 0xe8, 0xd5),
-                Self.color(0x00, 0x2b, 0x36),
-                Self.color(0xcb, 0x4b, 0x16),
-                Self.color(0x58, 0x6e, 0x75),
-                Self.color(0x65, 0x7b, 0x83),
-                Self.color(0x83, 0x94, 0x96),
-                Self.color(0x6c, 0x71, 0xc4),
-                Self.color(0x93, 0xa1, 0xa1),
-                Self.color(0xfd, 0xf6, 0xe3)
-            ]
-        case .dracula:
-            return [
-                Self.color(0x21, 0x22, 0x2c),
-                Self.color(0xff, 0x55, 0x55),
-                Self.color(0x50, 0xfa, 0x7b),
-                Self.color(0xf1, 0xfa, 0x8c),
-                Self.color(0xbd, 0x93, 0xf9),
-                Self.color(0xff, 0x79, 0xc6),
-                Self.color(0x8b, 0xe9, 0xfd),
-                Self.color(0xf8, 0xf8, 0xf2),
-                Self.color(0x62, 0x72, 0xa4),
-                Self.color(0xff, 0x6e, 0x6e),
-                Self.color(0x69, 0xff, 0x94),
-                Self.color(0xff, 0xff, 0xa5),
-                Self.color(0xd6, 0xac, 0xff),
-                Self.color(0xff, 0x92, 0xdf),
-                Self.color(0xa4, 0xff, 0xff),
-                Self.color(0xff, 0xff, 0xff)
             ]
         }
     }

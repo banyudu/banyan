@@ -61,6 +61,7 @@ struct ContentView: View {
             Text(closeConfirmationMessage)
         }
         .background(WindowTitleConfigurator())
+        .preferredColorScheme(store.terminalTheme.colorScheme)
         .accessibilityIdentifier(AccessibilityID.root)
     }
 

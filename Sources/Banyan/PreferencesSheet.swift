@@ -24,7 +24,7 @@ struct PreferencesSheet: View {
                 Text("Appearance")
                     .font(.headline)
 
-                Picker("Terminal theme", selection: $store.terminalTheme) {
+                Picker("Theme", selection: $store.terminalTheme) {
                     ForEach(TerminalTheme.allCases) { theme in
                         Text(theme.label).tag(theme)
                     }

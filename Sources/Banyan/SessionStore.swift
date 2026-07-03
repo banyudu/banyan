@@ -55,7 +55,7 @@ final class SessionStore: ObservableObject {
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
-           let theme = TerminalTheme(rawValue: rawTheme) {
+           let theme = TerminalTheme.fromPersistedRawValue(rawTheme) {
             defaultTheme = theme
         }
         var defaultFontFamily = "Menlo"
