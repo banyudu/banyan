@@ -216,12 +216,12 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        changeScrollback(20_000)
+        configureInteraction()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        changeScrollback(20_000)
+        configureInteraction()
     }
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
@@ -229,6 +229,11 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
             onOutput?(text)
         }
         super.dataReceived(slice: slice)
+    }
+
+    private func configureInteraction() {
+        changeScrollback(20_000)
+        allowMouseReporting = false
     }
 }
 

@@ -1,3 +1,4 @@
+import BanyanCore
 import SwiftUI
 import SwiftTerm
 
@@ -42,7 +43,8 @@ final class TerminalContainerView: NSView {
     private var topConstraint: NSLayoutConstraint?
     private var bottomConstraint: NSLayoutConstraint?
     private var scrollEventMonitor: Any?
-    private var alternateScrollRemainder: CGFloat = 0
+    private var inputEventMonitor: Any?
+    private var scrollInterpreter = TerminalScrollInterpreter()
 
     init(terminalView: LocalProcessTerminalView) {
         self.terminalView = terminalView
@@ -51,6 +53,7 @@ final class TerminalContainerView: NSView {
         wantsLayer = true
         install(terminalView)
         installScrollEventMonitor()
+        installInputEventMonitor()
     }
 
     required init?(coder: NSCoder) {
@@ -60,6 +63,9 @@ final class TerminalContainerView: NSView {
     deinit {
         if let scrollEventMonitor {
             NSEvent.removeMonitor(scrollEventMonitor)
+        }
+        if let inputEventMonitor {
+            NSEvent.removeMonitor(inputEventMonitor)
         }
     }
 
@@ -110,19 +116,94 @@ final class TerminalContainerView: NSView {
         }
     }
 
+    private func installInputEventMonitor() {
+        inputEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
+            guard let self, event.window === self.window else { return event }
+
+            switch event.type {
+            case .leftMouseDown:
+                if self.isEventInTerminal(event) {
+                    self.window?.makeFirstResponder(self.terminalView)
+                }
+                return event
+            case .keyDown:
+                guard self.isTerminalFirstResponder else { return event }
+                return self.handleTerminalShortcut(event) ? nil : event
+            default:
+                return event
+            }
+        }
+    }
+
     private func shouldHandleScroll(_ event: NSEvent) -> Bool {
         guard event.window === window, terminalView.window === window else { return false }
+        guard isEventInTerminal(event) else { return false }
+        return true
+    }
+
+    private func isEventInTerminal(_ event: NSEvent) -> Bool {
         let point = terminalView.convert(event.locationInWindow, from: nil)
-        guard terminalView.bounds.contains(point) else { return false }
-        return !terminalView.canScroll || terminalView.terminal.mouseMode != .off
+        return terminalView.bounds.contains(point)
+    }
+
+    private var isTerminalFirstResponder: Bool {
+        guard let firstResponder = window?.firstResponder else { return false }
+        if firstResponder === terminalView {
+            return true
+        }
+        if let view = firstResponder as? NSView {
+            return view === terminalView || view.isDescendant(of: terminalView)
+        }
+        return false
+    }
+
+    private func handleTerminalShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command), !flags.contains(.control), !flags.contains(.option),
+              let key = event.charactersIgnoringModifiers?.lowercased() else {
+            return false
+        }
+
+        switch key {
+        case "c":
+            guard terminalView.selectionActive else { return true }
+            terminalView.copy(self)
+            return true
+        case "v":
+            terminalView.paste(self)
+            return true
+        case "a":
+            terminalView.selectAll(self)
+            return true
+        default:
+            return false
+        }
     }
 
     private func handleScroll(_ event: NSEvent) {
-        if terminalView.allowMouseReporting, terminalView.terminal.mouseMode != .off {
+        let action = scrollInterpreter.interpret(
+            deltaY: Double(event.deltaY),
+            scrollingDeltaY: Double(event.scrollingDeltaY),
+            hasPreciseScrollingDeltas: event.hasPreciseScrollingDeltas,
+            canScroll: terminalView.canScroll,
+            allowMouseReporting: terminalView.allowMouseReporting,
+            mouseModeActive: terminalView.terminal.mouseMode != .off
+        )
+
+        switch action {
+        case .mouseReport:
             sendMouseWheel(event)
-            return
+        case .scrollbackUp(let lines):
+            terminalView.scrollUp(lines: lines)
+        case .scrollbackDown(let lines):
+            terminalView.scrollDown(lines: lines)
+        case .pageUp(let count):
+            sendPageScroll(up: true, count: count)
+        case .pageDown(let count):
+            sendPageScroll(up: false, count: count)
+        case nil:
+            break
         }
-        sendPageScroll(event)
     }
 
     private func sendMouseWheel(_ event: NSEvent) {
@@ -150,18 +231,13 @@ final class TerminalContainerView: NSView {
         )
     }
 
-    private func sendPageScroll(_ event: NSEvent) {
-        let delta = event.scrollingDeltaY == 0 ? event.deltaY : event.scrollingDeltaY
-        alternateScrollRemainder += delta
-        let threshold: CGFloat = event.hasPreciseScrollingDeltas ? 24 : 1
-
-        while abs(alternateScrollRemainder) >= threshold {
-            if alternateScrollRemainder > 0 {
+    private func sendPageScroll(up: Bool, count: Int) {
+        guard count > 0 else { return }
+        for _ in 0..<count {
+            if up {
                 terminalView.send(data: EscapeSequences.cmdPageUp[...])
-                alternateScrollRemainder -= threshold
             } else {
                 terminalView.send(data: EscapeSequences.cmdPageDown[...])
-                alternateScrollRemainder += threshold
             }
         }
     }
