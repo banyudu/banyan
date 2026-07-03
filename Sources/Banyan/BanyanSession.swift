@@ -156,24 +156,25 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     private func restoredMessage() -> String {
         let commandText = command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "default login shell" : command
-        return """
-        Restored Banyan session metadata.
-
-        Title: \(title)
-        Directory: \(cwd)
-        Command: \(commandText)
-        tmux: \(tmuxSessionName)
-
-        The tmux session is not currently attached in Banyan. Use Attach to reconnect, or Remove to kill it.
-
-        """
+        return [
+            "Restored Banyan session metadata.",
+            "",
+            "Title: \(title)",
+            "Directory: \(cwd)",
+            "Command: \(commandText)",
+            "tmux: \(tmuxSessionName)",
+            "",
+            "The tmux session is not currently attached in Banyan.",
+            "Use Attach to reconnect, or Remove to kill it.",
+            ""
+        ].joined(separator: "\r\n")
     }
 
     private func failToStart(_ message: String) {
         isRestored = true
         isProcessStarted = false
         status = .failed
-        terminalView.feed(text: "Banyan could not attach this session.\n\n\(message)\n")
+        terminalView.feed(text: "Banyan could not attach this session.\r\n\r\n\(message)\r\n")
         onStatusSignal?(status)
         touch()
     }
