@@ -17,7 +17,7 @@ struct ContentView: View {
             ToolbarItem(placement: .navigation) {
                 TitleBarLogo()
             }
-            ToolbarItemGroup {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     store.forkSelectedSession()
                 } label: {
@@ -218,7 +218,8 @@ private struct WindowTitleConfigurator: NSViewRepresentable {
 
     fileprivate static func configure(window: NSWindow?) {
         guard let window else { return }
-        window.title = ""
+        window.title = " "
+        window.titleVisibility = .visible
     }
 }
 
