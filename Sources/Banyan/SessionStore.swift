@@ -27,6 +27,7 @@ final class SessionStore: ObservableObject {
     private var controlServer: ControlServer?
     private let persistence = SessionPersistence()
     private let detector = AgentStateDetector()
+    private let tmuxBackend = TmuxBackend.shared
     private var didLoadPersistedSessions = false
 
     init() {
@@ -72,13 +73,16 @@ final class SessionStore: ObservableObject {
         guard !didLoadPersistedSessions else { return }
         didLoadPersistedSessions = true
         let snapshots = persistence.load()
-        for snapshot in snapshots where snapshot.status != .closed {
+        var loadedTmuxSessionNames = Set<String>()
+        for snapshot in snapshots {
+            let tmuxSessionName = snapshot.tmuxSessionName ?? TmuxBackend.sessionName(for: snapshot.id)
             let session = BanyanSession(
                 id: uniqueID(snapshot.id),
+                tmuxSessionName: tmuxSessionName,
                 title: snapshot.title,
                 cwd: snapshot.cwd,
                 command: snapshot.command,
-                status: snapshot.status,
+                status: snapshot.status == .closed && tmuxBackend.hasSession(named: tmuxSessionName) ? .running : snapshot.status,
                 tone: snapshot.tone,
                 createdAt: snapshot.createdAt,
                 updatedAt: snapshot.updatedAt,
@@ -90,8 +94,32 @@ final class SessionStore: ObservableObject {
             session.reportedTitle = snapshot.reportedTitle
             attach(session)
             sessions.append(session)
+            loadedTmuxSessionNames.insert(session.tmuxSessionName)
+            if session.status != .closed, tmuxBackend.hasSession(named: session.tmuxSessionName) {
+                session.start()
+            }
+        }
+        for tmuxSessionName in tmuxBackend.listBanyanSessions() where !loadedTmuxSessionNames.contains(tmuxSessionName) {
+            let id = uniqueID(String(tmuxSessionName.dropFirst("banyan-".count)))
+            let session = BanyanSession(
+                id: id,
+                tmuxSessionName: tmuxSessionName,
+                title: id,
+                cwd: NSHomeDirectory(),
+                command: "",
+                status: .running,
+                tone: .blue,
+                isRestored: true,
+                theme: terminalTheme,
+                fontFamily: terminalFontFamily,
+                fontSize: terminalFontSize
+            )
+            attach(session)
+            sessions.append(session)
+            session.start()
         }
         selectedSessionID = visibleSessions.first?.id
+        saveSessions()
     }
 
     func startControlServer() {
@@ -122,6 +150,7 @@ final class SessionStore: ObservableObject {
         let title = proposedTitle?.isEmpty == false ? proposedTitle! : id
         let session = BanyanSession(
             id: id,
+            tmuxSessionName: TmuxBackend.sessionName(for: id),
             title: title,
             cwd: cwd,
             command: command,
@@ -170,7 +199,7 @@ final class SessionStore: ObservableObject {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
-        sessions[index].terminate(markClosed: true)
+        sessions[index].killBackingSession()
         sessions.remove(at: index)
         if selectedSessionID == id {
             selectedSessionID = visibleSessions.first?.id
@@ -208,6 +237,7 @@ final class SessionStore: ObservableObject {
         let snapshots = sessions.map {
             SessionSnapshot(
                 id: $0.id,
+                tmuxSessionName: $0.tmuxSessionName,
                 title: $0.title,
                 reportedTitle: $0.reportedTitle,
                 cwd: $0.cwd,

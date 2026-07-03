@@ -6,7 +6,7 @@ The first screen is the working surface:
 
 - left sidebar: sessions, status signals, tone, title, and compact session actions
 - right side: the selected terminal session
-- each session owns its own PTY-backed terminal, working directory, and command
+- each session is backed by a persistent `tmux` session, so agents keep running across Banyan restarts
 - programmatic control is available through `banyanctl`
 
 The toolbar is intentionally small:
@@ -14,7 +14,17 @@ The toolbar is intentionally small:
 - `+` forks the selected session's working directory into a new default shell.
 - `slider.horizontal.3` opens Preferences for terminal appearance.
 - Sidebar options, including sort order and custom session creation, live behind the small sidebar menu.
-- Restored sessions are shown as restorable entries and are only relaunched when you choose Respawn.
+- Restored sessions attach to existing `tmux` sessions when possible.
+
+## Requirements
+
+Banyan requires `tmux` for every terminal session:
+
+```sh
+brew install tmux
+```
+
+Banyan owns the native macOS UI; `tmux` owns the long-running shell or agent process. Closing Banyan or detaching a session only closes the tmux client in Banyan, not the underlying tmux session.
 
 ## Build
 
@@ -29,6 +39,8 @@ swift run Banyan
 ```
 
 The app starts a local control server on `127.0.0.1:7842`.
+
+Live terminal processes are kept by `tmux` using session names prefixed with `banyan-`.
 
 Session metadata is saved to:
 
@@ -64,6 +76,8 @@ swift run banyanctl respawn --id ENG-6685
 swift run banyanctl remove --id ENG-6685
 swift run banyanctl list
 ```
+
+`close` detaches and hides the Banyan view while leaving the tmux session alive. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
 
 The control API uses a versioned JSON schema (`apiVersion: "v1"`) and a local shared token stored at:
 

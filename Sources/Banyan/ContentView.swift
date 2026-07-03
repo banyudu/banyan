@@ -44,7 +44,7 @@ struct ContentView: View {
         .onAppear {
             store.loadPersistedSessionsIfNeeded()
             store.startControlServer()
-            if store.sessions.isEmpty {
+            if store.visibleSessions.isEmpty {
                 store.spawn(title: "Shell", cwd: NSHomeDirectory())
             }
         }
@@ -203,7 +203,7 @@ private struct TerminalHeader: View {
                 Button {
                     try? store.respawn(id: session.id)
                 } label: {
-                    Label("Respawn", systemImage: "arrow.clockwise")
+                    Label("Attach", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)

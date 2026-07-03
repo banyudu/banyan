@@ -2,6 +2,7 @@ import Foundation
 
 struct SessionSnapshot: Codable {
     let id: String
+    let tmuxSessionName: String?
     let title: String
     let reportedTitle: String?
     let cwd: String

@@ -170,6 +170,7 @@ final class ControlServer {
     private func summary(_ session: BanyanSession) -> [String: Any] {
         [
             "id": session.id,
+            "tmuxSessionName": session.tmuxSessionName,
             "title": session.title,
             "reportedTitle": session.reportedTitle ?? "",
             "cwd": session.cwd,

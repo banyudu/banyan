@@ -5,6 +5,7 @@ import SwiftTerm
 @MainActor
 final class BanyanSession: ObservableObject, Identifiable {
     let id: String
+    let tmuxSessionName: String
     let createdAt: Date
     let terminalView: DetectingLocalProcessTerminalView
 
@@ -19,6 +20,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var isProcessStarted: Bool
 
     private var delegate: TerminalSessionDelegate?
+    private let tmuxBackend = TmuxBackend.shared
     var onDidChange: (() -> Void)?
     var onOutput: ((String) -> Void)?
     var onStatusSignal: ((SessionStatus) -> Void)?
@@ -26,6 +28,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     init(
         id: String,
+        tmuxSessionName: String? = nil,
         title: String,
         cwd: String,
         command: String,
@@ -39,6 +42,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         fontSize: Double = 13
     ) {
         self.id = id
+        self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
         self.title = title
         self.cwd = cwd
         self.command = command
@@ -60,7 +64,9 @@ final class BanyanSession: ObservableObject, Identifiable {
         delegate.onTerminate = { [weak self] exitCode in
             guard let self else { return }
             self.isProcessStarted = false
-            if self.status != .closed {
+            if self.status != .closed, self.tmuxBackend.hasSession(named: self.tmuxSessionName) {
+                self.status = .running
+            } else if self.status != .closed {
                 self.status = exitCode == 0 ? .completed : .failed
                 self.onStatusSignal?(self.status)
             }
@@ -85,15 +91,20 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func start() {
         guard !terminalView.process.running else { return }
+        do {
+            try tmuxBackend.ensureSession(named: tmuxSessionName, cwd: cwd, command: command)
+        } catch {
+            failToStart(error.localizedDescription)
+            return
+        }
         isRestored = false
         isProcessStarted = true
         status = .running
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            terminalView.startProcess(executable: shell, args: ["-l"], currentDirectory: cwd)
-        } else {
-            terminalView.startProcess(executable: shell, args: ["-lc", command], currentDirectory: cwd)
-        }
+        terminalView.startProcess(
+            executable: "/usr/bin/env",
+            args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path, "attach-session", "-t", tmuxSessionName],
+            currentDirectory: cwd
+        )
         touch()
     }
 
@@ -129,6 +140,15 @@ final class BanyanSession: ObservableObject, Identifiable {
         touch()
     }
 
+    func killBackingSession() {
+        terminalView.terminate()
+        tmuxBackend.killSession(named: tmuxSessionName)
+        isProcessStarted = false
+        isRestored = false
+        status = .closed
+        touch()
+    }
+
     func touch() {
         updatedAt = Date()
         onDidChange?()
@@ -142,10 +162,20 @@ final class BanyanSession: ObservableObject, Identifiable {
         Title: \(title)
         Directory: \(cwd)
         Command: \(commandText)
+        tmux: \(tmuxSessionName)
 
-        This session was not automatically relaunched. Use Respawn to start it again.
+        The tmux session is not currently attached in Banyan. Use Attach to reconnect, or Remove to kill it.
 
         """
+    }
+
+    private func failToStart(_ message: String) {
+        isRestored = true
+        isProcessStarted = false
+        status = .failed
+        terminalView.feed(text: "Banyan could not attach this session.\n\n\(message)\n")
+        onStatusSignal?(status)
+        touch()
     }
 }
 
