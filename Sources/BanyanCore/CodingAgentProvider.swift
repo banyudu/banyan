@@ -56,6 +56,50 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         }
     }
 
+    public var defaultExecutableName: String {
+        switch self {
+        case .claude:
+            return "claude"
+        case .codex:
+            return "codex"
+        case .deepseek:
+            return "deepseek"
+        case .gemini:
+            return "gemini"
+        case .minimax:
+            return "minimax"
+        case .opencode:
+            return "opencode"
+        case .xiaomiMiMo:
+            return "mimo"
+        case .zai:
+            return "glm"
+        }
+    }
+
+    public init?(agentName rawValue: String) {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+        if let provider = Self.provider(forExecutable: normalized) {
+            self = provider
+            return
+        }
+        switch normalized {
+        case "claude-code":
+            self = .claude
+        case "chatgpt", "openai":
+            self = .codex
+        case "google":
+            self = .gemini
+        case "xiaomi", "xiaomi-mimo":
+            self = .xiaomiMiMo
+        case "z", "zai", "z-ai", "z.ai", "glm":
+            self = .zai
+        default:
+            return nil
+        }
+    }
+
     public static func detect(in command: String) -> CodingAgentProvider? {
         for token in shellTokens(command) {
             if let provider = provider(forExecutable: token) {

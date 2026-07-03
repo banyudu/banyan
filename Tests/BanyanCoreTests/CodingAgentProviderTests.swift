@@ -17,6 +17,24 @@ import Testing
     #expect(CodingAgentProvider.detect(in: "") == nil)
 }
 
+@Test func providerNamesMapToDefaultAgentExecutables() {
+    #expect(CodingAgentProvider(agentName: "codex") == .codex)
+    #expect(CodingAgentProvider(agentName: "claude-code") == .claude)
+    #expect(CodingAgentProvider(agentName: "glm") == .zai)
+    #expect(CodingAgentProvider(agentName: "xiaomi") == .xiaomiMiMo)
+    #expect(CodingAgentProvider(agentName: "unknown") == nil)
+    #expect(CodingAgentProvider.zai.defaultExecutableName == "glm")
+}
+
+@Test func agentLaunchCommandQuotesPromptForShellStartup() {
+    let command = AgentLaunchCommand.command(
+        provider: .codex,
+        prompt: "add John's shortcuts"
+    )
+
+    #expect(command == "'codex' 'add John'\\''s shortcuts'")
+}
+
 @Test func promptCandidateSkipsCommonAgentFlags() {
     let prompt = CodingAgentProvider.promptCandidate(
         in: #"codex --model gpt-5 --ask-for-approval never "implement sidebar titles""#,

@@ -97,6 +97,19 @@ swift run banyanctl spawn \
   --cwd /Users/banyudu/dev/2enai/clawly \
   --cmd "codex"
 
+swift run banyanctl session new \
+  --title "Scratch shell" \
+  --cwd "$PWD"
+
+swift run banyanctl agent run \
+  --agent codex \
+  --cwd "$PWD" \
+  "implement keyboard shortcuts"
+
+swift run banyanctl agent run \
+  --agent claude \
+  --prompt-file /tmp/handoff-prompt.txt
+
 swift run banyanctl mark --id ENG-6685 --status need-input --tone yellow
 swift run banyanctl mark --id ENG-6685 --status review --tone purple --title "ENG-6685 review"
 swift run banyanctl close --id ENG-6685
@@ -105,7 +118,7 @@ swift run banyanctl remove --id ENG-6685
 swift run banyanctl list
 ```
 
-`--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
+`session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
 
 The control API uses a versioned JSON schema (`apiVersion: "v1"`) and a local shared token stored at:
 
@@ -156,7 +169,7 @@ Built-in themes:
 
 Banyan watches terminal output for common agent states and can mark sessions as `need-input`, `review`, `failed`, or `completed`. It sends macOS notifications for attention states.
 
-Coding-agent sessions launched through `claude`, `codex`, `deepseek`, or `opencode` get a compact provider badge in the sidebar. If a session has a manual title, Banyan keeps it. Otherwise it derives a title from the terminal-reported title, the prompt passed to the agent command, or a provider/project/session fallback.
+Coding-agent sessions launched through `claude`, `codex`, `deepseek`, `gemini`, `glm`/`zai`, `mimo`, `minimax`, or `opencode` get a compact provider badge in the sidebar. If a session has a manual title, Banyan keeps it. Otherwise it derives a title from the terminal-reported title, the prompt passed to the agent command, or a provider/project/session fallback.
 
 For local model or cheap hosted title generation, set `BANYAN_TITLE_COMMAND` before launching Banyan. The command receives a JSON object on stdin and should print one short title on the first stdout line:
 

@@ -18,6 +18,10 @@ struct BanyanCtl {
             switch command {
             case "spawn":
                 try post("/spawn", payload: parsePayload(Array(arguments.dropFirst())))
+            case "session":
+                try runSessionCommand(Array(arguments.dropFirst()))
+            case "agent":
+                try runAgentCommand(Array(arguments.dropFirst()))
             case "mark":
                 try post("/mark", payload: parsePayload(Array(arguments.dropFirst())))
             case "tick":
@@ -45,6 +49,30 @@ struct BanyanCtl {
         } catch {
             fputs("banyanctl: \(error.localizedDescription)\n", stderr)
             exit(ExitCode.serverUnavailable)
+        }
+    }
+
+    private func runSessionCommand(_ args: [String]) throws {
+        guard let subcommand = args.first else {
+            throw CLIError.message("session requires a subcommand")
+        }
+        switch subcommand {
+        case "new", "spawn":
+            try post("/spawn", payload: parsePayload(Array(args.dropFirst())))
+        default:
+            throw CLIError.message("unknown session subcommand '\(subcommand)'")
+        }
+    }
+
+    private func runAgentCommand(_ args: [String]) throws {
+        guard let subcommand = args.first else {
+            throw CLIError.message("agent requires a subcommand")
+        }
+        switch subcommand {
+        case "run":
+            try post("/spawn", payload: parseAgentRunPayload(Array(args.dropFirst())))
+        default:
+            throw CLIError.message("unknown agent subcommand '\(subcommand)'")
         }
     }
 
@@ -84,6 +112,86 @@ struct BanyanCtl {
             throw CLIError.message("screenshot requires --output PATH or --path PATH")
         }
         return result
+    }
+
+    private func parseAgentRunPayload(_ args: [String]) throws -> [String: String] {
+        var result: [String: String] = [
+            "cwd": FileManager.default.currentDirectoryPath
+        ]
+        var provider: CodingAgentProvider?
+        var prompt: String?
+        var promptParts: [String] = []
+        var commandOverride: String?
+        var index = 0
+        while index < args.count {
+            let token = args[index]
+            if token == "--" {
+                promptParts.append(contentsOf: args.dropFirst(index + 1))
+                break
+            }
+            if !token.hasPrefix("--") {
+                promptParts.append(token)
+                index += 1
+                continue
+            }
+
+            let rawKey = String(token.dropFirst(2))
+            guard index + 1 < args.count else {
+                throw CLIError.message("missing value for \(token)")
+            }
+            let value = args[index + 1]
+            switch rawKey {
+            case "agent", "provider":
+                guard let parsedProvider = CodingAgentProvider(agentName: value) else {
+                    throw CLIError.message("unknown agent '\(value)'")
+                }
+                provider = parsedProvider
+            case "command", "cmd":
+                commandOverride = value
+            case "cwd", "id", "title", "tone":
+                result[rawKey] = value
+            case "parent", "parent-id", "parentSessionID":
+                result["parent"] = value
+            case "prompt":
+                prompt = value
+            case "prompt-file":
+                prompt = try readPromptFile(value)
+            default:
+                throw CLIError.message("unknown agent run option '\(token)'")
+            }
+            index += 2
+        }
+
+        if prompt != nil, !promptParts.isEmpty {
+            throw CLIError.message("provide prompt either positionally or with --prompt/--prompt-file, not both")
+        }
+        if commandOverride != nil, prompt != nil || !promptParts.isEmpty {
+            throw CLIError.message("--command cannot be combined with a prompt")
+        }
+
+        if let commandOverride {
+            result["command"] = commandOverride
+            return result
+        }
+
+        guard let provider else {
+            throw CLIError.message("agent run requires --agent NAME")
+        }
+        let positionalPrompt = promptParts.isEmpty ? nil : promptParts.joined(separator: " ")
+        result["command"] = AgentLaunchCommand.command(provider: provider, prompt: prompt ?? positionalPrompt)
+        return result
+    }
+
+    private func readPromptFile(_ path: String) throws -> String {
+        if path == "-" {
+            let data = FileHandle.standardInput.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8) ?? ""
+        }
+        do {
+            return try String(contentsOfFile: NSString(string: path).expandingTildeInPath, encoding: .utf8)
+        } catch {
+            throw CLIError.message("could not read prompt file '\(path)'")
+        }
     }
 
     private func get(_ path: String) throws {
@@ -142,6 +250,8 @@ struct BanyanCtl {
 
         Usage:
           banyanctl spawn  [--id ID] [--title TITLE] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
+          banyanctl session new [--id ID] [--title TITLE] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
+          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|mimo|minimax|opencode [--cwd PATH] [--prompt TEXT] [--prompt-file PATH] [prompt...]
           banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE]
           banyanctl tick   [--id ID]
           banyanctl close  --id ID
