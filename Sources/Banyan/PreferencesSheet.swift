@@ -50,5 +50,6 @@ struct PreferencesSheet: View {
         }
         .padding(24)
         .frame(width: 440, height: 260)
+        .accessibilityIdentifier(AccessibilityID.preferencesSheet)
     }
 }

@@ -55,6 +55,7 @@ struct AddSessionSheet: View {
         }
         .padding(24)
         .frame(width: 520)
+        .accessibilityIdentifier(AccessibilityID.addSessionSheet)
     }
 
     private func chooseDirectory() {

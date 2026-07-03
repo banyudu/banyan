@@ -20,6 +20,7 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityIdentifier(AccessibilityID.toolbarAddSession)
                 .help("Fork selected directory")
 
                 Button {
@@ -27,6 +28,7 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "slider.horizontal.3")
                 }
+                .accessibilityIdentifier(AccessibilityID.toolbarPreferences)
                 .help("Preferences")
             }
         }
@@ -48,6 +50,7 @@ struct ContentView: View {
                 store.spawn(title: "Shell", cwd: NSHomeDirectory())
             }
         }
+        .accessibilityIdentifier(AccessibilityID.root)
     }
 
     private var sidebar: some View {
@@ -71,6 +74,7 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
+            .accessibilityIdentifier(AccessibilityID.sidebarList)
 
             HStack {
                 Button {
@@ -78,6 +82,7 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityIdentifier(AccessibilityID.sidebarAddSession)
                 .help("Fork selected directory")
 
                 Menu {
@@ -94,6 +99,7 @@ struct ContentView: View {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                 }
                 .menuStyle(.borderlessButton)
+                .accessibilityIdentifier(AccessibilityID.sidebarOptions)
                 .help("Sidebar options")
 
                 Spacer()
@@ -104,6 +110,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "slider.horizontal.3")
                     }
+                    .accessibilityIdentifier(AccessibilityID.sidebarEditSelected)
                     .help("Edit selected session")
 
                     Button {
@@ -111,12 +118,15 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
+                    .accessibilityIdentifier(AccessibilityID.sidebarCloseSelected)
                     .help("Close selected session")
                 }
             }
             .buttonStyle(.borderless)
             .padding(12)
+            .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
+        .accessibilityIdentifier(AccessibilityID.sidebar)
     }
 
     @ViewBuilder
@@ -134,12 +144,14 @@ struct ContentView: View {
                     .id(session.id)
                     .ignoresSafeArea(edges: .bottom)
             }
+            .accessibilityIdentifier(AccessibilityID.detail)
         } else {
             ContentUnavailableView(
                 "No Session Selected",
                 systemImage: "terminal",
                 description: Text("Spawn a session from the toolbar or with banyanctl.")
             )
+            .accessibilityIdentifier(AccessibilityID.emptyDetail)
         }
     }
 }
@@ -157,6 +169,7 @@ private struct SessionRow: View {
                 Text(session.title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
+                    .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
 
                 HStack(spacing: 6) {
                     Image(systemName: session.status.systemImage)
@@ -169,12 +182,14 @@ private struct SessionRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
             }
             Spacer(minLength: 0)
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(session.tone.backgroundColor, in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
     }
 }
 
@@ -189,16 +204,19 @@ private struct TerminalHeader: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.title)
                     .font(.headline)
+                    .accessibilityIdentifier(AccessibilityID.terminalHeaderTitle)
                 Text(session.cwd)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .accessibilityIdentifier(AccessibilityID.terminalHeaderDirectory)
             }
             Spacer()
             Text(session.command.isEmpty ? "shell" : session.command)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .accessibilityIdentifier(AccessibilityID.terminalHeaderCommand)
             if session.isRestored || !session.isProcessStarted {
                 Button {
                     try? store.respawn(id: session.id)
@@ -207,10 +225,12 @@ private struct TerminalHeader: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .accessibilityIdentifier(AccessibilityID.terminalAttachButton)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.bar)
+        .accessibilityIdentifier(AccessibilityID.terminalHeader)
     }
 }

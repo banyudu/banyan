@@ -43,6 +43,7 @@ final class TerminalContainerView: NSView {
     init(terminalView: LocalProcessTerminalView) {
         self.terminalView = terminalView
         super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier(AccessibilityID.terminal)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         install(terminalView)
