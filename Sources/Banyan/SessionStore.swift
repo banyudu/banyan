@@ -45,10 +45,10 @@ final class SessionStore: ObservableObject {
     private var controlServer: ControlServer?
     private let persistence = SessionPersistence()
     private let detector = AgentStateDetector()
-    private let supervisor = AgentSupervisor()
     private let tmuxBackend = TmuxBackend.shared
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
+    private var isSupervisorTickRunning = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -391,6 +391,15 @@ final class SessionStore: ObservableObject {
     }
 
     private func runSupervisorTick(sessionID: String? = nil) {
+        guard !isSupervisorTickRunning else { return }
+        isSupervisorTickRunning = true
+        defer { isSupervisorTickRunning = false }
+
+        let processTable = ProcessTable.snapshot()
+        let supervisor = AgentSupervisor(backend: tmuxBackend) { rootPID in
+            processTable.descendants(of: rootPID)
+        }
+
         for session in sessions where session.status != .closed && (sessionID == nil || session.id == sessionID) {
             guard !session.isRestored else { continue }
             guard let result = supervisor.inspect(

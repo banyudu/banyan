@@ -21,7 +21,7 @@ struct AgentSupervisor {
         backend: any AgentSupervisorBackend = TmuxBackend.shared,
         longRunningThreshold: TimeInterval = 120,
         processDescendants: @escaping (Int) -> [ProcessInfoRow] = { rootPID in
-            ProcessTable.snapshot(rootPID: rootPID).descendants
+            ProcessTable.snapshot().descendants(of: rootPID)
         }
     ) {
         self.backend = backend
@@ -51,7 +51,8 @@ struct AgentSupervisor {
         }
 
         let externalProcesses = descendants.filter { process in
-            !process.isSupportedAgent
+            process.pid != pane.rootPID
+                && !process.isSupportedAgent
                 && !process.isShellOrWrapper
                 && !process.isTmuxPlumbing
         }
@@ -136,15 +137,23 @@ struct AgentSupervisor {
     }
 }
 
-private struct ProcessTable {
-    let descendants: [ProcessInfoRow]
+struct ProcessTable {
+    private let childrenByParent: [Int: [ProcessInfoRow]]
+    private let rowByPID: [Int: ProcessInfoRow]
 
-    static func snapshot(rootPID: Int) -> ProcessTable {
-        let rows = ProcessInfoRow.load()
-        let childrenByParent = Dictionary(grouping: rows, by: \.parentPID)
-        var descendants: [ProcessInfoRow] = []
+    init(rows: [ProcessInfoRow]) {
+        self.childrenByParent = Dictionary(grouping: rows, by: \.parentPID)
+        self.rowByPID = Dictionary(uniqueKeysWithValues: rows.map { ($0.pid, $0) })
+    }
+
+    static func snapshot() -> ProcessTable {
+        ProcessTable(rows: ProcessInfoRow.load())
+    }
+
+    func descendants(of rootPID: Int) -> [ProcessInfoRow] {
+        var descendants: [ProcessInfoRow] = rowByPID[rootPID].map { [$0] } ?? []
         var queue = childrenByParent[rootPID] ?? []
-        var visited = Set<Int>()
+        var visited = Set(descendants.map(\.pid))
 
         while let process = queue.popLast() {
             guard !visited.contains(process.pid) else { continue }
@@ -153,7 +162,7 @@ private struct ProcessTable {
             queue.append(contentsOf: childrenByParent[process.pid] ?? [])
         }
 
-        return ProcessTable(descendants: descendants)
+        return descendants
     }
 }
 
@@ -189,7 +198,7 @@ struct ProcessInfoRow {
     static func load() -> [ProcessInfoRow] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-axo", "pid=,ppid=,stat=,etimes=,comm=,command="]
+        process.arguments = ["-axo", "pid=,ppid=,stat=,etime=,comm=,command="]
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -197,13 +206,13 @@ struct ProcessInfoRow {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return []
         }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         guard process.terminationStatus == 0 else { return [] }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
         return output.split(separator: "\n").compactMap(parse)
     }
@@ -213,7 +222,7 @@ struct ProcessInfoRow {
         guard parts.count >= 6,
               let pid = Int(parts[0]),
               let parentPID = Int(parts[1]),
-              let elapsed = TimeInterval(parts[3])
+              let elapsed = parseElapsedTime(parts[3])
         else {
             return nil
         }
@@ -226,5 +235,30 @@ struct ProcessInfoRow {
             commandName: String(parts[4]),
             arguments: String(parts[5])
         )
+    }
+
+    private static func parseElapsedTime(_ value: Substring) -> TimeInterval? {
+        let dayAndTime = value.split(separator: "-", maxSplits: 1)
+        let dayCount: Int
+        let timePart: Substring
+        if dayAndTime.count == 2 {
+            guard let days = Int(dayAndTime[0]) else { return nil }
+            dayCount = days
+            timePart = dayAndTime[1]
+        } else {
+            dayCount = 0
+            timePart = value
+        }
+
+        let components = timePart.split(separator: ":").compactMap { Int($0) }
+        guard components.count == 2 || components.count == 3 else { return nil }
+
+        let seconds: Int
+        if components.count == 3 {
+            seconds = components[0] * 3600 + components[1] * 60 + components[2]
+        } else {
+            seconds = components[0] * 60 + components[1]
+        }
+        return TimeInterval(dayCount * 86_400 + seconds)
     }
 }

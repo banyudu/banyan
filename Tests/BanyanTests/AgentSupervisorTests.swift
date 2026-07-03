@@ -160,12 +160,37 @@ import Testing
     #expect(result?.tone == .yellow)
 }
 
+@Test func supervisorCanDetectAgentFromPaneRootProcessArguments() {
+    let processTable = ProcessTable(rows: [
+        process(pid: 100, commandName: "/bin/zsh", arguments: "/bin/zsh /tmp/banyan-e2e/codex", elapsed: 5),
+        process(pid: 101, parentPID: 100, commandName: "/bin/sleep", arguments: "sleep 240", elapsed: 5)
+    ])
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "zsh"),
+        processes: processTable.descendants(of: 100)
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "PATH=/tmp/banyan-e2e:$PATH codex",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .executing)
+    #expect(result?.tone == .blue)
+}
+
 @Test func supportedAgentCommandParsingAcceptsPathsAndRejectsNearMatches() {
     #expect(AgentSupervisor.isSupportedAgentCommand("codex --ask-for-approval never"))
     #expect(AgentSupervisor.isSupportedAgentCommand("/opt/homebrew/bin/claude"))
     #expect(AgentSupervisor.isSupportedAgentCommand("opencode"))
     #expect(!AgentSupervisor.isSupportedAgentCommand("my-codex-wrapper"))
     #expect(!AgentSupervisor.isSupportedAgentCommand(""))
+}
+
+@Test func processInfoLoaderReadsPlatformProcessTable() {
+    let rows = ProcessInfoRow.load()
+
+    #expect(!rows.isEmpty)
+    #expect(rows.contains { $0.pid > 0 && $0.elapsed >= 0 && !$0.commandName.isEmpty })
 }
 
 private func makeSupervisor(
@@ -182,12 +207,13 @@ private func makeSupervisor(
 }
 
 private func pane(
+    rootPID: Int = 100,
     currentCommand: String = "zsh",
     isDead: Bool = false
 ) -> TmuxPaneSnapshot {
     TmuxPaneSnapshot(
         paneID: "%1",
-        rootPID: 100,
+        rootPID: rootPID,
         currentCommand: currentCommand,
         currentPath: "/tmp",
         isDead: isDead,
@@ -196,13 +222,15 @@ private func pane(
 }
 
 private func process(
+    pid: Int = 101,
+    parentPID: Int = 100,
     commandName: String,
     arguments: String,
     elapsed: TimeInterval
 ) -> ProcessInfoRow {
     ProcessInfoRow(
-        pid: 101,
-        parentPID: 100,
+        pid: pid,
+        parentPID: parentPID,
         state: "S",
         elapsed: elapsed,
         commandName: commandName,
