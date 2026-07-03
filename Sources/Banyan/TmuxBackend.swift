@@ -50,7 +50,10 @@ struct TmuxBackend {
     }
 
     func ensureSession(named name: String, cwd: String, command: String) throws {
-        guard !hasSession(named: name) else { return }
+        guard !hasSession(named: name) else {
+            configureSession(named: name)
+            return
+        }
 
         var arguments = ["new-session", "-d", "-s", name, "-c", cwd]
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
@@ -61,10 +64,16 @@ struct TmuxBackend {
             arguments.append(contentsOf: [shell, "-lc", trimmedCommand])
         }
         try run(arguments)
+        configureSession(named: name)
     }
 
     func killSession(named name: String) {
         _ = try? run(["kill-session", "-t", name])
+    }
+
+    private func configureSession(named name: String) {
+        _ = try? run(["set-option", "-g", "status", "off"])
+        _ = try? run(["set-option", "-t", name, "status", "off"])
     }
 
     private var baseArguments: [String] {
