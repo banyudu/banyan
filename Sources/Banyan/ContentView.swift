@@ -68,23 +68,32 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: $store.selectedSessionID) {
-                ForEach(store.sidebarSessions) { item in
-                    SessionRow(
-                        session: item.session,
-                        depth: item.depth,
-                        isSelected: store.selectedSessionID == item.session.id,
-                        onSelect: {
-                            store.select(id: item.session.id)
-                        },
-                        onClose: {
-                            store.requestClose(id: item.session.id)
-                        },
-                        onRemove: {
-                            try? store.remove(id: item.session.id)
+                ForEach(store.sidebarGroups) { group in
+                    Section {
+                        ForEach(group.items) { item in
+                            SessionRow(
+                                session: item.session,
+                                depth: item.depth,
+                                isSelected: store.selectedSessionID == item.session.id,
+                                onSelect: {
+                                    store.select(id: item.session.id)
+                                },
+                                onClose: {
+                                    store.requestClose(id: item.session.id)
+                                },
+                                onRemove: {
+                                    try? store.remove(id: item.session.id)
+                                }
+                            )
+                            .tag(item.session.id)
+                            .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
                         }
-                    )
-                        .tag(item.session.id)
-                        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+                    } header: {
+                        Text(group.title)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
             }
             .listStyle(.sidebar)

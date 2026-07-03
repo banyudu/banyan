@@ -11,6 +11,8 @@ final class BanyanSession: ObservableObject, Identifiable {
     let terminalView: DetectingLocalProcessTerminalView
     private let displayProject: String
     private let displayBranch: String?
+    let projectGroupID: String
+    let projectGroupTitle: String
 
     @Published var title: String
     @Published var reportedTitle: String?
@@ -87,6 +89,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.command = command
         self.displayProject = displayContext.project
         self.displayBranch = displayContext.branch
+        self.projectGroupID = displayContext.groupID
+        self.projectGroupTitle = displayContext.groupTitle
         self.status = status
         self.tone = tone
         self.parentSessionID = parentSessionID

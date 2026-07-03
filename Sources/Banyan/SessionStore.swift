@@ -10,6 +10,12 @@ struct SidebarSessionItem: Identifiable {
     }
 }
 
+struct SidebarSessionGroup: Identifiable {
+    let id: String
+    let title: String
+    let items: [SidebarSessionItem]
+}
+
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [BanyanSession] = []
@@ -102,10 +108,38 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    var sidebarSessions: [SidebarSessionItem] {
+    var sidebarGroups: [SidebarSessionGroup] {
         let active = visibleSessions
-        let activeIDs = Set(active.map(\.id))
-        let grouped = Dictionary(grouping: active) { session in
+        var sessionsByProject: [String: [BanyanSession]] = [:]
+        var orderedProjectIDs: [String] = []
+
+        for session in active {
+            if sessionsByProject[session.projectGroupID] == nil {
+                orderedProjectIDs.append(session.projectGroupID)
+            }
+            sessionsByProject[session.projectGroupID, default: []].append(session)
+        }
+
+        return orderedProjectIDs.compactMap { projectID in
+            guard let projectSessions = sessionsByProject[projectID],
+                  let firstSession = projectSessions.first else {
+                return nil
+            }
+            return SidebarSessionGroup(
+                id: projectID,
+                title: firstSession.projectGroupTitle,
+                items: sidebarItems(for: projectSessions)
+            )
+        }
+    }
+
+    var sidebarSessions: [SidebarSessionItem] {
+        sidebarGroups.flatMap(\.items)
+    }
+
+    private func sidebarItems(for sessions: [BanyanSession]) -> [SidebarSessionItem] {
+        let activeIDs = Set(sessions.map(\.id))
+        let grouped = Dictionary(grouping: sessions) { session in
             session.parentSessionID.flatMap { activeIDs.contains($0) ? $0 : nil }
         }
         var visited = Set<String>()
@@ -123,7 +157,7 @@ final class SessionStore: ObservableObject {
         for root in grouped[nil] ?? [] {
             append(root, depth: 0)
         }
-        for session in active where !visited.contains(session.id) {
+        for session in sessions where !visited.contains(session.id) {
             append(session, depth: 0)
         }
         return result

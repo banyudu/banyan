@@ -1,13 +1,45 @@
 import Foundation
 
+public struct SessionProjectContext: Equatable {
+    public let project: String
+    public let branch: String?
+    public let groupID: String
+    public let groupTitle: String
+}
+
 public enum SessionDisplayLabel {
-    public static func context(cwd: String) -> (project: String, branch: String?) {
-        let project = gitOutput(["rev-parse", "--show-toplevel"], cwd: cwd)
-            .map(projectName)
-            ?? projectName(cwd)
-        let branch = gitOutput(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: cwd)
-            ?? gitOutput(["rev-parse", "--short", "HEAD"], cwd: cwd)
-        return (project, branch)
+    public static func context(cwd: String) -> SessionProjectContext {
+        let resolvedCWD = standardizedPath(cwd)
+        guard let gitTopLevel = gitOutput(["rev-parse", "--show-toplevel"], cwd: resolvedCWD) else {
+            let project = projectName(resolvedCWD)
+            return SessionProjectContext(
+                project: project,
+                branch: nil,
+                groupID: "path:\(resolvedCWD)",
+                groupTitle: project
+            )
+        }
+
+        let project = projectName(gitTopLevel)
+        let branch = gitOutput(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: resolvedCWD)
+            ?? gitOutput(["rev-parse", "--short", "HEAD"], cwd: resolvedCWD)
+        if let remoteURL = gitRemoteURL(cwd: resolvedCWD) {
+            let normalizedAddress = normalizedGitAddress(remoteURL)
+            return SessionProjectContext(
+                project: project,
+                branch: branch,
+                groupID: "git:\(normalizedAddress)",
+                groupTitle: gitAddressTitle(normalizedAddress)
+            )
+        }
+
+        let mainDirectory = gitMainDirectory(cwd: resolvedCWD, fallbackTopLevel: gitTopLevel)
+        return SessionProjectContext(
+            project: project,
+            branch: branch,
+            groupID: "path:\(mainDirectory)",
+            groupTitle: projectName(mainDirectory)
+        )
     }
 
     public static func make(
@@ -97,13 +129,99 @@ public enum SessionDisplayLabel {
     }
 
     private static func projectName(_ path: String) -> String {
-        let expanded = NSString(string: path).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded).standardizedFileURL
+        let url = URL(fileURLWithPath: standardizedPath(path)).standardizedFileURL
         let component = url.lastPathComponent
         if component.isEmpty {
             return url.path
         }
         return component
+    }
+
+    private static func standardizedPath(_ path: String) -> String {
+        let expanded = NSString(string: path).expandingTildeInPath
+        return URL(fileURLWithPath: expanded).standardizedFileURL.path
+    }
+
+    private static func gitRemoteURL(cwd: String) -> String? {
+        if let originURL = gitOutput(["remote", "get-url", "origin"], cwd: cwd) {
+            return originURL
+        }
+
+        guard let remotes = gitOutput(["remote"], cwd: cwd) else { return nil }
+        guard let firstRemote = remotes
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .first else {
+            return nil
+        }
+        return gitOutput(["remote", "get-url", firstRemote], cwd: cwd)
+    }
+
+    private static func gitMainDirectory(cwd: String, fallbackTopLevel: String) -> String {
+        guard let commonGitDirectory = gitOutput(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd: cwd
+        ) else {
+            return standardizedPath(fallbackTopLevel)
+        }
+
+        let url = URL(fileURLWithPath: standardizedPath(commonGitDirectory)).standardizedFileURL
+        if url.lastPathComponent == ".git" {
+            return url.deletingLastPathComponent().path
+        }
+        return url.path
+    }
+
+    private static func normalizedGitAddress(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let scpAddress = normalizedSCPGitAddress(trimmed) {
+            return scpAddress
+        }
+        if let urlAddress = normalizedURLGitAddress(trimmed) {
+            return urlAddress
+        }
+        return removeGitSuffix(trimmed)
+    }
+
+    private static func normalizedSCPGitAddress(_ value: String) -> String? {
+        guard !value.contains("://"),
+              let atIndex = value.firstIndex(of: "@"),
+              let colonIndex = value[atIndex...].firstIndex(of: ":") else {
+            return nil
+        }
+
+        let hostStart = value.index(after: atIndex)
+        let pathStart = value.index(after: colonIndex)
+        let host = value[hostStart..<colonIndex].lowercased()
+        let path = removeGitSuffix(String(value[pathStart...]).trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        guard !host.isEmpty, !path.isEmpty else { return nil }
+        return "\(host)/\(path)"
+    }
+
+    private static func normalizedURLGitAddress(_ value: String) -> String? {
+        guard var components = URLComponents(string: value), let host = components.host else {
+            return nil
+        }
+        components.user = nil
+        components.password = nil
+        let path = removeGitSuffix(components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        guard !path.isEmpty else { return host.lowercased() }
+        return "\(host.lowercased())/\(path)"
+    }
+
+    private static func gitAddressTitle(_ value: String) -> String {
+        let components = value
+            .split(separator: "/")
+            .map(String.init)
+        if components.count >= 3 {
+            return components.suffix(2).joined(separator: "/")
+        }
+        return components.last ?? value
+    }
+
+    private static func removeGitSuffix(_ value: String) -> String {
+        guard value.lowercased().hasSuffix(".git") else { return value }
+        return String(value.dropLast(4))
     }
 
     private static func gitOutput(_ arguments: [String], cwd: String) -> String? {

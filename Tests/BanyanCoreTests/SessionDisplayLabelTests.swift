@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import BanyanCore
 
 @Test func displayLabelUsesProjectBranchAndExplicitTitle() {
@@ -77,4 +78,95 @@ import Testing
     )
 
     #expect(label == "banyan · main · \"banyan\"")
+}
+
+@Test func projectContextUsesWorkingDirectoryOutsideGit() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let context = SessionDisplayLabel.context(cwd: directory.path)
+
+    #expect(context.project == directory.lastPathComponent)
+    #expect(context.branch == nil)
+    #expect(context.groupID == "path:\(directory.standardizedFileURL.path)")
+    #expect(context.groupTitle == directory.lastPathComponent)
+}
+
+@Test func projectContextGroupsGitRepositoriesByRemoteAddress() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let first = root.appendingPathComponent("first")
+    let second = root.appendingPathComponent("second")
+    try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+    try runGit(["init"], cwd: first)
+    try runGit(["init"], cwd: second)
+    try runGit(["remote", "add", "origin", "git@github.com:yudu/banyan.git"], cwd: first)
+    try runGit(["remote", "add", "origin", "https://github.com/yudu/banyan.git"], cwd: second)
+
+    let firstContext = SessionDisplayLabel.context(cwd: first.path)
+    let secondContext = SessionDisplayLabel.context(cwd: second.path)
+
+    #expect(firstContext.groupID == "git:github.com/yudu/banyan")
+    #expect(secondContext.groupID == firstContext.groupID)
+    #expect(firstContext.groupTitle == "yudu/banyan")
+}
+
+@Test func projectContextGroupsGitWorktreesByMainDirectoryWithoutRemote() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let main = root.appendingPathComponent("repo")
+    let worktree = root.appendingPathComponent("repo-worktree")
+    try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+    try runGit(["init"], cwd: main)
+    try runGit(["config", "user.email", "test@example.com"], cwd: main)
+    try runGit(["config", "user.name", "Banyan Tests"], cwd: main)
+    try "test".write(to: main.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    try runGit(["add", "README.md"], cwd: main)
+    try runGit(["commit", "-m", "Initial commit"], cwd: main)
+    try runGit(["worktree", "add", "-b", "feature", worktree.path], cwd: main)
+
+    let mainContext = SessionDisplayLabel.context(cwd: main.path)
+    let worktreeContext = SessionDisplayLabel.context(cwd: worktree.path)
+
+    #expect(mainContext.groupID == "path:\(main.standardizedFileURL.path)")
+    #expect(worktreeContext.groupID == mainContext.groupID)
+    #expect(worktreeContext.groupTitle == main.lastPathComponent)
+}
+
+private func temporaryDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("BanyanCoreTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+}
+
+@discardableResult
+private func runGit(_ arguments: [String], cwd: URL) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["git"] + arguments
+    process.currentDirectoryURL = cwd
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+    try process.run()
+    process.waitUntilExit()
+
+    let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    if process.terminationStatus != 0 {
+        let message = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        throw GitTestError(arguments: arguments, message: message)
+    }
+    return output.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private struct GitTestError: Error, CustomStringConvertible {
+    let arguments: [String]
+    let message: String
+
+    var description: String {
+        "git \(arguments.joined(separator: " ")) failed: \(message)"
+    }
 }
