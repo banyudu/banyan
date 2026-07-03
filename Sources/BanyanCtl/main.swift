@@ -20,6 +20,8 @@ struct BanyanCtl {
                 try post("/spawn", payload: parsePayload(Array(arguments.dropFirst())))
             case "mark":
                 try post("/mark", payload: parsePayload(Array(arguments.dropFirst())))
+            case "tick":
+                try post("/tick", payload: parsePayload(Array(arguments.dropFirst())))
             case "close":
                 try post("/close", payload: parsePayload(Array(arguments.dropFirst())))
             case "respawn":
@@ -140,7 +142,8 @@ struct BanyanCtl {
 
         Usage:
           banyanctl spawn  [--id ID] [--title TITLE] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
-          banyanctl mark   --id ID [--status running|need-input|review|completed|failed] [--tone red] [--title TITLE]
+          banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE]
+          banyanctl tick   [--id ID]
           banyanctl close  --id ID
           banyanctl respawn --id ID
           banyanctl remove --id ID

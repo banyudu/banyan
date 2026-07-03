@@ -47,6 +47,7 @@ struct ContentView: View {
         .onAppear {
             store.loadPersistedSessionsIfNeeded()
             store.startControlServer()
+            store.startSupervisor()
             if store.visibleSessions.isEmpty {
                 store.spawn(cwd: NSHomeDirectory())
             }
@@ -319,7 +320,7 @@ private struct SessionRow: View {
                     }
                     .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
             } else {
-                Text(session.displayTitle)
+                Text(displayTitle)
                     .font(.system(size: 13, weight: isSelected ? .medium : .regular))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -377,16 +378,23 @@ private struct SessionRow: View {
         session.isRestored ? "arrow.clockwise.circle.fill" : session.status.systemImage
     }
 
+    private var displayTitle: String {
+        let emoji = session.isRestored ? "🔄" : session.status.emoji
+        return "\(emoji) \(session.displayTitle)"
+    }
+
     private var statusColor: Color {
         switch session.status {
         case .failed:
             return .red
-        case .needInput:
+        case .needInput, .asking, .longRunningShell:
             return .yellow
-        case .review:
+        case .review, .subagents:
             return .purple
         case .completed:
             return .green
+        case .executing:
+            return .blue
         case .running, .closed:
             return .secondary
         }

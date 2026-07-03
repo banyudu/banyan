@@ -171,6 +171,8 @@ final class BanyanSession: ObservableObject, Identifiable {
             || trimmed.hasPrefix("codex ")
             || trimmed == "claude"
             || trimmed.hasPrefix("claude ")
+            || trimmed == "opencode"
+            || trimmed.hasPrefix("opencode ")
     }
 
     private var usefulAgentTitle: String? {

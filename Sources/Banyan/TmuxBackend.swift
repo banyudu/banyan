@@ -1,5 +1,14 @@
 import Foundation
 
+struct TmuxPaneSnapshot {
+    let paneID: String
+    let rootPID: Int
+    let currentCommand: String
+    let currentPath: String
+    let isDead: Bool
+    let isInMode: Bool
+}
+
 struct TmuxBackend {
     enum BackendError: LocalizedError {
         case tmuxNotFound
@@ -47,6 +56,40 @@ struct TmuxBackend {
             .split(separator: "\n")
             .map(String.init)
             .filter { $0.hasPrefix("banyan-") }
+    }
+
+    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? {
+        let format = [
+            "#{pane_id}",
+            "#{pane_pid}",
+            "#{pane_current_command}",
+            "#{pane_current_path}",
+            "#{pane_dead}",
+            "#{pane_in_mode}"
+        ].joined(separator: "\t")
+        guard let output = try? run(["list-panes", "-t", name, "-F", format]),
+              let line = output.split(separator: "\n", omittingEmptySubsequences: true).first
+        else {
+            return nil
+        }
+
+        let parts = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 6, let rootPID = Int(parts[1]) else {
+            return nil
+        }
+        return TmuxPaneSnapshot(
+            paneID: parts[0],
+            rootPID: rootPID,
+            currentCommand: parts[2],
+            currentPath: parts[3],
+            isDead: parts[4] == "1",
+            isInMode: parts[5] == "1"
+        )
+    }
+
+    func captureVisibleText(paneID: String, lineLimit: Int = 80) -> String {
+        let start = "-\(max(1, lineLimit))"
+        return (try? run(["capture-pane", "-p", "-J", "-t", paneID, "-S", start])) ?? ""
     }
 
     func ensureSession(named name: String, cwd: String, command: String) throws {

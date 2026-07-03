@@ -42,19 +42,13 @@ struct DetectorRule: Codable {
     }
 
     static let defaultRules: [DetectorRule] = [
+        DetectorRule(status: .asking, tone: .yellow, patterns: [
+            "do you want", "would you like", "should i", "can i",
+            "approve", "permission required", "approval required"
+        ]),
         DetectorRule(status: .needInput, tone: .yellow, patterns: [
-            "needs input", "need input", "waiting for input", "approval required",
-            "permission required", "press enter", "waiting ("
-        ]),
-        DetectorRule(status: .review, tone: .purple, patterns: [
-            "review needed", "ready for review", "please review", "needs review"
-        ]),
-        DetectorRule(status: .failed, tone: .red, patterns: [
-            "build failed", "tests failed", "fatal:", "error:", "exception:", "traceback"
-        ]),
-        DetectorRule(status: .completed, tone: .green, patterns: [
-            "build complete!", "tests passed", "all tests passed",
-            "implementation complete", "completed successfully"
+            "needs input", "need input", "waiting for input", "press enter",
+            "waiting (", "press any key"
         ])
     ]
 

@@ -87,6 +87,15 @@ final class ControlServer {
             case .windowState:
                 return (200, windowState(), nil)
 
+            case .tick:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try store.tick(id: body.id)
+                let visibleSessions = body.id.flatMap { id in
+                    store.sessions.first(where: { $0.id == id }).map { [$0] }
+                } ?? store.sessions
+                return (200, ["sessions": visibleSessions.map(summary)], nil)
+
             case .spawn:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
@@ -239,6 +248,7 @@ final class ControlServer {
             "cwd": session.cwd,
             "command": session.command,
             "status": session.status.rawValue,
+            "statusEmoji": session.status.emoji,
             "tone": session.tone.rawValue,
             "parent": session.parentSessionID ?? "",
             "isRestored": session.isRestored,

@@ -32,6 +32,10 @@ let package = Package(
         .testTarget(
             name: "BanyanCoreTests",
             dependencies: ["BanyanCore"]
+        ),
+        .testTarget(
+            name: "BanyanTests",
+            dependencies: ["Banyan"]
         )
     ],
     swiftLanguageModes: [.v5]

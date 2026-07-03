@@ -57,6 +57,13 @@ import Testing
     #expect(ControlRoute.resolve(method: "POST", path: "/window-state") == nil)
 }
 
+@Test func tickRouteCanTargetOneSessionOrAllSessions() throws {
+    #expect(ControlRoute.resolve(method: "POST", path: "/tick") == .tick)
+
+    try ControlRoute.tick.validate(ControlPayload(apiVersion: "v1", id: nil))
+    try ControlRoute.tick.validate(ControlPayload(apiVersion: "v1", id: "agent"))
+}
+
 @Test func missingRequiredIDIsRejected() throws {
     let payload = ControlPayload(apiVersion: "v1", id: nil)
 

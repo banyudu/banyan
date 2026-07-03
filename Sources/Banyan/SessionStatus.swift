@@ -3,7 +3,11 @@ import SwiftUI
 
 enum SessionStatus: String, CaseIterable, Identifiable, Codable {
     case running
+    case executing
+    case longRunningShell = "long-running-shell"
+    case subagents
     case needInput = "need-input"
+    case asking
     case review
     case completed
     case failed
@@ -14,7 +18,11 @@ enum SessionStatus: String, CaseIterable, Identifiable, Codable {
     var label: String {
         switch self {
         case .running: return "Running"
+        case .executing: return "Executing"
+        case .longRunningShell: return "Long Shell"
+        case .subagents: return "Subagents"
         case .needInput: return "Need Input"
+        case .asking: return "Asking"
         case .review: return "Review"
         case .completed: return "Completed"
         case .failed: return "Failed"
@@ -25,7 +33,11 @@ enum SessionStatus: String, CaseIterable, Identifiable, Codable {
     var systemImage: String {
         switch self {
         case .running: return "play.fill"
+        case .executing: return "hammer.fill"
+        case .longRunningShell: return "clock.fill"
+        case .subagents: return "point.3.connected.trianglepath.dotted"
         case .needInput: return "hand.raised.fill"
+        case .asking: return "questionmark.circle.fill"
         case .review: return "eye.fill"
         case .completed: return "checkmark.circle.fill"
         case .failed: return "xmark.octagon.fill"
@@ -33,14 +45,33 @@ enum SessionStatus: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    var emoji: String {
+        switch self {
+        case .running: return "⚙️"
+        case .executing: return "🔧"
+        case .longRunningShell: return "⏳"
+        case .subagents: return "🧩"
+        case .needInput: return "⏸️"
+        case .asking: return "❓"
+        case .review: return "👀"
+        case .completed: return "✅"
+        case .failed: return "❌"
+        case .closed: return "📦"
+        }
+    }
+
     var priority: Int {
         switch self {
-        case .needInput: return 0
-        case .failed: return 1
-        case .review: return 2
-        case .running: return 3
-        case .completed: return 4
-        case .closed: return 5
+        case .asking: return 0
+        case .needInput: return 1
+        case .failed: return 2
+        case .longRunningShell: return 3
+        case .subagents: return 4
+        case .review: return 5
+        case .executing: return 6
+        case .running: return 7
+        case .completed: return 8
+        case .closed: return 9
         }
     }
 }

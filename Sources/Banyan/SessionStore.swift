@@ -45,8 +45,10 @@ final class SessionStore: ObservableObject {
     private var controlServer: ControlServer?
     private let persistence = SessionPersistence()
     private let detector = AgentStateDetector()
+    private let supervisor = AgentSupervisor()
     private let tmuxBackend = TmuxBackend.shared
     private var didLoadPersistedSessions = false
+    private var supervisorTimer: Timer?
 
     init() {
         let defaults = UserDefaults.standard
@@ -197,6 +199,16 @@ final class SessionStore: ObservableObject {
         controlServer = server
     }
 
+    func startSupervisor() {
+        guard supervisorTimer == nil else { return }
+        runSupervisorTick()
+        supervisorTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.runSupervisorTick()
+            }
+        }
+    }
+
     @discardableResult
     func forkSelectedSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
@@ -254,6 +266,18 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
         session.mark(status: status, tone: tone, title: title)
+        saveSessions()
+    }
+
+    func tick(id: String? = nil) throws {
+        if let id {
+            guard sessions.contains(where: { $0.id == id }) else {
+                throw ControlError.notFound(id)
+            }
+            runSupervisorTick(sessionID: id)
+        } else {
+            runSupervisorTick()
+        }
         saveSessions()
     }
 
@@ -361,7 +385,25 @@ final class SessionStore: ObservableObject {
 
     private func detectAttention(in text: String, for session: BanyanSession) {
         guard let result = detector.detect(in: text), session.status != .closed else { return }
+        guard result.status == .asking || result.status == .needInput else { return }
+        guard ![.executing, .longRunningShell, .subagents].contains(session.status) else { return }
         session.mark(status: result.status, tone: result.tone)
+    }
+
+    private func runSupervisorTick(sessionID: String? = nil) {
+        for session in sessions where session.status != .closed && (sessionID == nil || session.id == sessionID) {
+            guard !session.isRestored else { continue }
+            guard let result = supervisor.inspect(
+                tmuxSessionName: session.tmuxSessionName,
+                launchCommand: session.command,
+                currentStatus: session.status
+            ) else {
+                continue
+            }
+            if session.status != result.status || session.tone != result.tone {
+                session.mark(status: result.status, tone: result.tone)
+            }
+        }
     }
 
     private func resolvedWorkingDirectory(_ cwd: String?) -> String {
