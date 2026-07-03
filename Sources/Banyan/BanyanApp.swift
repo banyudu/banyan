@@ -16,7 +16,7 @@ struct BanyanApp: App {
         .commands {
             CommandGroup(after: .newItem) {
                 Button("New Session") {
-                    store.spawn(title: "Shell", cwd: NSHomeDirectory())
+                    store.forkSelectedSession()
                 }
                 .keyboardShortcut("n")
             }

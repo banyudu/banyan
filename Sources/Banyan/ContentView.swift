@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @State private var showingAddSession = false
+    @State private var showingPreferences = false
     @State private var editingSession: BanyanSession?
 
     var body: some View {
@@ -14,31 +15,27 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Picker("Theme", selection: $store.terminalTheme) {
-                    ForEach(TerminalTheme.allCases) { theme in
-                        Text(theme.label).tag(theme)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 190)
-
-                Picker("Sort", selection: $store.sortMode) {
-                    ForEach(SortMode.allCases) { sortMode in
-                        Text(sortMode.label).tag(sortMode)
-                    }
-                }
-                .frame(width: 130)
-
                 Button {
-                    showingAddSession = true
+                    store.forkSelectedSession()
                 } label: {
                     Image(systemName: "plus")
                 }
-                .help("Spawn session")
+                .help("Fork selected directory")
+
+                Button {
+                    showingPreferences = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .help("Preferences")
             }
         }
         .sheet(isPresented: $showingAddSession) {
             AddSessionSheet()
+                .environmentObject(store)
+        }
+        .sheet(isPresented: $showingPreferences) {
+            PreferencesSheet()
                 .environmentObject(store)
         }
         .sheet(item: $editingSession) { session in
@@ -63,12 +60,6 @@ struct ContentView: View {
                                 editingSession = session
                             }
                             Divider()
-                            ForEach(SessionStatus.allCases.filter { $0 != .closed }) { status in
-                                Button(status.label) {
-                                    session.mark(status: status)
-                                }
-                            }
-                            Divider()
                             Button("Close") {
                                 try? store.close(id: session.id)
                             }
@@ -82,10 +73,27 @@ struct ContentView: View {
 
             HStack {
                 Button {
-                    showingAddSession = true
+                    store.forkSelectedSession()
                 } label: {
-                    Label("Add", systemImage: "plus")
+                    Image(systemName: "plus")
                 }
+                .help("Fork selected directory")
+
+                Menu {
+                    Button("Custom Session...") {
+                        showingAddSession = true
+                    }
+                    Divider()
+                    Picker("Sort", selection: $store.sortMode) {
+                        ForEach(SortMode.allCases) { sortMode in
+                            Text(sortMode.label).tag(sortMode)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .help("Sidebar options")
 
                 Spacer()
 

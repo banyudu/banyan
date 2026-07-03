@@ -4,10 +4,16 @@ Banyan is a native macOS session cockpit for running many long-lived agent or te
 
 The first screen is the working surface:
 
-- left sidebar: sessions, status, tone, title, sorting, add/edit/close actions
+- left sidebar: sessions, status signals, tone, title, and compact session actions
 - right side: the selected terminal session
 - each session owns its own PTY-backed terminal, working directory, and command
 - programmatic control is available through `banyanctl`
+
+The toolbar is intentionally small:
+
+- `+` forks the selected session's working directory into a new default shell.
+- `slider.horizontal.3` opens Preferences for terminal appearance.
+- Sidebar options, including sort order and custom session creation, live behind the small sidebar menu.
 
 ## Build
 

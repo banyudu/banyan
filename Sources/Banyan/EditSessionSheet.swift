@@ -5,13 +5,11 @@ struct EditSessionSheet: View {
     @ObservedObject var session: BanyanSession
 
     @State private var title: String
-    @State private var status: SessionStatus
     @State private var tone: SessionTone
 
     init(session: BanyanSession) {
         self.session = session
         _title = State(initialValue: session.title)
-        _status = State(initialValue: session.status)
         _tone = State(initialValue: session.tone)
     }
 
@@ -22,11 +20,6 @@ struct EditSessionSheet: View {
 
             Form {
                 TextField("Title", text: $title)
-                Picker("Status", selection: $status) {
-                    ForEach(SessionStatus.allCases.filter { $0 != .closed }) { status in
-                        Text(status.label).tag(status)
-                    }
-                }
                 Picker("Tone", selection: $tone) {
                     ForEach(SessionTone.allCases) { tone in
                         Text(tone.label).tag(tone)
@@ -44,7 +37,7 @@ struct EditSessionSheet: View {
                     dismiss()
                 }
                 Button("Save") {
-                    session.mark(status: status, tone: tone, title: title)
+                    session.mark(tone: tone, title: title)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)

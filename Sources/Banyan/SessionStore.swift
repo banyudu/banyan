@@ -45,6 +45,12 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
+    func forkSelectedSession() -> BanyanSession {
+        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        return spawn(title: "Shell", cwd: cwd, command: "")
+    }
+
+    @discardableResult
     func spawn(
         id proposedID: String? = nil,
         title proposedTitle: String? = nil,
