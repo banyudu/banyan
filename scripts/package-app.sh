@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/Banyan.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+ICON_FILE="$ROOT_DIR/Assets/AppIcon.icns"
 
 cd "$ROOT_DIR"
+rm -rf "$ROOT_DIR/.build/arm64-apple-macosx/release/ModuleCache"
 swift build -c release
 
 rm -rf "$APP_DIR"
@@ -16,6 +18,10 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$DIST_DIR/bin"
 
 cp "$ROOT_DIR/.build/release/Banyan" "$MACOS_DIR/Banyan"
 cp "$ROOT_DIR/.build/release/banyanctl" "$DIST_DIR/bin/banyanctl"
+if [[ ! -f "$ICON_FILE" ]]; then
+  "$ROOT_DIR/scripts/generate-icons.sh"
+fi
+cp "$ICON_FILE" "$RESOURCES_DIR/Banyan.icns"
 
 SWIFTTERM_BUNDLE="$(find "$ROOT_DIR/.build" -path '*release*' -name '*SwiftTerm*.bundle' -type d | head -n 1 || true)"
 if [[ -n "$SWIFTTERM_BUNDLE" ]]; then
@@ -36,6 +42,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
+  <string>Banyan</string>
+  <key>CFBundleIconFile</key>
   <string>Banyan</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>

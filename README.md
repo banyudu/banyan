@@ -39,11 +39,12 @@ Session metadata is saved to:
 ## Package
 
 ```sh
+scripts/generate-icons.sh
 scripts/package-app.sh
 open dist/Banyan.app
 ```
 
-The packaging script creates an ad-hoc signed `dist/Banyan.app` and places the companion CLI at `dist/bin/banyanctl`.
+The logo source lives at `Assets/BanyanLogo.svg`. The icon script generates `Assets/AppIcon.icns`, and the packaging script creates an ad-hoc signed `dist/Banyan.app` with that icon plus the companion CLI at `dist/bin/banyanctl`.
 
 ## Control From Scripts
 
