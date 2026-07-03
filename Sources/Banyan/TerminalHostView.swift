@@ -9,6 +9,7 @@ struct TerminalHostView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TerminalContainerView {
         let container = TerminalContainerView(terminalView: session.terminalView)
+        container.apply(theme: theme)
         container.onLayout = {
             session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         }
@@ -19,6 +20,7 @@ struct TerminalHostView: NSViewRepresentable {
 
     func updateNSView(_ nsView: TerminalContainerView, context: Context) {
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+        nsView.apply(theme: theme)
         nsView.install(session.terminalView)
         nsView.onLayout = {
             session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
@@ -45,7 +47,6 @@ final class TerminalContainerView: NSView {
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier(AccessibilityID.terminal)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
         install(terminalView)
     }
 
@@ -70,6 +71,10 @@ final class TerminalContainerView: NSView {
         topConstraint = top
         bottomConstraint = bottom
         NSLayoutConstraint.activate([leading, trailing, top, bottom])
+    }
+
+    func apply(theme: TerminalTheme) {
+        layer?.backgroundColor = theme.backgroundColor.cgColor
     }
 
     override func layout() {
