@@ -26,6 +26,15 @@ brew install tmux
 
 Banyan owns the native macOS UI; `tmux` owns the long-running shell or agent process. Closing Banyan or detaching a session only closes the tmux client in Banyan, not the underlying tmux session.
 
+Banyan uses a dedicated tmux socket namespace:
+
+```sh
+tmux -L banyan ls
+tmux -L banyan attach -t banyan-Shell
+```
+
+This keeps Banyan sessions out of the default `tmux ls`, while still allowing manual attach/debug when needed.
+
 ## Build
 
 ```sh
@@ -40,7 +49,7 @@ swift run Banyan
 
 The app starts a local control server on `127.0.0.1:7842`.
 
-Live terminal processes are kept by `tmux` using session names prefixed with `banyan-`.
+Live terminal processes are kept by `tmux -L banyan` using session names prefixed with `banyan-`.
 
 Session metadata is saved to:
 

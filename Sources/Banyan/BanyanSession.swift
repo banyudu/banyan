@@ -102,7 +102,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         status = .running
         terminalView.startProcess(
             executable: "/usr/bin/env",
-            args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path, "attach-session", "-t", tmuxSessionName],
+            args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path] + tmuxBackend.attachArguments(for: tmuxSessionName),
             currentDirectory: cwd
         )
         touch()

@@ -16,6 +16,7 @@ struct TmuxBackend {
     }
 
     static let shared = TmuxBackend()
+    static let socketName = "banyan"
 
     let executableURL: URL
 
@@ -32,6 +33,10 @@ struct TmuxBackend {
 
     func hasSession(named name: String) -> Bool {
         (try? run(["has-session", "-t", name])) != nil
+    }
+
+    func attachArguments(for name: String) -> [String] {
+        baseArguments + ["attach-session", "-t", name]
     }
 
     func listBanyanSessions() -> [String] {
@@ -62,11 +67,15 @@ struct TmuxBackend {
         _ = try? run(["kill-session", "-t", name])
     }
 
+    private var baseArguments: [String] {
+        ["-L", Self.socketName]
+    }
+
     @discardableResult
     private func run(_ arguments: [String]) throws -> String {
         let process = Process()
         process.executableURL = executableURL
-        process.arguments = arguments
+        process.arguments = baseArguments + arguments
         process.environment = Self.processEnvironment()
 
         let pipe = Pipe()
