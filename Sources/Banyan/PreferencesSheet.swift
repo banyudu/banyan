@@ -3,6 +3,7 @@ import SwiftUI
 struct PreferencesSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: SessionStore
+    private let fontFamilies = ["Menlo", "SF Mono", "Monaco", "Andale Mono", "Courier New"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -24,17 +25,30 @@ struct PreferencesSheet: View {
                     .font(.headline)
 
                 Picker("Terminal theme", selection: $store.terminalTheme) {
-                    Label("System", systemImage: "circle.lefthalf.filled").tag(TerminalTheme.system)
-                    Label("Light", systemImage: "sun.max").tag(TerminalTheme.light)
-                    Label("Dark", systemImage: "moon").tag(TerminalTheme.dark)
+                    ForEach(TerminalTheme.allCases) { theme in
+                        Text(theme.label).tag(theme)
+                    }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                .pickerStyle(.menu)
+
+                Picker("Font", selection: $store.terminalFontFamily) {
+                    ForEach(fontFamilies, id: \.self) { family in
+                        Text(family).tag(family)
+                    }
+                }
+
+                HStack {
+                    Text("Size")
+                    Slider(value: $store.terminalFontSize, in: 10...22, step: 1)
+                    Text("\(Int(store.terminalFontSize))")
+                        .monospacedDigit()
+                        .frame(width: 28, alignment: .trailing)
+                }
             }
 
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 420, height: 180)
+        .frame(width: 440, height: 260)
     }
 }

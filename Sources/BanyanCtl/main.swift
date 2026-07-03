@@ -1,3 +1,4 @@
+import BanyanCore
 import Foundation
 
 let client = BanyanCtl(arguments: Array(CommandLine.arguments.dropFirst()))
@@ -21,6 +22,8 @@ struct BanyanCtl {
                 try post("/mark", payload: parsePayload(Array(arguments.dropFirst())))
             case "close":
                 try post("/close", payload: parsePayload(Array(arguments.dropFirst())))
+            case "respawn":
+                try post("/respawn", payload: parsePayload(Array(arguments.dropFirst())))
             case "remove":
                 try post("/remove", payload: parsePayload(Array(arguments.dropFirst())))
             case "list":
@@ -30,9 +33,12 @@ struct BanyanCtl {
             default:
                 throw CLIError.message("unknown command '\(command)'")
             }
+        } catch let error as CLIError {
+            fputs("banyanctl: \(error.localizedDescription)\n", stderr)
+            exit(error.exitCode)
         } catch {
             fputs("banyanctl: \(error.localizedDescription)\n", stderr)
-            exit(1)
+            exit(ExitCode.serverUnavailable)
         }
     }
 
@@ -58,15 +64,26 @@ struct BanyanCtl {
     private func get(_ path: String) throws {
         var request = URLRequest(url: baseURL.appendingPathComponent(String(path.dropFirst())))
         request.httpMethod = "GET"
+        request.timeoutInterval = 5
+        try authorize(&request)
         try send(request)
     }
 
     private func post(_ path: String, payload: [String: String]) throws {
         var request = URLRequest(url: baseURL.appendingPathComponent(String(path.dropFirst())))
         request.httpMethod = "POST"
+        request.timeoutInterval = 5
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        try authorize(&request)
+        var versionedPayload = payload
+        versionedPayload["apiVersion"] = ControlProtocol.version
+        request.httpBody = try JSONSerialization.data(withJSONObject: versionedPayload, options: [.sortedKeys])
         try send(request)
+    }
+
+    private func authorize(_ request: inout URLRequest) throws {
+        let token = try ControlToken.loadOrCreate()
+        request.setValue(token, forHTTPHeaderField: ControlToken.headerName)
     }
 
     private func send(_ request: URLRequest) throws {
@@ -83,14 +100,14 @@ struct BanyanCtl {
         }.resume()
         semaphore.wait()
 
-        if let responseError {
-            throw responseError
+        if responseError != nil {
+            throw CLIError.serverUnavailable
         }
         if let responseData, let text = String(data: responseData, encoding: .utf8) {
             print(text)
         }
         if statusCode >= 400 {
-            throw CLIError.message("server returned HTTP \(statusCode)")
+            throw CLIError.http(statusCode)
         }
     }
 
@@ -102,6 +119,7 @@ struct BanyanCtl {
           banyanctl spawn  [--id ID] [--title TITLE] [--cwd PATH] [--command CMD] [--cmd CMD] [--tone blue]
           banyanctl mark   --id ID [--status running|need-input|review|completed|failed] [--tone red] [--title TITLE]
           banyanctl close  --id ID
+          banyanctl respawn --id ID
           banyanctl remove --id ID
           banyanctl list
         """)
@@ -110,10 +128,36 @@ struct BanyanCtl {
 
 enum CLIError: LocalizedError {
     case message(String)
+    case http(Int)
+    case serverUnavailable
 
     var errorDescription: String? {
         switch self {
         case .message(let message): return message
+        case .http(let statusCode): return "server returned HTTP \(statusCode)"
+        case .serverUnavailable: return "Banyan control server is unavailable"
         }
     }
+
+    var exitCode: Int32 {
+        switch self {
+        case .message: return ExitCode.badInput
+        case .http(let statusCode):
+            if statusCode == 401 {
+                return ExitCode.badInput
+            }
+            if statusCode == 404 {
+                return ExitCode.notFound
+            }
+            return ExitCode.badInput
+        case .serverUnavailable: return ExitCode.serverUnavailable
+        }
+    }
+}
+
+enum ExitCode {
+    static let success: Int32 = 0
+    static let badInput: Int32 = 64
+    static let notFound: Int32 = 66
+    static let serverUnavailable: Int32 = 69
 }

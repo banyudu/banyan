@@ -7,11 +7,42 @@ final class SessionStore: ObservableObject {
     @Published var sortMode: SortMode = .manual
     @Published var terminalTheme: TerminalTheme = .system {
         didSet {
-            sessions.forEach { $0.apply(theme: terminalTheme) }
+            UserDefaults.standard.set(terminalTheme.rawValue, forKey: "terminalTheme")
+            applyAppearance()
+        }
+    }
+    @Published var terminalFontFamily: String = "Menlo" {
+        didSet {
+            UserDefaults.standard.set(terminalFontFamily, forKey: "terminalFontFamily")
+            applyAppearance()
+        }
+    }
+    @Published var terminalFontSize: Double = 13 {
+        didSet {
+            UserDefaults.standard.set(terminalFontSize, forKey: "terminalFontSize")
+            applyAppearance()
         }
     }
 
     private var controlServer: ControlServer?
+    private let persistence = SessionPersistence()
+    private let detector = AgentStateDetector()
+    private var didLoadPersistedSessions = false
+
+    init() {
+        let defaults = UserDefaults.standard
+        if let rawTheme = defaults.string(forKey: "terminalTheme"),
+           let theme = TerminalTheme(rawValue: rawTheme) {
+            terminalTheme = theme
+        }
+        if let fontFamily = defaults.string(forKey: "terminalFontFamily") {
+            terminalFontFamily = fontFamily
+        }
+        let storedFontSize = defaults.double(forKey: "terminalFontSize")
+        if storedFontSize > 0 {
+            terminalFontSize = storedFontSize
+        }
+    }
 
     var visibleSessions: [BanyanSession] {
         let active = sessions.filter { $0.status != .closed }
@@ -35,6 +66,32 @@ final class SessionStore: ObservableObject {
     var selectedSession: BanyanSession? {
         guard let selectedSessionID else { return nil }
         return sessions.first { $0.id == selectedSessionID }
+    }
+
+    func loadPersistedSessionsIfNeeded() {
+        guard !didLoadPersistedSessions else { return }
+        didLoadPersistedSessions = true
+        let snapshots = persistence.load()
+        for snapshot in snapshots where snapshot.status != .closed {
+            let session = BanyanSession(
+                id: uniqueID(snapshot.id),
+                title: snapshot.title,
+                cwd: snapshot.cwd,
+                command: snapshot.command,
+                status: snapshot.status,
+                tone: snapshot.tone,
+                createdAt: snapshot.createdAt,
+                updatedAt: snapshot.updatedAt,
+                isRestored: true,
+                theme: terminalTheme,
+                fontFamily: terminalFontFamily,
+                fontSize: terminalFontSize
+            )
+            session.reportedTitle = snapshot.reportedTitle
+            attach(session)
+            sessions.append(session)
+        }
+        selectedSessionID = visibleSessions.first?.id
     }
 
     func startControlServer() {
@@ -69,12 +126,25 @@ final class SessionStore: ObservableObject {
             cwd: cwd,
             command: command,
             tone: tone,
-            theme: terminalTheme
+            theme: terminalTheme,
+            fontFamily: terminalFontFamily,
+            fontSize: terminalFontSize
         )
+        attach(session)
         sessions.append(session)
         selectedSessionID = session.id
         session.start()
+        saveSessions()
         return session
+    }
+
+    func respawn(id: String) throws {
+        guard let session = sessions.first(where: { $0.id == id }) else {
+            throw ControlError.notFound(id)
+        }
+        session.start()
+        selectedSessionID = id
+        saveSessions()
     }
 
     func mark(id: String, status: SessionStatus? = nil, tone: SessionTone? = nil, title: String? = nil) throws {
@@ -82,6 +152,7 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
         session.mark(status: status, tone: tone, title: title)
+        saveSessions()
     }
 
     func close(id: String) throws {
@@ -92,6 +163,7 @@ final class SessionStore: ObservableObject {
         if selectedSessionID == id {
             selectedSessionID = visibleSessions.first?.id
         }
+        saveSessions()
     }
 
     func remove(id: String) throws {
@@ -103,10 +175,55 @@ final class SessionStore: ObservableObject {
         if selectedSessionID == id {
             selectedSessionID = visibleSessions.first?.id
         }
+        saveSessions()
     }
 
     func select(id: String) {
         selectedSessionID = id
+    }
+
+    private func attach(_ session: BanyanSession) {
+        session.onDidChange = { [weak self] in
+            Task { @MainActor in
+                self?.saveSessions()
+            }
+        }
+        session.onOutput = { [weak self, weak session] text in
+            guard let self, let session else { return }
+            self.detectAttention(in: text, for: session)
+        }
+        session.onStatusSignal = { [weak session] status in
+            guard let session else { return }
+            AttentionNotifier.shared.notifyIfNeeded(session: session, status: status)
+        }
+    }
+
+    private func applyAppearance() {
+        sessions.forEach {
+            $0.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
+        }
+    }
+
+    private func saveSessions() {
+        let snapshots = sessions.map {
+            SessionSnapshot(
+                id: $0.id,
+                title: $0.title,
+                reportedTitle: $0.reportedTitle,
+                cwd: $0.cwd,
+                command: $0.command,
+                status: $0.status,
+                tone: $0.tone,
+                createdAt: $0.createdAt,
+                updatedAt: $0.updatedAt
+            )
+        }
+        persistence.save(snapshots)
+    }
+
+    private func detectAttention(in text: String, for session: BanyanSession) {
+        guard let result = detector.detect(in: text), session.status != .closed else { return }
+        session.mark(status: result.status, tone: result.tone)
     }
 
     private func resolvedWorkingDirectory(_ cwd: String?) -> String {
@@ -142,6 +259,20 @@ final class SessionStore: ObservableObject {
 enum ControlError: LocalizedError {
     case notFound(String)
     case badRequest(String)
+
+    var code: String {
+        switch self {
+        case .notFound: return "not_found"
+        case .badRequest: return "bad_request"
+        }
+    }
+
+    var httpStatus: Int {
+        switch self {
+        case .notFound: return 404
+        case .badRequest: return 400
+        }
+    }
 
     var errorDescription: String? {
         switch self {

@@ -1,3 +1,4 @@
+import BanyanCore
 import Foundation
 import Network
 
@@ -5,9 +6,11 @@ final class ControlServer {
     private weak var store: SessionStore?
     private var listener: NWListener?
     private let port: NWEndpoint.Port = 7842
+    private let token: String
 
     init(store: SessionStore) {
         self.store = store
+        self.token = (try? ControlToken.loadOrCreate()) ?? ""
     }
 
     func start() {
@@ -32,7 +35,7 @@ final class ControlServer {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             if let error {
-                self.send(connection, status: 500, payload: ["error": error.localizedDescription])
+                self.send(connection, status: 500, data: nil, error: ControlErrorBody(code: "connection_error", message: error.localizedDescription))
                 return
             }
 
@@ -41,16 +44,16 @@ final class ControlServer {
                 nextBuffer.append(data)
             }
 
-            if self.hasCompleteRequest(nextBuffer) {
+            if ControlProtocol.isCompleteHTTPMessage(nextBuffer) {
                 Task { @MainActor in
                     let response = self.route(nextBuffer)
-                    self.send(connection, status: response.status, payload: response.payload)
+                    self.send(connection, status: response.status, data: response.data, error: response.error)
                 }
                 return
             }
 
             if isComplete {
-                self.send(connection, status: 400, payload: ["error": "empty request"])
+                self.send(connection, status: 400, data: nil, error: ControlErrorBody(code: "empty_request", message: "empty request"))
                 return
             }
 
@@ -58,36 +61,31 @@ final class ControlServer {
         }
     }
 
-    private func hasCompleteRequest(_ data: Data) -> Bool {
-        let marker = Data("\r\n\r\n".utf8)
-        guard let range = data.range(of: marker) else {
-            return false
-        }
-        let headerData = data[..<range.lowerBound]
-        guard let header = String(data: headerData, encoding: .utf8) else {
-            return false
-        }
-        let contentLength = HTTPControlRequest.contentLength(from: header)
-        return data.count >= range.upperBound + contentLength
-    }
-
     @MainActor
-    private func route(_ data: Data) -> (status: Int, payload: [String: Any]) {
+    private func route(_ data: Data) -> (status: Int, data: [String: Any]?, error: ControlErrorBody?) {
         guard let request = HTTPControlRequest(data: data) else {
-            return (400, ["error": "invalid HTTP request"])
+            return (400, nil, ControlErrorBody(code: "invalid_http", message: "invalid HTTP request"))
         }
 
         guard let store else {
-            return (500, ["error": "session store is unavailable"])
+            return (500, nil, ControlErrorBody(code: "store_unavailable", message: "session store is unavailable"))
+        }
+        guard token.isEmpty || request.headers[ControlToken.headerName.lowercased()] == token else {
+            return (401, nil, ControlErrorBody(code: "unauthorized", message: "invalid Banyan control token"))
         }
 
         do {
-            switch (request.method, request.path) {
-            case ("GET", "/list"):
-                return (200, ["sessions": store.sessions.map(summary)])
+            guard let route = ControlRoute.resolve(method: request.method, path: request.path) else {
+                return (404, nil, ControlErrorBody(code: "unknown_route", message: "unknown route"))
+            }
 
-            case ("POST", "/spawn"):
+            switch route {
+            case .list:
+                return (200, ["sessions": store.sessions.map(summary)], nil)
+
+            case .spawn:
                 let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
                 let tone = body.tone.flatMap(SessionTone.init(rawValue:)) ?? .blue
                 let session = store.spawn(
                     id: body.id,
@@ -96,42 +94,61 @@ final class ControlServer {
                     command: body.command,
                     tone: tone
                 )
-                return (200, ["session": summary(session)])
+                return (200, ["session": summary(session)], nil)
 
-            case ("POST", "/mark"):
+            case .mark:
                 let body = try request.decode(ControlPayload.self)
-                guard let id = body.id else {
-                    throw ControlError.badRequest("mark requires id")
-                }
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let id = body.id!
                 let status = try body.status.map(parseStatus)
                 let tone = try body.tone.map(parseTone)
                 try store.mark(id: id, status: status, tone: tone, title: body.title)
                 guard let session = store.sessions.first(where: { $0.id == id }) else {
                     throw ControlError.notFound(id)
                 }
-                return (200, ["session": summary(session)])
+                return (200, ["session": summary(session)], nil)
 
-            case ("POST", "/close"):
+            case .close:
                 let body = try request.decode(ControlPayload.self)
-                guard let id = body.id else {
-                    throw ControlError.badRequest("close requires id")
-                }
-                try store.close(id: id)
-                return (200, ["ok": true])
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                try store.close(id: body.id!)
+                return (200, ["ok": true], nil)
 
-            case ("POST", "/remove"):
+            case .respawn:
                 let body = try request.decode(ControlPayload.self)
-                guard let id = body.id else {
-                    throw ControlError.badRequest("remove requires id")
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let id = body.id!
+                try store.respawn(id: id)
+                guard let session = store.sessions.first(where: { $0.id == id }) else {
+                    throw ControlError.notFound(id)
                 }
-                try store.remove(id: id)
-                return (200, ["ok": true])
+                return (200, ["session": summary(session)], nil)
 
-            default:
-                return (404, ["error": "unknown route"])
+            case .remove:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                try store.remove(id: body.id!)
+                return (200, ["ok": true], nil)
             }
+        } catch let error as ControlError {
+            return (error.httpStatus, nil, ControlErrorBody(code: error.code, message: error.localizedDescription))
+        } catch let error as ControlValidationError {
+            return (400, nil, ControlErrorBody(code: "missing_id", message: error.localizedDescription))
+        } catch is DecodingError {
+            return (400, nil, ControlErrorBody(code: "malformed_json", message: "malformed JSON request body"))
         } catch {
-            return (400, ["error": error.localizedDescription])
+            return (400, nil, ControlErrorBody(code: "bad_request", message: error.localizedDescription))
+        }
+    }
+
+    private func validateVersion(_ apiVersion: String?) throws {
+        let version = apiVersion ?? ControlProtocol.version
+        guard version == ControlProtocol.version else {
+            throw ControlError.badRequest("unsupported apiVersion '\(version)'")
         }
     }
 
@@ -159,12 +176,27 @@ final class ControlServer {
             "command": session.command,
             "status": session.status.rawValue,
             "tone": session.tone.rawValue,
+            "isRestored": session.isRestored,
+            "isProcessStarted": session.isProcessStarted,
             "createdAt": ISO8601DateFormatter().string(from: session.createdAt),
             "updatedAt": ISO8601DateFormatter().string(from: session.updatedAt)
         ]
     }
 
-    private func send(_ connection: NWConnection, status: Int, payload: [String: Any]) {
+    private func send(_ connection: NWConnection, status: Int, data: [String: Any]?, error: ControlErrorBody?) {
+        var payload: [String: Any] = [
+            "apiVersion": ControlProtocol.version,
+            "ok": error == nil
+        ]
+        if let data {
+            payload["data"] = data
+        }
+        if let error {
+            payload["error"] = [
+                "code": error.code,
+                "message": error.message
+            ]
+        }
         let body = (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         let reason = status == 200 ? "OK" : "Error"
         var header = "HTTP/1.1 \(status) \(reason)\r\n"
@@ -177,56 +209,5 @@ final class ControlServer {
         connection.send(content: response, completion: .contentProcessed { _ in
             connection.cancel()
         })
-    }
-}
-
-private struct ControlPayload: Codable {
-    let id: String?
-    let title: String?
-    let cwd: String?
-    let command: String?
-    let status: String?
-    let tone: String?
-}
-
-private struct HTTPControlRequest {
-    let method: String
-    let path: String
-    let body: Data
-
-    init?(data: Data) {
-        let marker = Data("\r\n\r\n".utf8)
-        guard let range = data.range(of: marker),
-              let header = String(data: data[..<range.lowerBound], encoding: .utf8) else {
-            return nil
-        }
-        let lines = header.components(separatedBy: "\r\n")
-        guard let requestLine = lines.first else { return nil }
-        let parts = requestLine.split(separator: " ", maxSplits: 2).map(String.init)
-        guard parts.count >= 2 else { return nil }
-
-        self.method = parts[0]
-        self.path = parts[1]
-        let length = Self.contentLength(from: header)
-        let bodyStart = range.upperBound
-        let bodyEnd = min(data.count, bodyStart + length)
-        self.body = data[bodyStart..<bodyEnd]
-    }
-
-    func decode<T: Decodable>(_ type: T.Type) throws -> T {
-        if body.isEmpty {
-            return try JSONDecoder().decode(T.self, from: Data("{}".utf8))
-        }
-        return try JSONDecoder().decode(T.self, from: body)
-    }
-
-    static func contentLength(from header: String) -> Int {
-        for line in header.components(separatedBy: "\r\n") {
-            let parts = line.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-            if parts.count == 2, parts[0].lowercased() == "content-length" {
-                return Int(parts[1]) ?? 0
-            }
-        }
-        return 0
     }
 }

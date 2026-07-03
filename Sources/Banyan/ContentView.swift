@@ -42,6 +42,7 @@ struct ContentView: View {
             EditSessionSheet(session: session)
         }
         .onAppear {
+            store.loadPersistedSessionsIfNeeded()
             store.startControlServer()
             if store.sessions.isEmpty {
                 store.spawn(title: "Shell", cwd: NSHomeDirectory())
@@ -124,7 +125,12 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 TerminalHeader(session: session)
                 Divider()
-                TerminalHostView(session: session, theme: store.terminalTheme)
+                TerminalHostView(
+                    session: session,
+                    theme: store.terminalTheme,
+                    fontFamily: store.terminalFontFamily,
+                    fontSize: store.terminalFontSize
+                )
                     .id(session.id)
                     .ignoresSafeArea(edges: .bottom)
             }
@@ -154,7 +160,7 @@ private struct SessionRow: View {
 
                 HStack(spacing: 6) {
                     Image(systemName: session.status.systemImage)
-                    Text(session.status.label)
+                    Text(session.isRestored ? "Restorable" : session.status.label)
                     if let reportedTitle = session.reportedTitle, !reportedTitle.isEmpty {
                         Text("·")
                         Text(reportedTitle)
@@ -173,6 +179,7 @@ private struct SessionRow: View {
 }
 
 private struct TerminalHeader: View {
+    @EnvironmentObject private var store: SessionStore
     @ObservedObject var session: BanyanSession
 
     var body: some View {
@@ -192,6 +199,15 @@ private struct TerminalHeader: View {
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            if session.isRestored || !session.isProcessStarted {
+                Button {
+                    try? store.respawn(id: session.id)
+                } label: {
+                    Label("Respawn", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

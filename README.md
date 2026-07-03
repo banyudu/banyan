@@ -14,6 +14,7 @@ The toolbar is intentionally small:
 - `+` forks the selected session's working directory into a new default shell.
 - `slider.horizontal.3` opens Preferences for terminal appearance.
 - Sidebar options, including sort order and custom session creation, live behind the small sidebar menu.
+- Restored sessions are shown as restorable entries and are only relaunched when you choose Respawn.
 
 ## Build
 
@@ -29,6 +30,21 @@ swift run Banyan
 
 The app starts a local control server on `127.0.0.1:7842`.
 
+Session metadata is saved to:
+
+```text
+~/Library/Application Support/Banyan/sessions.json
+```
+
+## Package
+
+```sh
+scripts/package-app.sh
+open dist/Banyan.app
+```
+
+The packaging script creates an ad-hoc signed `dist/Banyan.app` and places the companion CLI at `dist/bin/banyanctl`.
+
 ## Control From Scripts
 
 Keep Banyan open, then drive it from another shell:
@@ -43,9 +59,18 @@ swift run banyanctl spawn \
 swift run banyanctl mark --id ENG-6685 --status need-input --tone yellow
 swift run banyanctl mark --id ENG-6685 --status review --tone purple --title "ENG-6685 review"
 swift run banyanctl close --id ENG-6685
+swift run banyanctl respawn --id ENG-6685
 swift run banyanctl remove --id ENG-6685
 swift run banyanctl list
 ```
+
+The control API uses a versioned JSON schema (`apiVersion: "v1"`) and a local shared token stored at:
+
+```text
+~/Library/Application Support/Banyan/control-token
+```
+
+`banyanctl` sends this token automatically with `X-Banyan-Token`.
 
 Supported statuses:
 
@@ -71,12 +96,39 @@ purple
 
 ## Terminal Rendering
 
-Banyan embeds SwiftTerm, so terminal applications can use ANSI, 256-color, and truecolor escape sequences for syntax highlighting and colorized output. Banyan currently exposes three terminal color sets:
+Banyan embeds SwiftTerm, so terminal applications can use ANSI, 256-color, and truecolor escape sequences for syntax highlighting and colorized output. Banyan exposes theme and font controls in Preferences.
+
+Built-in themes:
 
 - System
 - Dark
 - Light
+- Solarized Dark
+- Solarized Light
+- Dracula
+
+## Agent State Detection
+
+Banyan watches terminal output for common agent states and can mark sessions as `need-input`, `review`, `failed`, or `completed`. It sends macOS notifications for attention states.
+
+Global detector rules can be overridden with:
+
+```text
+~/Library/Application Support/Banyan/detectors.json
+```
+
+Example:
+
+```json
+[
+  {
+    "status": "need-input",
+    "tone": "yellow",
+    "patterns": ["waiting for approval", "permission required"]
+  }
+]
+```
 
 ## Current Scope
 
-This repo starts as a Swift Package executable for fast native iteration. Packaging as a signed `.app`, durable session restore, richer terminal themes, notifications, and a hardened local control protocol are tracked as follow-up work.
+This repo starts as a Swift Package executable for fast native iteration. The local package script creates an ad-hoc signed `.app`; distribution signing/notarization can be added later if needed.

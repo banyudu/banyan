@@ -6,7 +6,7 @@ import SwiftTerm
 final class BanyanSession: ObservableObject, Identifiable {
     let id: String
     let createdAt: Date
-    let terminalView: LocalProcessTerminalView
+    let terminalView: DetectingLocalProcessTerminalView
 
     @Published var title: String
     @Published var reportedTitle: String?
@@ -15,8 +15,13 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var status: SessionStatus
     @Published var tone: SessionTone
     @Published var updatedAt: Date
+    @Published var isRestored: Bool
+    @Published var isProcessStarted: Bool
 
     private var delegate: TerminalSessionDelegate?
+    var onDidChange: (() -> Void)?
+    var onOutput: ((String) -> Void)?
+    var onStatusSignal: ((SessionStatus) -> Void)?
 
     init(
         id: String,
@@ -25,7 +30,12 @@ final class BanyanSession: ObservableObject, Identifiable {
         command: String,
         status: SessionStatus = .running,
         tone: SessionTone = .blue,
-        theme: TerminalTheme
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        isRestored: Bool = false,
+        theme: TerminalTheme,
+        fontFamily: String? = nil,
+        fontSize: Double = 13
     ) {
         self.id = id
         self.title = title
@@ -33,11 +43,13 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.command = command
         self.status = status
         self.tone = tone
-        self.createdAt = Date()
-        self.updatedAt = Date()
-        self.terminalView = LocalProcessTerminalView(frame: .zero)
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.isRestored = isRestored
+        self.isProcessStarted = !isRestored
+        self.terminalView = DetectingLocalProcessTerminalView(frame: .zero)
 
-        theme.apply(to: terminalView)
+        theme.apply(to: terminalView, fontFamily: fontFamily, fontSize: fontSize)
 
         let delegate = TerminalSessionDelegate(sessionID: id)
         delegate.onTitle = { [weak self] title in
@@ -46,32 +58,50 @@ final class BanyanSession: ObservableObject, Identifiable {
         }
         delegate.onTerminate = { [weak self] exitCode in
             guard let self else { return }
+            self.isProcessStarted = false
             if self.status != .closed {
                 self.status = exitCode == 0 ? .completed : .failed
+                self.onStatusSignal?(self.status)
             }
             self.touch()
         }
         self.delegate = delegate
         self.terminalView.processDelegate = delegate
+        self.terminalView.onOutput = { [weak self] text in
+            self?.onOutput?(text)
+        }
+
+        if isRestored {
+            terminalView.feed(text: restoredMessage())
+        }
     }
 
     func start() {
+        guard !terminalView.process.running else { return }
+        isRestored = false
+        isProcessStarted = true
+        status = .running
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             terminalView.startProcess(executable: shell, args: ["-l"], currentDirectory: cwd)
         } else {
             terminalView.startProcess(executable: shell, args: ["-lc", command], currentDirectory: cwd)
         }
+        touch()
     }
 
-    func apply(theme: TerminalTheme) {
-        theme.apply(to: terminalView)
+    func apply(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13) {
+        theme.apply(to: terminalView, fontFamily: fontFamily, fontSize: fontSize)
         terminalView.needsDisplay = true
     }
 
     func mark(status: SessionStatus? = nil, tone: SessionTone? = nil, title: String? = nil) {
         if let status {
+            let changed = self.status != status
             self.status = status
+            if changed {
+                onStatusSignal?(status)
+            }
         }
         if let tone {
             self.tone = tone
@@ -84,6 +114,8 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func terminate(markClosed: Bool = true) {
         terminalView.terminate()
+        isProcessStarted = false
+        isRestored = false
         if markClosed {
             status = .closed
         }
@@ -92,6 +124,32 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func touch() {
         updatedAt = Date()
+        onDidChange?()
+    }
+
+    private func restoredMessage() -> String {
+        let commandText = command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "default login shell" : command
+        return """
+        Restored Banyan session metadata.
+
+        Title: \(title)
+        Directory: \(cwd)
+        Command: \(commandText)
+
+        This session was not automatically relaunched. Use Respawn to start it again.
+
+        """
+    }
+}
+
+final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
+    var onOutput: ((String) -> Void)?
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        if let text = String(bytes: slice, encoding: .utf8) {
+            onOutput?(text)
+        }
+        super.dataReceived(slice: slice)
     }
 }
 

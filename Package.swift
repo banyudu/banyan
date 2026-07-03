@@ -15,14 +15,23 @@ let package = Package(
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0")
     ],
     targets: [
+        .target(
+            name: "BanyanCore"
+        ),
         .executableTarget(
             name: "Banyan",
             dependencies: [
+                "BanyanCore",
                 .product(name: "SwiftTerm", package: "SwiftTerm")
             ]
         ),
         .executableTarget(
-            name: "BanyanCtl"
+            name: "BanyanCtl",
+            dependencies: ["BanyanCore"]
+        ),
+        .testTarget(
+            name: "BanyanCoreTests",
+            dependencies: ["BanyanCore"]
         )
     ],
     swiftLanguageModes: [.v5]
