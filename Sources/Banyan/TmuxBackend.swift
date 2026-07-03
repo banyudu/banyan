@@ -50,6 +50,8 @@ struct TmuxBackend {
     }
 
     func ensureSession(named name: String, cwd: String, command: String) throws {
+        configureServerEnvironment()
+        configureServerOptions()
         guard !hasSession(named: name) else {
             configureSession(named: name)
             return
@@ -72,12 +74,27 @@ struct TmuxBackend {
     }
 
     private func configureSession(named name: String) {
-        _ = try? run(["set-option", "-g", "status", "off"])
-        _ = try? run(["set-option", "-g", "mouse", "on"])
-        _ = try? run(["set-option", "-g", "history-limit", "20000"])
+        configureServerEnvironment()
+        configureServerOptions()
         _ = try? run(["set-option", "-t", name, "status", "off"])
         _ = try? run(["set-option", "-t", name, "mouse", "on"])
         _ = try? run(["set-option", "-t", name, "history-limit", "20000"])
+    }
+
+    private func configureServerOptions() {
+        _ = try? run(["set-option", "-g", "status", "off"])
+        _ = try? run(["set-option", "-g", "mouse", "on"])
+        _ = try? run(["set-option", "-g", "history-limit", "20000"])
+        _ = try? run(["set-option", "-g", "default-terminal", "tmux-256color"])
+        _ = try? run(["set-option", "-g", "terminal-overrides", "xterm-256color:RGB"])
+    }
+
+    private func configureServerEnvironment() {
+        _ = try? run(["set-environment", "-gu", "NO_COLOR"])
+        _ = try? run(["set-environment", "-g", "COLORTERM", "truecolor"])
+        _ = try? run(["set-environment", "-g", "CLICOLOR", "1"])
+        _ = try? run(["set-environment", "-g", "CLICOLOR_FORCE", "1"])
+        _ = try? run(["set-environment", "-g", "FORCE_COLOR", "3"])
     }
 
     private var baseArguments: [String] {
@@ -151,6 +168,12 @@ struct TmuxBackend {
         environment["PATH"] = merged
         environment.removeValue(forKey: "TMUX")
         environment.removeValue(forKey: "TMUX_PANE")
+        environment.removeValue(forKey: "NO_COLOR")
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        environment["CLICOLOR"] = "1"
+        environment["CLICOLOR_FORCE"] = "1"
+        environment["FORCE_COLOR"] = "3"
         return environment
     }
 }

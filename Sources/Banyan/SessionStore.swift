@@ -102,7 +102,7 @@ final class SessionStore: ObservableObject {
         for snapshot in snapshots {
             let tmuxSessionName = snapshot.tmuxSessionName ?? TmuxBackend.sessionName(for: snapshot.id)
             let session = BanyanSession(
-                id: uniqueID(snapshot.id),
+                id: uniqueID(snapshot.id, avoidingLiveTmuxSessions: false),
                 tmuxSessionName: tmuxSessionName,
                 title: snapshot.title,
                 cwd: snapshot.cwd,
@@ -125,7 +125,7 @@ final class SessionStore: ObservableObject {
             }
         }
         for tmuxSessionName in tmuxBackend.listBanyanSessions() where !loadedTmuxSessionNames.contains(tmuxSessionName) {
-            let id = uniqueID(String(tmuxSessionName.dropFirst("banyan-".count)))
+            let id = uniqueID(String(tmuxSessionName.dropFirst("banyan-".count)), avoidingLiveTmuxSessions: false)
             let session = BanyanSession(
                 id: id,
                 tmuxSessionName: tmuxSessionName,
@@ -173,7 +173,7 @@ final class SessionStore: ObservableObject {
         tone: SessionTone = .blue
     ) -> BanyanSession {
         let baseID = sanitizeID(proposedID ?? proposedTitle ?? "session")
-        let id = uniqueID(baseID)
+        let id = uniqueID(baseID, avoidingLiveTmuxSessions: true)
         let cwd = resolvedWorkingDirectory(proposedCWD)
         let command = proposedCommand ?? ""
         let title = proposedTitle?.isEmpty == false ? proposedTitle! : id
@@ -315,15 +315,25 @@ final class SessionStore: ObservableObject {
         return String(cleaned).trimmingCharacters(in: CharacterSet(charactersIn: "-_")).isEmpty ? "session" : String(cleaned)
     }
 
-    private func uniqueID(_ baseID: String) -> String {
-        if !sessions.contains(where: { $0.id == baseID }) {
+    private func uniqueID(_ baseID: String, avoidingLiveTmuxSessions: Bool) -> String {
+        if isAvailableID(baseID, avoidingLiveTmuxSessions: avoidingLiveTmuxSessions) {
             return baseID
         }
         var index = 2
-        while sessions.contains(where: { $0.id == "\(baseID)-\(index)" }) {
+        while !isAvailableID("\(baseID)-\(index)", avoidingLiveTmuxSessions: avoidingLiveTmuxSessions) {
             index += 1
         }
         return "\(baseID)-\(index)"
+    }
+
+    private func isAvailableID(_ id: String, avoidingLiveTmuxSessions: Bool) -> Bool {
+        guard !sessions.contains(where: { $0.id == id }) else {
+            return false
+        }
+        if avoidingLiveTmuxSessions, tmuxBackend.hasSession(named: TmuxBackend.sessionName(for: id)) {
+            return false
+        }
+        return true
     }
 }
 

@@ -119,6 +119,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         terminalView.startProcess(
             executable: "/usr/bin/env",
             args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path] + tmuxBackend.attachArguments(for: tmuxSessionName),
+            environment: Self.terminalEnvironment(),
             currentDirectory: cwd
         )
         touch()
@@ -193,6 +194,20 @@ final class BanyanSession: ObservableObject, Identifiable {
         terminalView.feed(text: "Banyan could not attach this session.\r\n\r\n\(message)\r\n")
         onStatusSignal?(status)
         touch()
+    }
+
+    private static func terminalEnvironment() -> [String] {
+        var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
+        let inherited = ProcessInfo.processInfo.environment
+        for key in ["PATH", "SHELL", "TMPDIR", "SSH_AUTH_SOCK"] {
+            if let value = inherited[key] {
+                environment.append("\(key)=\(value)")
+            }
+        }
+        environment.append("CLICOLOR=1")
+        environment.append("CLICOLOR_FORCE=1")
+        environment.append("FORCE_COLOR=3")
+        return environment
     }
 }
 

@@ -47,6 +47,14 @@ swift build
 swift run Banyan
 ```
 
+For iterative UI work, use the dev watcher:
+
+```sh
+scripts/dev-watch.sh
+```
+
+It rebuilds and restarts only the Banyan client when Swift package files change. Backing `tmux -L banyan` sessions remain alive across restarts, so running agents and shells are not killed.
+
 The app starts a local control server on `127.0.0.1:7842`.
 
 Live terminal processes are kept by `tmux -L banyan` using session names prefixed with `banyan-`.

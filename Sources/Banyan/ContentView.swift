@@ -161,32 +161,49 @@ private struct SessionRow: View {
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Circle()
                 .fill(Color(nsColor: session.tone.nsColor))
                 .frame(width: isSelected ? 9 : 7, height: isSelected ? 9 : 7)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(session.displayTitle)
-                    .font(.system(size: isSelected ? 13 : 12.5, weight: isSelected ? .semibold : .regular))
-                    .lineLimit(1)
-                    .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
-
-                HStack(spacing: 6) {
-                    Image(systemName: session.status.systemImage)
-                    Text(session.isRestored ? "Restorable" : session.status.label)
-                }
-                .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+            Text(session.displayTitle)
+                .font(.system(size: isSelected ? 13 : 12.5, weight: isSelected ? .semibold : .regular))
                 .lineLimit(1)
-                .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
-            }
+                .truncationMode(.tail)
+                .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
+
             Spacer(minLength: 0)
+
+            Image(systemName: sessionStatusIcon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: 14, height: 14)
+                .accessibilityLabel(session.isRestored ? "Restorable" : session.status.label)
+                .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
         }
-        .padding(.vertical, isSelected ? 5 : 3)
+        .padding(.vertical, isSelected ? 5 : 4)
         .padding(.horizontal, 8)
         .background(rowBackground)
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
+    }
+
+    private var sessionStatusIcon: String {
+        session.isRestored ? "arrow.clockwise.circle.fill" : session.status.systemImage
+    }
+
+    private var statusColor: Color {
+        switch session.status {
+        case .failed:
+            return .red
+        case .needInput:
+            return .yellow
+        case .review:
+            return .purple
+        case .completed:
+            return .green
+        case .running, .closed:
+            return .secondary
+        }
     }
 
     @ViewBuilder
