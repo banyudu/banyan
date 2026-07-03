@@ -6,7 +6,6 @@ struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @State private var showingAddSession = false
     @State private var showingPreferences = false
-    @State private var sessionPendingClose: BanyanSession?
 
     var body: some View {
         NavigationSplitView {
@@ -56,9 +55,7 @@ struct ContentView: View {
         .alert("Close parent session?", isPresented: closeConfirmationBinding) {
             Button("Cancel", role: .cancel) {}
             Button("Detach and Close", role: .destructive) {
-                if let session = sessionPendingClose {
-                    try? store.close(id: session.id)
-                }
+                store.confirmPendingClose()
             }
         } message: {
             Text(closeConfirmationMessage)
@@ -79,7 +76,7 @@ struct ContentView: View {
                             store.select(id: item.session.id)
                         },
                         onClose: {
-                            requestClose(item.session)
+                            store.requestClose(id: item.session.id)
                         },
                         onRemove: {
                             try? store.remove(id: item.session.id)
@@ -122,7 +119,7 @@ struct ContentView: View {
 
                 if let selected = store.selectedSession {
                     Button {
-                        requestClose(selected)
+                        store.requestClose(id: selected.id)
                     } label: {
                         Image(systemName: "xmark")
                     }
@@ -137,26 +134,18 @@ struct ContentView: View {
         .accessibilityIdentifier(AccessibilityID.sidebar)
     }
 
-    private func requestClose(_ session: BanyanSession) {
-        if store.hasActiveChildren(session.id) {
-            sessionPendingClose = session
-        } else {
-            try? store.close(id: session.id)
-        }
-    }
-
     private var closeConfirmationBinding: Binding<Bool> {
         Binding {
-            sessionPendingClose != nil
+            store.pendingCloseSession != nil
         } set: { isPresented in
             if !isPresented {
-                sessionPendingClose = nil
+                store.cancelPendingClose()
             }
         }
     }
 
     private var closeConfirmationMessage: String {
-        guard let session = sessionPendingClose else {
+        guard let session = store.pendingCloseSession else {
             return ""
         }
         return "Closing \(session.displayTitle) will detach its child sessions to the same level as this parent session."

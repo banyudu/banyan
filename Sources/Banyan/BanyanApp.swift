@@ -14,11 +14,41 @@ struct BanyanApp: App {
         }
         .windowStyle(.titleBar)
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("New Session") {
+            CommandGroup(replacing: .newItem) {
+                Button("New Terminal") {
                     store.forkSelectedSession()
                 }
                 .keyboardShortcut("n")
+            }
+            CommandMenu("Terminal") {
+                Button("Close Current Terminal") {
+                    store.requestCloseSelectedSession()
+                }
+                .keyboardShortcut("w")
+                .disabled(store.selectedSession == nil)
+
+                Divider()
+
+                Button("Next Terminal") {
+                    store.selectNextSession()
+                }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(store.sidebarSessions.count < 2)
+
+                Button("Previous Terminal") {
+                    store.selectPreviousSession()
+                }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(store.sidebarSessions.count < 2)
+
+                Divider()
+
+                ForEach(Array(store.sidebarSessions.prefix(9).enumerated()), id: \.element.id) { index, item in
+                    Button("Switch to Terminal \(index + 1): \(item.session.displayTitle)") {
+                        store.selectSession(shortcutIndex: index + 1)
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                }
             }
         }
     }

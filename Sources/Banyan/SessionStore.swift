@@ -41,6 +41,7 @@ final class SessionStore: ObservableObject {
             applyAppearance()
         }
     }
+    @Published private var pendingCloseSessionID: String?
 
     private var controlServer: ControlServer?
     private let persistence = SessionPersistence()
@@ -131,6 +132,11 @@ final class SessionStore: ObservableObject {
     var selectedSession: BanyanSession? {
         guard let selectedSessionID else { return nil }
         return sessions.first { $0.id == selectedSessionID }
+    }
+
+    var pendingCloseSession: BanyanSession? {
+        guard let pendingCloseSessionID else { return nil }
+        return sessions.first { $0.id == pendingCloseSessionID }
     }
 
     func loadPersistedSessionsIfNeeded() {
@@ -313,6 +319,47 @@ final class SessionStore: ObservableObject {
         selectedSessionID = id
     }
 
+    func selectNextSession() {
+        selectAdjacentSession(direction: .next)
+    }
+
+    func selectPreviousSession() {
+        selectAdjacentSession(direction: .previous)
+    }
+
+    func selectSession(shortcutIndex: Int) {
+        guard let id = SessionSelectionNavigator.directID(
+            in: sidebarSessions.map(\.id),
+            oneBasedIndex: shortcutIndex
+        ) else {
+            return
+        }
+        selectedSessionID = id
+    }
+
+    func requestCloseSelectedSession() {
+        guard let selectedSession else { return }
+        requestClose(id: selectedSession.id)
+    }
+
+    func requestClose(id: String) {
+        if hasActiveChildren(id) {
+            pendingCloseSessionID = id
+        } else {
+            try? close(id: id)
+        }
+    }
+
+    func confirmPendingClose() {
+        guard let id = pendingCloseSessionID else { return }
+        pendingCloseSessionID = nil
+        try? close(id: id)
+    }
+
+    func cancelPendingClose() {
+        pendingCloseSessionID = nil
+    }
+
     func activeChildCount(of id: String) -> Int {
         sessions.filter { $0.status != .closed && $0.parentSessionID == id }.count
     }
@@ -442,6 +489,17 @@ final class SessionStore: ObservableObject {
             session.parentSessionID = parentIDForChildren
             session.touch()
         }
+    }
+
+    private func selectAdjacentSession(direction: SessionSelectionDirection) {
+        guard let id = SessionSelectionNavigator.adjacentID(
+            in: sidebarSessions.map(\.id),
+            selectedID: selectedSessionID,
+            direction: direction
+        ) else {
+            return
+        }
+        selectedSessionID = id
     }
 
     private func defaultTitle(for cwd: String) -> String {
