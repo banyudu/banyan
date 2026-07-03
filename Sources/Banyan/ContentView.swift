@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @State private var showingAddSession = false
     @State private var showingPreferences = false
+    @State private var sessionPendingClose: BanyanSession?
 
     var body: some View {
         NavigationSplitView {
@@ -24,7 +25,7 @@ struct ContentView: View {
                     Image(systemName: "plus")
                 }
                 .accessibilityIdentifier(AccessibilityID.toolbarAddSession)
-                .help("Fork selected directory")
+                .help("Fork selected session")
 
                 Button {
                     showingPreferences = true
@@ -50,6 +51,16 @@ struct ContentView: View {
                 store.spawn(cwd: NSHomeDirectory())
             }
         }
+        .alert("Close parent session?", isPresented: closeConfirmationBinding) {
+            Button("Cancel", role: .cancel) {}
+            Button("Detach and Close", role: .destructive) {
+                if let session = sessionPendingClose {
+                    try? store.close(id: session.id)
+                }
+            }
+        } message: {
+            Text(closeConfirmationMessage)
+        }
         .background(WindowTitleConfigurator())
         .accessibilityIdentifier(AccessibilityID.root)
     }
@@ -57,21 +68,22 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: $store.selectedSessionID) {
-                ForEach(store.visibleSessions) { session in
+                ForEach(store.sidebarSessions) { item in
                     SessionRow(
-                        session: session,
-                        isSelected: store.selectedSessionID == session.id,
+                        session: item.session,
+                        depth: item.depth,
+                        isSelected: store.selectedSessionID == item.session.id,
                         onSelect: {
-                            store.select(id: session.id)
+                            store.select(id: item.session.id)
                         },
                         onClose: {
-                            try? store.close(id: session.id)
+                            requestClose(item.session)
                         },
                         onRemove: {
-                            try? store.remove(id: session.id)
+                            try? store.remove(id: item.session.id)
                         }
                     )
-                        .tag(session.id)
+                        .tag(item.session.id)
                         .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
                 }
             }
@@ -85,7 +97,7 @@ struct ContentView: View {
                     Image(systemName: "plus")
                 }
                 .accessibilityIdentifier(AccessibilityID.sidebarAddSession)
-                .help("Fork selected directory")
+                .help("Fork selected session")
 
                 Menu {
                     Button("Custom Session...") {
@@ -108,7 +120,7 @@ struct ContentView: View {
 
                 if let selected = store.selectedSession {
                     Button {
-                        try? store.close(id: selected.id)
+                        requestClose(selected)
                     } label: {
                         Image(systemName: "xmark")
                     }
@@ -121,6 +133,31 @@ struct ContentView: View {
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
         .accessibilityIdentifier(AccessibilityID.sidebar)
+    }
+
+    private func requestClose(_ session: BanyanSession) {
+        if store.hasActiveChildren(session.id) {
+            sessionPendingClose = session
+        } else {
+            try? store.close(id: session.id)
+        }
+    }
+
+    private var closeConfirmationBinding: Binding<Bool> {
+        Binding {
+            sessionPendingClose != nil
+        } set: { isPresented in
+            if !isPresented {
+                sessionPendingClose = nil
+            }
+        }
+    }
+
+    private var closeConfirmationMessage: String {
+        guard let session = sessionPendingClose else {
+            return ""
+        }
+        return "Closing \(session.displayTitle) will detach its child sessions to the same level as this parent session."
     }
 
     @ViewBuilder
@@ -234,6 +271,7 @@ private final class TitlebarConfigurationView: NSView {
 
 private struct SessionRow: View {
     @ObservedObject var session: BanyanSession
+    let depth: Int
     let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
@@ -277,7 +315,8 @@ private struct SessionRow: View {
         }
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
         .padding(.vertical, 2)
-        .padding(.horizontal, 4)
+        .padding(.leading, 4 + CGFloat(depth) * 18)
+        .padding(.trailing, 4)
         .background(rowBackground)
         .contentShape(Rectangle())
         .simultaneousGesture(singleClickSelectGesture)

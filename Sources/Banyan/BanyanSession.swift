@@ -22,6 +22,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var updatedAt: Date
     @Published var isRestored: Bool
     @Published var isProcessStarted: Bool
+    @Published var parentSessionID: String?
 
     private var delegate: TerminalSessionDelegate?
     private let tmuxBackend = TmuxBackend.shared
@@ -54,6 +55,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         command: String,
         status: SessionStatus = .running,
         tone: SessionTone = .blue,
+        parentSessionID: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         isRestored: Bool = false,
@@ -72,6 +74,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.displayBranch = displayContext.branch
         self.status = status
         self.tone = tone
+        self.parentSessionID = parentSessionID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isRestored = isRestored

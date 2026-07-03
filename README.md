@@ -90,6 +90,13 @@ swift run banyanctl spawn \
   --cwd /Users/banyudu/dev/2enai/clawly \
   --cmd "codex"
 
+swift run banyanctl spawn \
+  --parent ENG-6685 \
+  --id ENG-6685-sub-1 \
+  --title "ENG-6685 subtask" \
+  --cwd /Users/banyudu/dev/2enai/clawly \
+  --cmd "codex"
+
 swift run banyanctl mark --id ENG-6685 --status need-input --tone yellow
 swift run banyanctl mark --id ENG-6685 --status review --tone purple --title "ENG-6685 review"
 swift run banyanctl close --id ENG-6685
@@ -98,7 +105,7 @@ swift run banyanctl remove --id ENG-6685
 swift run banyanctl list
 ```
 
-`close` detaches and hides the Banyan view while leaving the tmux session alive. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
+`--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
 
 The control API uses a versioned JSON schema (`apiVersion: "v1"`) and a local shared token stored at:
 

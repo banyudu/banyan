@@ -11,6 +11,7 @@ struct SessionSnapshot: Codable {
     let command: String
     let status: SessionStatus
     let tone: SessionTone
+    let parentSessionID: String?
     let createdAt: Date
     let updatedAt: Date
 
@@ -24,6 +25,7 @@ struct SessionSnapshot: Codable {
         command: String,
         status: SessionStatus,
         tone: SessionTone,
+        parentSessionID: String? = nil,
         createdAt: Date,
         updatedAt: Date
     ) {
@@ -36,6 +38,7 @@ struct SessionSnapshot: Codable {
         self.command = command
         self.status = status
         self.tone = tone
+        self.parentSessionID = parentSessionID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -50,6 +53,7 @@ struct SessionSnapshot: Codable {
         case command
         case status
         case tone
+        case parentSessionID
         case createdAt
         case updatedAt
     }
@@ -66,6 +70,7 @@ struct SessionSnapshot: Codable {
             command: try container.decode(String.self, forKey: .command),
             status: try container.decode(SessionStatus.self, forKey: .status),
             tone: try container.decode(SessionTone.self, forKey: .tone),
+            parentSessionID: try container.decodeIfPresent(String.self, forKey: .parentSessionID),
             createdAt: try container.decode(Date.self, forKey: .createdAt),
             updatedAt: try container.decode(Date.self, forKey: .updatedAt)
         )
@@ -100,7 +105,7 @@ struct SessionPersistence {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, reported_title, is_title_pinned, cwd, command, status, tone, created_at, updated_at
+            SELECT id, tmux_session_name, title, reported_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -121,8 +126,8 @@ struct SessionPersistence {
                     let status = SessionStatus(rawValue: rawStatus),
                     let rawTone = columnText(statement, 8),
                     let tone = SessionTone(rawValue: rawTone),
-                    let createdAt = decodeDate(columnText(statement, 9)),
-                    let updatedAt = decodeDate(columnText(statement, 10))
+                    let createdAt = decodeDate(columnText(statement, 10)),
+                    let updatedAt = decodeDate(columnText(statement, 11))
                 else {
                     continue
                 }
@@ -137,6 +142,7 @@ struct SessionPersistence {
                         command: command,
                         status: status,
                         tone: tone,
+                        parentSessionID: columnText(statement, 9),
                         createdAt: createdAt,
                         updatedAt: updatedAt
                     )
@@ -249,12 +255,14 @@ struct SessionPersistence {
             command TEXT NOT NULL,
             status TEXT NOT NULL,
             tone TEXT NOT NULL,
+            parent_session_id TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             sort_order INTEGER NOT NULL DEFAULT 0
         )
         """)
         try? execute(database, "ALTER TABLE sessions ADD COLUMN is_title_pinned INTEGER NOT NULL DEFAULT 0")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
         try execute(database, """
         CREATE TABLE IF NOT EXISTS workspace_state (
             key TEXT PRIMARY KEY,
@@ -275,8 +283,8 @@ struct SessionPersistence {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, reported_title, is_title_pinned, cwd, command, status, tone, created_at, updated_at, sort_order
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, reported_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
@@ -286,6 +294,7 @@ struct SessionPersistence {
             command = excluded.command,
             status = excluded.status,
             tone = excluded.tone,
+            parent_session_id = excluded.parent_session_id,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at,
             sort_order = excluded.sort_order
@@ -305,9 +314,10 @@ struct SessionPersistence {
         bindText(statement, 7, snapshot.command)
         bindText(statement, 8, snapshot.status.rawValue)
         bindText(statement, 9, snapshot.tone.rawValue)
-        bindText(statement, 10, encodeDate(snapshot.createdAt))
-        bindText(statement, 11, encodeDate(snapshot.updatedAt))
-        sqlite3_bind_int64(statement, 12, Int64(sortOrder))
+        bindText(statement, 10, snapshot.parentSessionID)
+        bindText(statement, 11, encodeDate(snapshot.createdAt))
+        bindText(statement, 12, encodeDate(snapshot.updatedAt))
+        sqlite3_bind_int64(statement, 13, Int64(sortOrder))
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw databaseError(database)

@@ -87,11 +87,13 @@ final class ControlServer {
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
                 let tone = body.tone.flatMap(SessionTone.init(rawValue:)) ?? .blue
+                let parentSessionID = try store.resolvedParentSessionIDForSpawn(body.parent)
                 let session = store.spawn(
                     id: body.id,
                     title: body.title,
                     cwd: body.cwd,
                     command: body.command,
+                    parentSessionID: parentSessionID,
                     tone: tone
                 )
                 return (200, ["session": summary(session)], nil)
@@ -185,6 +187,7 @@ final class ControlServer {
             "command": session.command,
             "status": session.status.rawValue,
             "tone": session.tone.rawValue,
+            "parent": session.parentSessionID ?? "",
             "isRestored": session.isRestored,
             "isProcessStarted": session.isProcessStarted,
             "createdAt": ISO8601DateFormatter().string(from: session.createdAt),

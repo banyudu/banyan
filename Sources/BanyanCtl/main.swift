@@ -53,7 +53,15 @@ struct BanyanCtl {
                 throw CLIError.message("unexpected argument '\(token)'")
             }
             let rawKey = String(token.dropFirst(2))
-            let key = rawKey == "cmd" ? "command" : rawKey
+            let key: String
+            switch rawKey {
+            case "cmd":
+                key = "command"
+            case "parent-id", "parentSessionID":
+                key = "parent"
+            default:
+                key = rawKey
+            }
             guard index + 1 < args.count else {
                 throw CLIError.message("missing value for \(token)")
             }
@@ -129,7 +137,7 @@ struct BanyanCtl {
         banyanctl controls a running Banyan app on localhost:7842.
 
         Usage:
-          banyanctl spawn  [--id ID] [--title TITLE] [--cwd PATH] [--command CMD] [--cmd CMD] [--tone blue]
+          banyanctl spawn  [--id ID] [--title TITLE] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
           banyanctl mark   --id ID [--status running|need-input|review|completed|failed] [--tone red] [--title TITLE]
           banyanctl close  --id ID
           banyanctl respawn --id ID

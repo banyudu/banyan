@@ -1,6 +1,15 @@
 import BanyanCore
 import Foundation
 
+struct SidebarSessionItem: Identifiable {
+    let session: BanyanSession
+    let depth: Int
+
+    var id: String {
+        session.id
+    }
+}
+
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [BanyanSession] = []
@@ -90,6 +99,33 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    var sidebarSessions: [SidebarSessionItem] {
+        let active = visibleSessions
+        let activeIDs = Set(active.map(\.id))
+        let grouped = Dictionary(grouping: active) { session in
+            session.parentSessionID.flatMap { activeIDs.contains($0) ? $0 : nil }
+        }
+        var visited = Set<String>()
+        var result: [SidebarSessionItem] = []
+
+        func append(_ session: BanyanSession, depth: Int) {
+            guard !visited.contains(session.id) else { return }
+            visited.insert(session.id)
+            result.append(SidebarSessionItem(session: session, depth: depth))
+            for child in grouped[session.id] ?? [] {
+                append(child, depth: depth + 1)
+            }
+        }
+
+        for root in grouped[nil] ?? [] {
+            append(root, depth: 0)
+        }
+        for session in active where !visited.contains(session.id) {
+            append(session, depth: 0)
+        }
+        return result
+    }
+
     var selectedSession: BanyanSession? {
         guard let selectedSessionID else { return nil }
         return sessions.first { $0.id == selectedSessionID }
@@ -111,6 +147,7 @@ final class SessionStore: ObservableObject {
                 command: snapshot.command,
                 status: snapshot.status == .closed && tmuxBackend.hasSession(named: tmuxSessionName) ? .running : snapshot.status,
                 tone: snapshot.tone,
+                parentSessionID: snapshot.parentSessionID,
                 createdAt: snapshot.createdAt,
                 updatedAt: snapshot.updatedAt,
                 isRestored: true,
@@ -163,7 +200,7 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func forkSelectedSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
-        return spawn(cwd: cwd, command: "")
+        return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.id)
     }
 
     @discardableResult
@@ -172,6 +209,7 @@ final class SessionStore: ObservableObject {
         title proposedTitle: String? = nil,
         cwd proposedCWD: String? = nil,
         command proposedCommand: String? = nil,
+        parentSessionID proposedParentSessionID: String? = nil,
         tone: SessionTone = .blue
     ) -> BanyanSession {
         let baseID = sanitizeID(proposedID ?? proposedTitle ?? "session")
@@ -180,6 +218,7 @@ final class SessionStore: ObservableObject {
         let command = proposedCommand ?? ""
         let hasExplicitTitle = proposedTitle?.isEmpty == false
         let title = hasExplicitTitle ? proposedTitle! : defaultTitle(for: cwd)
+        let parentSessionID = normalizedParentSessionID(proposedParentSessionID)
         let session = BanyanSession(
             id: id,
             tmuxSessionName: TmuxBackend.sessionName(for: id),
@@ -188,6 +227,7 @@ final class SessionStore: ObservableObject {
             cwd: cwd,
             command: command,
             tone: tone,
+            parentSessionID: parentSessionID,
             theme: terminalTheme,
             fontFamily: terminalFontFamily,
             fontSize: terminalFontSize
@@ -221,6 +261,7 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        detachChildren(of: id, to: session.parentSessionID)
         session.terminate(markClosed: true)
         if selectedSessionID == id {
             selectedSessionID = visibleSessions.first?.id
@@ -232,6 +273,8 @@ final class SessionStore: ObservableObject {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        let parentSessionID = sessions[index].parentSessionID
+        detachChildren(of: id, to: parentSessionID)
         sessions[index].killBackingSession()
         sessions.remove(at: index)
         if selectedSessionID == id {
@@ -242,6 +285,24 @@ final class SessionStore: ObservableObject {
 
     func select(id: String) {
         selectedSessionID = id
+    }
+
+    func activeChildCount(of id: String) -> Int {
+        sessions.filter { $0.status != .closed && $0.parentSessionID == id }.count
+    }
+
+    func hasActiveChildren(_ id: String) -> Bool {
+        activeChildCount(of: id) > 0
+    }
+
+    func resolvedParentSessionIDForSpawn(_ parentSessionID: String?) throws -> String? {
+        guard let parentSessionID = normalizedParentSessionID(parentSessionID) else {
+            return nil
+        }
+        guard sessions.contains(where: { $0.id == parentSessionID && $0.status != .closed }) else {
+            throw ControlError.badRequest("No active parent session found for id '\(parentSessionID)'")
+        }
+        return parentSessionID
     }
 
     private func attach(_ session: BanyanSession) {
@@ -278,6 +339,7 @@ final class SessionStore: ObservableObject {
                 command: $0.command,
                 status: $0.status,
                 tone: $0.tone,
+                parentSessionID: $0.parentSessionID,
                 createdAt: $0.createdAt,
                 updatedAt: $0.updatedAt
             )
@@ -310,6 +372,19 @@ final class SessionStore: ObservableObject {
             return expanded
         }
         return NSHomeDirectory()
+    }
+
+    private func normalizedParentSessionID(_ parentSessionID: String?) -> String? {
+        let trimmed = parentSessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private func detachChildren(of parentID: String, to newParentID: String?) {
+        let parentIDForChildren = normalizedParentSessionID(newParentID)
+        for session in sessions where session.parentSessionID == parentID {
+            session.parentSessionID = parentIDForChildren
+            session.touch()
+        }
     }
 
     private func defaultTitle(for cwd: String) -> String {

@@ -93,6 +93,7 @@ public struct ControlPayload: Codable {
     public let command: String?
     public let status: String?
     public let tone: String?
+    public let parent: String?
     public let path: String?
 
     public init(
@@ -103,6 +104,7 @@ public struct ControlPayload: Codable {
         command: String? = nil,
         status: String? = nil,
         tone: String? = nil,
+        parent: String? = nil,
         path: String? = nil
     ) {
         self.apiVersion = apiVersion
@@ -112,6 +114,7 @@ public struct ControlPayload: Codable {
         self.command = command
         self.status = status
         self.tone = tone
+        self.parent = parent
         self.path = path
     }
 }
