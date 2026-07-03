@@ -22,6 +22,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     var onDidChange: (() -> Void)?
     var onOutput: ((String) -> Void)?
     var onStatusSignal: ((SessionStatus) -> Void)?
+    private var didRenderRestoredMessage = false
 
     init(
         id: String,
@@ -71,9 +72,15 @@ final class BanyanSession: ObservableObject, Identifiable {
             self?.onOutput?(text)
         }
 
-        if isRestored {
-            terminalView.feed(text: restoredMessage())
-        }
+    }
+
+    func renderRestoredMessageIfNeeded(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13) {
+        guard isRestored, !didRenderRestoredMessage else { return }
+        guard terminalView.bounds.width > 80, terminalView.bounds.height > 80 else { return }
+        theme.apply(to: terminalView, fontFamily: fontFamily, fontSize: fontSize)
+        terminalView.resizeSubviews(withOldSize: .zero)
+        terminalView.feed(text: restoredMessage())
+        didRenderRestoredMessage = true
     }
 
     func start() {

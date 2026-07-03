@@ -9,6 +9,9 @@ struct TerminalHostView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TerminalContainerView {
         let container = TerminalContainerView(terminalView: session.terminalView)
+        container.onLayout = {
+            session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+        }
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         container.needsLayout = true
         return container
@@ -17,6 +20,9 @@ struct TerminalHostView: NSViewRepresentable {
     func updateNSView(_ nsView: TerminalContainerView, context: Context) {
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         nsView.install(session.terminalView)
+        nsView.onLayout = {
+            session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+        }
         nsView.needsLayout = true
         DispatchQueue.main.async {
             nsView.layoutSubtreeIfNeeded()
@@ -27,6 +33,7 @@ struct TerminalHostView: NSViewRepresentable {
 
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
+    var onLayout: (() -> Void)?
 
     init(terminalView: LocalProcessTerminalView) {
         self.terminalView = terminalView
@@ -58,11 +65,13 @@ final class TerminalContainerView: NSView {
     override func layout() {
         super.layout()
         forceTerminalResize()
+        onLayout?()
     }
 
     func forceTerminalResize() {
         guard bounds.width > 40, bounds.height > 40 else { return }
         terminalView.frame = bounds
+        terminalView.setFrameSize(bounds.size)
         terminalView.resizeSubviews(withOldSize: .zero)
         terminalView.needsDisplay = true
     }
