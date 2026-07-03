@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 struct SessionSnapshot: Codable {
     let id: String
@@ -13,40 +14,345 @@ struct SessionSnapshot: Codable {
     let updatedAt: Date
 }
 
-struct SessionPersistence {
-    private let fileURL: URL
+struct WorkspaceSnapshot {
+    let selectedSessionID: String?
+    let sortMode: SortMode
+    let terminalTheme: TerminalTheme
+    let terminalFontFamily: String
+    let terminalFontSize: Double
+}
 
-    init(fileURL: URL = SessionPersistence.defaultFileURL()) {
-        self.fileURL = fileURL
+struct SessionPersistence {
+    private let databaseURL: URL
+    private let legacyJSONURL: URL
+
+    init(
+        databaseURL: URL = SessionPersistence.defaultDatabaseURL(),
+        legacyJSONURL: URL = SessionPersistence.defaultLegacyJSONURL()
+    ) {
+        self.databaseURL = databaseURL
+        self.legacyJSONURL = legacyJSONURL
+        migrateLegacyJSONIfNeeded()
     }
 
     func load() -> [SessionSnapshot] {
-        guard let data = try? Data(contentsOf: fileURL) else {
+        do {
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+
+            let sql = """
+            SELECT id, tmux_session_name, title, reported_title, cwd, command, status, tone, created_at, updated_at
+            FROM sessions
+            ORDER BY sort_order ASC, created_at ASC
+            """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw databaseError(database)
+            }
+            defer { sqlite3_finalize(statement) }
+
+            var snapshots: [SessionSnapshot] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard
+                    let id = columnText(statement, 0),
+                    let title = columnText(statement, 2),
+                    let cwd = columnText(statement, 4),
+                    let command = columnText(statement, 5),
+                    let rawStatus = columnText(statement, 6),
+                    let status = SessionStatus(rawValue: rawStatus),
+                    let rawTone = columnText(statement, 7),
+                    let tone = SessionTone(rawValue: rawTone),
+                    let createdAt = decodeDate(columnText(statement, 8)),
+                    let updatedAt = decodeDate(columnText(statement, 9))
+                else {
+                    continue
+                }
+                snapshots.append(
+                    SessionSnapshot(
+                        id: id,
+                        tmuxSessionName: columnText(statement, 1),
+                        title: title,
+                        reportedTitle: columnText(statement, 3),
+                        cwd: cwd,
+                        command: command,
+                        status: status,
+                        tone: tone,
+                        createdAt: createdAt,
+                        updatedAt: updatedAt
+                    )
+                )
+            }
+            return snapshots
+        } catch {
+            NSLog("Banyan failed to load sessions from SQLite: \(error.localizedDescription)")
             return []
         }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([SessionSnapshot].self, from: data)) ?? []
     }
 
     func save(_ snapshots: [SessionSnapshot]) {
         do {
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(snapshots).write(to: fileURL, options: [.atomic])
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+            try execute(database, "BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try execute(database, "DELETE FROM sessions")
+                for (index, snapshot) in snapshots.enumerated() {
+                    try upsert(snapshot, sortOrder: index, database: database)
+                }
+                try execute(database, "COMMIT")
+            } catch {
+                try? execute(database, "ROLLBACK")
+                throw error
+            }
         } catch {
-            NSLog("Banyan failed to persist sessions: \(error.localizedDescription)")
+            NSLog("Banyan failed to persist sessions to SQLite: \(error.localizedDescription)")
         }
     }
 
-    static func defaultFileURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+    func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot {
+        do {
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+
+            let state = try loadState(database)
+            return WorkspaceSnapshot(
+                selectedSessionID: state["selectedSessionID"] ?? defaults.selectedSessionID,
+                sortMode: state["sortMode"].flatMap(SortMode.init(rawValue:)) ?? defaults.sortMode,
+                terminalTheme: state["terminalTheme"].flatMap(TerminalTheme.init(rawValue:)) ?? defaults.terminalTheme,
+                terminalFontFamily: state["terminalFontFamily"] ?? defaults.terminalFontFamily,
+                terminalFontSize: state["terminalFontSize"].flatMap(Double.init) ?? defaults.terminalFontSize
+            )
+        } catch {
+            NSLog("Banyan failed to load workspace state from SQLite: \(error.localizedDescription)")
+            return defaults
+        }
+    }
+
+    func saveWorkspace(_ workspace: WorkspaceSnapshot) {
+        do {
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+            try execute(database, "BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try setState("selectedSessionID", workspace.selectedSessionID, database)
+                try setState("sortMode", workspace.sortMode.rawValue, database)
+                try setState("terminalTheme", workspace.terminalTheme.rawValue, database)
+                try setState("terminalFontFamily", workspace.terminalFontFamily, database)
+                try setState("terminalFontSize", String(workspace.terminalFontSize), database)
+                try execute(database, "COMMIT")
+            } catch {
+                try? execute(database, "ROLLBACK")
+                throw error
+            }
+        } catch {
+            NSLog("Banyan failed to persist workspace state to SQLite: \(error.localizedDescription)")
+        }
+    }
+
+    private func migrateLegacyJSONIfNeeded() {
+        guard FileManager.default.fileExists(atPath: legacyJSONURL.path) else { return }
+        guard load().isEmpty else { return }
+        guard let data = try? Data(contentsOf: legacyJSONURL) else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let snapshots = try? decoder.decode([SessionSnapshot].self, from: data), !snapshots.isEmpty else {
+            return
+        }
+        save(snapshots)
+    }
+
+    private func openDatabase() throws -> OpaquePointer {
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        var database: OpaquePointer?
+        guard sqlite3_open(databaseURL.path, &database) == SQLITE_OK, let database else {
+            throw databaseError(database)
+        }
+        return database
+    }
+
+    private func migrate(_ database: OpaquePointer) throws {
+        try execute(database, "PRAGMA foreign_keys = ON")
+        try execute(database, """
+        CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY,
+            tmux_session_name TEXT,
+            title TEXT NOT NULL,
+            reported_title TEXT,
+            cwd TEXT NOT NULL,
+            command TEXT NOT NULL,
+            status TEXT NOT NULL,
+            tone TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )
+        """)
+        try execute(database, """
+        CREATE TABLE IF NOT EXISTS workspace_state (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """)
+        try execute(database, """
+        CREATE TABLE IF NOT EXISTS session_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            message TEXT,
+            created_at TEXT NOT NULL
+        )
+        """)
+    }
+
+    private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
+        let sql = """
+        INSERT INTO sessions (
+            id, tmux_session_name, title, reported_title, cwd, command, status, tone, created_at, updated_at, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            tmux_session_name = excluded.tmux_session_name,
+            title = excluded.title,
+            reported_title = excluded.reported_title,
+            cwd = excluded.cwd,
+            command = excluded.command,
+            status = excluded.status,
+            tone = excluded.tone,
+            created_at = excluded.created_at,
+            updated_at = excluded.updated_at,
+            sort_order = excluded.sort_order
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw databaseError(database)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bindText(statement, 1, snapshot.id)
+        bindText(statement, 2, snapshot.tmuxSessionName)
+        bindText(statement, 3, snapshot.title)
+        bindText(statement, 4, snapshot.reportedTitle)
+        bindText(statement, 5, snapshot.cwd)
+        bindText(statement, 6, snapshot.command)
+        bindText(statement, 7, snapshot.status.rawValue)
+        bindText(statement, 8, snapshot.tone.rawValue)
+        bindText(statement, 9, encodeDate(snapshot.createdAt))
+        bindText(statement, 10, encodeDate(snapshot.updatedAt))
+        sqlite3_bind_int64(statement, 11, Int64(sortOrder))
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw databaseError(database)
+        }
+    }
+
+    private func loadState(_ database: OpaquePointer) throws -> [String: String] {
+        let sql = "SELECT key, value FROM workspace_state"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw databaseError(database)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var result: [String: String] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let key = columnText(statement, 0) else { continue }
+            result[key] = columnText(statement, 1)
+        }
+        return result
+    }
+
+    private func setState(_ key: String, _ value: String?, _ database: OpaquePointer) throws {
+        if let value {
+            let sql = """
+            INSERT INTO workspace_state (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw databaseError(database)
+            }
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, 1, key)
+            bindText(statement, 2, value)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw databaseError(database)
+            }
+        } else {
+            let sql = "DELETE FROM workspace_state WHERE key = ?"
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw databaseError(database)
+            }
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, 1, key)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw databaseError(database)
+            }
+        }
+    }
+
+    private func execute(_ database: OpaquePointer, _ sql: String) throws {
+        var error: UnsafeMutablePointer<CChar>?
+        guard sqlite3_exec(database, sql, nil, nil, &error) == SQLITE_OK else {
+            let message = error.map { String(cString: $0) } ?? "unknown SQLite error"
+            sqlite3_free(error)
+            throw NSError(domain: "BanyanSQLite", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
+    private func databaseError(_ database: OpaquePointer?) -> NSError {
+        let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown SQLite error"
+        return NSError(domain: "BanyanSQLite", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func bindText(_ statement: OpaquePointer?, _ index: Int32, _ value: String?) {
+        if let value {
+            sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(statement, index)
+        }
+    }
+
+    private func columnText(_ statement: OpaquePointer?, _ index: Int32) -> String? {
+        guard let text = sqlite3_column_text(statement, index) else { return nil }
+        return String(cString: text)
+    }
+
+    private func encodeDate(_ date: Date) -> String {
+        Self.dateFormatter.string(from: date)
+    }
+
+    private func decodeDate(_ value: String?) -> Date? {
+        value.flatMap { Self.dateFormatter.date(from: $0) }
+    }
+
+    static func defaultDatabaseURL() -> URL {
+        let base = applicationSupportURL()
+        return base.appendingPathComponent("Banyan/state.sqlite")
+    }
+
+    static func defaultLegacyJSONURL() -> URL {
+        let base = applicationSupportURL()
         return base.appendingPathComponent("Banyan/sessions.json")
     }
+
+    private static func applicationSupportURL() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+    }
+
+    private static let dateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
+
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

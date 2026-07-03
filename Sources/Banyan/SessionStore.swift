@@ -3,23 +3,31 @@ import Foundation
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [BanyanSession] = []
-    @Published var selectedSessionID: String?
-    @Published var sortMode: SortMode = .manual
+    @Published var selectedSessionID: String? {
+        didSet {
+            saveWorkspace()
+        }
+    }
+    @Published var sortMode: SortMode = .manual {
+        didSet {
+            saveWorkspace()
+        }
+    }
     @Published var terminalTheme: TerminalTheme = .system {
         didSet {
-            UserDefaults.standard.set(terminalTheme.rawValue, forKey: "terminalTheme")
+            saveWorkspace()
             applyAppearance()
         }
     }
     @Published var terminalFontFamily: String = "Menlo" {
         didSet {
-            UserDefaults.standard.set(terminalFontFamily, forKey: "terminalFontFamily")
+            saveWorkspace()
             applyAppearance()
         }
     }
     @Published var terminalFontSize: Double = 13 {
         didSet {
-            UserDefaults.standard.set(terminalFontSize, forKey: "terminalFontSize")
+            saveWorkspace()
             applyAppearance()
         }
     }
@@ -32,17 +40,34 @@ final class SessionStore: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
            let theme = TerminalTheme(rawValue: rawTheme) {
-            terminalTheme = theme
+            defaultTheme = theme
         }
+        var defaultFontFamily = "Menlo"
         if let fontFamily = defaults.string(forKey: "terminalFontFamily") {
-            terminalFontFamily = fontFamily
+            defaultFontFamily = fontFamily
         }
+        var defaultFontSize: Double = 13
         let storedFontSize = defaults.double(forKey: "terminalFontSize")
         if storedFontSize > 0 {
-            terminalFontSize = storedFontSize
+            defaultFontSize = storedFontSize
         }
+        let workspace = persistence.loadWorkspace(
+            defaults: WorkspaceSnapshot(
+                selectedSessionID: nil,
+                sortMode: .manual,
+                terminalTheme: defaultTheme,
+                terminalFontFamily: defaultFontFamily,
+                terminalFontSize: defaultFontSize
+            )
+        )
+        selectedSessionID = workspace.selectedSessionID
+        sortMode = workspace.sortMode
+        terminalTheme = workspace.terminalTheme
+        terminalFontFamily = workspace.terminalFontFamily
+        terminalFontSize = workspace.terminalFontSize
     }
 
     var visibleSessions: [BanyanSession] {
@@ -118,7 +143,11 @@ final class SessionStore: ObservableObject {
             sessions.append(session)
             session.start()
         }
-        selectedSessionID = visibleSessions.first?.id
+        if let selectedSessionID, visibleSessions.contains(where: { $0.id == selectedSessionID }) {
+            self.selectedSessionID = selectedSessionID
+        } else {
+            selectedSessionID = visibleSessions.first?.id
+        }
         saveSessions()
     }
 
@@ -249,6 +278,18 @@ final class SessionStore: ObservableObject {
             )
         }
         persistence.save(snapshots)
+    }
+
+    private func saveWorkspace() {
+        persistence.saveWorkspace(
+            WorkspaceSnapshot(
+                selectedSessionID: selectedSessionID,
+                sortMode: sortMode,
+                terminalTheme: terminalTheme,
+                terminalFontFamily: terminalFontFamily,
+                terminalFontSize: terminalFontSize
+            )
+        )
     }
 
     private func detectAttention(in text: String, for session: BanyanSession) {

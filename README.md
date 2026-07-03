@@ -51,11 +51,15 @@ The app starts a local control server on `127.0.0.1:7842`.
 
 Live terminal processes are kept by `tmux -L banyan` using session names prefixed with `banyan-`.
 
-Session metadata is saved to:
+Session and workspace state are saved to SQLite:
 
 ```text
-~/Library/Application Support/Banyan/sessions.json
+~/Library/Application Support/Banyan/state.sqlite
 ```
+
+On first launch after upgrading, Banyan migrates legacy session metadata from `sessions.json` when the SQLite database has no sessions.
+
+Persisted state currently includes session metadata, tmux session names, sidebar order, selected session, sort mode, terminal theme, and terminal font settings.
 
 ## Package
 
