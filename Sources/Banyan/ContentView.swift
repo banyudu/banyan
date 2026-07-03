@@ -57,7 +57,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             List(selection: $store.selectedSessionID) {
                 ForEach(store.visibleSessions) { session in
-                    SessionRow(session: session)
+                    SessionRow(session: session, isSelected: store.selectedSessionID == session.id)
                         .tag(session.id)
                         .contextMenu {
                             Button("Edit") {
@@ -158,16 +158,17 @@ struct ContentView: View {
 
 private struct SessionRow: View {
     @ObservedObject var session: BanyanSession
+    let isSelected: Bool
 
     var body: some View {
         HStack(spacing: 10) {
             Circle()
                 .fill(Color(nsColor: session.tone.nsColor))
-                .frame(width: 9, height: 9)
+                .frame(width: isSelected ? 9 : 7, height: isSelected ? 9 : 7)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: isSelected ? 13 : 12.5, weight: isSelected ? .semibold : .regular))
                     .lineLimit(1)
                     .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
 
@@ -179,17 +180,31 @@ private struct SessionRow: View {
                         Text(reportedTitle)
                     }
                 }
-                .font(.caption)
+                .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
             }
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, isSelected ? 5 : 3)
         .padding(.horizontal, 8)
-        .background(session.tone.backgroundColor, in: RoundedRectangle(cornerRadius: 6))
+        .background(rowBackground)
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
+    }
+
+    @ViewBuilder
+    private var rowBackground: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(session.tone.backgroundColor)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(nsColor: session.tone.nsColor).opacity(0.18), lineWidth: 1)
+                }
+        } else {
+            Color.clear
+        }
     }
 }
 
