@@ -13,10 +13,8 @@ enum AccessibilityID {
     static let toolbarLogo = "banyan.toolbar.logo"
     static let sidebarAddSession = "banyan.sidebar.add-session"
     static let sidebarOptions = "banyan.sidebar.options"
-    static let sidebarEditSelected = "banyan.sidebar.edit-selected"
     static let sidebarCloseSelected = "banyan.sidebar.close-selected"
     static let addSessionSheet = "banyan.sheet.add-session"
-    static let editSessionSheet = "banyan.sheet.edit-session"
     static let preferencesSheet = "banyan.sheet.preferences"
 
     static func sessionRow(_ id: String) -> String {

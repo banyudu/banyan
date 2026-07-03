@@ -5,7 +5,6 @@ struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @State private var showingAddSession = false
     @State private var showingPreferences = false
-    @State private var editingSession: BanyanSession?
 
     var body: some View {
         NavigationSplitView {
@@ -44,14 +43,11 @@ struct ContentView: View {
             PreferencesSheet()
                 .environmentObject(store)
         }
-        .sheet(item: $editingSession) { session in
-            EditSessionSheet(session: session)
-        }
         .onAppear {
             store.loadPersistedSessionsIfNeeded()
             store.startControlServer()
             if store.visibleSessions.isEmpty {
-                store.spawn(title: "Shell", cwd: NSHomeDirectory())
+                store.spawn(cwd: NSHomeDirectory())
             }
         }
         .background(WindowTitleConfigurator())
@@ -62,20 +58,21 @@ struct ContentView: View {
         VStack(spacing: 0) {
             List(selection: $store.selectedSessionID) {
                 ForEach(store.visibleSessions) { session in
-                    SessionRow(session: session, isSelected: store.selectedSessionID == session.id)
-                        .tag(session.id)
-                        .contextMenu {
-                            Button("Edit") {
-                                editingSession = session
-                            }
-                            Divider()
-                            Button("Close") {
-                                try? store.close(id: session.id)
-                            }
-                            Button("Remove") {
-                                try? store.remove(id: session.id)
-                            }
+                    SessionRow(
+                        session: session,
+                        isSelected: store.selectedSessionID == session.id,
+                        onSelect: {
+                            store.select(id: session.id)
+                        },
+                        onClose: {
+                            try? store.close(id: session.id)
+                        },
+                        onRemove: {
+                            try? store.remove(id: session.id)
                         }
+                    )
+                        .tag(session.id)
+                        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
                 }
             }
             .listStyle(.sidebar)
@@ -110,14 +107,6 @@ struct ContentView: View {
                 Spacer()
 
                 if let selected = store.selectedSession {
-                    Button {
-                        editingSession = selected
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                    }
-                    .accessibilityIdentifier(AccessibilityID.sidebarEditSelected)
-                    .help("Edit selected session")
-
                     Button {
                         try? store.close(id: selected.id)
                     } label: {
@@ -246,32 +235,88 @@ private final class TitlebarConfigurationView: NSView {
 private struct SessionRow: View {
     @ObservedObject var session: BanyanSession
     let isSelected: Bool
+    let onSelect: () -> Void
+    let onClose: () -> Void
+    let onRemove: () -> Void
+
+    @State private var isRenaming = false
+    @State private var renameDraft = ""
+    @FocusState private var isRenameFocused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(Color(nsColor: session.tone.nsColor))
-                .frame(width: isSelected ? 9 : 7, height: isSelected ? 9 : 7)
-
-            Text(session.displayTitle)
-                .font(.system(size: isSelected ? 13 : 12.5, weight: isSelected ? .semibold : .regular))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
-
-            Spacer(minLength: 0)
-
             Image(systemName: sessionStatusIcon)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(statusColor)
                 .frame(width: 14, height: 14)
                 .accessibilityLabel(session.isRestored ? "Restorable" : session.status.label)
                 .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
+
+            if isRenaming {
+                TextField("Session title", text: $renameDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .focused($isRenameFocused)
+                    .onSubmit(commitRename)
+                    .onExitCommand(perform: cancelRename)
+                    .onChange(of: isRenameFocused) { _, isFocused in
+                        if !isFocused, isRenaming {
+                            commitRename()
+                        }
+                    }
+                    .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
+            } else {
+                Text(session.displayTitle)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
+            }
+
+            Spacer(minLength: 0)
         }
-        .padding(.vertical, isSelected ? 5 : 4)
+        .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+        .padding(.vertical, 2)
         .padding(.horizontal, 8)
         .background(rowBackground)
+        .contentShape(Rectangle())
+        .simultaneousGesture(singleClickSelectGesture)
+        .simultaneousGesture(doubleClickRenameGesture)
+        .contextMenu {
+            Button("Rename") {
+                beginRename()
+            }
+            Divider()
+            Button("Close") {
+                onClose()
+            }
+            Button("Remove") {
+                onRemove()
+            }
+        }
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
+    }
+
+    private func beginRename() {
+        guard !isRenaming else { return }
+        onSelect()
+        renameDraft = session.displayTitle
+        isRenaming = true
+        DispatchQueue.main.async {
+            isRenameFocused = true
+        }
+    }
+
+    private func commitRename() {
+        let trimmed = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, trimmed != session.displayTitle {
+            session.mark(title: trimmed)
+        }
+        isRenaming = false
+    }
+
+    private func cancelRename() {
+        isRenaming = false
     }
 
     private var sessionStatusIcon: String {
@@ -296,14 +341,24 @@ private struct SessionRow: View {
     @ViewBuilder
     private var rowBackground: some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(session.tone.backgroundColor)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: session.tone.nsColor).opacity(0.18), lineWidth: 1)
-                }
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
         } else {
             Color.clear
+        }
+    }
+
+    private var doubleClickRenameGesture: some Gesture {
+        TapGesture(count: 2).onEnded {
+            beginRename()
+        }
+    }
+
+    private var singleClickSelectGesture: some Gesture {
+        TapGesture(count: 1).onEnded {
+            if !isRenaming {
+                onSelect()
+            }
         }
     }
 }

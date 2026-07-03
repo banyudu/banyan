@@ -1,3 +1,4 @@
+import BanyanCore
 import Foundation
 
 @MainActor
@@ -104,7 +105,8 @@ final class SessionStore: ObservableObject {
             let session = BanyanSession(
                 id: uniqueID(snapshot.id, avoidingLiveTmuxSessions: false),
                 tmuxSessionName: tmuxSessionName,
-                title: snapshot.title,
+                title: restoredTitle(from: snapshot),
+                isTitlePinned: snapshot.isTitlePinned,
                 cwd: snapshot.cwd,
                 command: snapshot.command,
                 status: snapshot.status == .closed && tmuxBackend.hasSession(named: tmuxSessionName) ? .running : snapshot.status,
@@ -129,7 +131,7 @@ final class SessionStore: ObservableObject {
             let session = BanyanSession(
                 id: id,
                 tmuxSessionName: tmuxSessionName,
-                title: id,
+                title: defaultTitle(for: NSHomeDirectory()),
                 cwd: NSHomeDirectory(),
                 command: "",
                 status: .running,
@@ -161,7 +163,7 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func forkSelectedSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
-        return spawn(title: "Shell", cwd: cwd, command: "")
+        return spawn(cwd: cwd, command: "")
     }
 
     @discardableResult
@@ -176,11 +178,13 @@ final class SessionStore: ObservableObject {
         let id = uniqueID(baseID, avoidingLiveTmuxSessions: true)
         let cwd = resolvedWorkingDirectory(proposedCWD)
         let command = proposedCommand ?? ""
-        let title = proposedTitle?.isEmpty == false ? proposedTitle! : id
+        let hasExplicitTitle = proposedTitle?.isEmpty == false
+        let title = hasExplicitTitle ? proposedTitle! : defaultTitle(for: cwd)
         let session = BanyanSession(
             id: id,
             tmuxSessionName: TmuxBackend.sessionName(for: id),
             title: title,
+            isTitlePinned: hasExplicitTitle,
             cwd: cwd,
             command: command,
             tone: tone,
@@ -269,6 +273,7 @@ final class SessionStore: ObservableObject {
                 tmuxSessionName: $0.tmuxSessionName,
                 title: $0.title,
                 reportedTitle: $0.reportedTitle,
+                isTitlePinned: $0.isTitlePinned,
                 cwd: $0.cwd,
                 command: $0.command,
                 status: $0.status,
@@ -305,6 +310,26 @@ final class SessionStore: ObservableObject {
             return expanded
         }
         return NSHomeDirectory()
+    }
+
+    private func defaultTitle(for cwd: String) -> String {
+        PathDisplayName.make(path: cwd)
+    }
+
+    private func restoredTitle(from snapshot: SessionSnapshot) -> String {
+        if !snapshot.isTitlePinned, isGenericDefaultTitle(snapshot.title) {
+            return defaultTitle(for: snapshot.cwd)
+        }
+        return snapshot.title
+    }
+
+    private func isGenericDefaultTitle(_ title: String) -> Bool {
+        let value = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return value.isEmpty
+            || value == "shell"
+            || value.hasPrefix("shell-")
+            || value == "session"
+            || value.hasPrefix("session-")
     }
 
     private func sanitizeID(_ value: String) -> String {

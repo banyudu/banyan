@@ -6,12 +6,70 @@ struct SessionSnapshot: Codable {
     let tmuxSessionName: String?
     let title: String
     let reportedTitle: String?
+    let isTitlePinned: Bool
     let cwd: String
     let command: String
     let status: SessionStatus
     let tone: SessionTone
     let createdAt: Date
     let updatedAt: Date
+
+    init(
+        id: String,
+        tmuxSessionName: String?,
+        title: String,
+        reportedTitle: String?,
+        isTitlePinned: Bool = false,
+        cwd: String,
+        command: String,
+        status: SessionStatus,
+        tone: SessionTone,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.tmuxSessionName = tmuxSessionName
+        self.title = title
+        self.reportedTitle = reportedTitle
+        self.isTitlePinned = isTitlePinned
+        self.cwd = cwd
+        self.command = command
+        self.status = status
+        self.tone = tone
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case tmuxSessionName
+        case title
+        case reportedTitle
+        case isTitlePinned
+        case cwd
+        case command
+        case status
+        case tone
+        case createdAt
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            tmuxSessionName: try container.decodeIfPresent(String.self, forKey: .tmuxSessionName),
+            title: try container.decode(String.self, forKey: .title),
+            reportedTitle: try container.decodeIfPresent(String.self, forKey: .reportedTitle),
+            isTitlePinned: try container.decodeIfPresent(Bool.self, forKey: .isTitlePinned) ?? false,
+            cwd: try container.decode(String.self, forKey: .cwd),
+            command: try container.decode(String.self, forKey: .command),
+            status: try container.decode(SessionStatus.self, forKey: .status),
+            tone: try container.decode(SessionTone.self, forKey: .tone),
+            createdAt: try container.decode(Date.self, forKey: .createdAt),
+            updatedAt: try container.decode(Date.self, forKey: .updatedAt)
+        )
+    }
 }
 
 struct WorkspaceSnapshot {
@@ -42,7 +100,7 @@ struct SessionPersistence {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, reported_title, cwd, command, status, tone, created_at, updated_at
+            SELECT id, tmux_session_name, title, reported_title, is_title_pinned, cwd, command, status, tone, created_at, updated_at
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -57,14 +115,14 @@ struct SessionPersistence {
                 guard
                     let id = columnText(statement, 0),
                     let title = columnText(statement, 2),
-                    let cwd = columnText(statement, 4),
-                    let command = columnText(statement, 5),
-                    let rawStatus = columnText(statement, 6),
+                    let cwd = columnText(statement, 5),
+                    let command = columnText(statement, 6),
+                    let rawStatus = columnText(statement, 7),
                     let status = SessionStatus(rawValue: rawStatus),
-                    let rawTone = columnText(statement, 7),
+                    let rawTone = columnText(statement, 8),
                     let tone = SessionTone(rawValue: rawTone),
-                    let createdAt = decodeDate(columnText(statement, 8)),
-                    let updatedAt = decodeDate(columnText(statement, 9))
+                    let createdAt = decodeDate(columnText(statement, 9)),
+                    let updatedAt = decodeDate(columnText(statement, 10))
                 else {
                     continue
                 }
@@ -74,6 +132,7 @@ struct SessionPersistence {
                         tmuxSessionName: columnText(statement, 1),
                         title: title,
                         reportedTitle: columnText(statement, 3),
+                        isTitlePinned: sqlite3_column_int(statement, 4) != 0,
                         cwd: cwd,
                         command: command,
                         status: status,
@@ -185,6 +244,7 @@ struct SessionPersistence {
             tmux_session_name TEXT,
             title TEXT NOT NULL,
             reported_title TEXT,
+            is_title_pinned INTEGER NOT NULL DEFAULT 0,
             cwd TEXT NOT NULL,
             command TEXT NOT NULL,
             status TEXT NOT NULL,
@@ -194,6 +254,7 @@ struct SessionPersistence {
             sort_order INTEGER NOT NULL DEFAULT 0
         )
         """)
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN is_title_pinned INTEGER NOT NULL DEFAULT 0")
         try execute(database, """
         CREATE TABLE IF NOT EXISTS workspace_state (
             key TEXT PRIMARY KEY,
@@ -214,12 +275,13 @@ struct SessionPersistence {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, reported_title, cwd, command, status, tone, created_at, updated_at, sort_order
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, reported_title, is_title_pinned, cwd, command, status, tone, created_at, updated_at, sort_order
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
             reported_title = excluded.reported_title,
+            is_title_pinned = excluded.is_title_pinned,
             cwd = excluded.cwd,
             command = excluded.command,
             status = excluded.status,
@@ -238,13 +300,14 @@ struct SessionPersistence {
         bindText(statement, 2, snapshot.tmuxSessionName)
         bindText(statement, 3, snapshot.title)
         bindText(statement, 4, snapshot.reportedTitle)
-        bindText(statement, 5, snapshot.cwd)
-        bindText(statement, 6, snapshot.command)
-        bindText(statement, 7, snapshot.status.rawValue)
-        bindText(statement, 8, snapshot.tone.rawValue)
-        bindText(statement, 9, encodeDate(snapshot.createdAt))
-        bindText(statement, 10, encodeDate(snapshot.updatedAt))
-        sqlite3_bind_int64(statement, 11, Int64(sortOrder))
+        sqlite3_bind_int(statement, 5, snapshot.isTitlePinned ? 1 : 0)
+        bindText(statement, 6, snapshot.cwd)
+        bindText(statement, 7, snapshot.command)
+        bindText(statement, 8, snapshot.status.rawValue)
+        bindText(statement, 9, snapshot.tone.rawValue)
+        bindText(statement, 10, encodeDate(snapshot.createdAt))
+        bindText(statement, 11, encodeDate(snapshot.updatedAt))
+        sqlite3_bind_int64(statement, 12, Int64(sortOrder))
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw databaseError(database)

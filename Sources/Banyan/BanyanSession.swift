@@ -14,6 +14,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     @Published var title: String
     @Published var reportedTitle: String?
+    @Published var isTitlePinned: Bool
     @Published var cwd: String
     @Published var command: String
     @Published var status: SessionStatus
@@ -30,19 +31,22 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var didRenderRestoredMessage = false
 
     var displayTitle: String {
-        SessionDisplayLabel.make(
-            project: displayProject,
-            branch: displayBranch,
-            title: title,
-            id: id,
-            command: command
-        )
+        if isTitlePinned {
+            return title
+        }
+
+        if isAgentCommand, let agentTitle = usefulAgentTitle {
+            return agentTitle
+        }
+
+        return title
     }
 
     init(
         id: String,
         tmuxSessionName: String? = nil,
         title: String,
+        isTitlePinned: Bool = false,
         cwd: String,
         command: String,
         status: SessionStatus = .running,
@@ -58,6 +62,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
         self.title = title
+        self.isTitlePinned = isTitlePinned
         self.cwd = cwd
         self.command = command
         self.displayProject = displayContext.project
@@ -143,8 +148,43 @@ final class BanyanSession: ObservableObject, Identifiable {
         }
         if let title, !title.isEmpty {
             self.title = title
+            isTitlePinned = true
         }
         touch()
+    }
+
+    private var isAgentCommand: Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed == "codex"
+            || trimmed.hasPrefix("codex ")
+            || trimmed == "claude"
+            || trimmed.hasPrefix("claude ")
+    }
+
+    private var usefulAgentTitle: String? {
+        guard let value = reportedTitle.map(normalizedForDisplay), !value.isEmpty else {
+            return nil
+        }
+        let lowercased = value.lowercased()
+        guard lowercased != "codex", lowercased != "claude" else {
+            return nil
+        }
+        guard !looksLikeHostTitle(value) else {
+            return nil
+        }
+        return value
+    }
+
+    private func normalizedForDisplay(_ value: String) -> String {
+        value.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private func looksLikeHostTitle(_ value: String) -> Bool {
+        let parts = value.split(separator: "@", maxSplits: 1)
+        guard parts.count == 2 else { return false }
+        return !parts[0].contains(" ") && !parts[1].contains(" ")
     }
 
     func terminate(markClosed: Bool = true) {

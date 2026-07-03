@@ -17,7 +17,6 @@ These identifiers are defined in `Sources/Banyan/AccessibilityIdentifiers.swift`
 | Sidebar footer | `banyan.sidebar.footer` |
 | Sidebar add button | `banyan.sidebar.add-session` |
 | Sidebar options menu | `banyan.sidebar.options` |
-| Sidebar edit selected button | `banyan.sidebar.edit-selected` |
 | Sidebar close selected button | `banyan.sidebar.close-selected` |
 | Toolbar logo | `banyan.toolbar.logo` |
 | Toolbar add button | `banyan.toolbar.add-session` |
@@ -31,7 +30,6 @@ These identifiers are defined in `Sources/Banyan/AccessibilityIdentifiers.swift`
 | Terminal reconnect banner | `banyan.terminal.reconnect-banner` |
 | Terminal attach button | `banyan.terminal.reconnect-banner.attach` |
 | Add session sheet | `banyan.sheet.add-session` |
-| Edit session sheet | `banyan.sheet.edit-session` |
 | Preferences sheet | `banyan.sheet.preferences` |
 
 ## Semantic Actions

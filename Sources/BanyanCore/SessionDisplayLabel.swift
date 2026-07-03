@@ -10,16 +10,44 @@ public enum SessionDisplayLabel {
         return (project, branch)
     }
 
-    public static func make(project: String, branch: String?, title: String, id: String, command: String) -> String {
+    public static func make(
+        project: String,
+        branch: String?,
+        title: String,
+        id: String,
+        command: String,
+        reportedTitle: String? = nil,
+        prefersReportedTitle: Bool = false
+    ) -> String {
         var components = [clean(project)]
         if let branch = branch.map(clean), !branch.isEmpty {
             components.append(branch)
         }
-        components.append("\"\(truncate(taskTitle(title: title, id: id, command: command), limit: 44))\"")
+        let task = taskTitle(
+            title: title,
+            id: id,
+            command: command,
+            reportedTitle: reportedTitle,
+            prefersReportedTitle: prefersReportedTitle
+        )
+        components.append("\"\(truncate(task, limit: 44))\"")
         return components.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
-    private static func taskTitle(title: String, id: String, command: String) -> String {
+    private static func taskTitle(
+        title: String,
+        id: String,
+        command: String,
+        reportedTitle: String?,
+        prefersReportedTitle: Bool
+    ) -> String {
+        if prefersReportedTitle,
+           let reported = reportedTitle.map(clean),
+           !isGenericTitle(reported),
+           !looksLikeHostTitle(reported) {
+            return reported
+        }
+
         let cleanedTitle = clean(title)
         if !isGenericTitle(cleanedTitle), !looksLikeHostTitle(cleanedTitle) {
             return cleanedTitle
@@ -61,6 +89,8 @@ public enum SessionDisplayLabel {
             || lowercased.hasPrefix("shell-")
             || lowercased == "session"
             || lowercased.hasPrefix("session-")
+            || lowercased == "codex"
+            || lowercased == "claude"
     }
 
     private static func looksLikeHostTitle(_ value: String) -> Bool {
