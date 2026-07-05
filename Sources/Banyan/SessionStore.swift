@@ -251,9 +251,9 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
-    func forkSelectedSession() -> BanyanSession {
+    func spawnSiblingSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
-        return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.id)
+        return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.parentSessionID)
     }
 
     @discardableResult
@@ -425,6 +425,10 @@ final class SessionStore: ObservableObject {
         session.onStatusSignal = { [weak session] status in
             guard let session else { return }
             AttentionNotifier.shared.notifyIfNeeded(session: session, status: status)
+        }
+        session.onProcessExit = { [weak self, weak session] _ in
+            guard let self, let session, session.status != .closed else { return }
+            try? self.close(id: session.id)
         }
     }
 

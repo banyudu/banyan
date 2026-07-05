@@ -20,12 +20,12 @@ struct ContentView: View {
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    store.forkSelectedSession()
+                    store.spawnSiblingSession()
                 } label: {
                     Image(systemName: "plus")
                 }
                 .accessibilityIdentifier(AccessibilityID.toolbarAddSession)
-                .help("Fork selected session")
+                .help("New sibling session")
 
                 Button {
                     showingPreferences = true
@@ -101,12 +101,12 @@ struct ContentView: View {
 
             HStack {
                 Button {
-                    store.forkSelectedSession()
+                    store.spawnSiblingSession()
                 } label: {
                     Image(systemName: "plus")
                 }
                 .accessibilityIdentifier(AccessibilityID.sidebarAddSession)
-                .help("Fork selected session")
+                .help("New sibling session")
 
                 Menu {
                     Button("Custom Session...") {

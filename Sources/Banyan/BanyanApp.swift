@@ -22,7 +22,7 @@ struct BanyanApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Terminal") {
-                    store.forkSelectedSession()
+                    store.spawnSiblingSession()
                 }
                 .keyboardShortcut("n")
             }
@@ -64,6 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async {
+            Self.disableDefaultCloseWindowShortcut()
+        }
         Task { @MainActor in
             AttentionNotifier.shared.requestAuthorization()
         }
@@ -71,6 +74,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Self.disableDefaultCloseWindowShortcut()
+    }
+
+    private static func disableDefaultCloseWindowShortcut() {
+        NSApp.mainMenu?.forEachItem { item in
+            guard item.action == #selector(NSWindow.performClose(_:)),
+                  item.keyEquivalent.lowercased() == "w" else {
+                return
+            }
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
+        }
+    }
+}
+
+private extension NSMenu {
+    func forEachItem(_ body: (NSMenuItem) -> Void) {
+        for item in items {
+            body(item)
+            item.submenu?.forEachItem(body)
+        }
     }
 }
 

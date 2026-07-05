@@ -33,6 +33,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     var onDidChange: (() -> Void)?
     var onOutput: ((String) -> Void)?
     var onStatusSignal: ((SessionStatus) -> Void)?
+    var onProcessExit: ((Int32?) -> Void)?
     private var didRenderRestoredMessage = false
     private var appliedTheme: TerminalTheme?
     private var appliedFontFamily: String?
@@ -112,6 +113,10 @@ final class BanyanSession: ObservableObject, Identifiable {
         delegate.onTerminate = { [weak self] exitCode in
             guard let self else { return }
             self.isProcessStarted = false
+            if self.status != .closed, let onProcessExit = self.onProcessExit {
+                onProcessExit(exitCode)
+                return
+            }
             if self.status != .closed, self.tmuxBackend.hasSession(named: self.tmuxSessionName) {
                 self.status = .running
             } else if self.status != .closed {
