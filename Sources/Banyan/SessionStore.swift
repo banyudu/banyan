@@ -493,6 +493,9 @@ final class SessionStore: ObservableObject {
             ) else {
                 continue
             }
+            if result.status == .closed && tmuxBackend.hasSession(named: session.tmuxSessionName) {
+                continue
+            }
             if session.detectedAgentProvider != result.provider {
                 session.markDetectedAgentProvider(result.provider)
             }

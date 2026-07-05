@@ -2,6 +2,7 @@ import BanyanCore
 import Foundation
 
 protocol AgentSupervisorBackend {
+    func hasSession(named name: String) -> Bool
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot?
     func captureVisibleText(paneID: String, lineLimit: Int) -> String
 }
@@ -33,8 +34,11 @@ struct AgentSupervisor {
 
     func inspect(tmuxSessionName: String, launchCommand: String, currentStatus: SessionStatus) -> Result? {
         guard currentStatus != .closed else { return nil }
-        guard let pane = backend.primaryPaneSnapshot(named: tmuxSessionName), !pane.isDead else {
-            return currentStatus == .closed ? nil : Result(status: .closed, tone: .neutral, provider: nil)
+        guard let pane = backend.primaryPaneSnapshot(named: tmuxSessionName) else {
+            return backend.hasSession(named: tmuxSessionName) ? nil : Result(status: .closed, tone: .neutral, provider: nil)
+        }
+        guard !pane.isDead else {
+            return Result(status: .closed, tone: .neutral, provider: nil)
         }
 
         let descendants = processDescendants(pane.rootPID)

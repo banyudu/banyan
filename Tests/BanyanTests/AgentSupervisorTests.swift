@@ -13,7 +13,7 @@ import Testing
 }
 
 @Test func supervisorMarksMissingOrDeadPaneClosed() {
-    let missingPaneResult = makeSupervisor(pane: nil).inspect(
+    let missingPaneResult = makeSupervisor(pane: nil, sessionExists: false).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -28,6 +28,16 @@ import Testing
     #expect(missingPaneResult?.tone == .neutral)
     #expect(deadPaneResult?.status == .closed)
     #expect(deadPaneResult?.tone == .neutral)
+}
+
+@Test func supervisorIgnoresMissingPaneWhenTmuxSessionStillExists() {
+    let result = makeSupervisor(pane: nil, sessionExists: true).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "codex",
+        currentStatus: .running
+    )
+
+    #expect(result == nil)
 }
 
 @Test func supervisorKeepsNonAgentSessionsRunning() {
@@ -214,12 +224,13 @@ import Testing
 
 private func makeSupervisor(
     pane: TmuxPaneSnapshot? = pane(),
+    sessionExists: Bool = true,
     visibleText: String = "",
     processes: [ProcessInfoRow] = [],
     longRunningThreshold: TimeInterval = 120
 ) -> AgentSupervisor {
     AgentSupervisor(
-        backend: FakeSupervisorBackend(pane: pane, visibleText: visibleText),
+        backend: FakeSupervisorBackend(pane: pane, sessionExists: sessionExists, visibleText: visibleText),
         longRunningThreshold: longRunningThreshold,
         processDescendants: { _ in processes }
     )
@@ -259,7 +270,12 @@ private func process(
 
 private struct FakeSupervisorBackend: AgentSupervisorBackend {
     var pane: TmuxPaneSnapshot?
+    var sessionExists: Bool
     var visibleText: String
+
+    func hasSession(named name: String) -> Bool {
+        sessionExists
+    }
 
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? {
         pane

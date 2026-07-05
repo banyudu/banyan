@@ -11,6 +11,12 @@ struct BanyanApp: App {
             ContentView()
                 .environmentObject(store)
                 .frame(minWidth: 900, minHeight: 560)
+                .onAppear {
+                    CommandWTerminalCloseMonitor.shared.action = {
+                        store.requestCloseSelectedSession()
+                    }
+                    CommandWTerminalCloseMonitor.shared.start()
+                }
         }
         .windowStyle(.titleBar)
         .commands {
@@ -64,6 +70,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
+    }
+}
+
+private final class CommandWTerminalCloseMonitor {
+    static let shared = CommandWTerminalCloseMonitor()
+
+    var action: () -> Void = {}
+    private var monitor: Any?
+
+    private init() {}
+
+    deinit {
+        stop()
+    }
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard Self.matchesPlainCommandW(event) else {
+                return event
+            }
+            self?.action()
+            return nil
+        }
+    }
+
+    func stop() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+
+    private static func matchesPlainCommandW(_ event: NSEvent) -> Bool {
+        guard !event.isARepeat else { return false }
+        guard event.charactersIgnoringModifiers?.lowercased() == "w" else { return false }
+
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return modifiers.contains(.command)
+            && !modifiers.contains(.option)
+            && !modifiers.contains(.control)
+            && !modifiers.contains(.shift)
     }
 }
