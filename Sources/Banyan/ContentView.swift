@@ -165,7 +165,7 @@ struct ContentView: View {
     private var detail: some View {
         if let session = store.selectedSession {
             VStack(spacing: 0) {
-                if session.isRestored || !session.isProcessStarted {
+                if session.needsManualAttach {
                     TerminalReconnectBanner(session: session)
                     Divider()
                 }
@@ -303,7 +303,7 @@ private struct SessionRow: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(statusColor)
                 .frame(width: 14, height: 14)
-                .accessibilityLabel(session.isRestored ? "Restorable" : session.status.label)
+                .accessibilityLabel(session.needsManualAttach ? "Restorable" : session.status.label)
                 .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
 
             if let provider = session.agentProvider {
@@ -380,7 +380,7 @@ private struct SessionRow: View {
     }
 
     private var sessionStatusIcon: String {
-        session.isRestored ? "arrow.clockwise.circle.fill" : session.status.systemImage
+        session.needsManualAttach ? "arrow.clockwise.circle.fill" : session.status.systemImage
     }
 
     private var displayTitle: String {

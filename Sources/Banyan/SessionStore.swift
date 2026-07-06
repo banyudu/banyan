@@ -28,6 +28,7 @@ private struct SupervisorSessionResult {
     let status: SessionStatus
     let tone: SessionTone
     let provider: CodingAgentProvider?
+    let currentPath: String?
 }
 
 @MainActor
@@ -520,7 +521,7 @@ final class SessionStore: ObservableObject {
             guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
                 return nil
             }
-            guard !session.isRestored else { return nil }
+            guard session.isProcessStarted else { return nil }
             return SupervisorSessionInput(
                 id: session.id,
                 tmuxSessionName: session.tmuxSessionName,
@@ -554,7 +555,8 @@ final class SessionStore: ObservableObject {
                     id: input.id,
                     status: result.status,
                     tone: result.tone,
-                    provider: result.provider
+                    provider: result.provider,
+                    currentPath: result.currentPath
                 )
             }
 
@@ -575,6 +577,7 @@ final class SessionStore: ObservableObject {
             if session.detectedAgentProvider != result.provider {
                 session.markDetectedAgentProvider(result.provider)
             }
+            session.updateCurrentDirectory(result.currentPath)
             if session.status != result.status || session.tone != result.tone {
                 session.mark(status: result.status, tone: result.tone)
             }

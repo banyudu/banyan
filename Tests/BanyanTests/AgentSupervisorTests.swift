@@ -49,6 +49,7 @@ import Testing
 
     #expect(result?.status == .running)
     #expect(result?.tone == .blue)
+    #expect(result?.currentPath == "/tmp")
 }
 
 @Test func supervisorClassifiesAgentWaitingForInput() {

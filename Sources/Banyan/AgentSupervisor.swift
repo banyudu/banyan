@@ -14,6 +14,7 @@ struct AgentSupervisor {
         let status: SessionStatus
         let tone: SessionTone
         let provider: CodingAgentProvider?
+        let currentPath: String?
     }
 
     private let backend: any AgentSupervisorBackend
@@ -35,10 +36,10 @@ struct AgentSupervisor {
     func inspect(tmuxSessionName: String, launchCommand: String, currentStatus: SessionStatus) -> Result? {
         guard currentStatus != .closed else { return nil }
         guard let pane = backend.primaryPaneSnapshot(named: tmuxSessionName) else {
-            return backend.hasSession(named: tmuxSessionName) ? nil : Result(status: .closed, tone: .neutral, provider: nil)
+            return backend.hasSession(named: tmuxSessionName) ? nil : Result(status: .closed, tone: .neutral, provider: nil, currentPath: nil)
         }
         guard !pane.isDead else {
-            return Result(status: .closed, tone: .neutral, provider: nil)
+            return Result(status: .closed, tone: .neutral, provider: nil, currentPath: pane.currentPath)
         }
 
         let descendants = processDescendants(pane.rootPID)
@@ -49,13 +50,13 @@ struct AgentSupervisor {
         )
 
         guard let provider else {
-            return Result(status: .running, tone: .blue, provider: nil)
+            return Result(status: .running, tone: .blue, provider: nil, currentPath: pane.currentPath)
         }
 
         let rootAgentProcessCount = Self.isSupportedAgentCommand(pane.currentCommand) ? 1 : 0
         let agentProcesses = descendants.filter(\.isSupportedAgent)
         if rootAgentProcessCount + agentProcesses.count > 1 {
-            return Result(status: .subagents, tone: .purple, provider: provider)
+            return Result(status: .subagents, tone: .purple, provider: provider, currentPath: pane.currentPath)
         }
 
         let externalProcesses = descendants.filter { process in
@@ -66,22 +67,22 @@ struct AgentSupervisor {
         }
 
         if externalProcesses.contains(where: { $0.elapsed >= longRunningThreshold }) {
-            return Result(status: .longRunningShell, tone: .yellow, provider: provider)
+            return Result(status: .longRunningShell, tone: .yellow, provider: provider, currentPath: pane.currentPath)
         }
 
         if !externalProcesses.isEmpty {
-            return Result(status: .executing, tone: .blue, provider: provider)
+            return Result(status: .executing, tone: .blue, provider: provider, currentPath: pane.currentPath)
         }
 
         let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: 60)
         if Self.looksLikeAgentQuestion(visibleText) {
-            return Result(status: .asking, tone: .yellow, provider: provider)
+            return Result(status: .asking, tone: .yellow, provider: provider, currentPath: pane.currentPath)
         }
         if Self.looksLikeAgentExecuting(visibleText) {
-            return Result(status: .executing, tone: .blue, provider: provider)
+            return Result(status: .executing, tone: .blue, provider: provider, currentPath: pane.currentPath)
         }
 
-        return Result(status: .needInput, tone: .yellow, provider: provider)
+        return Result(status: .needInput, tone: .yellow, provider: provider, currentPath: pane.currentPath)
     }
 
     static func isSupportedAgentCommand(_ command: String) -> Bool {

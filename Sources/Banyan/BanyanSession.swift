@@ -9,10 +9,10 @@ final class BanyanSession: ObservableObject, Identifiable {
     let tmuxSessionName: String
     let createdAt: Date
     let terminalView: DetectingLocalProcessTerminalView
-    private let displayProject: String
-    private let displayBranch: String?
-    let projectGroupID: String
-    let projectGroupTitle: String
+    private var displayProject: String
+    private var displayBranch: String?
+    @Published private(set) var projectGroupID: String
+    @Published private(set) var projectGroupTitle: String
 
     @Published var title: String
     @Published var reportedTitle: String?
@@ -60,6 +60,10 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     var agentProvider: CodingAgentProvider? {
         CodingAgentProvider.detect(in: command) ?? detectedAgentProvider
+    }
+
+    var needsManualAttach: Bool {
+        isRestored && !isProcessStarted && status == .failed
     }
 
     init(
@@ -111,6 +115,9 @@ final class BanyanSession: ObservableObject, Identifiable {
             self.refreshGeneratedTitle()
             self.touch()
         }
+        delegate.onDirectoryChange = { [weak self] directory in
+            self?.updateCurrentDirectory(directory)
+        }
         delegate.onTerminate = { [weak self] exitCode in
             guard let self else { return }
             self.isProcessStarted = false
@@ -141,7 +148,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func renderRestoredMessageIfNeeded(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13) {
-        guard isRestored, !didRenderRestoredMessage else { return }
+        guard needsManualAttach, !didRenderRestoredMessage else { return }
         guard terminalView.bounds.width > 80, terminalView.bounds.height > 80 else { return }
         theme.apply(to: terminalView, fontFamily: fontFamily, fontSize: fontSize)
         terminalView.resizeSubviews(withOldSize: .zero)
@@ -207,6 +214,25 @@ final class BanyanSession: ObservableObject, Identifiable {
         touch()
     }
 
+    func updateCurrentDirectory(_ directory: String?) {
+        guard let directory = Self.normalizedDirectory(directory), directory != cwd else { return }
+        let shouldUpdateTitle = Self.titleTracksCurrentDirectory(title, isTitlePinned: isTitlePinned, cwd: cwd)
+        cwd = directory
+        updateDisplayContext(for: directory)
+        if shouldUpdateTitle {
+            title = Self.titleForCurrentDirectory(directory)
+        }
+        refreshGeneratedTitle()
+        touch()
+    }
+
+    nonisolated static func titleTracksCurrentDirectory(_ title: String, isTitlePinned: Bool, cwd: String) -> Bool {
+        guard !isTitlePinned else { return false }
+        let currentTitle = SessionTitleGenerator.sanitizeTitle(title)
+        let directoryTitle = SessionTitleGenerator.sanitizeTitle(titleForCurrentDirectory(cwd))
+        return currentTitle == directoryTitle
+    }
+
     private var usefulAgentTitle: String? {
         guard let value = reportedTitle.flatMap(SessionTitleGenerator.sanitizeTitle), !value.isEmpty else {
             return nil
@@ -246,6 +272,31 @@ final class BanyanSession: ObservableObject, Identifiable {
             generatedTitle = localTitle
         }
         requestExternalGeneratedTitleIfNeeded(context: context)
+    }
+
+    private func updateDisplayContext(for cwd: String) {
+        let displayContext = SessionDisplayLabel.context(cwd: cwd)
+        displayProject = displayContext.project
+        displayBranch = displayContext.branch
+        projectGroupID = displayContext.groupID
+        projectGroupTitle = displayContext.groupTitle
+    }
+
+    nonisolated private static func titleForCurrentDirectory(_ cwd: String) -> String {
+        PathDisplayName.make(path: cwd)
+    }
+
+    private static func normalizedDirectory(_ directory: String?) -> String? {
+        guard let rawDirectory = directory?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDirectory.isEmpty else {
+            return nil
+        }
+        let path: String
+        if rawDirectory.hasPrefix("file://"), let url = URL(string: rawDirectory), url.isFileURL {
+            path = url.path
+        } else {
+            path = NSString(string: rawDirectory).expandingTildeInPath
+        }
+        return URL(fileURLWithPath: path).standardizedFileURL.path
     }
 
     private func requestExternalGeneratedTitleIfNeeded(context: SessionTitleContext) {
@@ -299,7 +350,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             terminalView.terminate()
         }
         isProcessStarted = false
-        isRestored = true
+        isRestored = false
         touch()
     }
 
@@ -385,6 +436,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
 private final class TerminalSessionDelegate: NSObject, LocalProcessTerminalViewDelegate {
     let sessionID: String
     var onTitle: ((String) -> Void)?
+    var onDirectoryChange: ((String?) -> Void)?
     var onTerminate: ((Int32?) -> Void)?
 
     init(sessionID: String) {
@@ -399,7 +451,11 @@ private final class TerminalSessionDelegate: NSObject, LocalProcessTerminalViewD
         }
     }
 
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onDirectoryChange?(directory)
+        }
+    }
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
