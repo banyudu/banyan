@@ -572,8 +572,7 @@ private struct SessionRow: View {
 
     @ViewBuilder
     private var titleLabel: some View {
-        if titleOverride == nil,
-           let titleURL = session.titleURL,
+        if let titleURL = session.titleURL,
            let url = URL(string: titleURL),
            let titleLinkLabel = session.titleLinkLabel {
             HStack(spacing: 4) {

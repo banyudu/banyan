@@ -220,9 +220,25 @@ final class SessionStore: ObservableObject {
                 SidebarSessionItem(
                     session: $0,
                     depth: 0,
-                    titleOverride: "\($0.projectName) · \($0.displayTitle)"
+                    titleOverride: Self.historySidebarTitle(
+                        projectName: $0.projectName,
+                        displayTitle: $0.displayTitle,
+                        issueID: $0.titleLinkLabel
+                    )
                 )
             }
+    }
+
+    nonisolated static func historySidebarTitle(projectName: String, displayTitle: String, issueID: String?) -> String {
+        let title = displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let issueID, !issueID.isEmpty else {
+            return "\(projectName) · \(title)"
+        }
+        let firstToken = title.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).first
+        if firstToken?.caseInsensitiveCompare(issueID) == .orderedSame {
+            return title
+        }
+        return "\(issueID.uppercased()) · \(title)"
     }
 
     var selectedSession: BanyanSession? {
