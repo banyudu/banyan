@@ -25,6 +25,12 @@ struct BanyanApp: App {
                     store.spawnSiblingSession()
                 }
                 .keyboardShortcut("n")
+
+                Button("New Child Terminal...") {
+                    store.showChildSessionSheet()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(store.selectedSession == nil)
             }
             CommandMenu("Terminal") {
                 Button("Close Current Terminal") {

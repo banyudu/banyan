@@ -4,7 +4,6 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
-    @State private var showingAddSession = false
     @State private var showingPreferences = false
 
     var body: some View {
@@ -36,8 +35,8 @@ struct ContentView: View {
                 .help("Preferences")
             }
         }
-        .sheet(isPresented: $showingAddSession) {
-            AddSessionSheet()
+        .sheet(item: addSessionDraftBinding) { draft in
+            AddSessionSheet(draft: draft)
                 .environmentObject(store)
         }
         .sheet(isPresented: $showingPreferences) {
@@ -110,8 +109,12 @@ struct ContentView: View {
 
                 Menu {
                     Button("Custom Session...") {
-                        showingAddSession = true
+                        store.showCustomSessionSheet()
                     }
+                    Button("Child Session...") {
+                        store.showChildSessionSheet()
+                    }
+                    .disabled(store.selectedSession == nil)
                     Divider()
                     Picker("Sort", selection: $store.sortMode) {
                         ForEach(SortMode.allCases) { sortMode in
@@ -142,6 +145,14 @@ struct ContentView: View {
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
         .accessibilityIdentifier(AccessibilityID.sidebar)
+    }
+
+    private var addSessionDraftBinding: Binding<AddSessionDraft?> {
+        Binding {
+            store.addSessionDraft
+        } set: { draft in
+            store.addSessionDraft = draft
+        }
     }
 
     private var closeConfirmationBinding: Binding<Bool> {
@@ -296,6 +307,7 @@ private struct SessionRow: View {
 
     @State private var isRenaming = false
     @State private var renameDraft = ""
+    @State private var isIssueLinkHovered = false
     @FocusState private var isRenameFocused: Bool
 
     var body: some View {
@@ -319,11 +331,7 @@ private struct SessionRow: View {
                     }
                     .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
             } else {
-                Text(displayTitle)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
+                titleLabel
             }
 
             Spacer(minLength: 0)
@@ -348,6 +356,7 @@ private struct SessionRow: View {
                 onRemove()
             }
         }
+        .onDisappear(perform: resetIssueLinkHover)
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
     }
 
@@ -375,6 +384,64 @@ private struct SessionRow: View {
 
     private var displayTitle: String {
         session.displayTitle
+    }
+
+    @ViewBuilder
+    private var titleLabel: some View {
+        if let titleURL = session.titleURL,
+           let url = URL(string: titleURL),
+           let titleLinkLabel = session.titleLinkLabel {
+            HStack(spacing: 4) {
+                Link(destination: url) {
+                    Text(titleLinkLabel)
+                        .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                        .underline(isIssueLinkHovered)
+                        .lineLimit(1)
+                }
+                .onHover(perform: setIssueLinkHovered)
+                let remainder = linkedTitleRemainder(issueID: titleLinkLabel)
+                if !remainder.isEmpty {
+                    Text(remainder)
+                        .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
+        } else {
+            Text(displayTitle)
+                .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
+        }
+    }
+
+    private func linkedTitleRemainder(issueID: String) -> String {
+        let parts = displayTitle.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard let firstToken = parts.first,
+              firstToken.caseInsensitiveCompare(issueID) == .orderedSame else {
+            return displayTitle
+        }
+        return parts.count > 1 ? String(parts[1]) : ""
+    }
+
+    private func setIssueLinkHovered(_ isHovered: Bool) {
+        guard isIssueLinkHovered != isHovered else { return }
+        isIssueLinkHovered = isHovered
+        if isHovered {
+            NSCursor.pointingHand.push()
+        } else {
+            NSCursor.pop()
+        }
+    }
+
+    private func resetIssueLinkHover() {
+        guard isIssueLinkHovered else { return }
+        isIssueLinkHovered = false
+        NSCursor.pop()
     }
 
     @ViewBuilder

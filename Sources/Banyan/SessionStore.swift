@@ -35,6 +35,7 @@ private struct SupervisorSessionResult {
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [BanyanSession] = []
     @Published private(set) var terminalFocusRequestID = UUID()
+    @Published var addSessionDraft: AddSessionDraft?
     @Published var selectedSessionID: String? {
         didSet {
             saveWorkspace()
@@ -202,6 +203,7 @@ final class SessionStore: ObservableObject {
                 id: uniqueID(snapshot.id, avoidingLiveTmuxSessions: false),
                 tmuxSessionName: tmuxSessionName,
                 title: restoredTitle(from: snapshot),
+                titleURL: snapshot.titleURL,
                 generatedTitle: snapshot.generatedTitle,
                 isTitlePinned: snapshot.isTitlePinned,
                 cwd: snapshot.cwd,
@@ -281,10 +283,21 @@ final class SessionStore: ObservableObject {
         return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.parentSessionID)
     }
 
+    func showCustomSessionSheet() {
+        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        addSessionDraft = .sibling(cwd: cwd)
+    }
+
+    func showChildSessionSheet() {
+        guard let selectedSession else { return }
+        addSessionDraft = .child(of: selectedSession)
+    }
+
     @discardableResult
     func spawn(
         id proposedID: String? = nil,
         title proposedTitle: String? = nil,
+        titleURL proposedTitleURL: String? = nil,
         cwd proposedCWD: String? = nil,
         command proposedCommand: String? = nil,
         parentSessionID proposedParentSessionID: String? = nil,
@@ -301,6 +314,7 @@ final class SessionStore: ObservableObject {
             id: id,
             tmuxSessionName: TmuxBackend.sessionName(for: id),
                 title: title,
+                titleURL: normalizedTitleURL(proposedTitleURL),
                 generatedTitle: nil,
                 isTitlePinned: hasExplicitTitle,
             cwd: cwd,
@@ -328,11 +342,11 @@ final class SessionStore: ObservableObject {
         saveSessions()
     }
 
-    func mark(id: String, status: SessionStatus? = nil, tone: SessionTone? = nil, title: String? = nil) throws {
+    func mark(id: String, status: SessionStatus? = nil, tone: SessionTone? = nil, title: String? = nil, titleURL: String? = nil) throws {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
-        session.mark(status: status, tone: tone, title: title)
+        session.mark(status: status, tone: tone, title: title, titleURL: normalizedTitleURL(titleURL))
         saveSessions()
     }
 
@@ -478,6 +492,7 @@ final class SessionStore: ObservableObject {
                 id: $0.id,
                 tmuxSessionName: $0.tmuxSessionName,
                 title: $0.title,
+                titleURL: $0.titleURL,
                 reportedTitle: $0.reportedTitle,
                 generatedTitle: $0.generatedTitle,
                 isTitlePinned: $0.isTitlePinned,
@@ -593,6 +608,11 @@ final class SessionStore: ObservableObject {
 
     private func normalizedParentSessionID(_ parentSessionID: String?) -> String? {
         let trimmed = parentSessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private func normalizedTitleURL(_ titleURL: String?) -> String? {
+        let trimmed = titleURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
     }
 

@@ -104,6 +104,7 @@ final class ControlServer {
                 let session = store.spawn(
                     id: body.id,
                     title: body.title,
+                    titleURL: body.titleURL,
                     cwd: body.cwd,
                     command: body.command,
                     parentSessionID: parentSessionID,
@@ -118,7 +119,7 @@ final class ControlServer {
                 let id = body.id!
                 let status = try body.status.map(parseStatus)
                 let tone = try body.tone.map(parseTone)
-                try store.mark(id: id, status: status, tone: tone, title: body.title)
+                try store.mark(id: id, status: status, tone: tone, title: body.title, titleURL: body.titleURL)
                 guard let session = store.sessions.first(where: { $0.id == id }) else {
                     throw ControlError.notFound(id)
                 }
@@ -243,6 +244,7 @@ final class ControlServer {
             "id": session.id,
             "tmuxSessionName": session.tmuxSessionName,
             "title": session.title,
+            "titleURL": session.titleURL ?? "",
             "displayTitle": session.displayTitle,
             "reportedTitle": session.reportedTitle ?? "",
             "generatedTitle": session.generatedTitle ?? "",

@@ -91,6 +91,8 @@ struct BanyanCtl {
                 key = "command"
             case "parent-id", "parentSessionID":
                 key = "parent"
+            case "title-url", "titleURL":
+                key = "titleURL"
             default:
                 key = rawKey
             }
@@ -150,6 +152,8 @@ struct BanyanCtl {
                 commandOverride = value
             case "cwd", "id", "title", "tone":
                 result[rawKey] = value
+            case "title-url", "titleURL":
+                result["titleURL"] = value
             case "parent", "parent-id", "parentSessionID":
                 result["parent"] = value
             case "prompt":
@@ -249,10 +253,10 @@ struct BanyanCtl {
         banyanctl controls a running Banyan app on localhost:7842.
 
         Usage:
-          banyanctl spawn  [--id ID] [--title TITLE] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
-          banyanctl session new [--id ID] [--title TITLE] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
-          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|mimo|minimax|opencode [--cwd PATH] [--prompt TEXT] [--prompt-file PATH] [prompt...]
-          banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE]
+          banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
+          banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
+          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|mimo|minimax|opencode [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--prompt TEXT] [--prompt-file PATH] [prompt...]
+          banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE] [--title-url URL]
           banyanctl tick   [--id ID]
           banyanctl close  --id ID
           banyanctl respawn --id ID

@@ -89,6 +89,7 @@ public struct ControlPayload: Codable {
     public let apiVersion: String?
     public let id: String?
     public let title: String?
+    public let titleURL: String?
     public let cwd: String?
     public let command: String?
     public let status: String?
@@ -100,6 +101,7 @@ public struct ControlPayload: Codable {
         apiVersion: String? = ControlProtocol.version,
         id: String? = nil,
         title: String? = nil,
+        titleURL: String? = nil,
         cwd: String? = nil,
         command: String? = nil,
         status: String? = nil,
@@ -110,6 +112,7 @@ public struct ControlPayload: Codable {
         self.apiVersion = apiVersion
         self.id = id
         self.title = title
+        self.titleURL = titleURL
         self.cwd = cwd
         self.command = command
         self.status = status

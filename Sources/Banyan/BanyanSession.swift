@@ -15,6 +15,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published private(set) var projectGroupTitle: String
 
     @Published var title: String
+    @Published var titleURL: String?
     @Published var reportedTitle: String?
     @Published var generatedTitle: String?
     @Published var detectedAgentProvider: CodingAgentProvider?
@@ -41,6 +42,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var externalTitleSignature: String?
     private var externalTitleTask: Task<Void, Never>?
     private var isDetachingTerminalClient = false
+    private var titleURLWasAutoDetected = false
 
     var displayTitle: String {
         if hasUsefulPinnedTitle {
@@ -58,6 +60,12 @@ final class BanyanSession: ObservableObject, Identifiable {
         return title
     }
 
+    var titleLinkLabel: String? {
+        LinearIssueReference.issueID(in: title)
+            ?? LinearIssueReference.issueID(in: titleURL)
+            ?? LinearIssueReference.detect(branch: displayBranch, cwd: cwd)?.id
+    }
+
     var agentProvider: CodingAgentProvider? {
         CodingAgentProvider.detect(in: command) ?? detectedAgentProvider
     }
@@ -70,6 +78,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         id: String,
         tmuxSessionName: String? = nil,
         title: String,
+        titleURL: String? = nil,
         generatedTitle: String? = nil,
         isTitlePinned: Bool = false,
         cwd: String,
@@ -88,6 +97,14 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
         self.title = title
+        if let normalizedTitleURL = Self.normalizedTitleURL(titleURL) {
+            self.titleURL = normalizedTitleURL
+            self.titleURLWasAutoDetected = normalizedTitleURL == LinearIssueReference.detect(branch: displayContext.branch, cwd: cwd)?.url
+        } else {
+            let detectedReference = LinearIssueReference.detect(branch: displayContext.branch, cwd: cwd)
+            self.titleURL = detectedReference?.url
+            self.titleURLWasAutoDetected = detectedReference != nil
+        }
         self.generatedTitle = generatedTitle
         self.detectedAgentProvider = nil
         self.isTitlePinned = isTitlePinned
@@ -188,7 +205,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         terminalView.needsDisplay = true
     }
 
-    func mark(status: SessionStatus? = nil, tone: SessionTone? = nil, title: String? = nil) {
+    func mark(status: SessionStatus? = nil, tone: SessionTone? = nil, title: String? = nil, titleURL: String? = nil) {
         if let status {
             let changed = self.status != status
             self.status = status
@@ -202,6 +219,10 @@ final class BanyanSession: ObservableObject, Identifiable {
         if let title, !title.isEmpty {
             self.title = title
             isTitlePinned = true
+        }
+        if let titleURL {
+            self.titleURL = Self.normalizedTitleURL(titleURL)
+            titleURLWasAutoDetected = false
         }
         refreshGeneratedTitle()
         touch()
@@ -222,6 +243,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         if shouldUpdateTitle {
             title = Self.titleForCurrentDirectory(directory)
         }
+        refreshAutoDetectedTitleURL()
         refreshGeneratedTitle()
         touch()
     }
@@ -282,8 +304,28 @@ final class BanyanSession: ObservableObject, Identifiable {
         projectGroupTitle = displayContext.groupTitle
     }
 
+    private func refreshAutoDetectedTitleURL() {
+        guard let detectedReference = LinearIssueReference.detect(branch: displayBranch, cwd: cwd) else {
+            if titleURLWasAutoDetected {
+                titleURL = nil
+                titleURLWasAutoDetected = false
+            }
+            return
+        }
+
+        if titleURL == nil || titleURLWasAutoDetected {
+            titleURL = detectedReference.url
+            titleURLWasAutoDetected = true
+        }
+    }
+
     nonisolated private static func titleForCurrentDirectory(_ cwd: String) -> String {
         PathDisplayName.make(path: cwd)
+    }
+
+    nonisolated private static func normalizedTitleURL(_ titleURL: String?) -> String? {
+        let trimmed = titleURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
     }
 
     private static func normalizedDirectory(_ directory: String?) -> String? {
@@ -414,15 +456,16 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
         let shouldPreserveScroll = canScroll && scrollPosition < 0.999
-        let preservedScrollPosition = scrollPosition
+        let preservedTopRow = terminal.buffer.yDisp
         if let text = String(bytes: slice, encoding: .utf8) {
             onOutput?(text)
         }
         super.dataReceived(slice: slice)
         if shouldPreserveScroll {
+            scrollTo(row: preservedTopRow, notifyAccessibility: false)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.canScroll else { return }
-                self.scroll(toPosition: preservedScrollPosition)
+                self.scrollTo(row: preservedTopRow, notifyAccessibility: false)
             }
         }
     }

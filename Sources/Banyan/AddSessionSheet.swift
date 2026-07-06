@@ -1,21 +1,82 @@
 import SwiftUI
 
+struct AddSessionDraft: Identifiable {
+    enum Kind {
+        case sibling
+        case child(parentID: String, parentTitle: String)
+
+        var heading: String {
+            switch self {
+            case .sibling:
+                return "New Session"
+            case .child:
+                return "New Child Session"
+            }
+        }
+
+        var parentSessionID: String? {
+            switch self {
+            case .sibling:
+                return nil
+            case .child(let parentID, _):
+                return parentID
+            }
+        }
+
+        var parentTitle: String? {
+            switch self {
+            case .sibling:
+                return nil
+            case .child(_, let parentTitle):
+                return parentTitle
+            }
+        }
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let initialCWD: String
+
+    static func sibling(cwd: String = FileManager.default.currentDirectoryPath) -> AddSessionDraft {
+        AddSessionDraft(kind: .sibling, initialCWD: cwd)
+    }
+
+    @MainActor
+    static func child(of session: BanyanSession) -> AddSessionDraft {
+        AddSessionDraft(kind: .child(parentID: session.id, parentTitle: session.displayTitle), initialCWD: session.cwd)
+    }
+}
+
 struct AddSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: SessionStore
 
+    let draft: AddSessionDraft
+
     @State private var id = ""
     @State private var title = ""
-    @State private var cwd = FileManager.default.currentDirectoryPath
+    @State private var cwd: String
     @State private var command = ""
     @State private var tone: SessionTone = .blue
 
+    init(draft: AddSessionDraft = .sibling()) {
+        self.draft = draft
+        _cwd = State(initialValue: draft.initialCWD)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("New Session")
+            Text(draft.kind.heading)
                 .font(.title2.weight(.semibold))
 
             Form {
+                if let parentTitle = draft.kind.parentTitle {
+                    LabeledContent("Parent") {
+                        Text(parentTitle)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
                 TextField("ID", text: $id)
                 TextField("Title", text: $title)
                 HStack {
@@ -46,6 +107,7 @@ struct AddSessionSheet: View {
                         title: title.isEmpty ? nil : title,
                         cwd: cwd,
                         command: command,
+                        parentSessionID: draft.kind.parentSessionID,
                         tone: tone
                     )
                     dismiss()
