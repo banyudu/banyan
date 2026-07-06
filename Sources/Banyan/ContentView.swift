@@ -18,9 +18,9 @@ struct ContentView: View {
                 TitleBarLogo()
             }
             ToolbarItem(placement: .principal) {
-                if store.selectedSession != nil {
+                if let context = store.selectedContextInfo, context.hasTitlebarContent {
                     TitleBarContextView(
-                        context: store.selectedContextInfo,
+                        context: context,
                         onOpenLinear: store.openSelectedLinearIssue,
                         onOpenPullRequest: store.openSelectedPullRequest
                     )
@@ -210,14 +210,23 @@ struct ContentView: View {
     }
 }
 
+private extension SessionContextInfo {
+    var hasTitlebarContent: Bool {
+        let hasLinearTitle = linearIssueID?.isEmpty == false
+            && linearIssueTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let hasPullRequest = pullRequestURL?.isEmpty == false
+        return hasLinearTitle || hasPullRequest
+    }
+}
+
 private struct TitleBarContextView: View {
-    let context: SessionContextInfo?
+    let context: SessionContextInfo
     let onOpenLinear: () -> Void
     let onOpenPullRequest: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            if let issueID = context?.linearIssueID,
+            if let issueID = context.linearIssueID,
                let linearIssueTitle = sanitizedLinearIssueTitle {
                 TitleBarContextButton(
                     accessibilityIdentifier: AccessibilityID.toolbarLinearLink,
@@ -230,14 +239,12 @@ private struct TitleBarContextView: View {
                 )
             }
 
-            if let pullRequestURL = context?.pullRequestURL, !pullRequestURL.isEmpty {
-                TitleBarContextButton(
+            if let pullRequestURL = context.pullRequestURL, !pullRequestURL.isEmpty {
+                Spacer(minLength: 4)
+                TitleBarIconButton(
                     accessibilityIdentifier: AccessibilityID.toolbarPullRequestLink,
                     systemImage: "arrow.triangle.pull",
-                    primary: pullRequestLabel,
-                    secondary: context?.pullRequestTitle,
-                    help: "Open GitHub pull request (Cmd-G)",
-                    isEnabled: true,
+                    help: pullRequestHelp,
                     action: onOpenPullRequest
                 )
             }
@@ -249,15 +256,18 @@ private struct TitleBarContextView: View {
     }
 
     private var sanitizedLinearIssueTitle: String? {
-        let trimmed = context?.linearIssueTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = context.linearIssueTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
     }
 
-    private var pullRequestLabel: String {
-        if let number = context?.pullRequestNumber {
-            return "PR #\(number)"
+    private var pullRequestHelp: String {
+        if let number = context.pullRequestNumber {
+            return "Open GitHub pull request #\(number) (Cmd-G)"
         }
-        return "PR"
+        if let title = context.pullRequestTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return "Open GitHub pull request: \(title)"
+        }
+        return "Open GitHub pull request (Cmd-G)"
     }
 }
 
@@ -305,6 +315,46 @@ private struct TitleBarContextButton: View {
 
     private func setHovered(_ hovered: Bool) {
         guard isEnabled, isHovered != hovered else { return }
+        isHovered = hovered
+        if hovered {
+            NSCursor.pointingHand.push()
+        } else {
+            NSCursor.pop()
+        }
+    }
+
+    private func resetHover() {
+        guard isHovered else { return }
+        isHovered = false
+        NSCursor.pop()
+    }
+}
+
+private struct TitleBarIconButton: View {
+    let accessibilityIdentifier: String
+    let systemImage: String
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isHovered ? .primary : .secondary)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover(perform: setHovered)
+        .onDisappear(perform: resetHover)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private func setHovered(_ hovered: Bool) {
+        guard isHovered != hovered else { return }
         isHovered = hovered
         if hovered {
             NSCursor.pointingHand.push()

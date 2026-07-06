@@ -37,16 +37,17 @@ enum SessionContextResolver {
             ?? LinearIssueReference.issueID(in: input.titleURL)
             ?? LinearIssueReference.issueID(in: input.displayTitle)
             ?? LinearIssueReference.detect(branch: projectContext.branch, cwd: input.cwd)?.id
-        let linearURL = detectedIssueID.map(LinearIssueReference.issueURL(for:))
         let linearTitle = detectedIssueID.flatMap { issueID in
             commandOutput(["linear", "issue", "title", issueID], cwd: input.cwd)
         }
+        let resolvedIssueID = linearTitle == nil ? nil : detectedIssueID
+        let linearURL = resolvedIssueID.map(LinearIssueReference.issueURL(for:))
         let pullRequest = pullRequest(cwd: input.cwd)
 
         return SessionContextInfo(
             sessionID: input.sessionID,
             signature: input.signature,
-            linearIssueID: detectedIssueID,
+            linearIssueID: resolvedIssueID,
             linearIssueTitle: linearTitle,
             linearIssueURL: linearURL,
             pullRequestNumber: pullRequest?.number,

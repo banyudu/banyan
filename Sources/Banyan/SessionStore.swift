@@ -437,12 +437,6 @@ final class SessionStore: ObservableObject {
         if let value = selectedContextInfo?.linearIssueURL, let url = URL(string: value) {
             return url
         }
-        if let value = selectedSession?.titleURL, let url = URL(string: value) {
-            return url
-        }
-        if let issueID = selectedSession?.titleLinkLabel {
-            return URL(string: LinearIssueReference.issueURL(for: issueID))
-        }
         return nil
     }
 
