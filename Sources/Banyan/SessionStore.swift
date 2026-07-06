@@ -1,5 +1,6 @@
 import BanyanCore
 import Foundation
+import AppKit
 
 struct SidebarSessionItem: Identifiable {
     let session: BanyanSession
@@ -35,12 +36,14 @@ private struct SupervisorSessionResult {
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [BanyanSession] = []
     @Published private(set) var terminalFocusRequestID = UUID()
+    @Published private(set) var selectedContextInfo: SessionContextInfo?
     @Published var addSessionDraft: AddSessionDraft?
     @Published var selectedSessionID: String? {
         didSet {
             saveWorkspace()
             startSelectedSessionIfNeeded()
             requestTerminalFocus()
+            refreshSelectedContextInfo(force: true)
         }
     }
     @Published var sortMode: SortMode = .manual {
@@ -75,6 +78,9 @@ final class SessionStore: ObservableObject {
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
     private var isSupervisorTickRunning = false
+    private var selectedContextTask: Task<Void, Never>?
+    private var selectedContextSignature: String?
+    private var selectedContextResolvedAt = Date.distantPast
 
     init() {
         let defaults = UserDefaults.standard
@@ -250,6 +256,7 @@ final class SessionStore: ObservableObject {
             selectedSessionID = visibleSessions.first?.id
         }
         startSelectedSessionIfNeeded()
+        refreshSelectedContextInfo(force: true)
         saveSessions()
     }
 
@@ -329,6 +336,7 @@ final class SessionStore: ObservableObject {
         sessions.append(session)
         selectedSessionID = session.id
         session.start()
+        refreshSelectedContextInfo(force: true)
         saveSessions()
         return session
     }
@@ -360,6 +368,16 @@ final class SessionStore: ObservableObject {
             runSupervisorTick()
         }
         saveSessions()
+    }
+
+    func openSelectedLinearIssue() {
+        guard let url = selectedLinearIssueURL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openSelectedPullRequest() {
+        guard let url = selectedPullRequestURL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func close(id: String) throws {
@@ -415,6 +433,24 @@ final class SessionStore: ObservableObject {
         requestClose(id: selectedSession.id)
     }
 
+    var selectedLinearIssueURL: URL? {
+        if let value = selectedContextInfo?.linearIssueURL, let url = URL(string: value) {
+            return url
+        }
+        if let value = selectedSession?.titleURL, let url = URL(string: value) {
+            return url
+        }
+        if let issueID = selectedSession?.titleLinkLabel {
+            return URL(string: LinearIssueReference.issueURL(for: issueID))
+        }
+        return nil
+    }
+
+    var selectedPullRequestURL: URL? {
+        guard let value = selectedContextInfo?.pullRequestURL else { return nil }
+        return URL(string: value)
+    }
+
     func requestClose(id: String) {
         if hasActiveChildren(id) {
             pendingCloseSessionID = id
@@ -454,7 +490,11 @@ final class SessionStore: ObservableObject {
     private func attach(_ session: BanyanSession) {
         session.onDidChange = { [weak self] in
             Task { @MainActor in
-                self?.saveSessions()
+                guard let self else { return }
+                self.saveSessions()
+                if self.selectedSessionID == session.id {
+                    self.refreshSelectedContextInfo()
+                }
             }
         }
         session.onOutput = { [weak self, weak session] text in
@@ -577,8 +617,51 @@ final class SessionStore: ObservableObject {
                 self.applySupervisorResults(results)
                 self.isSupervisorTickRunning = false
                 self.saveSessions()
+                self.refreshSelectedContextInfoIfStale()
             }
         }
+    }
+
+    private func refreshSelectedContextInfo(force: Bool = false) {
+        guard let session = selectedSession, session.status != .closed else {
+            selectedContextTask?.cancel()
+            selectedContextTask = nil
+            selectedContextSignature = nil
+            selectedContextInfo = nil
+            return
+        }
+
+        let input = SessionContextLookupInput(
+            sessionID: session.id,
+            cwd: session.cwd,
+            title: session.title,
+            titleURL: session.titleURL,
+            displayTitle: session.displayTitle
+        )
+        guard force || input.signature != selectedContextSignature else { return }
+
+        selectedContextSignature = input.signature
+        if selectedContextInfo?.signature != input.signature {
+            selectedContextInfo = nil
+        }
+        selectedContextTask?.cancel()
+        selectedContextTask = Task.detached(priority: .utility) {
+            let info = SessionContextResolver.resolve(input: input)
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.selectedSessionID == input.sessionID,
+                      self.selectedContextSignature == input.signature else {
+                    return
+                }
+                self.selectedContextInfo = info
+                self.selectedContextResolvedAt = Date()
+            }
+        }
+    }
+
+    private func refreshSelectedContextInfoIfStale() {
+        guard Date().timeIntervalSince(selectedContextResolvedAt) > 30 else { return }
+        refreshSelectedContextInfo(force: true)
     }
 
     private func applySupervisorResults(_ results: [SupervisorSessionResult]) {

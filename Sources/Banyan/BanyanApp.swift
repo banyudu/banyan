@@ -41,6 +41,20 @@ struct BanyanApp: App {
 
                 Divider()
 
+                Button("Open GitHub Pull Request") {
+                    store.openSelectedPullRequest()
+                }
+                .keyboardShortcut("g")
+                .disabled(store.selectedPullRequestURL == nil)
+
+                Button("Open Linear Issue") {
+                    store.openSelectedLinearIssue()
+                }
+                .keyboardShortcut("l")
+                .disabled(store.selectedLinearIssueURL == nil)
+
+                Divider()
+
                 Button("Next Terminal") {
                     store.selectNextSession()
                 }

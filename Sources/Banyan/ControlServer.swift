@@ -196,12 +196,32 @@ final class ControlServer {
             "title": window?.title ?? "",
             "titleVisibility": window?.titleVisibility == .hidden ? "hidden" : "visible"
         ]
+        if let context = store?.selectedContextInfo {
+            let selectedContext: [String: String] = [
+                "sessionID": context.sessionID,
+                "linearIssueID": context.linearIssueID ?? "",
+                "linearIssueTitle": context.linearIssueTitle ?? "",
+                "linearIssueURL": context.linearIssueURL ?? "",
+                "pullRequestNumber": context.pullRequestNumber.map(String.init) ?? "",
+                "pullRequestTitle": context.pullRequestTitle ?? "",
+                "pullRequestURL": context.pullRequestURL ?? ""
+            ]
+            state["selectedContext"] = selectedContext
+        }
         if let window {
             state["windowWidth"] = window.frame.width
             let actionFrames = [
                 viewFrame(window: window, identifier: AccessibilityID.toolbarAddSession),
                 viewFrame(window: window, identifier: AccessibilityID.toolbarPreferences)
             ].compactMap(\.self)
+            if let contextFrame = viewFrame(window: window, identifier: AccessibilityID.toolbarContext) {
+                state["toolbarContextFound"] = true
+                state["toolbarContextMinX"] = contextFrame.minX
+                state["toolbarContextMaxX"] = contextFrame.maxX
+                state["toolbarContextWidth"] = contextFrame.width
+            } else {
+                state["toolbarContextFound"] = false
+            }
             if !actionFrames.isEmpty {
                 let actionsFrame = actionFrames.dropFirst().reduce(actionFrames[0]) { $0.union($1) }
                 state["toolbarActionsFound"] = true

@@ -17,6 +17,15 @@ struct ContentView: View {
             ToolbarItem(placement: .navigation) {
                 TitleBarLogo()
             }
+            ToolbarItem(placement: .principal) {
+                if store.selectedSession != nil {
+                    TitleBarContextView(
+                        context: store.selectedContextInfo,
+                        onOpenLinear: store.openSelectedLinearIssue,
+                        onOpenPullRequest: store.openSelectedPullRequest
+                    )
+                }
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     store.spawnSiblingSession()
@@ -198,6 +207,116 @@ struct ContentView: View {
             )
             .accessibilityIdentifier(AccessibilityID.emptyDetail)
         }
+    }
+}
+
+private struct TitleBarContextView: View {
+    let context: SessionContextInfo?
+    let onOpenLinear: () -> Void
+    let onOpenPullRequest: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let issueID = context?.linearIssueID,
+               let linearIssueTitle = sanitizedLinearIssueTitle {
+                TitleBarContextButton(
+                    accessibilityIdentifier: AccessibilityID.toolbarLinearLink,
+                    systemImage: "list.bullet.rectangle",
+                    primary: issueID,
+                    secondary: linearIssueTitle,
+                    help: "Open Linear issue (Cmd-L)",
+                    isEnabled: true,
+                    action: onOpenLinear
+                )
+            }
+
+            if let pullRequestURL = context?.pullRequestURL, !pullRequestURL.isEmpty {
+                TitleBarContextButton(
+                    accessibilityIdentifier: AccessibilityID.toolbarPullRequestLink,
+                    systemImage: "arrow.triangle.pull",
+                    primary: pullRequestLabel,
+                    secondary: context?.pullRequestTitle,
+                    help: "Open GitHub pull request (Cmd-G)",
+                    isEnabled: true,
+                    action: onOpenPullRequest
+                )
+            }
+        }
+        .frame(maxWidth: 560)
+        .padding(.horizontal, 10)
+        .lineLimit(1)
+        .accessibilityIdentifier(AccessibilityID.toolbarContext)
+    }
+
+    private var sanitizedLinearIssueTitle: String? {
+        let trimmed = context?.linearIssueTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private var pullRequestLabel: String {
+        if let number = context?.pullRequestNumber {
+            return "PR #\(number)"
+        }
+        return "PR"
+    }
+}
+
+private struct TitleBarContextButton: View {
+    let accessibilityIdentifier: String
+    let systemImage: String
+    let primary: String
+    let secondary: String?
+    let help: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .medium))
+                Text(primary)
+                    .font(.system(size: 12, weight: .semibold))
+                    .underline(isHovered)
+                if let secondary = sanitizedSecondary {
+                    Text(secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .help(help)
+        .onHover(perform: setHovered)
+        .onDisappear(perform: resetHover)
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var sanitizedSecondary: String? {
+        let trimmed = secondary?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private func setHovered(_ hovered: Bool) {
+        guard isEnabled, isHovered != hovered else { return }
+        isHovered = hovered
+        if hovered {
+            NSCursor.pointingHand.push()
+        } else {
+            NSCursor.pop()
+        }
+    }
+
+    private func resetHover() {
+        guard isHovered else { return }
+        isHovered = false
+        NSCursor.pop()
     }
 }
 
