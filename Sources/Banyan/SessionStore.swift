@@ -34,11 +34,12 @@ private struct SupervisorSessionResult {
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [BanyanSession] = []
+    @Published private(set) var terminalFocusRequestID = UUID()
     @Published var selectedSessionID: String? {
         didSet {
-            detachInactiveSession(id: oldValue)
             saveWorkspace()
             startSelectedSessionIfNeeded()
+            requestTerminalFocus()
         }
     }
     @Published var sortMode: SortMode = .manual {
@@ -456,6 +457,10 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func requestTerminalFocus() {
+        terminalFocusRequestID = UUID()
+    }
+
     private func applyAppearance() {
         sessions.forEach {
             $0.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
@@ -465,14 +470,6 @@ final class SessionStore: ObservableObject {
     private func startSelectedSessionIfNeeded() {
         guard let session = selectedSession, session.status != .closed else { return }
         session.start()
-    }
-
-    private func detachInactiveSession(id: String?) {
-        guard let id, id != selectedSessionID else { return }
-        guard let session = sessions.first(where: { $0.id == id }), session.status != .closed else {
-            return
-        }
-        session.detachTerminalClient()
     }
 
     private func saveSessions() {

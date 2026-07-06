@@ -7,6 +7,7 @@ struct TerminalHostView: NSViewRepresentable {
     let theme: TerminalTheme
     let fontFamily: String
     let fontSize: Double
+    let focusRequestID: UUID
 
     func makeNSView(context: Context) -> TerminalContainerView {
         let container = TerminalContainerView(terminalView: session.terminalView)
@@ -16,6 +17,8 @@ struct TerminalHostView: NSViewRepresentable {
         }
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         container.needsLayout = true
+        context.coordinator.lastFocusRequestID = focusRequestID
+        container.focusTerminalWhenReady()
         return container
     }
 
@@ -30,6 +33,18 @@ struct TerminalHostView: NSViewRepresentable {
             nsView.needsLayout = true
             nsView.syncTerminalFrameIfNeeded(markNeedsDisplay: true)
         }
+        if context.coordinator.lastFocusRequestID != focusRequestID {
+            context.coordinator.lastFocusRequestID = focusRequestID
+            nsView.focusTerminalWhenReady()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator {
+        var lastFocusRequestID: UUID?
     }
 }
 
@@ -123,6 +138,23 @@ final class TerminalContainerView: NSView {
         }
         if markNeedsDisplay {
             terminalView.needsDisplay = true
+        }
+    }
+
+    func focusTerminalWhenReady() {
+        focusTerminalWhenReady(attempt: 0)
+    }
+
+    private func focusTerminalWhenReady(attempt: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0 : 0.03)) { [weak self] in
+            guard let self else { return }
+            guard let window = self.window else {
+                if attempt < 5 {
+                    self.focusTerminalWhenReady(attempt: attempt + 1)
+                }
+                return
+            }
+            window.makeFirstResponder(self.terminalView)
         }
     }
 
