@@ -53,9 +53,10 @@ struct AgentSupervisor {
             return Result(status: .running, tone: .blue, provider: nil, currentPath: pane.currentPath)
         }
 
-        let rootAgentProcessCount = Self.isSupportedAgentCommand(pane.currentCommand) ? 1 : 0
-        let agentProcesses = descendants.filter(\.isSupportedAgent)
-        if rootAgentProcessCount + agentProcesses.count > 1 {
+        let rootAgentProcessCount = Self.isSupportedAgentCommand(pane.currentCommand)
+            && !descendants.contains { $0.pid == pane.rootPID && $0.isSupportedAgent } ? 1 : 0
+        let agentProcessCount = Self.logicalAgentProcessCount(in: descendants)
+        if rootAgentProcessCount + agentProcessCount > 1 {
             return Result(status: .subagents, tone: .purple, provider: provider, currentPath: pane.currentPath)
         }
 
@@ -101,6 +102,18 @@ struct AgentSupervisor {
             return provider
         }
         return descendants.compactMap(\.supportedAgentProvider).first
+    }
+
+    static func logicalAgentProcessCount(in descendants: [ProcessInfoRow]) -> Int {
+        let agentProcesses = descendants.filter(\.isSupportedAgent)
+        let agentProcessesByParent = Dictionary(grouping: agentProcesses, by: \.parentPID)
+
+        return agentProcesses.filter { process in
+            guard process.isNodeAgentLauncher else { return true }
+            guard let provider = process.supportedAgentProvider else { return true }
+            let childAgents = agentProcessesByParent[process.pid] ?? []
+            return !childAgents.contains { $0.supportedAgentProvider == provider }
+        }.count
     }
 
     private static func looksLikeAgentQuestion(_ text: String) -> Bool {
@@ -212,6 +225,10 @@ struct ProcessInfoRow {
     var isTmuxPlumbing: Bool {
         let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
         return name == "tmux" || name == "reattach-to-user-namespace"
+    }
+
+    var isNodeAgentLauncher: Bool {
+        URL(fileURLWithPath: commandName).lastPathComponent.lowercased() == "node"
     }
 
     static func load() -> [ProcessInfoRow] {

@@ -155,6 +155,82 @@ import Testing
     #expect(result?.tone == .purple)
 }
 
+@Test func supervisorTreatsNodeWrappedCodexAsSingleAgent() {
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "node"),
+        processes: [
+            process(
+                pid: 100,
+                parentPID: 1,
+                commandName: "node",
+                arguments: "node /Users/banyudu/.nvm/versions/node/v24.4.1/bin/codex",
+                elapsed: 5
+            ),
+            process(
+                pid: 101,
+                parentPID: 100,
+                commandName: "/Users/banyudu/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
+                arguments: "/Users/banyudu/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
+                elapsed: 5
+            )
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+    #expect(result?.provider?.rawValue == "codex")
+}
+
+@Test func supervisorDoesNotDoubleCountRootAgentProcess() {
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "codex"),
+        processes: [
+            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/codex", arguments: "codex", elapsed: 5)
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
+@Test func supervisorStillClassifiesNestedAgentWithNodeWrappedCodexAsSubagents() {
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "node"),
+        processes: [
+            process(
+                pid: 100,
+                parentPID: 1,
+                commandName: "node",
+                arguments: "node /Users/banyudu/.nvm/versions/node/v24.4.1/bin/codex",
+                elapsed: 5
+            ),
+            process(
+                pid: 101,
+                parentPID: 100,
+                commandName: "/Users/banyudu/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
+                arguments: "/Users/banyudu/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
+                elapsed: 5
+            ),
+            process(pid: 102, parentPID: 101, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 5)
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .subagents)
+    #expect(result?.tone == .purple)
+}
+
 @Test func supervisorCanDetectAgentFromDescendantProcess() {
     let result = makeSupervisor(
         pane: pane(currentCommand: "node"),
