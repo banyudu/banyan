@@ -16,12 +16,28 @@ struct SidebarSessionGroup: Identifiable {
     let items: [SidebarSessionItem]
 }
 
+private struct SupervisorSessionInput {
+    let id: String
+    let tmuxSessionName: String
+    let command: String
+    let status: SessionStatus
+}
+
+private struct SupervisorSessionResult {
+    let id: String
+    let status: SessionStatus
+    let tone: SessionTone
+    let provider: CodingAgentProvider?
+}
+
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [BanyanSession] = []
     @Published var selectedSessionID: String? {
         didSet {
+            detachInactiveSession(id: oldValue)
             saveWorkspace()
+            startSelectedSessionIfNeeded()
         }
     }
     @Published var sortMode: SortMode = .manual {
@@ -188,7 +204,10 @@ final class SessionStore: ObservableObject {
                 isTitlePinned: snapshot.isTitlePinned,
                 cwd: snapshot.cwd,
                 command: snapshot.command,
-                status: snapshot.status == .closed && tmuxBackend.hasSession(named: tmuxSessionName) ? .running : snapshot.status,
+                status: Self.restoredStatus(
+                    snapshotStatus: snapshot.status,
+                    backingSessionExists: tmuxBackend.hasSession(named: tmuxSessionName)
+                ),
                 tone: snapshot.tone,
                 parentSessionID: snapshot.parentSessionID,
                 createdAt: snapshot.createdAt,
@@ -202,9 +221,6 @@ final class SessionStore: ObservableObject {
             attach(session)
             sessions.append(session)
             loadedTmuxSessionNames.insert(session.tmuxSessionName)
-            if session.status != .closed, tmuxBackend.hasSession(named: session.tmuxSessionName) {
-                session.start()
-            }
         }
         for tmuxSessionName in tmuxBackend.listBanyanSessions() where !loadedTmuxSessionNames.contains(tmuxSessionName) {
             let id = uniqueID(String(tmuxSessionName.dropFirst("banyan-".count)), avoidingLiveTmuxSessions: false)
@@ -223,13 +239,13 @@ final class SessionStore: ObservableObject {
             )
             attach(session)
             sessions.append(session)
-            session.start()
         }
         if let selectedSessionID, visibleSessions.contains(where: { $0.id == selectedSessionID }) {
             self.selectedSessionID = selectedSessionID
         } else {
             selectedSessionID = visibleSessions.first?.id
         }
+        startSelectedSessionIfNeeded()
         saveSessions()
     }
 
@@ -238,6 +254,13 @@ final class SessionStore: ObservableObject {
         let server = ControlServer(store: self)
         server.start()
         controlServer = server
+    }
+
+    nonisolated static func restoredStatus(snapshotStatus: SessionStatus, backingSessionExists: Bool) -> SessionStatus {
+        if snapshotStatus == .closed {
+            return .closed
+        }
+        return snapshotStatus
     }
 
     func startSupervisor() {
@@ -438,6 +461,19 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func startSelectedSessionIfNeeded() {
+        guard let session = selectedSession, session.status != .closed else { return }
+        session.start()
+    }
+
+    private func detachInactiveSession(id: String?) {
+        guard let id, id != selectedSessionID else { return }
+        guard let session = sessions.first(where: { $0.id == id }), session.status != .closed else {
+            return
+        }
+        session.detachTerminalClient()
+    }
+
     private func saveSessions() {
         let snapshots = sessions.map {
             SessionSnapshot(
@@ -480,24 +516,60 @@ final class SessionStore: ObservableObject {
 
     private func runSupervisorTick(sessionID: String? = nil) {
         guard !isSupervisorTickRunning else { return }
-        isSupervisorTickRunning = true
-        defer { isSupervisorTickRunning = false }
-
-        let processTable = ProcessTable.snapshot()
-        let supervisor = AgentSupervisor(backend: tmuxBackend) { rootPID in
-            processTable.descendants(of: rootPID)
-        }
-
-        for session in sessions where session.status != .closed && (sessionID == nil || session.id == sessionID) {
-            guard !session.isRestored else { continue }
-            guard let result = supervisor.inspect(
-                tmuxSessionName: session.tmuxSessionName,
-                launchCommand: session.command,
-                currentStatus: session.status
-            ) else {
-                continue
+        let inputs = sessions.compactMap { session -> SupervisorSessionInput? in
+            guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
+                return nil
             }
-            if result.status == .closed && tmuxBackend.hasSession(named: session.tmuxSessionName) {
+            guard !session.isRestored else { return nil }
+            return SupervisorSessionInput(
+                id: session.id,
+                tmuxSessionName: session.tmuxSessionName,
+                command: session.command,
+                status: session.status
+            )
+        }
+        guard !inputs.isEmpty else { return }
+
+        isSupervisorTickRunning = true
+
+        Task.detached(priority: .utility) { [weak self] in
+            let backend = TmuxBackend.shared
+            let processTable = ProcessTable.snapshot()
+            let supervisor = AgentSupervisor(backend: backend) { rootPID in
+                processTable.descendants(of: rootPID)
+            }
+
+            let results = inputs.compactMap { input -> SupervisorSessionResult? in
+                guard let result = supervisor.inspect(
+                    tmuxSessionName: input.tmuxSessionName,
+                    launchCommand: input.command,
+                    currentStatus: input.status
+                ) else {
+                    return nil
+                }
+                if result.status == .closed && backend.hasSession(named: input.tmuxSessionName) {
+                    return nil
+                }
+                return SupervisorSessionResult(
+                    id: input.id,
+                    status: result.status,
+                    tone: result.tone,
+                    provider: result.provider
+                )
+            }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.applySupervisorResults(results)
+                self.isSupervisorTickRunning = false
+                self.saveSessions()
+            }
+        }
+    }
+
+    private func applySupervisorResults(_ results: [SupervisorSessionResult]) {
+        for result in results {
+            guard let session = sessions.first(where: { $0.id == result.id }), session.status != .closed else {
                 continue
             }
             if session.detectedAgentProvider != result.provider {

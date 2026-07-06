@@ -40,6 +40,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var appliedFontSize: Double?
     private var externalTitleSignature: String?
     private var externalTitleTask: Task<Void, Never>?
+    private var isDetachingTerminalClient = false
 
     var displayTitle: String {
         if hasUsefulPinnedTitle {
@@ -113,6 +114,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         delegate.onTerminate = { [weak self] exitCode in
             guard let self else { return }
             self.isProcessStarted = false
+            if self.isDetachingTerminalClient {
+                self.isDetachingTerminalClient = false
+                self.touch()
+                return
+            }
             if self.status != .closed, let onProcessExit = self.onProcessExit {
                 onProcessExit(exitCode)
                 return
@@ -145,6 +151,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func start() {
         guard !terminalView.process.running else { return }
+        isDetachingTerminalClient = false
         do {
             try tmuxBackend.ensureSession(named: tmuxSessionName, cwd: cwd, command: command)
         } catch {
@@ -265,6 +272,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func terminate(markClosed: Bool = true) {
+        isDetachingTerminalClient = false
         terminalView.terminate()
         isProcessStarted = false
         isRestored = false
@@ -275,11 +283,23 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func killBackingSession() {
+        isDetachingTerminalClient = false
         terminalView.terminate()
         tmuxBackend.killSession(named: tmuxSessionName)
         isProcessStarted = false
         isRestored = false
         status = .closed
+        touch()
+    }
+
+    func detachTerminalClient() {
+        guard status != .closed else { return }
+        if terminalView.process.running {
+            isDetachingTerminalClient = true
+            terminalView.terminate()
+        }
+        isProcessStarted = false
+        isRestored = true
         touch()
     }
 
@@ -342,10 +362,18 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     }
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
+        let shouldPreserveScroll = canScroll && scrollPosition < 0.999
+        let preservedScrollPosition = scrollPosition
         if let text = String(bytes: slice, encoding: .utf8) {
             onOutput?(text)
         }
         super.dataReceived(slice: slice)
+        if shouldPreserveScroll {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.canScroll else { return }
+                self.scroll(toPosition: preservedScrollPosition)
+            }
+        }
     }
 
     private func configureInteraction() {
