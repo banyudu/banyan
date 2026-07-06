@@ -77,7 +77,9 @@ final class SessionStore: ObservableObject {
     private let tmuxBackend = TmuxBackend.shared
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
+    private var historyImportTimer: Timer?
     private var isSupervisorTickRunning = false
+    private var isHistoryImportRunning = false
     private var selectedContextTask: Task<Void, Never>?
     private var selectedContextSignature: String?
     private var selectedContextResolvedAt = Date.distantPast
@@ -260,6 +262,10 @@ final class SessionStore: ObservableObject {
         saveSessions()
     }
 
+    func refreshImportedHistory() {
+        applyImportedHistory(AgentSessionHistoryImporter.load())
+    }
+
     func startControlServer() {
         guard controlServer == nil else { return }
         let server = ControlServer(store: self)
@@ -280,6 +286,16 @@ final class SessionStore: ObservableObject {
         supervisorTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.runSupervisorTick()
+            }
+        }
+    }
+
+    func startHistoryImport() {
+        guard historyImportTimer == nil else { return }
+        runHistoryImport()
+        historyImportTimer = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.runHistoryImport()
             }
         }
     }
@@ -396,6 +412,13 @@ final class SessionStore: ObservableObject {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        if sessions[index].isImportedHistory {
+            sessions[index].status = .closed
+            if selectedSessionID == id {
+                selectedSessionID = visibleSessions.first?.id
+            }
+            return
+        }
         let parentSessionID = sessions[index].parentSessionID
         detachChildren(of: id, to: parentSessionID)
         sessions[index].killBackingSession()
@@ -404,6 +427,30 @@ final class SessionStore: ObservableObject {
             selectedSessionID = visibleSessions.first?.id
         }
         saveSessions()
+    }
+
+    @discardableResult
+    func resumeImportedHistory(id: String, prompt: String? = nil) throws -> BanyanSession {
+        guard let history = sessions.first(where: { $0.id == id && $0.isImportedHistory }) else {
+            throw ControlError.notFound(id)
+        }
+        guard let provider = history.agentProvider,
+              let sourceID = AgentSessionHistoryImporter.sourceID(fromImportedSessionID: history.id, provider: provider),
+              let command = AgentSessionHistoryImporter.resumeCommand(
+                provider: provider,
+                sourceID: sourceID,
+                cwd: history.cwd,
+                prompt: prompt
+              ) else {
+            throw ControlError.badRequest("Session history item '\(id)' cannot be resumed")
+        }
+        return spawn(
+            id: "\(provider.rawValue)-\(String(sourceID.prefix(8)))",
+            title: history.displayTitle,
+            cwd: history.cwd,
+            command: command,
+            tone: .blue
+        )
     }
 
     func select(id: String) {
@@ -516,12 +563,12 @@ final class SessionStore: ObservableObject {
     }
 
     private func startSelectedSessionIfNeeded() {
-        guard let session = selectedSession, session.status != .closed else { return }
+        guard let session = selectedSession, session.status != .closed, !session.isImportedHistory else { return }
         session.start()
     }
 
     private func saveSessions() {
-        let snapshots = sessions.map {
+        let snapshots = sessions.filter { !$0.isImportedHistory }.map {
             SessionSnapshot(
                 id: $0.id,
                 tmuxSessionName: $0.tmuxSessionName,
@@ -552,6 +599,71 @@ final class SessionStore: ObservableObject {
                 terminalFontSize: terminalFontSize
             )
         )
+    }
+
+    private func runHistoryImport() {
+        guard !isHistoryImportRunning else { return }
+        isHistoryImportRunning = true
+        Task.detached(priority: .utility) {
+            let imported = AgentSessionHistoryImporter.load()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.applyImportedHistory(imported)
+                self.isHistoryImportRunning = false
+            }
+        }
+    }
+
+    private func applyImportedHistory(_ imported: [ImportedAgentSession]) {
+        let importedIDs = Set(imported.map(\.id))
+        sessions.removeAll { session in
+            session.isImportedHistory && !importedIDs.contains(session.id) && session.status != .closed
+        }
+
+        for history in imported {
+            if let existing = sessions.first(where: { $0.id == history.id }) {
+                guard existing.isImportedHistory, existing.status != .closed else { continue }
+                replaceImportedSession(history)
+            } else {
+                sessions.append(makeImportedSession(history))
+            }
+        }
+
+        if let selectedSessionID, !visibleSessions.contains(where: { $0.id == selectedSessionID }) {
+            self.selectedSessionID = visibleSessions.first?.id
+        } else if selectedSessionID == nil {
+            selectedSessionID = visibleSessions.first?.id
+        }
+    }
+
+    private func replaceImportedSession(_ history: ImportedAgentSession) {
+        guard let index = sessions.firstIndex(where: { $0.id == history.id && $0.isImportedHistory }) else {
+            return
+        }
+        sessions[index] = makeImportedSession(history)
+    }
+
+    private func makeImportedSession(_ history: ImportedAgentSession) -> BanyanSession {
+        let session = BanyanSession(
+            id: history.id,
+            tmuxSessionName: TmuxBackend.sessionName(for: history.id),
+            title: history.title,
+            generatedTitle: nil,
+            isTitlePinned: true,
+            cwd: history.cwd,
+            command: history.provider.defaultExecutableName,
+            status: .completed,
+            tone: .neutral,
+            historyTranscriptURL: history.transcriptURL,
+            createdAt: history.createdAt,
+            updatedAt: history.updatedAt,
+            isRestored: true,
+            theme: terminalTheme,
+            fontFamily: terminalFontFamily,
+            fontSize: terminalFontSize
+        )
+        attach(session)
+        return session
     }
 
     private func detectAttention(in text: String, for session: BanyanSession) {

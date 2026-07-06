@@ -54,8 +54,10 @@ struct ContentView: View {
         }
         .onAppear {
             store.loadPersistedSessionsIfNeeded()
+            store.refreshImportedHistory()
             store.startControlServer()
             store.startSupervisor()
+            store.startHistoryImport()
             if store.visibleSessions.isEmpty {
                 store.spawn(cwd: NSHomeDirectory())
             }
@@ -184,21 +186,26 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         if let session = store.selectedSession {
-            VStack(spacing: 0) {
-                if session.needsManualAttach {
-                    TerminalReconnectBanner(session: session)
-                    Divider()
+            if session.isImportedHistory {
+                ImportedSessionHistoryView(session: session)
+                    .accessibilityIdentifier(AccessibilityID.detail)
+            } else {
+                VStack(spacing: 0) {
+                    if session.needsManualAttach {
+                        TerminalReconnectBanner(session: session)
+                        Divider()
+                    }
+                    TerminalHostView(
+                        session: session,
+                        theme: store.terminalTheme,
+                        fontFamily: store.terminalFontFamily,
+                        fontSize: store.terminalFontSize,
+                        focusRequestID: store.terminalFocusRequestID
+                    )
+                        .ignoresSafeArea(edges: .bottom)
                 }
-                TerminalHostView(
-                    session: session,
-                    theme: store.terminalTheme,
-                    fontFamily: store.terminalFontFamily,
-                    fontSize: store.terminalFontSize,
-                    focusRequestID: store.terminalFocusRequestID
-                )
-                    .ignoresSafeArea(edges: .bottom)
+                .accessibilityIdentifier(AccessibilityID.detail)
             }
-            .accessibilityIdentifier(AccessibilityID.detail)
         } else {
             ContentUnavailableView(
                 "No Session Selected",
@@ -801,6 +808,112 @@ private struct AgentProviderIcon: View {
                 "\(home)/Applications/OpenCode.app"
             ]
         }
+    }
+}
+
+private struct ImportedSessionHistoryView: View {
+    @EnvironmentObject private var store: SessionStore
+    @ObservedObject var session: BanyanSession
+    @State private var preview = "Loading..."
+    @State private var resumePrompt = ""
+    @FocusState private var isResumePromptFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                if let provider = session.agentProvider {
+                    AgentProviderIcon(provider: provider)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.displayTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(session.cwd)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Button {
+                    resumeSession()
+                } label: {
+                    Label("Resume", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Resume in a Banyan session")
+
+                Button {
+                    openTranscript()
+                } label: {
+                    Image(systemName: "doc.text.magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .help("Reveal transcript")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.bar)
+
+            ScrollView {
+                Text(preview)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+
+            Divider()
+
+            HStack(spacing: 8) {
+                TextField("Message to resume...", text: $resumePrompt)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isResumePromptFocused)
+                    .onSubmit(resumeWithPrompt)
+
+                Button {
+                    resumeWithPrompt()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: 20))
+                .help("Resume with message")
+                .disabled(resumePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(12)
+            .background(.bar)
+        }
+        .task(id: session.id) {
+            loadPreview()
+            isResumePromptFocused = true
+        }
+    }
+
+    private func loadPreview() {
+        guard let url = session.historyTranscriptURL,
+              let provider = session.agentProvider else {
+            preview = "No transcript is attached to this history item."
+            return
+        }
+        preview = AgentSessionHistoryImporter.transcriptPreview(from: url, provider: provider)
+    }
+
+    private func openTranscript() {
+        guard let url = session.historyTranscriptURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func resumeSession() {
+        _ = try? store.resumeImportedHistory(id: session.id)
+    }
+
+    private func resumeWithPrompt() {
+        let prompt = resumePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        resumePrompt = ""
+        _ = try? store.resumeImportedHistory(id: session.id, prompt: prompt)
     }
 }
 

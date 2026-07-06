@@ -8,6 +8,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     let id: String
     let tmuxSessionName: String
     let createdAt: Date
+    let historyTranscriptURL: URL?
     let terminalView: DetectingLocalProcessTerminalView
     private var displayProject: String
     private var displayBranch: String?
@@ -74,6 +75,10 @@ final class BanyanSession: ObservableObject, Identifiable {
         isRestored && !isProcessStarted && status == .failed
     }
 
+    var isImportedHistory: Bool {
+        historyTranscriptURL != nil
+    }
+
     init(
         id: String,
         tmuxSessionName: String? = nil,
@@ -86,6 +91,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         status: SessionStatus = .running,
         tone: SessionTone = .blue,
         parentSessionID: String? = nil,
+        historyTranscriptURL: URL? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         isRestored: Bool = false,
@@ -96,6 +102,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         let displayContext = SessionDisplayLabel.context(cwd: cwd)
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
+        self.historyTranscriptURL = historyTranscriptURL
         self.title = title
         if let normalizedTitleURL = Self.normalizedTitleURL(titleURL) {
             self.titleURL = normalizedTitleURL
@@ -174,6 +181,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func start() {
+        guard !isImportedHistory else { return }
         guard !terminalView.process.running else { return }
         isDetachingTerminalClient = false
         do {
