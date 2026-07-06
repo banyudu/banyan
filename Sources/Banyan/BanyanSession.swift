@@ -247,6 +247,12 @@ final class BanyanSession: ObservableObject, Identifiable {
         touch()
     }
 
+    func noteUserSubmittedInput() {
+        guard !isImportedHistory, isProcessStarted, status != .closed, agentProvider != nil else { return }
+        guard [.running, .longRunningShell, .needInput, .asking].contains(status) else { return }
+        mark(status: .executing, tone: .blue)
+    }
+
     func markFirstPromptTitle(_ title: String) {
         guard !hasUsefulPinnedTitle else { return }
         guard let provider = agentProvider, [.claude, .codex].contains(provider) else { return }

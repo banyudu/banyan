@@ -10,7 +10,10 @@ struct TerminalHostView: NSViewRepresentable {
     let focusRequestID: UUID
 
     func makeNSView(context: Context) -> TerminalContainerView {
-        let container = TerminalContainerView(terminalView: session.terminalView)
+        let container = TerminalContainerView(
+            terminalView: session.terminalView,
+            onUserSubmittedInput: { session.noteUserSubmittedInput() }
+        )
         container.apply(theme: theme)
         container.onLayout = {
             session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
@@ -24,6 +27,7 @@ struct TerminalHostView: NSViewRepresentable {
 
     func updateNSView(_ nsView: TerminalContainerView, context: Context) {
         let didInstall = nsView.install(session.terminalView)
+        nsView.onUserSubmittedInput = { session.noteUserSubmittedInput() }
         nsView.apply(theme: theme)
         nsView.onLayout = {
             session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
@@ -51,6 +55,7 @@ struct TerminalHostView: NSViewRepresentable {
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
     var onLayout: (() -> Void)?
+    var onUserSubmittedInput: (() -> Void)?
     private let contentInset: CGFloat = 14
     private var leadingConstraint: NSLayoutConstraint?
     private var trailingConstraint: NSLayoutConstraint?
@@ -60,8 +65,9 @@ final class TerminalContainerView: NSView {
     private var inputEventMonitor: Any?
     private var scrollInterpreter = TerminalScrollInterpreter()
 
-    init(terminalView: LocalProcessTerminalView) {
+    init(terminalView: LocalProcessTerminalView, onUserSubmittedInput: (() -> Void)? = nil) {
         self.terminalView = terminalView
+        self.onUserSubmittedInput = onUserSubmittedInput
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier(AccessibilityID.terminal)
         wantsLayer = true
@@ -178,6 +184,9 @@ final class TerminalContainerView: NSView {
                 return event
             case .keyDown:
                 guard self.isTerminalFirstResponder else { return event }
+                if self.isSubmitKey(event) {
+                    self.onUserSubmittedInput?()
+                }
                 return self.handleTerminalShortcut(event) ? nil : event
             default:
                 return event
@@ -205,6 +214,10 @@ final class TerminalContainerView: NSView {
             return view === terminalView || view.isDescendant(of: terminalView)
         }
         return false
+    }
+
+    private func isSubmitKey(_ event: NSEvent) -> Bool {
+        event.keyCode == 36 || event.keyCode == 76
     }
 
     private func handleTerminalShortcut(_ event: NSEvent) -> Bool {

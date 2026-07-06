@@ -27,12 +27,35 @@ import Testing
 }
 
 @MainActor
-private func makeAttachStateSession(isRestored: Bool, status: SessionStatus = .running) -> BanyanSession {
+@Test func submittedInputPromotesIdleAgentSessionToExecuting() {
+    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "codex")
+
+    session.noteUserSubmittedInput()
+
+    #expect(session.status == .executing)
+    #expect(session.tone == .blue)
+}
+
+@MainActor
+@Test func submittedInputDoesNotPromotePlainShellSession() {
+    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "")
+
+    session.noteUserSubmittedInput()
+
+    #expect(session.status == .longRunningShell)
+}
+
+@MainActor
+private func makeAttachStateSession(
+    isRestored: Bool,
+    status: SessionStatus = .running,
+    command: String = ""
+) -> BanyanSession {
     BanyanSession(
         id: "attach-state",
         title: "/tmp",
         cwd: "/tmp",
-        command: "",
+        command: command,
         status: status,
         isRestored: isRestored,
         theme: .system
