@@ -63,7 +63,7 @@ import Testing
     #expect(action == .pageDown(count: 1))
 }
 
-@Test func activeMouseModeTakesPriorityForWheelEvents() {
+@Test func disabledMouseReportingKeepsWheelEventsInScrollback() {
     var interpreter = TerminalScrollInterpreter()
 
     let action = interpreter.interpret(
@@ -72,6 +72,21 @@ import Testing
         hasPreciseScrollingDeltas: true,
         canScroll: true,
         allowMouseReporting: false,
+        mouseModeActive: true
+    )
+
+    #expect(action == .scrollbackUp(lines: 1))
+}
+
+@Test func activeMouseModeTakesPriorityWhenMouseReportingIsAllowed() {
+    var interpreter = TerminalScrollInterpreter()
+
+    let action = interpreter.interpret(
+        deltaY: 10,
+        scrollingDeltaY: 10,
+        hasPreciseScrollingDeltas: true,
+        canScroll: true,
+        allowMouseReporting: true,
         mouseModeActive: true
     )
 

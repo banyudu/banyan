@@ -20,7 +20,7 @@ public struct TerminalScrollInterpreter {
         allowMouseReporting: Bool,
         mouseModeActive: Bool
     ) -> TerminalScrollAction? {
-        if mouseModeActive {
+        if allowMouseReporting && mouseModeActive {
             return .mouseReport
         }
 

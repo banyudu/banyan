@@ -245,8 +245,10 @@ final class TerminalContainerView: NSView {
             sendMouseWheel(event)
         case .scrollbackUp(let lines):
             terminalView.scrollUp(lines: lines)
+            (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
         case .scrollbackDown(let lines):
             terminalView.scrollDown(lines: lines)
+            (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
         case .pageUp(let count):
             sendPageScroll(up: true, count: count)
         case .pageDown(let count):

@@ -443,6 +443,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
 final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
+    private var preservedScrollbackTopRow: Int?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -455,18 +456,34 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     }
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
-        let shouldPreserveScroll = canScroll && scrollPosition < 0.999
-        let preservedTopRow = terminal.buffer.yDisp
+        let preservedTopRow = preservedScrollbackTopRow ?? (canScroll && scrollPosition < 1 ? terminal.buffer.yDisp : nil)
         if let text = String(bytes: slice, encoding: .utf8) {
             onOutput?(text)
         }
         super.dataReceived(slice: slice)
-        if shouldPreserveScroll {
-            scrollTo(row: preservedTopRow, notifyAccessibility: false)
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.canScroll else { return }
-                self.scrollTo(row: preservedTopRow, notifyAccessibility: false)
-            }
+        if let preservedTopRow {
+            restoreScrollbackPosition(preservedTopRow)
+        }
+    }
+
+    func noteUserScrollbackPosition() {
+        guard canScroll, scrollPosition < 1 else {
+            preservedScrollbackTopRow = nil
+            return
+        }
+        preservedScrollbackTopRow = terminal.buffer.yDisp
+    }
+
+    private func restoreScrollbackPosition(_ row: Int) {
+        guard canScroll else { return }
+        scrollTo(row: row, notifyAccessibility: false)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.canScroll else { return }
+            self.scrollTo(row: row, notifyAccessibility: false)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+            guard let self, self.canScroll else { return }
+            self.scrollTo(row: row, notifyAccessibility: false)
         }
     }
 
