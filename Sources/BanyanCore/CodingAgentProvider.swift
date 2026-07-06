@@ -198,11 +198,55 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
     ]
 
     private static func shellTokens(_ command: String) -> [String] {
-        command
-            .split(whereSeparator: \.isWhitespace)
-            .map(String.init)
-            .map(cleanToken)
-            .filter { !$0.isEmpty }
+        var tokens: [String] = []
+        var current = ""
+        var isInSingleQuote = false
+        var isInDoubleQuote = false
+        var isEscaping = false
+
+        func appendCurrentToken() {
+            let token = cleanToken(current)
+            if !token.isEmpty {
+                tokens.append(token)
+            }
+            current = ""
+        }
+
+        for character in command {
+            if isEscaping {
+                current.append(character)
+                isEscaping = false
+                continue
+            }
+
+            if character == "\\", !isInSingleQuote {
+                isEscaping = true
+                continue
+            }
+
+            if character == "'", !isInDoubleQuote {
+                isInSingleQuote.toggle()
+                continue
+            }
+
+            if character == "\"", !isInSingleQuote {
+                isInDoubleQuote.toggle()
+                continue
+            }
+
+            if character.isWhitespace, !isInSingleQuote, !isInDoubleQuote {
+                appendCurrentToken()
+                continue
+            }
+
+            current.append(character)
+        }
+
+        if isEscaping {
+            current.append("\\")
+        }
+        appendCurrentToken()
+        return tokens
     }
 
     private static func cleanToken(_ token: String) -> String {

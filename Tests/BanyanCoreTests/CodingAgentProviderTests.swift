@@ -44,6 +44,18 @@ import Testing
     #expect(prompt == "implement sidebar titles")
 }
 
+@Test func promptCandidatePreservesQuotedPromptText() {
+    let prompt = CodingAgentProvider.promptCandidate(
+        in: AgentLaunchCommand.command(
+            provider: .codex,
+            prompt: "pull the latest code"
+        ),
+        provider: .codex
+    )
+
+    #expect(prompt == "pull the latest code")
+}
+
 @Test func titleGeneratorUsesAgentPromptBeforeGenericSessionID() {
     let title = SessionTitleGenerator.automaticTitle(for: SessionTitleContext(
         id: "session-2",
@@ -58,6 +70,25 @@ import Testing
     ))
 
     #expect(title == "add session icons")
+}
+
+@Test func titleGeneratorUsesFirstPromptSentence() {
+    let title = SessionTitleGenerator.automaticTitle(for: SessionTitleContext(
+        id: "session-2",
+        baseTitle: "banyan",
+        isTitlePinned: false,
+        cwd: "/Users/banyudu/dev/yudu/banyan",
+        project: "banyan",
+        branch: "main",
+        command: AgentLaunchCommand.command(
+            provider: .claude,
+            prompt: "pull the latest code. Then run tests and summarize the result."
+        ),
+        reportedTitle: nil,
+        provider: .claude
+    ))
+
+    #expect(title == "pull the latest code.")
 }
 
 @Test func titleGeneratorUsesProviderProjectAndIDWhenPromptIsMissing() {

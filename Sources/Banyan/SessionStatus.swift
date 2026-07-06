@@ -30,21 +30,6 @@ enum SessionStatus: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    var systemImage: String {
-        switch self {
-        case .running: return "play.fill"
-        case .executing: return "hammer.fill"
-        case .longRunningShell: return "clock.fill"
-        case .subagents: return "point.3.connected.trianglepath.dotted"
-        case .needInput: return "hand.raised.fill"
-        case .asking: return "questionmark.circle.fill"
-        case .review: return "eye.fill"
-        case .completed: return "checkmark.circle.fill"
-        case .failed: return "xmark.octagon.fill"
-        case .closed: return "archivebox.fill"
-        }
-    }
-
     var emoji: String {
         switch self {
         case .running: return "⚙️"

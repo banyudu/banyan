@@ -24,8 +24,4 @@ enum AccessibilityID {
     static func sessionRowTitle(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id).title"
     }
-
-    static func sessionRowStatus(_ id: String) -> String {
-        "banyan.sidebar.session-row.\(id).status"
-    }
 }

@@ -93,7 +93,7 @@ public enum SessionTitleGenerator {
     }
 
     public static func titleFromPrompt(_ prompt: String) -> String? {
-        var title = sanitizeTitle(prompt) ?? ""
+        var title = sanitizeTitle(firstSentence(in: prompt)) ?? ""
         for prefix in ["please ", "can you ", "could you ", "i want to ", "help me "] {
             if title.lowercased().hasPrefix(prefix) {
                 title = String(title.dropFirst(prefix.count))
@@ -119,6 +119,21 @@ public enum SessionTitleGenerator {
         let parts = value.split(separator: "@", maxSplits: 1)
         guard parts.count == 2 else { return false }
         return !parts[0].contains(" ") && !parts[1].contains(" ")
+    }
+
+    private static func firstSentence(in prompt: String) -> String {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        if let firstLine = trimmed.split(whereSeparator: \.isNewline).first {
+            let line = String(firstLine).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let sentenceEnd = line.firstIndex(where: { ".!?。！？".contains($0) }) {
+                return String(line[...sentenceEnd])
+            }
+            return line
+        }
+
+        return trimmed
     }
 
     private static func truncate(_ value: String, limit: Int) -> String {

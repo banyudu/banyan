@@ -300,13 +300,6 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: sessionStatusIcon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(statusColor)
-                .frame(width: 14, height: 14)
-                .accessibilityLabel(session.needsManualAttach ? "Restorable" : session.status.label)
-                .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
-
             if let provider = session.agentProvider {
                 AgentProviderIcon(provider: provider)
                     .accessibilityLabel(provider.displayName)
@@ -380,29 +373,8 @@ private struct SessionRow: View {
         isRenaming = false
     }
 
-    private var sessionStatusIcon: String {
-        session.needsManualAttach ? "arrow.clockwise.circle.fill" : session.status.systemImage
-    }
-
     private var displayTitle: String {
         session.displayTitle
-    }
-
-    private var statusColor: Color {
-        switch session.status {
-        case .failed:
-            return .red
-        case .needInput, .asking, .longRunningShell:
-            return .yellow
-        case .review, .subagents:
-            return .purple
-        case .completed:
-            return .green
-        case .executing:
-            return .blue
-        case .running, .closed:
-            return .secondary
-        }
     }
 
     @ViewBuilder
