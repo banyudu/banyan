@@ -236,13 +236,14 @@ final class TerminalContainerView: NSView {
             scrollingDeltaY: Double(event.scrollingDeltaY),
             hasPreciseScrollingDeltas: event.hasPreciseScrollingDeltas,
             canScroll: terminalView.canScroll,
-            allowMouseReporting: terminalView.allowMouseReporting,
             mouseModeActive: terminalView.terminal.mouseMode != .off
         )
 
         switch action {
-        case .mouseReport:
-            sendMouseWheel(event)
+        case .mouseWheelUp(let count):
+            sendMouseWheel(event, up: true, count: count)
+        case .mouseWheelDown(let count):
+            sendMouseWheel(event, up: false, count: count)
         case .scrollbackUp(let lines):
             terminalView.scrollUp(lines: lines)
             (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
@@ -258,29 +259,31 @@ final class TerminalContainerView: NSView {
         }
     }
 
-    private func sendMouseWheel(_ event: NSEvent) {
+    private func sendMouseWheel(_ event: NSEvent, up: Bool, count: Int) {
+        guard count > 0 else { return }
         let point = terminalView.convert(event.locationInWindow, from: nil)
         let terminal = terminalView.terminal!
         let colWidth = max(terminalView.bounds.width / CGFloat(max(terminal.cols, 1)), 1)
         let rowHeight = max(terminalView.bounds.height / CGFloat(max(terminal.rows, 1)), 1)
         let col = max(0, min(terminal.cols - 1, Int(point.x / colWidth)))
         let row = max(0, min(terminal.rows - 1, Int((terminalView.bounds.height - point.y) / rowHeight)))
-        let button = event.deltaY > 0 ? 4 : 5
         let flags = event.modifierFlags
         let buttonFlags = terminal.encodeButton(
-            button: button,
+            button: up ? 4 : 5,
             release: false,
             shift: flags.contains(.shift),
             meta: flags.contains(.option),
             control: flags.contains(.control)
         )
-        terminal.sendEvent(
-            buttonFlags: buttonFlags,
-            x: col,
-            y: row,
-            pixelX: Int(point.x),
-            pixelY: Int(terminalView.bounds.height - point.y)
-        )
+        for _ in 0..<count {
+            terminal.sendEvent(
+                buttonFlags: buttonFlags,
+                x: col,
+                y: row,
+                pixelX: Int(point.x),
+                pixelY: Int(terminalView.bounds.height - point.y)
+            )
+        }
     }
 
     private func sendPageScroll(up: Bool, count: Int) {

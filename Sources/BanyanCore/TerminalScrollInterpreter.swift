@@ -1,5 +1,6 @@
 public enum TerminalScrollAction: Equatable {
-    case mouseReport
+    case mouseWheelUp(count: Int)
+    case mouseWheelDown(count: Int)
     case scrollbackUp(lines: Int)
     case scrollbackDown(lines: Int)
     case pageUp(count: Int)
@@ -7,6 +8,7 @@ public enum TerminalScrollAction: Equatable {
 }
 
 public struct TerminalScrollInterpreter {
+    private var mouseRemainder: Double = 0
     private var scrollbackRemainder: Double = 0
     private var alternateRemainder: Double = 0
 
@@ -17,20 +19,25 @@ public struct TerminalScrollInterpreter {
         scrollingDeltaY: Double,
         hasPreciseScrollingDeltas: Bool,
         canScroll: Bool,
-        allowMouseReporting: Bool,
         mouseModeActive: Bool
     ) -> TerminalScrollAction? {
-        if allowMouseReporting && mouseModeActive {
-            return .mouseReport
-        }
-
         let delta = scrollingDeltaY == 0 ? deltaY : scrollingDeltaY
         guard delta != 0 else { return nil }
 
+        if mouseModeActive {
+            return mouseWheelAction(delta: delta, precise: hasPreciseScrollingDeltas)
+        }
         if canScroll {
             return scrollbackAction(delta: delta, precise: hasPreciseScrollingDeltas)
         }
         return alternateAction(delta: delta, precise: hasPreciseScrollingDeltas)
+    }
+
+    private mutating func mouseWheelAction(delta: Double, precise: Bool) -> TerminalScrollAction? {
+        mouseRemainder += delta
+        let steps = consumeSteps(from: &mouseRemainder, threshold: precise ? 16 : 1)
+        guard steps != 0 else { return nil }
+        return steps > 0 ? .mouseWheelUp(count: steps) : .mouseWheelDown(count: abs(steps))
     }
 
     private mutating func scrollbackAction(delta: Double, precise: Bool) -> TerminalScrollAction? {

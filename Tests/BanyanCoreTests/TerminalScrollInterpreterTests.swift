@@ -9,7 +9,6 @@ import Testing
         scrollingDeltaY: 4,
         hasPreciseScrollingDeltas: true,
         canScroll: true,
-        allowMouseReporting: false,
         mouseModeActive: false
     )
     #expect(first == nil)
@@ -19,7 +18,6 @@ import Testing
         scrollingDeltaY: 4,
         hasPreciseScrollingDeltas: true,
         canScroll: true,
-        allowMouseReporting: false,
         mouseModeActive: false
     )
     #expect(second == .scrollbackUp(lines: 1))
@@ -33,7 +31,6 @@ import Testing
         scrollingDeltaY: 0,
         hasPreciseScrollingDeltas: false,
         canScroll: true,
-        allowMouseReporting: false,
         mouseModeActive: false
     )
 
@@ -43,52 +40,93 @@ import Testing
 @Test func alternateScreenPreciseDeltasBecomePageScrolls() {
     var interpreter = TerminalScrollInterpreter()
 
-    _ = interpreter.interpret(
-        deltaY: 0,
-        scrollingDeltaY: -12,
-        hasPreciseScrollingDeltas: true,
-        canScroll: false,
-        allowMouseReporting: false,
-        mouseModeActive: false
-    )
     let action = interpreter.interpret(
         deltaY: 0,
-        scrollingDeltaY: -12,
+        scrollingDeltaY: -24,
         hasPreciseScrollingDeltas: true,
         canScroll: false,
-        allowMouseReporting: false,
         mouseModeActive: false
     )
 
     #expect(action == .pageDown(count: 1))
 }
 
-@Test func disabledMouseReportingKeepsWheelEventsInScrollback() {
+@Test func activeMouseModeSendsWheelReports() {
     var interpreter = TerminalScrollInterpreter()
 
     let action = interpreter.interpret(
-        deltaY: 10,
-        scrollingDeltaY: 10,
+        deltaY: 0,
+        scrollingDeltaY: 16,
         hasPreciseScrollingDeltas: true,
-        canScroll: true,
-        allowMouseReporting: false,
+        canScroll: false,
         mouseModeActive: true
     )
 
-    #expect(action == .scrollbackUp(lines: 1))
+    #expect(action == .mouseWheelUp(count: 1))
 }
 
-@Test func activeMouseModeTakesPriorityWhenMouseReportingIsAllowed() {
+@Test func activeMouseModeWinsOverScrollback() {
     var interpreter = TerminalScrollInterpreter()
 
     let action = interpreter.interpret(
-        deltaY: 10,
-        scrollingDeltaY: 10,
+        deltaY: 0,
+        scrollingDeltaY: -16,
         hasPreciseScrollingDeltas: true,
         canScroll: true,
-        allowMouseReporting: true,
         mouseModeActive: true
     )
 
-    #expect(action == .mouseReport)
+    #expect(action == .mouseWheelDown(count: 1))
+}
+
+@Test func preciseMouseWheelDeltasAccumulateBeforeReporting() {
+    var interpreter = TerminalScrollInterpreter()
+
+    let first = interpreter.interpret(
+        deltaY: 0,
+        scrollingDeltaY: 8,
+        hasPreciseScrollingDeltas: true,
+        canScroll: false,
+        mouseModeActive: true
+    )
+    #expect(first == nil)
+
+    let second = interpreter.interpret(
+        deltaY: 0,
+        scrollingDeltaY: 8,
+        hasPreciseScrollingDeltas: true,
+        canScroll: false,
+        mouseModeActive: true
+    )
+    #expect(second == .mouseWheelUp(count: 1))
+}
+
+@Test func zeroDeltaEventsProduceNoMouseReports() {
+    // Momentum-tail and horizontal scroll events carry deltaY == 0; they must
+    // not turn into wheel-down reports that snap tmux copy-mode back to bottom.
+    var interpreter = TerminalScrollInterpreter()
+
+    let action = interpreter.interpret(
+        deltaY: 0,
+        scrollingDeltaY: 0,
+        hasPreciseScrollingDeltas: true,
+        canScroll: false,
+        mouseModeActive: true
+    )
+
+    #expect(action == nil)
+}
+
+@Test func nonPreciseWheelClicksReportImmediatelyInMouseMode() {
+    var interpreter = TerminalScrollInterpreter()
+
+    let action = interpreter.interpret(
+        deltaY: -3,
+        scrollingDeltaY: 0,
+        hasPreciseScrollingDeltas: false,
+        canScroll: false,
+        mouseModeActive: true
+    )
+
+    #expect(action == .mouseWheelDown(count: 3))
 }
