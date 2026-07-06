@@ -188,6 +188,35 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard !isImportedHistory else { return }
         guard !terminalView.process.running else { return }
         isDetachingTerminalClient = false
+        startTerminalClient()
+    }
+
+    func reattachTerminalClient() {
+        guard !isImportedHistory else { return }
+        if terminalView.process.running {
+            isDetachingTerminalClient = true
+            terminalView.terminate()
+        }
+        isDetachingTerminalClient = false
+        isProcessStarted = false
+        isRestored = false
+        startTerminalClient()
+    }
+
+    func restartBackingSession() {
+        guard !isImportedHistory else { return }
+        if terminalView.process.running {
+            isDetachingTerminalClient = true
+        }
+        terminalView.terminate()
+        isDetachingTerminalClient = false
+        tmuxBackend.killSession(named: tmuxSessionName)
+        isProcessStarted = false
+        isRestored = false
+        startTerminalClient()
+    }
+
+    private func startTerminalClient() {
         do {
             try tmuxBackend.ensureSession(named: tmuxSessionName, cwd: cwd, command: command)
         } catch {

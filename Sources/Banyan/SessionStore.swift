@@ -412,7 +412,16 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
-        session.start()
+        session.reattachTerminalClient()
+        selectedSessionID = id
+        saveSessions()
+    }
+
+    func restart(id: String) throws {
+        guard let session = sessions.first(where: { $0.id == id }) else {
+            throw ControlError.notFound(id)
+        }
+        session.restartBackingSession()
         selectedSessionID = id
         saveSessions()
     }

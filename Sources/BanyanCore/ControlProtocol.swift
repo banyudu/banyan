@@ -128,6 +128,7 @@ public enum ControlRoute: Equatable {
     case mark
     case close
     case respawn
+    case restart
     case remove
     case screenshot
     case windowState
@@ -141,6 +142,7 @@ public enum ControlRoute: Equatable {
         case ("POST", "/mark"): return .mark
         case ("POST", "/close"): return .close
         case ("POST", "/respawn"): return .respawn
+        case ("POST", "/restart"): return .restart
         case ("POST", "/remove"): return .remove
         case ("POST", "/screenshot"): return .screenshot
         case ("POST", "/tick"): return .tick
@@ -150,7 +152,7 @@ public enum ControlRoute: Equatable {
 
     public var requiresID: Bool {
         switch self {
-        case .mark, .close, .respawn, .remove: return true
+        case .mark, .close, .respawn, .restart, .remove: return true
         case .list, .spawn, .screenshot, .windowState, .tick: return false
         }
     }

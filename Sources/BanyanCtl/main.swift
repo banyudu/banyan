@@ -30,6 +30,8 @@ struct BanyanCtl {
                 try post("/close", payload: parsePayload(Array(arguments.dropFirst())))
             case "respawn":
                 try post("/respawn", payload: parsePayload(Array(arguments.dropFirst())))
+            case "restart":
+                try post("/restart", payload: parsePayload(Array(arguments.dropFirst())))
             case "remove":
                 try post("/remove", payload: parsePayload(Array(arguments.dropFirst())))
             case "screenshot":
@@ -260,6 +262,7 @@ struct BanyanCtl {
           banyanctl tick   [--id ID]
           banyanctl close  --id ID
           banyanctl respawn --id ID
+          banyanctl restart --id ID
           banyanctl remove --id ID
           banyanctl screenshot --output PATH
           banyanctl window-state

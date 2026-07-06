@@ -64,6 +64,16 @@ import Testing
     try ControlRoute.tick.validate(ControlPayload(apiVersion: "v1", id: "agent"))
 }
 
+@Test func restartRouteRequiresSessionID() throws {
+    #expect(ControlRoute.resolve(method: "POST", path: "/restart") == .restart)
+
+    #expect(throws: ControlValidationError.missingID) {
+        try ControlRoute.restart.validate(ControlPayload(apiVersion: "v1", id: nil))
+    }
+
+    try ControlRoute.restart.validate(ControlPayload(apiVersion: "v1", id: "agent"))
+}
+
 @Test func missingRequiredIDIsRejected() throws {
     let payload = ControlPayload(apiVersion: "v1", id: nil)
 

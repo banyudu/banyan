@@ -143,6 +143,17 @@ final class ControlServer {
                 }
                 return (200, ["session": summary(session)], nil)
 
+            case .restart:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let id = body.id!
+                try store.restart(id: id)
+                guard let session = store.sessions.first(where: { $0.id == id }) else {
+                    throw ControlError.notFound(id)
+                }
+                return (200, ["session": summary(session)], nil)
+
             case .remove:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)

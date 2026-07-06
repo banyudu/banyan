@@ -89,6 +89,9 @@ struct ContentView: View {
                                 onClose: {
                                     store.requestClose(id: item.session.id)
                                 },
+                                onRestart: {
+                                    try? store.restart(id: item.session.id)
+                                },
                                 onRemove: {
                                     try? store.remove(id: item.session.id)
                                 }
@@ -478,6 +481,7 @@ private struct SessionRow: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
+    let onRestart: () -> Void
     let onRemove: () -> Void
 
     @State private var isRenaming = false
@@ -535,6 +539,11 @@ private struct SessionRow: View {
             Divider()
             Button("Close") {
                 onClose()
+            }
+            if !session.isImportedHistory {
+                Button("Restart") {
+                    onRestart()
+                }
             }
             Button("Remove") {
                 onRemove()
