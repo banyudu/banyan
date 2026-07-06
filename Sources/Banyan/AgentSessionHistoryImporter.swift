@@ -43,35 +43,49 @@ enum AgentSessionHistoryImporter {
     ) -> [ImportedAgentSession] {
         let codexDirectory = homeDirectory.appendingPathComponent(".codex")
         let indexURL = codexDirectory.appendingPathComponent("session_index.jsonl")
-        guard fileManager.fileExists(atPath: indexURL.path),
-              let indexContents = try? String(contentsOf: indexURL, encoding: .utf8) else {
-            return []
-        }
+        let indexContents = (try? String(contentsOf: indexURL, encoding: .utf8)) ?? ""
 
-        let sessionFilesByID = codexSessionFilesByID(
+        let sessionFiles = codexSessionFiles(
             in: codexDirectory.appendingPathComponent("sessions"),
             fileManager: fileManager
         )
+        let sessionFilesByID = Dictionary(uniqueKeysWithValues: sessionFiles.map { ($0.id, $0) })
 
         let indexRows = indexContents
             .split(whereSeparator: \.isNewline)
             .compactMap { parseCodexIndexLine(String($0)) }
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(maxSessions)
+        let recentFileRows = sessionFiles
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .prefix(maxSessions)
+            .map { CodexSessionCandidate(id: $0.id, transcriptURL: $0.url, threadName: nil, updatedAt: $0.modifiedAt) }
+        let indexedRows = indexRows.compactMap { row -> CodexSessionCandidate? in
+            guard let file = sessionFilesByID[row.id] else { return nil }
+            return CodexSessionCandidate(
+                id: row.id,
+                transcriptURL: file.url,
+                threadName: row.threadName,
+                updatedAt: row.updatedAt
+            )
+        }
+        let candidates = Dictionary((indexedRows + recentFileRows).map { ($0.id, $0) }) { indexed, _ in indexed }
+            .values
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(maxSessions)
 
-        return indexRows.compactMap { row in
-            guard let transcriptURL = sessionFilesByID[row.id] else { return nil }
-            let metadata = parseCodexMetadata(from: transcriptURL)
+        return candidates.compactMap { candidate in
+            let metadata = parseCodexMetadata(from: candidate.transcriptURL)
             let cwd = metadata.cwd ?? homeDirectory.path
             return ImportedAgentSession(
-                id: importedID(provider: .codex, sourceID: row.id),
+                id: importedID(provider: .codex, sourceID: candidate.id),
                 provider: .codex,
-                sourceID: row.id,
-                title: sanitizedTitle(row.threadName) ?? "Codex \(row.id.prefix(8))",
+                sourceID: candidate.id,
+                title: metadata.firstPromptTitle ?? sanitizedTitle(candidate.threadName) ?? "Codex \(candidate.id.prefix(8))",
                 cwd: cwd,
-                transcriptURL: transcriptURL,
-                createdAt: metadata.createdAt ?? row.updatedAt,
-                updatedAt: row.updatedAt
+                transcriptURL: candidate.transcriptURL,
+                createdAt: metadata.createdAt ?? candidate.updatedAt,
+                updatedAt: candidate.updatedAt
             )
         }
     }
@@ -122,39 +136,56 @@ enum AgentSessionHistoryImporter {
         )
     }
 
-    private static func codexSessionFilesByID(in directory: URL, fileManager: FileManager) -> [String: URL] {
+    private static func codexSessionFiles(in directory: URL, fileManager: FileManager) -> [CodexSessionFile] {
         guard let enumerator = fileManager.enumerator(
             at: directory,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return [:]
+            return []
         }
 
-        var result: [String: URL] = [:]
+        var result: [CodexSessionFile] = []
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
             let stem = url.deletingPathExtension().lastPathComponent
             guard let id = stem.split(separator: "-").suffix(5).map(String.init).joined(separator: "-").nilIfEmpty else {
                 continue
             }
-            result[id] = url
+            let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                ?? Date.distantPast
+            result.append(CodexSessionFile(id: id, url: url, modifiedAt: modifiedAt))
         }
         return result
     }
 
-    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?) {
-        for line in readLinePrefix(from: url, maxLines: 80, maxBytes: 512_000) {
-            guard let object = jsonObject(from: line),
-                  object["type"] as? String == "session_meta",
-                  let payload = object["payload"] as? [String: Any] else {
+    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, firstPromptTitle: String?) {
+        var cwd: String?
+        var createdAt: Date?
+        var firstPromptTitle: String?
+
+        for line in readLinePrefix(from: url, maxLines: 300, maxBytes: 2_000_000) {
+            guard let object = jsonObject(from: line) else {
                 continue
             }
-            return (
-                payload["cwd"] as? String,
-                parseDate(payload["timestamp"] as? String) ?? parseDate(object["timestamp"] as? String)
-            )
+
+            if object["type"] as? String == "session_meta",
+               let payload = object["payload"] as? [String: Any] {
+                cwd = cwd ?? payload["cwd"] as? String
+                createdAt = createdAt
+                    ?? parseDate(payload["timestamp"] as? String)
+                    ?? parseDate(object["timestamp"] as? String)
+            }
+
+            if firstPromptTitle == nil {
+                firstPromptTitle = codexUserPromptTitle(object)
+            }
+
+            if cwd != nil, createdAt != nil, firstPromptTitle != nil {
+                break
+            }
         }
-        return (nil, nil)
+
+        return (cwd, createdAt, firstPromptTitle)
     }
 
     private static func parseClaudeSession(
@@ -299,6 +330,14 @@ enum AgentSessionHistoryImporter {
         return nil
     }
 
+    private static func codexUserPromptTitle(_ object: [String: Any]) -> String? {
+        guard object["type"] as? String == "event_msg",
+              let payload = object["payload"] as? [String: Any],
+              payload["type"] as? String == "user_message",
+              let message = payload["message"] as? String else { return nil }
+        return sanitizedTitle(message)
+    }
+
     private static func claudePreviewLine(_ object: [String: Any]) -> String? {
         guard let type = object["type"] as? String,
               ["user", "assistant"].contains(type),
@@ -354,13 +393,14 @@ enum AgentSessionHistoryImporter {
         defer { try? handle.close() }
 
         var data = Data()
-        while data.count < maxBytes {
+        var newlineCount = 0
+        while data.count < maxBytes, newlineCount < maxLines {
             let chunk = handle.readData(ofLength: min(64 * 1024, maxBytes - data.count))
             if chunk.isEmpty { break }
-            data.append(chunk)
-            if data.filter({ $0 == 10 }).count >= maxLines {
-                break
+            newlineCount += chunk.reduce(0) { count, byte in
+                byte == 10 ? count + 1 : count
             }
+            data.append(chunk)
         }
 
         guard let text = String(data: data, encoding: .utf8) else { return [] }
@@ -401,6 +441,19 @@ enum AgentSessionHistoryImporter {
 
 private struct CodexIndexRow {
     let id: String
+    let threadName: String?
+    let updatedAt: Date
+}
+
+private struct CodexSessionFile {
+    let id: String
+    let url: URL
+    let modifiedAt: Date
+}
+
+private struct CodexSessionCandidate {
+    let id: String
+    let transcriptURL: URL
     let threadName: String?
     let updatedAt: Date
 }

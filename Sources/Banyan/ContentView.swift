@@ -54,13 +54,10 @@ struct ContentView: View {
         }
         .onAppear {
             store.loadPersistedSessionsIfNeeded()
-            store.refreshImportedHistory()
+            store.refreshImportedHistory(spawnDefaultIfEmpty: true)
             store.startControlServer()
             store.startSupervisor()
             store.startHistoryImport()
-            if store.visibleSessions.isEmpty {
-                store.spawn(cwd: NSHomeDirectory())
-            }
         }
         .alert("Close parent session?", isPresented: closeConfirmationBinding) {
             Button("Cancel", role: .cancel) {}
@@ -84,6 +81,7 @@ struct ContentView: View {
                             SessionRow(
                                 session: item.session,
                                 depth: item.depth,
+                                titleOverride: item.titleOverride,
                                 isSelected: store.selectedSessionID == item.session.id,
                                 onSelect: {
                                     store.select(id: item.session.id)
@@ -476,6 +474,7 @@ private final class TitlebarConfigurationView: NSView {
 private struct SessionRow: View {
     @ObservedObject var session: BanyanSession
     let depth: Int
+    let titleOverride: String?
     let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
@@ -491,6 +490,15 @@ private struct SessionRow: View {
             if let provider = session.agentProvider {
                 AgentProviderIcon(provider: provider)
                     .accessibilityLabel(provider.displayName)
+            }
+
+            if !session.isImportedHistory {
+                Text(session.status.emoji)
+                    .font(.system(size: 12))
+                    .frame(width: 16, height: 18)
+                    .help(session.status.label)
+                    .accessibilityLabel(session.status.label)
+                    .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
             }
 
             if isRenaming {
@@ -559,12 +567,13 @@ private struct SessionRow: View {
     }
 
     private var displayTitle: String {
-        session.displayTitle
+        titleOverride ?? session.displayTitle
     }
 
     @ViewBuilder
     private var titleLabel: some View {
-        if let titleURL = session.titleURL,
+        if titleOverride == nil,
+           let titleURL = session.titleURL,
            let url = URL(string: titleURL),
            let titleLinkLabel = session.titleLinkLabel {
             HStack(spacing: 4) {
@@ -589,6 +598,7 @@ private struct SessionRow: View {
         } else {
             Text(displayTitle)
                 .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                .foregroundStyle(session.isImportedHistory ? .secondary : .primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
@@ -886,18 +896,24 @@ private struct ImportedSessionHistoryView: View {
             .background(.bar)
         }
         .task(id: session.id) {
-            loadPreview()
             isResumePromptFocused = true
+            await loadPreview()
         }
     }
 
-    private func loadPreview() {
+    @MainActor
+    private func loadPreview() async {
         guard let url = session.historyTranscriptURL,
               let provider = session.agentProvider else {
             preview = "No transcript is attached to this history item."
             return
         }
-        preview = AgentSessionHistoryImporter.transcriptPreview(from: url, provider: provider)
+        preview = "Loading..."
+        let loadedPreview = await Task.detached(priority: .utility) {
+            AgentSessionHistoryImporter.transcriptPreview(from: url, provider: provider)
+        }.value
+        guard !Task.isCancelled else { return }
+        preview = loadedPreview
     }
 
     private func openTranscript() {

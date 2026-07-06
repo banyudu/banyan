@@ -36,7 +36,7 @@ enum SessionStatus: String, CaseIterable, Identifiable, Codable {
         case .executing: return "🔧"
         case .longRunningShell: return "⏳"
         case .subagents: return "🧩"
-        case .needInput: return "⏸️"
+        case .needInput: return "✋"
         case .asking: return "❓"
         case .review: return "👀"
         case .completed: return "✅"

@@ -5,6 +5,13 @@ import AppKit
 struct SidebarSessionItem: Identifiable {
     let session: BanyanSession
     let depth: Int
+    let titleOverride: String?
+
+    init(session: BanyanSession, depth: Int, titleOverride: String? = nil) {
+        self.session = session
+        self.depth = depth
+        self.titleOverride = titleOverride
+    }
 
     var id: String {
         session.id
@@ -80,6 +87,7 @@ final class SessionStore: ObservableObject {
     private var historyImportTimer: Timer?
     private var isSupervisorTickRunning = false
     private var isHistoryImportRunning = false
+    private var latestImportedHistory: [ImportedAgentSession] = []
     private var selectedContextTask: Task<Void, Never>?
     private var selectedContextSignature: String?
     private var selectedContextResolvedAt = Date.distantPast
@@ -136,7 +144,7 @@ final class SessionStore: ObservableObject {
     }
 
     var sidebarGroups: [SidebarSessionGroup] {
-        let active = visibleSessions
+        let active = visibleSessions.filter { !$0.isImportedHistory }
         var sessionsByProject: [String: [BanyanSession]] = [:]
         var orderedProjectIDs: [String] = []
 
@@ -147,7 +155,7 @@ final class SessionStore: ObservableObject {
             sessionsByProject[session.projectGroupID, default: []].append(session)
         }
 
-        return orderedProjectIDs.compactMap { projectID in
+        var groups: [SidebarSessionGroup] = orderedProjectIDs.compactMap { projectID in
             guard let projectSessions = sessionsByProject[projectID],
                   let firstSession = projectSessions.first else {
                 return nil
@@ -158,6 +166,19 @@ final class SessionStore: ObservableObject {
                 items: sidebarItems(for: projectSessions)
             )
         }
+
+        let historyItems = sidebarHistoryItems
+        if !historyItems.isEmpty {
+            groups.append(
+                SidebarSessionGroup(
+                    id: "history",
+                    title: "History",
+                    items: historyItems
+                )
+            )
+        }
+
+        return groups
     }
 
     var sidebarSessions: [SidebarSessionItem] {
@@ -188,6 +209,20 @@ final class SessionStore: ObservableObject {
             append(session, depth: 0)
         }
         return result
+    }
+
+    private var sidebarHistoryItems: [SidebarSessionItem] {
+        sessions
+            .filter { $0.status != .closed && $0.isImportedHistory }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(10)
+            .map {
+                SidebarSessionItem(
+                    session: $0,
+                    depth: 0,
+                    titleOverride: "\($0.projectName) · \($0.displayTitle)"
+                )
+            }
     }
 
     var selectedSession: BanyanSession? {
@@ -262,8 +297,8 @@ final class SessionStore: ObservableObject {
         saveSessions()
     }
 
-    func refreshImportedHistory() {
-        applyImportedHistory(AgentSessionHistoryImporter.load())
+    func refreshImportedHistory(spawnDefaultIfEmpty: Bool = false) {
+        runHistoryImport(spawnDefaultIfEmpty: spawnDefaultIfEmpty)
     }
 
     func startControlServer() {
@@ -601,7 +636,7 @@ final class SessionStore: ObservableObject {
         )
     }
 
-    private func runHistoryImport() {
+    private func runHistoryImport(spawnDefaultIfEmpty: Bool = false) {
         guard !isHistoryImportRunning else { return }
         isHistoryImportRunning = true
         Task.detached(priority: .utility) {
@@ -610,24 +645,36 @@ final class SessionStore: ObservableObject {
                 guard let self else { return }
                 self.applyImportedHistory(imported)
                 self.isHistoryImportRunning = false
+                if spawnDefaultIfEmpty, self.visibleSessions.isEmpty {
+                    self.spawn(cwd: NSHomeDirectory())
+                }
             }
         }
     }
 
     private func applyImportedHistory(_ imported: [ImportedAgentSession]) {
+        latestImportedHistory = imported
         let importedIDs = Set(imported.map(\.id))
         sessions.removeAll { session in
             session.isImportedHistory && !importedIDs.contains(session.id) && session.status != .closed
         }
 
+        var sessionIndexesByID = Dictionary(
+            uniqueKeysWithValues: sessions.enumerated().map { ($0.element.id, $0.offset) }
+        )
         for history in imported {
-            if let existing = sessions.first(where: { $0.id == history.id }) {
+            if let index = sessionIndexesByID[history.id] {
+                let existing = sessions[index]
                 guard existing.isImportedHistory, existing.status != .closed else { continue }
-                replaceImportedSession(history)
+                if !importedSession(existing, matches: history) {
+                    replaceImportedSession(history, at: index)
+                }
             } else {
                 sessions.append(makeImportedSession(history))
+                sessionIndexesByID[history.id] = sessions.endIndex - 1
             }
         }
+        refreshLiveAgentTitles(from: imported)
 
         if let selectedSessionID, !visibleSessions.contains(where: { $0.id == selectedSessionID }) {
             self.selectedSessionID = visibleSessions.first?.id
@@ -636,11 +683,21 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    private func replaceImportedSession(_ history: ImportedAgentSession) {
-        guard let index = sessions.firstIndex(where: { $0.id == history.id && $0.isImportedHistory }) else {
-            return
-        }
+    private func replaceImportedSession(_ history: ImportedAgentSession, at index: Int) {
         sessions[index] = makeImportedSession(history)
+    }
+
+    private func importedSession(_ session: BanyanSession, matches history: ImportedAgentSession) -> Bool {
+        session.id == history.id
+            && session.isImportedHistory
+            && session.title == history.title
+            && session.cwd == history.cwd
+            && session.command == history.provider.defaultExecutableName
+            && session.status == .completed
+            && session.tone == .neutral
+            && session.historyTranscriptURL == history.transcriptURL
+            && session.createdAt == history.createdAt
+            && session.updatedAt == history.updatedAt
     }
 
     private func makeImportedSession(_ history: ImportedAgentSession) -> BanyanSession {
@@ -664,6 +721,47 @@ final class SessionStore: ObservableObject {
         )
         attach(session)
         return session
+    }
+
+    private func refreshLiveAgentTitles(from imported: [ImportedAgentSession]) {
+        let candidates = imported.filter { [.claude, .codex].contains($0.provider) }
+        guard !candidates.isEmpty else { return }
+
+        for session in sessions where !session.isImportedHistory && session.status != .closed && !session.isTitlePinned {
+            let provider = session.agentProvider
+            guard provider == nil || [.claude, .codex].contains(provider!) else { continue }
+            guard let match = bestPromptTitleMatch(for: session, provider: provider, in: candidates) else { continue }
+            if session.detectedAgentProvider != match.provider {
+                session.markDetectedAgentProvider(match.provider)
+            }
+            session.markFirstPromptTitle(match.title)
+        }
+    }
+
+    private func bestPromptTitleMatch(
+        for session: BanyanSession,
+        provider: CodingAgentProvider?,
+        in candidates: [ImportedAgentSession]
+    ) -> ImportedAgentSession? {
+        let sessionCWD = standardizedPath(session.cwd)
+        let createdAt = session.createdAt
+        let matchWindow: TimeInterval = 5 * 60
+
+        return candidates
+            .filter {
+                (provider == nil || $0.provider == provider)
+                    && standardizedPath($0.cwd) == sessionCWD
+                    && abs($0.createdAt.timeIntervalSince(createdAt)) <= matchWindow
+            }
+            .min {
+                abs($0.createdAt.timeIntervalSince(createdAt)) < abs($1.createdAt.timeIntervalSince(createdAt))
+            }
+    }
+
+    private func standardizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
+            .standardizedFileURL
+            .path
     }
 
     private func detectAttention(in text: String, for session: BanyanSession) {
@@ -771,17 +869,22 @@ final class SessionStore: ObservableObject {
     }
 
     private func applySupervisorResults(_ results: [SupervisorSessionResult]) {
+        var didUpdateProvider = false
         for result in results {
             guard let session = sessions.first(where: { $0.id == result.id }), session.status != .closed else {
                 continue
             }
             if session.detectedAgentProvider != result.provider {
                 session.markDetectedAgentProvider(result.provider)
+                didUpdateProvider = true
             }
             session.updateCurrentDirectory(result.currentPath)
             if session.status != result.status || session.tone != result.tone {
                 session.mark(status: result.status, tone: result.tone)
             }
+        }
+        if didUpdateProvider {
+            refreshLiveAgentTitles(from: latestImportedHistory)
         }
     }
 

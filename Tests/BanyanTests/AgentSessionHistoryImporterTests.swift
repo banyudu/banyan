@@ -16,7 +16,11 @@ import Testing
         to: codex.appendingPathComponent("session_index.jsonl")
     )
     try write(
-        #"{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"session_id":"\#(id)","cwd":"/tmp/banyan-codex","timestamp":"2026-07-01T10:00:00.000Z"}}"#,
+        [
+            #"{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"session_id":"\#(id)","cwd":"/tmp/banyan-codex","timestamp":"2026-07-01T10:00:00.000Z"}}"#,
+            ##"{"timestamp":"2026-07-01T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/banyan-codex"}]}}"##,
+            #"{"timestamp":"2026-07-01T10:00:10.000Z","type":"event_msg","payload":{"type":"user_message","message":"Use the first prompt as the sidebar title\n\nIgnore the generated thread name."}}"#
+        ].joined(separator: "\n"),
         to: sessionDirectory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
     )
 
@@ -24,7 +28,29 @@ import Testing
 
     let session = try #require(imported.first { $0.id == "history-codex-\(id)" })
     #expect(session.provider == .codex)
-    #expect(session.title == "Implement history sidebar")
+    #expect(session.title == "Use the first prompt as the sidebar title")
+    #expect(session.cwd == "/tmp/banyan-codex")
+}
+
+@Test func importsRecentCodexTranscriptWhenIndexIsMissing() throws {
+    let home = try makeTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let id = "019efe8d-0514-72a2-ad62-daea0b976dcf"
+    let sessionDirectory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+    try write(
+        [
+            #"{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"session_id":"\#(id)","cwd":"/tmp/banyan-codex","timestamp":"2026-07-01T10:00:00.000Z"}}"#,
+            #"{"timestamp":"2026-07-01T10:00:10.000Z","type":"event_msg","payload":{"type":"user_message","message":"Import transcript files even without an index"}}"#
+        ].joined(separator: "\n"),
+        to: sessionDirectory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    )
+
+    let imported = AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10)
+
+    let session = try #require(imported.first { $0.id == "history-codex-\(id)" })
+    #expect(session.title == "Import transcript files even without an index")
     #expect(session.cwd == "/tmp/banyan-codex")
 }
 

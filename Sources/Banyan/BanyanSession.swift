@@ -15,6 +15,10 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published private(set) var projectGroupID: String
     @Published private(set) var projectGroupTitle: String
 
+    var projectName: String {
+        displayProject
+    }
+
     @Published var title: String
     @Published var titleURL: String?
     @Published var reportedTitle: String?
@@ -239,6 +243,16 @@ final class BanyanSession: ObservableObject, Identifiable {
     func markDetectedAgentProvider(_ provider: CodingAgentProvider?) {
         guard detectedAgentProvider != provider else { return }
         detectedAgentProvider = provider
+        refreshGeneratedTitle()
+        touch()
+    }
+
+    func markFirstPromptTitle(_ title: String) {
+        guard !hasUsefulPinnedTitle else { return }
+        guard let provider = agentProvider, [.claude, .codex].contains(provider) else { return }
+        guard let promptTitle = SessionTitleGenerator.titleFromPrompt(title) else { return }
+        guard reportedTitle != promptTitle else { return }
+        reportedTitle = promptTitle
         refreshGeneratedTitle()
         touch()
     }
