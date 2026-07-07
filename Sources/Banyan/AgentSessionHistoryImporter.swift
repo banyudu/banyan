@@ -81,7 +81,7 @@ enum AgentSessionHistoryImporter {
                 id: importedID(provider: .codex, sourceID: candidate.id),
                 provider: .codex,
                 sourceID: candidate.id,
-                title: metadata.firstPromptTitle ?? sanitizedTitle(candidate.threadName) ?? "Codex \(candidate.id.prefix(8))",
+                title: metadata.promptTitle ?? sanitizedTitle(candidate.threadName) ?? "Codex \(candidate.id.prefix(8))",
                 cwd: cwd,
                 transcriptURL: candidate.transcriptURL,
                 createdAt: metadata.createdAt ?? candidate.updatedAt,
@@ -158,12 +158,12 @@ enum AgentSessionHistoryImporter {
         return result
     }
 
-    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, firstPromptTitle: String?) {
+    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, promptTitle: String?) {
         var cwd: String?
         var createdAt: Date?
-        var firstPromptTitle: String?
+        var titleTracker = PromptTitleTracker()
 
-        for line in readLinePrefix(from: url, maxLines: 300, maxBytes: 2_000_000) {
+        for line in readLinePrefixAndSuffix(from: url) {
             guard let object = jsonObject(from: line) else {
                 continue
             }
@@ -176,16 +176,13 @@ enum AgentSessionHistoryImporter {
                     ?? parseDate(object["timestamp"] as? String)
             }
 
-            if firstPromptTitle == nil {
-                firstPromptTitle = codexUserPromptTitle(object)
+            if let prompt = codexUserPrompt(object) {
+                titleTracker.observe(prompt)
             }
 
-            if cwd != nil, createdAt != nil, firstPromptTitle != nil {
-                break
-            }
         }
 
-        return (cwd, createdAt, firstPromptTitle)
+        return (cwd, createdAt, titleTracker.resolvedTitle)
     }
 
     private static func parseClaudeSession(
@@ -197,9 +194,9 @@ enum AgentSessionHistoryImporter {
         var cwd: String?
         var createdAt: Date?
         var updatedAt = fallbackUpdatedAt
-        var title: String?
+        var titleTracker = PromptTitleTracker()
 
-        for line in readLinePrefix(from: url, maxLines: 300, maxBytes: 2_000_000) {
+        for line in readLinePrefixAndSuffix(from: url) {
             guard let object = jsonObject(from: line) else { continue }
             if cwd == nil {
                 cwd = object["cwd"] as? String
@@ -210,13 +207,10 @@ enum AgentSessionHistoryImporter {
                 }
                 updatedAt = max(updatedAt, timestamp)
             }
-            if title == nil,
-               object["type"] as? String == "user",
-               let message = object["message"] as? [String: Any] {
-                title = titleFromClaudeMessage(message)
-            }
-            if cwd != nil, createdAt != nil, title != nil {
-                break
+            if object["type"] as? String == "user",
+               let message = object["message"] as? [String: Any],
+               let prompt = bodyFromClaudeMessage(message) {
+                titleTracker.observe(prompt)
             }
         }
 
@@ -225,7 +219,7 @@ enum AgentSessionHistoryImporter {
             id: importedID(provider: .claude, sourceID: sourceID),
             provider: .claude,
             sourceID: sourceID,
-            title: sanitizedTitle(title) ?? "Claude \(sourceID.prefix(8))",
+            title: titleTracker.resolvedTitle ?? "Claude \(sourceID.prefix(8))",
             cwd: resolvedCWD,
             transcriptURL: url,
             createdAt: createdAt ?? fallbackUpdatedAt,
@@ -233,19 +227,19 @@ enum AgentSessionHistoryImporter {
         )
     }
 
-    private static func titleFromClaudeMessage(_ message: [String: Any]) -> String? {
+    private static func bodyFromClaudeMessage(_ message: [String: Any]) -> String? {
         guard let content = message["content"] else { return nil }
         if let text = content as? String {
-            return sanitizedTitle(text)
+            return sanitizedBody(text)
         }
         guard let parts = content as? [[String: Any]] else { return nil }
         for part in parts {
             guard part["type"] as? String == "text",
                   let text = part["text"] as? String,
-                  let title = sanitizedTitle(text) else {
+                  let body = sanitizedBody(text) else {
                 continue
             }
-            return title
+            return body
         }
         return nil
     }
@@ -330,12 +324,12 @@ enum AgentSessionHistoryImporter {
         return nil
     }
 
-    private static func codexUserPromptTitle(_ object: [String: Any]) -> String? {
+    private static func codexUserPrompt(_ object: [String: Any]) -> String? {
         guard object["type"] as? String == "event_msg",
               let payload = object["payload"] as? [String: Any],
               payload["type"] as? String == "user_message",
               let message = payload["message"] as? String else { return nil }
-        return sanitizedTitle(message)
+        return sanitizedBody(message)
     }
 
     private static func claudePreviewLine(_ object: [String: Any]) -> String? {
@@ -388,6 +382,34 @@ enum AgentSessionHistoryImporter {
         "history-\(provider.rawValue)-\(sourceID)"
     }
 
+    private struct PromptTitleTracker {
+        private var firstTitle: String?
+        private var currentSegmentTitle: String?
+
+        var resolvedTitle: String? {
+            currentSegmentTitle ?? firstTitle
+        }
+
+        mutating func observe(_ prompt: String) {
+            if isConversationResetCommand(prompt) {
+                currentSegmentTitle = nil
+                return
+            }
+            guard let title = sanitizedTitle(prompt) else { return }
+            if firstTitle == nil {
+                firstTitle = title
+            }
+            if currentSegmentTitle == nil {
+                currentSegmentTitle = title
+            }
+        }
+
+        private func isConversationResetCommand(_ prompt: String) -> Bool {
+            let normalized = prompt.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized == "/clear" || normalized == "/new"
+        }
+    }
+
     private static func readLinePrefix(from url: URL, maxLines: Int, maxBytes: Int) -> [String] {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
         defer { try? handle.close() }
@@ -408,6 +430,31 @@ enum AgentSessionHistoryImporter {
             .split(whereSeparator: \.isNewline)
             .prefix(maxLines)
             .map(String.init)
+    }
+
+    private static func readLinePrefixAndSuffix(from url: URL) -> [String] {
+        readLinePrefix(from: url, maxLines: 300, maxBytes: 2_000_000)
+            + readLineSuffix(from: url, maxLines: 1_500, maxBytes: 4_000_000)
+    }
+
+    private static func readLineSuffix(from url: URL, maxLines: Int, maxBytes: UInt64) -> [String] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+
+        let fileSize = (try? handle.seekToEnd()) ?? 0
+        let offset = fileSize > maxBytes ? fileSize - maxBytes : 0
+        do {
+            try handle.seek(toOffset: offset)
+        } catch {
+            return []
+        }
+        let data = handle.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        var lines = text.split(whereSeparator: \.isNewline).map(String.init)
+        if offset > 0, !lines.isEmpty {
+            lines.removeFirst()
+        }
+        return Array(lines.suffix(maxLines))
     }
 
     private static func jsonObject(from line: String) -> [String: Any]? {

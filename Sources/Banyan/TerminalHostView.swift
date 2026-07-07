@@ -12,7 +12,7 @@ struct TerminalHostView: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalContainerView {
         let container = TerminalContainerView(
             terminalView: session.terminalView,
-            onUserSubmittedInput: { session.noteUserSubmittedInput() }
+            onUserSubmittedInput: { session.noteUserSubmittedInput($0) }
         )
         container.apply(theme: theme)
         container.onLayout = {
@@ -27,7 +27,7 @@ struct TerminalHostView: NSViewRepresentable {
 
     func updateNSView(_ nsView: TerminalContainerView, context: Context) {
         let didInstall = nsView.install(session.terminalView)
-        nsView.onUserSubmittedInput = { session.noteUserSubmittedInput() }
+        nsView.onUserSubmittedInput = { session.noteUserSubmittedInput($0) }
         nsView.apply(theme: theme)
         nsView.onLayout = {
             session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
@@ -55,7 +55,7 @@ struct TerminalHostView: NSViewRepresentable {
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
     var onLayout: (() -> Void)?
-    var onUserSubmittedInput: (() -> Void)?
+    var onUserSubmittedInput: ((String?) -> Void)?
     private let contentInset: CGFloat = 14
     private var leadingConstraint: NSLayoutConstraint?
     private var trailingConstraint: NSLayoutConstraint?
@@ -64,8 +64,9 @@ final class TerminalContainerView: NSView {
     private var scrollEventMonitor: Any?
     private var inputEventMonitor: Any?
     private var scrollInterpreter = TerminalScrollInterpreter()
+    private var submittedInputBuffer = ""
 
-    init(terminalView: LocalProcessTerminalView, onUserSubmittedInput: (() -> Void)? = nil) {
+    init(terminalView: LocalProcessTerminalView, onUserSubmittedInput: ((String?) -> Void)? = nil) {
         self.terminalView = terminalView
         self.onUserSubmittedInput = onUserSubmittedInput
         super.init(frame: .zero)
@@ -185,7 +186,10 @@ final class TerminalContainerView: NSView {
             case .keyDown:
                 guard self.isTerminalFirstResponder else { return event }
                 if self.isSubmitKey(event) {
-                    self.onUserSubmittedInput?()
+                    self.onUserSubmittedInput?(self.submittedInputBuffer)
+                    self.submittedInputBuffer = ""
+                } else {
+                    self.recordInput(event)
                 }
                 return self.handleTerminalShortcut(event) ? nil : event
             default:
@@ -218,6 +222,25 @@ final class TerminalContainerView: NSView {
 
     private func isSubmitKey(_ event: NSEvent) -> Bool {
         event.keyCode == 36 || event.keyCode == 76
+    }
+
+    private func recordInput(_ event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard !flags.contains(.command), !flags.contains(.control) else { return }
+        switch event.keyCode {
+        case 51:
+            if !submittedInputBuffer.isEmpty {
+                submittedInputBuffer.removeLast()
+            }
+        case 53:
+            submittedInputBuffer = ""
+        default:
+            guard let characters = event.characters, !characters.isEmpty else { return }
+            guard !characters.contains(where: { character in
+                character.isNewline || character.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 })
+            }) else { return }
+            submittedInputBuffer.append(contentsOf: characters)
+        }
     }
 
     private func handleTerminalShortcut(_ event: NSEvent) -> Bool {

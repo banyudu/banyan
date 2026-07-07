@@ -33,6 +33,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var isRestored: Bool
     @Published var isProcessStarted: Bool
     @Published var parentSessionID: String?
+    private(set) var lastConversationResetAt: Date?
 
     private var delegate: TerminalSessionDelegate?
     private let tmuxBackend = TmuxBackend.shared
@@ -276,7 +277,16 @@ final class BanyanSession: ObservableObject, Identifiable {
         touch()
     }
 
-    func noteUserSubmittedInput() {
+    func noteUserSubmittedInput(_ submittedInput: String? = nil) {
+        if Self.isConversationResetCommand(submittedInput), agentProvider != nil {
+            lastConversationResetAt = Date()
+            if !hasUsefulPinnedTitle {
+                reportedTitle = nil
+                generatedTitle = nil
+                externalTitleSignature = nil
+            }
+            touch()
+        }
         guard !isImportedHistory, isProcessStarted, status != .closed, agentProvider != nil else { return }
         guard [.running, .longRunningShell, .needInput, .asking].contains(status) else { return }
         mark(status: .executing, tone: .blue)
@@ -336,6 +346,9 @@ final class BanyanSession: ObservableObject, Identifiable {
             generatedTitle = nil
             return
         }
+        let titleCommand = lastConversationResetAt == nil
+            ? command
+            : (agentProvider?.defaultExecutableName ?? command)
         let context = SessionTitleContext(
             id: id,
             baseTitle: title,
@@ -343,7 +356,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             cwd: cwd,
             project: displayProject,
             branch: displayBranch,
-            command: command,
+            command: titleCommand,
             reportedTitle: reportedTitle,
             provider: agentProvider
         )
@@ -396,6 +409,13 @@ final class BanyanSession: ObservableObject, Identifiable {
             path = NSString(string: rawDirectory).expandingTildeInPath
         }
         return URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    private static func isConversationResetCommand(_ input: String?) -> Bool {
+        let normalized = input?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized == "/clear" || normalized == "/new"
     }
 
     private func requestExternalGeneratedTitleIfNeeded(context: SessionTitleContext) {

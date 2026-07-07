@@ -772,22 +772,44 @@ final class SessionStore: ObservableObject {
         provider: CodingAgentProvider?,
         in candidates: [ImportedAgentSession]
     ) -> ImportedAgentSession? {
-        let sessionCWD = standardizedPath(session.cwd)
-        let createdAt = session.createdAt
-        let matchWindow: TimeInterval = 5 * 60
+        Self.bestPromptTitleMatch(
+            sessionCWD: session.cwd,
+            sessionCreatedAt: session.createdAt,
+            sessionResetAt: session.lastConversationResetAt,
+            provider: provider,
+            in: candidates
+        )
+    }
 
-        return candidates
-            .filter {
-                (provider == nil || $0.provider == provider)
-                    && standardizedPath($0.cwd) == sessionCWD
-                    && abs($0.createdAt.timeIntervalSince(createdAt)) <= matchWindow
-            }
+    nonisolated static func bestPromptTitleMatch(
+        sessionCWD: String,
+        sessionCreatedAt: Date,
+        sessionResetAt: Date?,
+        provider: CodingAgentProvider?,
+        in candidates: [ImportedAgentSession]
+    ) -> ImportedAgentSession? {
+        let sessionCWD = standardizedPath(sessionCWD)
+        let matchWindow: TimeInterval = 5 * 60
+        let resetWindow: TimeInterval = 30
+        let matchingCandidates = candidates.filter {
+            (provider == nil || $0.provider == provider)
+                && standardizedPath($0.cwd) == sessionCWD
+        }
+
+        if let sessionResetAt {
+            return matchingCandidates
+                .filter { $0.updatedAt >= sessionResetAt.addingTimeInterval(-resetWindow) }
+                .max { $0.updatedAt < $1.updatedAt }
+        }
+
+        return matchingCandidates
+            .filter { abs($0.createdAt.timeIntervalSince(sessionCreatedAt)) <= matchWindow }
             .min {
-                abs($0.createdAt.timeIntervalSince(createdAt)) < abs($1.createdAt.timeIntervalSince(createdAt))
+                abs($0.createdAt.timeIntervalSince(sessionCreatedAt)) < abs($1.createdAt.timeIntervalSince(sessionCreatedAt))
             }
     }
 
-    private func standardizedPath(_ path: String) -> String {
+    nonisolated private static func standardizedPath(_ path: String) -> String {
         URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
             .standardizedFileURL
             .path

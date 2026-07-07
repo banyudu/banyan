@@ -54,6 +54,31 @@ import Testing
     #expect(session.cwd == "/tmp/banyan-codex")
 }
 
+@Test func codexTranscriptTitleUsesPromptAfterLatestClearOrNew() throws {
+    let home = try makeTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let id = "019efe8d-0514-72a2-ad62-daea0b976dcf"
+    let sessionDirectory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+    try write(
+        [
+            #"{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"session_id":"\#(id)","cwd":"/tmp/banyan-codex","timestamp":"2026-07-01T10:00:00.000Z"}}"#,
+            #"{"timestamp":"2026-07-01T10:00:10.000Z","type":"event_msg","payload":{"type":"user_message","message":"Old sidebar title"}}"#,
+            #"{"timestamp":"2026-07-01T10:05:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"/clear"}}"#,
+            #"{"timestamp":"2026-07-01T10:05:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"New sidebar title after clear"}}"#,
+            #"{"timestamp":"2026-07-01T10:10:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"/new"}}"#,
+            #"{"timestamp":"2026-07-01T10:10:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"Newest sidebar title after new"}}"#
+        ].joined(separator: "\n"),
+        to: sessionDirectory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    )
+
+    let imported = AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10)
+
+    let session = try #require(imported.first { $0.id == "history-codex-\(id)" })
+    #expect(session.title == "Newest sidebar title after new")
+}
+
 @Test func importsClaudeProjectLogsFromFirstHumanPrompt() throws {
     let home = try makeTemporaryHome()
     defer { try? FileManager.default.removeItem(at: home) }
@@ -75,6 +100,30 @@ import Testing
     #expect(session.provider == .claude)
     #expect(session.title == "Add imported sessions to the sidebar")
     #expect(session.cwd == "/tmp/banyan-claude")
+}
+
+@Test func claudeTranscriptTitleUsesPromptAfterLatestClearOrNew() throws {
+    let home = try makeTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let projects = home.appendingPathComponent(".claude/projects/-tmp-banyan-claude")
+    try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+    let transcript = projects.appendingPathComponent("867ceb9b-12de-47ff-a70e-e562c00c8bf5.jsonl")
+    try write(
+        [
+            #"{"type":"user","message":{"role":"user","content":"Old Claude title"},"timestamp":"2026-07-01T11:00:00.000Z","cwd":"/tmp/banyan-claude","sessionId":"867ceb9b-12de-47ff-a70e-e562c00c8bf5"}"#,
+            #"{"type":"user","message":{"role":"user","content":"/clear"},"timestamp":"2026-07-01T11:05:00.000Z","cwd":"/tmp/banyan-claude","sessionId":"867ceb9b-12de-47ff-a70e-e562c00c8bf5"}"#,
+            #"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Claude title after clear"}]},"timestamp":"2026-07-01T11:05:20.000Z","cwd":"/tmp/banyan-claude","sessionId":"867ceb9b-12de-47ff-a70e-e562c00c8bf5"}"#,
+            #"{"type":"user","message":{"role":"user","content":"/new"},"timestamp":"2026-07-01T11:10:00.000Z","cwd":"/tmp/banyan-claude","sessionId":"867ceb9b-12de-47ff-a70e-e562c00c8bf5"}"#,
+            #"{"type":"user","message":{"role":"user","content":"Newest Claude title after new"},"timestamp":"2026-07-01T11:10:20.000Z","cwd":"/tmp/banyan-claude","sessionId":"867ceb9b-12de-47ff-a70e-e562c00c8bf5"}"#
+        ].joined(separator: "\n"),
+        to: transcript
+    )
+
+    let imported = AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10)
+
+    let session = try #require(imported.first { $0.id == "history-claude-867ceb9b-12de-47ff-a70e-e562c00c8bf5" })
+    #expect(session.title == "Newest Claude title after new")
 }
 
 @Test func transcriptPreviewExtractsReadableClaudeMessages() throws {
