@@ -608,7 +608,11 @@ final class SessionStore: ObservableObject {
         }
         session.onProcessExit = { [weak self, weak session] _ in
             guard let self, let session, session.status != .closed else { return }
-            try? self.close(id: session.id)
+            if self.tmuxBackend.hasSession(named: session.tmuxSessionName) {
+                session.detachTerminalClient()
+            } else {
+                try? self.close(id: session.id)
+            }
         }
     }
 
@@ -875,7 +879,9 @@ final class SessionStore: ObservableObject {
         }
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .utility) {
-            let info = SessionContextResolver.resolve(input: input)
+            let info = SessionContextResolver.resolve(input: input) {
+                Task.isCancelled
+            }
             await MainActor.run { [weak self] in
                 guard let self,
                       self.selectedSessionID == input.sessionID,
