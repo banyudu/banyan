@@ -222,6 +222,7 @@ final class ControlServer {
         if let window {
             state["windowWidth"] = window.frame.width
             let actionFrames = [
+                viewFrame(window: window, identifier: AccessibilityID.toolbarPullRequestLink),
                 viewFrame(window: window, identifier: AccessibilityID.toolbarAddSession),
                 viewFrame(window: window, identifier: AccessibilityID.toolbarPreferences)
             ].compactMap(\.self)
