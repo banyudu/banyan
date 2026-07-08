@@ -84,40 +84,22 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: $store.selectedSessionID) {
-                ForEach(store.sidebarGroups) { group in
-                    Section {
-                        ForEach(group.items) { item in
-                            SessionRow(
-                                session: item.session,
-                                depth: item.depth,
-                                titleOverride: item.titleOverride,
-                                isSelected: store.selectedSessionID == item.session.id,
-                                onSelect: {
-                                    store.select(id: item.session.id)
-                                },
-                                onClose: {
-                                    store.requestClose(id: item.session.id)
-                                },
-                                onRestart: {
-                                    try? store.restart(id: item.session.id)
-                                },
-                                onRemove: {
-                                    try? store.remove(id: item.session.id)
-                                }
-                            )
-                            .tag(item.session.id)
-                            .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
-                        }
-                    } header: {
-                        Text(group.title)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
+                sidebarSections(store.sessionSidebarGroups)
             }
             .listStyle(.sidebar)
             .accessibilityIdentifier(AccessibilityID.sidebarList)
+
+            Spacer(minLength: 0)
+
+            if let historyGroup = store.historySidebarGroup {
+                Divider()
+                List(selection: $store.selectedSessionID) {
+                    sidebarSections([historyGroup])
+                }
+                .listStyle(.sidebar)
+                .frame(height: historyListHeight(itemCount: historyGroup.items.count))
+                .accessibilityIdentifier(AccessibilityID.sidebarHistoryList)
+            }
 
             HStack {
                 Button {
@@ -166,6 +148,49 @@ struct ContentView: View {
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
         .accessibilityIdentifier(AccessibilityID.sidebar)
+    }
+
+    @ViewBuilder
+    private func sidebarSections(_ groups: [SidebarSessionGroup]) -> some View {
+        ForEach(groups) { group in
+            Section {
+                ForEach(group.items) { item in
+                    sidebarRow(item)
+                }
+            } header: {
+                Text(group.title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private func sidebarRow(_ item: SidebarSessionItem) -> some View {
+        SessionRow(
+            session: item.session,
+            depth: item.depth,
+            titleOverride: item.titleOverride,
+            isSelected: store.selectedSessionID == item.session.id,
+            onSelect: {
+                store.select(id: item.session.id)
+            },
+            onClose: {
+                store.requestClose(id: item.session.id)
+            },
+            onRestart: {
+                try? store.restart(id: item.session.id)
+            },
+            onRemove: {
+                try? store.remove(id: item.session.id)
+            }
+        )
+        .tag(item.session.id)
+        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+    }
+
+    private func historyListHeight(itemCount: Int) -> CGFloat {
+        min(CGFloat(itemCount) * 31 + 36, 320)
     }
 
     private var addSessionDraftBinding: Binding<AddSessionDraft?> {

@@ -151,7 +151,7 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    var sidebarGroups: [SidebarSessionGroup] {
+    var sessionSidebarGroups: [SidebarSessionGroup] {
         let active = visibleSessions.filter { !$0.isImportedHistory }
         var sessionsByProject: [String: [BanyanSession]] = [:]
         var orderedProjectIDs: [String] = []
@@ -163,7 +163,7 @@ final class SessionStore: ObservableObject {
             sessionsByProject[session.projectGroupID, default: []].append(session)
         }
 
-        var groups: [SidebarSessionGroup] = orderedProjectIDs.compactMap { projectID in
+        let groups: [SidebarSessionGroup] = orderedProjectIDs.compactMap { projectID in
             guard let projectSessions = sessionsByProject[projectID],
                   let firstSession = projectSessions.first else {
                 return nil
@@ -175,17 +175,24 @@ final class SessionStore: ObservableObject {
             )
         }
 
-        let historyItems = sidebarHistoryItems
-        if !historyItems.isEmpty {
-            groups.append(
-                SidebarSessionGroup(
-                    id: "history",
-                    title: "History",
-                    items: historyItems
-                )
-            )
-        }
+        return groups
+    }
 
+    var historySidebarGroup: SidebarSessionGroup? {
+        let historyItems = sidebarHistoryItems
+        guard !historyItems.isEmpty else { return nil }
+        return SidebarSessionGroup(
+            id: "history",
+            title: "History",
+            items: historyItems
+        )
+    }
+
+    var sidebarGroups: [SidebarSessionGroup] {
+        var groups = sessionSidebarGroups
+        if let historySidebarGroup {
+            groups.append(historySidebarGroup)
+        }
         return groups
     }
 
