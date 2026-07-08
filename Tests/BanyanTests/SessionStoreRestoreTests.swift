@@ -108,3 +108,135 @@ import Testing
 
     #expect(match?.id == "history-codex-launch")
 }
+
+@Test func promptTitleAssignmentsDoNotReuseOneHistoryTitleForMultipleSessions() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let sessions = [
+        LivePromptTitleMatchInput(
+            id: "session-a",
+            cwd: "/tmp/banyan",
+            createdAt: base,
+            resetAt: nil,
+            provider: .codex
+        ),
+        LivePromptTitleMatchInput(
+            id: "session-b",
+            cwd: "/tmp/banyan",
+            createdAt: base.addingTimeInterval(10),
+            resetAt: nil,
+            provider: .codex
+        )
+    ]
+    let imported = [
+        ImportedAgentSession(
+            id: "history-codex-only",
+            provider: .codex,
+            sourceID: "only",
+            title: "One imported prompt",
+            cwd: "/tmp/banyan",
+            transcriptURL: URL(fileURLWithPath: "/tmp/only.jsonl"),
+            createdAt: base.addingTimeInterval(5),
+            updatedAt: base.addingTimeInterval(6)
+        )
+    ]
+
+    let matches = SessionStore.bestPromptTitleAssignments(
+        for: sessions,
+        in: imported
+    )
+
+    #expect(matches.count == 1)
+    #expect(Set(matches.values.map(\.id)) == ["history-codex-only"])
+}
+
+@Test func promptTitleAssignmentsPreferNearestOneToOneMatches() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let sessions = [
+        LivePromptTitleMatchInput(
+            id: "session-a",
+            cwd: "/tmp/banyan",
+            createdAt: base,
+            resetAt: nil,
+            provider: .codex
+        ),
+        LivePromptTitleMatchInput(
+            id: "session-b",
+            cwd: "/tmp/banyan",
+            createdAt: base.addingTimeInterval(70),
+            resetAt: nil,
+            provider: .codex
+        )
+    ]
+    let imported = [
+        ImportedAgentSession(
+            id: "history-codex-a",
+            provider: .codex,
+            sourceID: "a",
+            title: "First imported prompt",
+            cwd: "/tmp/banyan",
+            transcriptURL: URL(fileURLWithPath: "/tmp/a.jsonl"),
+            createdAt: base.addingTimeInterval(2),
+            updatedAt: base.addingTimeInterval(3)
+        ),
+        ImportedAgentSession(
+            id: "history-codex-b",
+            provider: .codex,
+            sourceID: "b",
+            title: "Second imported prompt",
+            cwd: "/tmp/banyan",
+            transcriptURL: URL(fileURLWithPath: "/tmp/b.jsonl"),
+            createdAt: base.addingTimeInterval(73),
+            updatedAt: base.addingTimeInterval(74)
+        )
+    ]
+
+    let matches = SessionStore.bestPromptTitleAssignments(
+        for: sessions,
+        in: imported
+    )
+
+    #expect(matches["session-a"]?.id == "history-codex-a")
+    #expect(matches["session-b"]?.id == "history-codex-b")
+}
+
+@Test func promptTitleAssignmentsAfterResetPreferNewestUpdatedHistory() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let sessions = [
+        LivePromptTitleMatchInput(
+            id: "session-a",
+            cwd: "/tmp/banyan",
+            createdAt: base,
+            resetAt: base.addingTimeInterval(600),
+            provider: .codex
+        )
+    ]
+    let imported = [
+        ImportedAgentSession(
+            id: "history-codex-old",
+            provider: .codex,
+            sourceID: "old",
+            title: "Old prompt",
+            cwd: "/tmp/banyan",
+            transcriptURL: URL(fileURLWithPath: "/tmp/old.jsonl"),
+            createdAt: base,
+            updatedAt: base.addingTimeInterval(605)
+        ),
+        ImportedAgentSession(
+            id: "history-codex-new",
+            provider: .codex,
+            sourceID: "new",
+            title: "Newest prompt",
+            cwd: "/tmp/banyan",
+            transcriptURL: URL(fileURLWithPath: "/tmp/new.jsonl"),
+            createdAt: base.addingTimeInterval(30),
+            updatedAt: base.addingTimeInterval(660)
+        )
+    ]
+
+    let matches = SessionStore.bestPromptTitleAssignments(
+        for: sessions,
+        in: imported
+    )
+
+    #expect(matches["session-a"]?.id == "history-codex-new")
+}
