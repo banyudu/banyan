@@ -79,6 +79,23 @@ struct LinearIssueAttachment: Equatable, Identifiable {
     let url: String
 }
 
+struct LinearIssueSummary: Equatable, Identifiable {
+    let id: String
+    let identifier: String
+    let title: String
+    let url: String
+    let priority: Int?
+    let priorityLabel: String?
+    let updatedAt: String?
+    let state: LinearWorkflowState
+    let assigneeName: String?
+    let teamKey: String?
+    let teamName: String?
+    let projectName: String?
+    let cycleName: String?
+    let labels: [LinearIssueLabel]
+}
+
 enum LinearIssueLoadState: Equatable {
     case idle
     case loading
@@ -88,6 +105,32 @@ enum LinearIssueLoadState: Equatable {
 }
 
 enum LinearIssueClient {
+    static func fetchIssueList(cwd: String, limit: Int = 50) async throws -> [LinearIssueSummary] {
+        let output = try await runCommand(
+            [
+                "linear",
+                "issue",
+                "query",
+                "--all-teams",
+                "--assignee",
+                "self",
+                "--state",
+                "unstarted",
+                "--state",
+                "started",
+                "--sort",
+                "priority",
+                "--limit",
+                "\(limit)",
+                "--json",
+                "--no-pager"
+            ],
+            cwd: cwd,
+            timeout: 12
+        )
+        return try decodeIssueListResponse(output)
+    }
+
     static func fetchIssue(identifier: String, cwd: String) async throws -> LinearIssueDetails {
         do {
             return try await fetchIssueWithLinearCLI(identifier: identifier, cwd: cwd)
@@ -234,6 +277,11 @@ enum LinearIssueClient {
             throw LinearIssueClientError.issueNotFound
         }
         return issue.details
+    }
+
+    private static func decodeIssueListResponse(_ output: String) throws -> [LinearIssueSummary] {
+        let payload = try JSONDecoder().decode(LinearIssueListResponse.self, from: Data(output.utf8))
+        return payload.nodes.map(\.summary)
     }
 
     private static func decodeIssueStatusResponse(_ output: String) throws -> LinearIssueStatusSnapshot {
@@ -430,6 +478,59 @@ private enum LinearIssueClientError: Error {
 private struct GraphQLRequest: Encodable {
     let query: String
     let variables: [String: String]
+}
+
+private struct LinearIssueListResponse: Decodable {
+    let nodes: [LinearIssueSummaryPayload]
+}
+
+private struct LinearIssueSummaryPayload: Decodable {
+    let id: String
+    let identifier: String
+    let title: String
+    let url: String
+    let priority: Int?
+    let priorityLabel: String?
+    let updatedAt: String?
+    let state: GraphQLState
+    let assignee: GraphQLUser?
+    let team: LinearIssueSummaryTeam?
+    let project: GraphQLNamedValue?
+    let cycle: GraphQLCycle?
+    let labels: GraphQLConnection<GraphQLLabel>?
+
+    var summary: LinearIssueSummary {
+        let cycleName = cycle.flatMap { cycle -> String? in
+            if let name = cycle.name, !name.isEmpty {
+                return name
+            }
+            if let number = cycle.number {
+                return "Cycle \(number)"
+            }
+            return nil
+        }
+        return LinearIssueSummary(
+            id: id,
+            identifier: identifier,
+            title: title,
+            url: url,
+            priority: priority,
+            priorityLabel: priorityLabel,
+            updatedAt: updatedAt,
+            state: state.workflowState,
+            assigneeName: assignee?.name,
+            teamKey: team?.key,
+            teamName: team?.name,
+            projectName: project?.name,
+            cycleName: cycleName,
+            labels: (labels?.nodes ?? []).map { LinearIssueLabel(name: $0.name, color: $0.color) }
+        )
+    }
+}
+
+private struct LinearIssueSummaryTeam: Decodable {
+    let key: String?
+    let name: String?
 }
 
 private struct GraphQLIssueResponse: Decodable {

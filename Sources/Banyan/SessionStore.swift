@@ -24,6 +24,28 @@ struct SidebarSessionGroup: Identifiable {
     let items: [SidebarSessionItem]
 }
 
+enum SidebarMode: String, CaseIterable, Identifiable {
+    case sessions
+    case linear
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .sessions: return "Sessions"
+        case .linear: return "Linear"
+        }
+    }
+}
+
+enum LinearIssueListLoadState: Equatable {
+    case idle
+    case loading
+    case loaded
+    case failed(String)
+    case starting(String)
+}
+
 private struct SupervisorSessionInput {
     let id: String
     let tmuxSessionName: String
@@ -58,6 +80,22 @@ final class SessionStore: ObservableObject {
     }
     @Published private(set) var selectedLinearIssueDetails: LinearIssueDetails?
     @Published private(set) var selectedLinearIssueLoadState: LinearIssueLoadState = .idle
+    @Published var sidebarMode: SidebarMode = .sessions {
+        didSet {
+            if sidebarMode == .linear {
+                refreshLinearIssueListIfNeeded()
+            }
+        }
+    }
+    @Published private(set) var linearIssues: [LinearIssueSummary] = []
+    @Published private(set) var linearIssueListLoadState: LinearIssueListLoadState = .idle
+    @Published var selectedLinearListIssueID: String? {
+        didSet {
+            refreshSelectedLinearListIssue()
+        }
+    }
+    @Published private(set) var selectedLinearListIssueDetails: LinearIssueDetails?
+    @Published private(set) var selectedLinearListIssueLoadState: LinearIssueLoadState = .idle
     @Published var addSessionDraft: AddSessionDraft?
     @Published var selectedSessionID: String? {
         didSet {
@@ -108,6 +146,8 @@ final class SessionStore: ObservableObject {
     private var selectedLinearIssueStatusTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTimer: Timer?
     private var selectedLinearIssueIdentifier: String?
+    private var linearIssueListTask: Task<Void, Never>?
+    private var selectedLinearListIssueTask: Task<Void, Never>?
 
     init() {
         let defaults = UserDefaults.standard
@@ -348,6 +388,133 @@ final class SessionStore: ObservableObject {
 
     func refreshImportedHistory(spawnDefaultIfEmpty: Bool = false) {
         runHistoryImport(spawnDefaultIfEmpty: spawnDefaultIfEmpty)
+    }
+
+    func refreshLinearIssueListIfNeeded() {
+        if case .idle = linearIssueListLoadState {
+            refreshLinearIssueList()
+        }
+    }
+
+    func refreshLinearIssueList() {
+        linearIssueListTask?.cancel()
+        linearIssueListLoadState = .loading
+        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        linearIssueListTask = Task.detached(priority: .utility) {
+            do {
+                let issues = try await LinearIssueClient.fetchIssueList(cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.linearIssueListTask = nil
+                    self.linearIssues = issues
+                    if let selectedLinearListIssueID = self.selectedLinearListIssueID,
+                       !issues.contains(where: { $0.identifier == selectedLinearListIssueID }) {
+                        self.selectedLinearListIssueID = issues.first?.identifier
+                    } else if self.selectedLinearListIssueID == nil {
+                        self.selectedLinearListIssueID = issues.first?.identifier
+                    }
+                    self.linearIssueListLoadState = .loaded
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.linearIssueListTask = nil
+                    self.linearIssueListLoadState = .failed("Unable to load Linear issues")
+                }
+            }
+        }
+    }
+
+    func refreshSelectedLinearListIssue(force: Bool = false) {
+        guard let issueID = selectedLinearListIssueID else {
+            selectedLinearListIssueTask?.cancel()
+            selectedLinearListIssueTask = nil
+            selectedLinearListIssueDetails = nil
+            selectedLinearListIssueLoadState = .idle
+            return
+        }
+
+        guard force || selectedLinearListIssueDetails?.identifier != issueID else { return }
+
+        selectedLinearListIssueTask?.cancel()
+        selectedLinearListIssueLoadState = .loading
+        if selectedLinearListIssueDetails?.identifier != issueID {
+            selectedLinearListIssueDetails = nil
+        }
+
+        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        selectedLinearListIssueTask = Task.detached(priority: .utility) {
+            do {
+                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedLinearListIssueID == issueID else { return }
+                    self.selectedLinearListIssueTask = nil
+                    self.selectedLinearListIssueDetails = issue
+                    self.selectedLinearListIssueLoadState = .loaded
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedLinearListIssueID == issueID else { return }
+                    self.selectedLinearListIssueTask = nil
+                    self.selectedLinearListIssueLoadState = .failed("Unable to load issue details")
+                }
+            }
+        }
+    }
+
+    func openSelectedLinearListIssue() {
+        guard let url = selectedLinearListIssueURL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func updateSelectedLinearListIssueState(_ state: LinearWorkflowState) {
+        guard let issueID = selectedLinearListIssueID else { return }
+        selectedLinearListIssueTask?.cancel()
+        selectedLinearListIssueLoadState = .updating(state.name)
+
+        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        selectedLinearListIssueTask = Task.detached(priority: .userInitiated) {
+            do {
+                try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd)
+                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedLinearListIssueID == issueID else { return }
+                    self.selectedLinearListIssueTask = nil
+                    self.selectedLinearListIssueDetails = issue
+                    self.selectedLinearListIssueLoadState = .loaded
+                    self.refreshLinearIssueList()
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedLinearListIssueID == issueID else { return }
+                    self.selectedLinearListIssueTask = nil
+                    self.selectedLinearListIssueLoadState = .failed("Unable to update issue state")
+                }
+            }
+        }
+    }
+
+    func startSelectedLinearListIssueSession() {
+        guard let issueID = selectedLinearListIssueID else { return }
+        startLinearIssueSession(issueID)
+    }
+
+    func startLinearIssueSession(_ issueID: String) {
+        linearIssueListLoadState = .starting(issueID)
+        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        Task.detached(priority: .userInitiated) {
+            let errorMessage = Self.runBanyanWorktree(issueID: issueID, cwd: cwd)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if let errorMessage {
+                    self.linearIssueListLoadState = .failed(errorMessage)
+                } else {
+                    self.sidebarMode = .sessions
+                    self.linearIssueListLoadState = .loaded
+                    self.runHistoryImport()
+                }
+            }
+        }
     }
 
     func startControlServer() {
@@ -873,6 +1040,35 @@ final class SessionStore: ObservableObject {
         return nil
     }
 
+    var selectedLinearListIssueURL: URL? {
+        if let value = selectedLinearListIssueDetails?.url, let url = URL(string: value) {
+            return url
+        }
+        if let value = linearIssues.first(where: { $0.identifier == selectedLinearListIssueID })?.url,
+           let url = URL(string: value) {
+            return url
+        }
+        guard let selectedLinearListIssueID else { return nil }
+        return URL(string: LinearIssueReference.issueURL(for: selectedLinearListIssueID))
+    }
+
+    var selectedLinearListIssueContext: SessionContextInfo? {
+        guard let issueID = selectedLinearListIssueID else { return nil }
+        let title = selectedLinearListIssueDetails?.title
+            ?? linearIssues.first(where: { $0.identifier == issueID })?.title
+        let url = selectedLinearListIssueURL?.absoluteString
+        return SessionContextInfo(
+            sessionID: "linear-list",
+            signature: issueID,
+            linearIssueID: issueID,
+            linearIssueTitle: title,
+            linearIssueURL: url,
+            pullRequestNumber: nil,
+            pullRequestTitle: nil,
+            pullRequestURL: nil
+        )
+    }
+
     var selectedPullRequestURL: URL? {
         guard let value = selectedContextInfo?.pullRequestURL else { return nil }
         return URL(string: value)
@@ -1364,6 +1560,50 @@ final class SessionStore: ObservableObject {
     private func normalizedTitleURL(_ titleURL: String?) -> String? {
         let trimmed = titleURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    nonisolated private static func runBanyanWorktree(issueID: String, cwd: String) -> String? {
+        let executablePath = "\(NSHomeDirectory())/bin/banyan-worktree"
+        guard FileManager.default.isExecutableFile(atPath: executablePath) else {
+            return "Missing ~/bin/banyan-worktree"
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = ["--banyan", issueID]
+        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        process.environment = AppProcessEnvironment.make(pathAdditions: [
+            "\(NSHomeDirectory())/bin",
+            "\(NSHomeDirectory())/.bun/bin",
+            "\(NSHomeDirectory())/.local/bin",
+            "\(NSHomeDirectory())/.cargo/bin",
+            "\(NSHomeDirectory())/go/bin",
+            "\(NSHomeDirectory())/.nix-profile/bin",
+            "/nix/var/nix/profiles/default/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"
+        ])
+
+        let stderr = Pipe()
+        process.standardOutput = Pipe()
+        process.standardError = stderr
+
+        do {
+            try process.run()
+        } catch {
+            return "Unable to start banyan-worktree"
+        }
+
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let data = stderr.fileHandleForReading.readDataToEndOfFile()
+            let message = String(decoding: data, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return message.isEmpty ? "banyan-worktree failed" : message
+        }
+        return nil
     }
 
     private func detachChildren(of parentID: String, to newParentID: String?) {

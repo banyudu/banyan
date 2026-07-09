@@ -85,6 +85,31 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
+            Picker("Sidebar", selection: $store.sidebarMode) {
+                ForEach(SidebarMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
+
+            Divider()
+
+            switch store.sidebarMode {
+            case .sessions:
+                sessionsSidebar
+            case .linear:
+                linearSidebar
+            }
+        }
+        .accessibilityIdentifier(AccessibilityID.sidebar)
+    }
+
+    private var sessionsSidebar: some View {
+        VStack(spacing: 0) {
             List(selection: $store.selectedSessionID) {
                 sidebarSections(store.sessionSidebarGroups, allowsMove: true)
             }
@@ -149,7 +174,105 @@ struct ContentView: View {
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
-        .accessibilityIdentifier(AccessibilityID.sidebar)
+    }
+
+    private var linearSidebar: some View {
+        VStack(spacing: 0) {
+            linearListContent
+
+            HStack {
+                Button {
+                    store.refreshLinearIssueList()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityIdentifier(AccessibilityID.linearIssueListRefreshButton)
+                .help("Refresh Linear issues")
+
+                Spacer()
+
+                Button {
+                    store.startSelectedLinearListIssueSession()
+                } label: {
+                    Label("Start", systemImage: "play.fill")
+                }
+                .disabled(store.selectedLinearListIssueID == nil || store.linearIssueListLoadState.isStarting)
+                .accessibilityIdentifier(AccessibilityID.linearIssueStartButton)
+                .help("Start Banyan session for selected issue")
+            }
+            .buttonStyle(.borderless)
+            .padding(12)
+            .accessibilityIdentifier(AccessibilityID.sidebarFooter)
+        }
+    }
+
+    @ViewBuilder
+    private var linearListContent: some View {
+        switch store.linearIssueListLoadState {
+        case .idle, .loading:
+            VStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading Linear issues...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear {
+                store.refreshLinearIssueListIfNeeded()
+            }
+        case let .failed(message):
+            VStack(spacing: 10) {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Retry") {
+                    store.refreshLinearIssueList()
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+        case let .starting(issueID):
+            VStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Starting \(issueID)...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .loaded:
+            if store.linearIssues.isEmpty {
+                ContentUnavailableView(
+                    "No Linear Issues",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text("Assigned Todo and In Progress issues will appear here.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: $store.selectedLinearListIssueID) {
+                    ForEach(store.linearIssues) { issue in
+                        LinearIssueRow(
+                            issue: issue,
+                            isStarting: store.linearIssueListLoadState.isStarting(issue.identifier),
+                            onStart: {
+                                store.startLinearIssueSession(issue.identifier)
+                            }
+                        )
+                        .tag(issue.identifier)
+                        .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                    }
+                }
+                .listStyle(.sidebar)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier(AccessibilityID.linearIssueList)
+            }
+        }
     }
 
     @ViewBuilder
@@ -265,6 +388,16 @@ struct ContentView: View {
 
     @ViewBuilder
     private var detail: some View {
+        switch store.sidebarMode {
+        case .sessions:
+            sessionDetail
+        case .linear:
+            linearDetail
+        }
+    }
+
+    @ViewBuilder
+    private var sessionDetail: some View {
         if let session = store.selectedSession {
             HStack(spacing: 0) {
                 selectedSessionDetail(session)
@@ -297,6 +430,68 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    private var linearDetail: some View {
+        HStack(spacing: 0) {
+            if let issueID = store.selectedLinearListIssueID {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let issue = store.selectedLinearListIssueDetails {
+                        Text(issue.identifier)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(issue.title)
+                            .font(.title2.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if let summary = store.linearIssues.first(where: { $0.identifier == issueID }) {
+                        Text(summary.identifier)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(summary.title)
+                            .font(.title2.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(issueID)
+                            .font(.title2.weight(.semibold))
+                    }
+
+                    Button {
+                        store.startSelectedLinearListIssueSession()
+                    } label: {
+                        Label("Start Session", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(store.linearIssueListLoadState.isStarting)
+
+                    Spacer(minLength: 0)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                if let context = store.selectedLinearListIssueContext {
+                    Divider()
+                    LinearIssuePanel(
+                        context: context,
+                        issue: store.selectedLinearListIssueDetails,
+                        loadState: store.selectedLinearListIssueLoadState,
+                        onRefresh: {
+                            store.refreshSelectedLinearListIssue(force: true)
+                        },
+                        onOpen: store.openSelectedLinearListIssue,
+                        onChangeState: store.updateSelectedLinearListIssueState
+                    )
+                }
+            } else {
+                ContentUnavailableView(
+                    "No Linear Issue Selected",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text("Select an issue from the Linear sidebar.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .accessibilityIdentifier(AccessibilityID.detail)
+    }
+
+    @ViewBuilder
     private func selectedSessionDetail(_ session: BanyanSession) -> some View {
         if session.status == .closed {
             ClosedSessionHistoryView(session: session)
@@ -326,6 +521,95 @@ private extension SessionContextInfo {
         let hasLinearTitle = linearIssueID?.isEmpty == false
             && linearIssueTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         return hasLinearTitle
+    }
+}
+
+private struct LinearIssueRow: View {
+    let issue: LinearIssueSummary
+    let isStarting: Bool
+    let onStart: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(issue.identifier)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    statusPill
+                    Spacer(minLength: 0)
+                }
+
+                Text(issue.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                HStack(spacing: 6) {
+                    if let projectName = issue.projectName {
+                        Text(projectName)
+                    }
+                    if let priority = issue.priority, priority > 0 {
+                        Text("P\(priority)")
+                    }
+                    if let cycleName = issue.cycleName {
+                        Text(cycleName)
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
+
+            Button(action: onStart) {
+                if isStarting {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "play.fill")
+                }
+            }
+            .buttonStyle(.borderless)
+            .frame(width: 24, height: 24)
+            .disabled(isStarting)
+            .help("Start Banyan session")
+        }
+        .frame(height: 52)
+        .contentShape(Rectangle())
+    }
+
+    private var statusPill: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(Color.linearHex(issue.state.color))
+                .frame(width: 6, height: 6)
+            Text(issue.state.name)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: 92, alignment: .leading)
+        .clipped()
+    }
+}
+
+private extension LinearIssueListLoadState {
+    var isStarting: Bool {
+        if case .starting = self {
+            return true
+        }
+        return false
+    }
+
+    func isStarting(_ issueID: String) -> Bool {
+        if case let .starting(startingIssueID) = self {
+            return startingIssueID == issueID
+        }
+        return false
     }
 }
 

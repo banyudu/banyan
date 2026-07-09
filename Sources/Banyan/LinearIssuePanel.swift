@@ -382,7 +382,7 @@ private extension LinearIssueLoadState {
     }
 }
 
-private extension Color {
+extension Color {
     static func linearHex(_ value: String?) -> Color {
         guard let value else { return .secondary }
         let hex = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))

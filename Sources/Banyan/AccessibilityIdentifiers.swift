@@ -21,6 +21,10 @@ enum AccessibilityID {
     static let sidebarAddSession = "banyan.sidebar.add-session"
     static let sidebarOptions = "banyan.sidebar.options"
     static let sidebarCloseSelected = "banyan.sidebar.close-selected"
+    static let sidebarModePicker = "banyan.sidebar.mode"
+    static let linearIssueList = "banyan.sidebar.linear-list"
+    static let linearIssueListRefreshButton = "banyan.sidebar.linear-refresh"
+    static let linearIssueStartButton = "banyan.sidebar.linear-start"
     static let addSessionSheet = "banyan.sheet.add-session"
     static let preferencesSheet = "banyan.sheet.preferences"
 
