@@ -41,64 +41,141 @@ import Testing
     #expect(title == "banyan · Fix sidebar grouping")
 }
 
-@MainActor
-@Test func importedHistorySessionIgnoresTimestampOnlyUpdates() {
-    let base = Date(timeIntervalSince1970: 1_787_500_000)
-    let session = BanyanSession(
-        id: "history-codex-live",
-        title: "Keep history stable",
-        cwd: "/tmp/banyan",
-        command: "codex",
-        status: .completed,
-        tone: .neutral,
-        historyTranscriptURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
-        createdAt: base,
-        updatedAt: base,
-        isRestored: true,
-        theme: .system
-    )
-    let history = ImportedAgentSession(
-        id: "history-codex-live",
-        provider: .codex,
-        sourceID: "live",
-        title: "Keep history stable",
-        cwd: "/tmp/banyan",
-        transcriptURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
-        createdAt: base,
-        updatedAt: base.addingTimeInterval(20)
+@Test func sidebarMoveReordersOnlyTheMovedProjectGroup() {
+    let reordered = SessionStore.reorderedSidebarSessionIDs(
+        activeSidebarIDs: ["one", "two", "three", "four", "five"],
+        groupSessionIDs: ["two", "three", "four"],
+        sourceOffsets: IndexSet(integer: 0),
+        destinationOffset: 3
     )
 
-    #expect(SessionStore.importedHistorySession(session, matches: history))
+    #expect(reordered == ["one", "three", "four", "two", "five"])
+}
+
+@Test func sidebarMovePreservesRowsOutsideTheMovedProjectGroup() {
+    let reordered = SessionStore.reorderedSidebarSessionIDs(
+        activeSidebarIDs: ["project-a-1", "project-a-2", "project-b-1", "project-b-2"],
+        groupSessionIDs: ["project-b-1", "project-b-2"],
+        sourceOffsets: IndexSet(integer: 1),
+        destinationOffset: 0
+    )
+
+    #expect(reordered == ["project-a-1", "project-a-2", "project-b-2", "project-b-1"])
 }
 
 @MainActor
-@Test func importedHistorySessionDetectsVisibleMetadataChanges() {
+@Test func localHistoryIncludesClosedCodexSessionsWithLinearIssueIDs() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
     let session = BanyanSession(
-        id: "history-codex-live",
-        title: "Old title",
+        id: "banyan-session",
+        title: "ENG-123 Closed in Banyan",
         cwd: "/tmp/banyan",
         command: "codex",
-        status: .completed,
+        status: .closed,
         tone: .neutral,
-        historyTranscriptURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
         createdAt: base,
         updatedAt: base,
         isRestored: true,
         theme: .system
     )
-    let history = ImportedAgentSession(
-        id: "history-codex-live",
-        provider: .codex,
-        sourceID: "live",
-        title: "New title",
+
+    #expect(SessionStore.isLocalHistorySession(session))
+}
+
+@MainActor
+@Test func localHistoryIncludesClosedClaudeSessionsWithLinearIssueIDs() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let session = BanyanSession(
+        id: "banyan-session",
+        title: "ENG-456 Closed Claude session",
         cwd: "/tmp/banyan",
-        transcriptURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
+        command: "claude",
+        status: .closed,
+        tone: .neutral,
         createdAt: base,
-        updatedAt: base.addingTimeInterval(20)
+        updatedAt: base,
+        isRestored: true,
+        theme: .system
     )
 
-    #expect(!SessionStore.importedHistorySession(session, matches: history))
+    #expect(SessionStore.isLocalHistorySession(session))
+}
+
+@MainActor
+@Test func localHistoryExcludesExternalImportedSessions() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let session = BanyanSession(
+        id: "history-codex-external",
+        title: "External handoff session",
+        cwd: "/tmp/banyan",
+        command: "codex",
+        status: .completed,
+        tone: .neutral,
+        historyTranscriptURL: URL(fileURLWithPath: "/tmp/external.jsonl"),
+        createdAt: base,
+        updatedAt: base,
+        isRestored: true,
+        theme: .system
+    )
+
+    #expect(!SessionStore.isLocalHistorySession(session))
+}
+
+@MainActor
+@Test func localHistoryExcludesClosedSessionsWithoutLinearIssueIDs() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let session = BanyanSession(
+        id: "closed-session",
+        title: "Closed without issue id",
+        cwd: "/tmp/banyan",
+        command: "codex",
+        status: .closed,
+        tone: .neutral,
+        createdAt: base,
+        updatedAt: base,
+        isRestored: true,
+        theme: .system
+    )
+
+    #expect(!SessionStore.isLocalHistorySession(session))
+}
+
+@MainActor
+@Test func localHistoryExcludesClosedNonCodexClaudeSessions() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let session = BanyanSession(
+        id: "closed-session",
+        title: "ENG-789 Closed shell session",
+        cwd: "/tmp/banyan",
+        command: "zsh",
+        status: .closed,
+        tone: .neutral,
+        createdAt: base,
+        updatedAt: base,
+        isRestored: true,
+        theme: .system
+    )
+
+    #expect(!SessionStore.isLocalHistorySession(session))
+}
+
+@MainActor
+@Test func localHistoryExcludesActiveBanyanSessions() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let session = BanyanSession(
+        id: "active-session",
+        title: "Still active",
+        cwd: "/tmp/banyan",
+        command: "codex",
+        status: .running,
+        tone: .blue,
+        createdAt: base,
+        updatedAt: base,
+        isRestored: true,
+        theme: .system
+    )
+
+    #expect(!SessionStore.isLocalHistorySession(session))
 }
 
 @Test func promptTitleMatchAfterResetUsesRecentlyUpdatedSession() {

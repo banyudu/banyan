@@ -228,7 +228,7 @@ final class SessionStore: ObservableObject {
 
     private var sidebarHistoryItems: [SidebarSessionItem] {
         sessions
-            .filter { $0.status != .closed && $0.isImportedHistory }
+            .filter(Self.isLocalHistorySession)
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(10)
             .map {
@@ -254,6 +254,16 @@ final class SessionStore: ObservableObject {
             return title
         }
         return "\(issueID.uppercased()) · \(title)"
+    }
+
+    static func isLocalHistorySession(_ session: BanyanSession) -> Bool {
+        guard session.status == .closed, !session.isImportedHistory else {
+            return false
+        }
+        guard let provider = session.agentProvider, [.codex, .claude].contains(provider) else {
+            return false
+        }
+        return session.titleLinkLabel != nil
     }
 
     var selectedSession: BanyanSession? {
@@ -539,6 +549,78 @@ final class SessionStore: ObservableObject {
         selectedSessionID = id
     }
 
+    func moveSidebarSessions(in groupID: String, from sourceOffsets: IndexSet, to destinationOffset: Int) {
+        let groups = sessionSidebarGroups
+        guard let group = groups.first(where: { $0.id == groupID }) else { return }
+
+        let activeSidebarIDs = groups.flatMap { $0.items.map(\.id) }
+        let groupSessionIDs = group.items.map(\.id)
+        guard let reorderedIDs = Self.reorderedSidebarSessionIDs(
+            activeSidebarIDs: activeSidebarIDs,
+            groupSessionIDs: groupSessionIDs,
+            sourceOffsets: sourceOffsets,
+            destinationOffset: destinationOffset
+        ), reorderedIDs != activeSidebarIDs else {
+            return
+        }
+
+        let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        let reorderedSidebarSessions = reorderedIDs.compactMap { sessionsByID[$0] }
+        guard reorderedSidebarSessions.count == reorderedIDs.count else { return }
+
+        let activeSidebarIDSet = Set(activeSidebarIDs)
+        let activeSidebarIndices = sessions.indices.filter { activeSidebarIDSet.contains(sessions[$0].id) }
+        guard activeSidebarIndices.count == reorderedSidebarSessions.count else { return }
+
+        var nextSessions = sessions
+        for (index, session) in zip(activeSidebarIndices, reorderedSidebarSessions) {
+            nextSessions[index] = session
+        }
+
+        sessions = nextSessions
+        sortMode = .manual
+        saveSessions()
+    }
+
+    nonisolated static func reorderedSidebarSessionIDs(
+        activeSidebarIDs: [String],
+        groupSessionIDs: [String],
+        sourceOffsets: IndexSet,
+        destinationOffset: Int
+    ) -> [String]? {
+        guard !sourceOffsets.isEmpty,
+              !groupSessionIDs.isEmpty,
+              destinationOffset >= 0,
+              destinationOffset <= groupSessionIDs.count,
+              sourceOffsets.allSatisfy({ $0 >= 0 && $0 < groupSessionIDs.count })
+        else {
+            return nil
+        }
+
+        let sourceSet = Set(sourceOffsets)
+        let movingIDs = sourceOffsets.sorted().map { groupSessionIDs[$0] }
+        var remainingIDs = groupSessionIDs.enumerated().compactMap { index, id in
+            sourceSet.contains(index) ? nil : id
+        }
+        let removedBeforeDestination = sourceOffsets.filter { $0 < destinationOffset }.count
+        let insertionIndex = max(0, min(destinationOffset - removedBeforeDestination, remainingIDs.count))
+        remainingIDs.insert(contentsOf: movingIDs, at: insertionIndex)
+
+        let groupIDSet = Set(groupSessionIDs)
+        guard groupIDSet.count == groupSessionIDs.count,
+              groupIDSet.isSubset(of: Set(activeSidebarIDs)) else {
+            return nil
+        }
+
+        var reorderedGroupIterator = remainingIDs.makeIterator()
+        return activeSidebarIDs.map { id in
+            if groupIDSet.contains(id) {
+                return reorderedGroupIterator.next() ?? id
+            }
+            return id
+        }
+    }
+
     func selectNextSession() {
         selectAdjacentSession(direction: .next)
     }
@@ -705,77 +787,16 @@ final class SessionStore: ObservableObject {
 
     private func applyImportedHistory(_ imported: [ImportedAgentSession]) {
         latestImportedHistory = imported
-        let importedIDs = Set(imported.map(\.id))
-        let staleImportedIDs = Set(sessions.compactMap { session in
-            session.isImportedHistory && !importedIDs.contains(session.id) && session.status != .closed
-                ? session.id
-                : nil
-        })
-        if !staleImportedIDs.isEmpty {
-            sessions.removeAll { staleImportedIDs.contains($0.id) }
-        }
-
-        var sessionIndexesByID = Dictionary(
-            uniqueKeysWithValues: sessions.enumerated().map { ($0.element.id, $0.offset) }
-        )
-        for history in imported {
-            if let index = sessionIndexesByID[history.id] {
-                let existing = sessions[index]
-                guard existing.isImportedHistory, existing.status != .closed else { continue }
-                if !Self.importedHistorySession(existing, matches: history) {
-                    replaceImportedSession(history, at: index)
-                }
-            } else {
-                sessions.append(makeImportedSession(history))
-                sessionIndexesByID[history.id] = sessions.endIndex - 1
-            }
+        if sessions.contains(where: \.isImportedHistory) {
+            sessions.removeAll { $0.isImportedHistory }
         }
         refreshLiveAgentTitles(from: imported)
 
-        if let selectedSessionID, !visibleSessions.contains(where: { $0.id == selectedSessionID }) {
-            self.selectedSessionID = visibleSessions.first?.id
+        if let selectedSessionID, !sidebarSessions.contains(where: { $0.id == selectedSessionID }) {
+            self.selectedSessionID = sidebarSessions.first?.id
         } else if selectedSessionID == nil {
-            selectedSessionID = visibleSessions.first?.id
+            selectedSessionID = sidebarSessions.first?.id
         }
-    }
-
-    private func replaceImportedSession(_ history: ImportedAgentSession, at index: Int) {
-        sessions[index] = makeImportedSession(history)
-    }
-
-    static func importedHistorySession(_ session: BanyanSession, matches history: ImportedAgentSession) -> Bool {
-        session.id == history.id
-            && session.isImportedHistory
-            && session.title == history.title
-            && session.cwd == history.cwd
-            && session.command == history.provider.defaultExecutableName
-            && session.status == .completed
-            && session.tone == .neutral
-            && session.historyTranscriptURL == history.transcriptURL
-            && session.createdAt == history.createdAt
-    }
-
-    private func makeImportedSession(_ history: ImportedAgentSession) -> BanyanSession {
-        let session = BanyanSession(
-            id: history.id,
-            tmuxSessionName: TmuxBackend.sessionName(for: history.id),
-            title: history.title,
-            generatedTitle: nil,
-            isTitlePinned: true,
-            cwd: history.cwd,
-            command: history.provider.defaultExecutableName,
-            status: .completed,
-            tone: .neutral,
-            historyTranscriptURL: history.transcriptURL,
-            createdAt: history.createdAt,
-            updatedAt: history.updatedAt,
-            isRestored: true,
-            theme: terminalTheme,
-            fontFamily: terminalFontFamily,
-            fontSize: terminalFontSize
-        )
-        attach(session)
-        return session
     }
 
     private func refreshLiveAgentTitles(from imported: [ImportedAgentSession]) {

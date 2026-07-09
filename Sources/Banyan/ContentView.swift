@@ -84,7 +84,7 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: $store.selectedSessionID) {
-                sidebarSections(store.sessionSidebarGroups)
+                sidebarSections(store.sessionSidebarGroups, allowsMove: true)
             }
             .listStyle(.sidebar)
             .accessibilityIdentifier(AccessibilityID.sidebarList)
@@ -94,7 +94,7 @@ struct ContentView: View {
             if let historyGroup = store.historySidebarGroup {
                 Divider()
                 List(selection: $store.selectedSessionID) {
-                    sidebarSections([historyGroup])
+                    sidebarSections([historyGroup], allowsMove: false)
                 }
                 .listStyle(.sidebar)
                 .frame(height: historyListHeight(itemCount: historyGroup.items.count))
@@ -133,7 +133,7 @@ struct ContentView: View {
 
                 Spacer()
 
-                if let selected = store.selectedSession {
+                if let selected = store.selectedSession, selected.status != .closed {
                     Button {
                         store.requestClose(id: selected.id)
                     } label: {
@@ -151,11 +151,20 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func sidebarSections(_ groups: [SidebarSessionGroup]) -> some View {
+    private func sidebarSections(_ groups: [SidebarSessionGroup], allowsMove: Bool) -> some View {
         ForEach(groups) { group in
             Section {
-                ForEach(group.items) { item in
-                    sidebarRow(item)
+                if allowsMove {
+                    ForEach(group.items) { item in
+                        sidebarRow(item)
+                    }
+                    .onMove { source, destination in
+                        store.moveSidebarSessions(in: group.id, from: source, to: destination)
+                    }
+                } else {
+                    ForEach(group.items) { item in
+                        sidebarRow(item)
+                    }
                 }
             } header: {
                 Text(group.title)
@@ -180,6 +189,9 @@ struct ContentView: View {
             },
             onRestart: {
                 try? store.restart(id: item.session.id)
+            },
+            onRespawn: {
+                try? store.respawn(id: item.session.id)
             },
             onRemove: {
                 try? store.remove(id: item.session.id)
@@ -245,7 +257,10 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         if let session = store.selectedSession {
-            if session.isImportedHistory {
+            if session.status == .closed {
+                ClosedSessionHistoryView(session: session)
+                    .accessibilityIdentifier(AccessibilityID.detail)
+            } else if session.isImportedHistory {
                 ImportedSessionHistoryView(session: session)
                     .accessibilityIdentifier(AccessibilityID.detail)
             } else {
@@ -470,6 +485,7 @@ private struct SessionRow: View {
     let onSelect: () -> Void
     let onClose: () -> Void
     let onRestart: () -> Void
+    let onRespawn: () -> Void
     let onRemove: () -> Void
 
     @State private var isRenaming = false
@@ -484,7 +500,7 @@ private struct SessionRow: View {
                     .accessibilityLabel(provider.displayName)
             }
 
-            if !session.isImportedHistory {
+            if !session.isImportedHistory && session.status != .closed {
                 Text(session.status.emoji)
                     .font(.system(size: 12))
                     .frame(width: 16, height: 18)
@@ -525,10 +541,16 @@ private struct SessionRow: View {
                 beginRename()
             }
             Divider()
-            Button("Close") {
-                onClose()
+            if session.status == .closed {
+                Button("Reopen") {
+                    onRespawn()
+                }
+            } else {
+                Button("Close") {
+                    onClose()
+                }
             }
-            if !session.isImportedHistory {
+            if !session.isImportedHistory && session.status != .closed {
                 Button("Restart") {
                     onRestart()
                 }
@@ -594,7 +616,7 @@ private struct SessionRow: View {
         } else {
             Text(displayTitle)
                 .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                .foregroundStyle(session.isImportedHistory ? .secondary : .primary)
+                .foregroundStyle(session.isImportedHistory || session.status == .closed ? .secondary : .primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
@@ -814,6 +836,58 @@ private struct AgentProviderIcon: View {
                 "\(home)/Applications/OpenCode.app"
             ]
         }
+    }
+}
+
+private struct ClosedSessionHistoryView: View {
+    @EnvironmentObject private var store: SessionStore
+    @ObservedObject var session: BanyanSession
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                if let provider = session.agentProvider {
+                    AgentProviderIcon(provider: provider)
+                } else {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.displayTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(session.cwd)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer()
+                Button {
+                    reopenSession()
+                } label: {
+                    Label("Reopen", systemImage: "arrow.uturn.forward.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Reopen the closed Banyan session")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.bar)
+
+            ContentUnavailableView(
+                "Closed Session",
+                systemImage: "archivebox",
+                description: Text("This history item was closed in Banyan. Reopen it to attach the terminal again.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func reopenSession() {
+        _ = try? store.respawn(id: session.id)
     }
 }
 
