@@ -477,8 +477,11 @@ final class SessionStore: ObservableObject {
     }
 
     func openSelectedPullRequest() {
-        guard let url = selectedPullRequestURL else { return }
-        NSWorkspace.shared.open(url)
+        if let url = selectedPullRequestURL {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        resolveSelectedContextForOpenPullRequest()
     }
 
     func showFindInSelectedSession() {
@@ -1038,7 +1041,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func refreshSelectedContextInfo(force: Bool = false) {
-        guard let session = selectedSession, session.status != .closed else {
+        guard let input = selectedContextLookupInput() else {
             selectedContextTask?.cancel()
             selectedContextTask = nil
             selectedContextSignature = nil
@@ -1046,13 +1049,6 @@ final class SessionStore: ObservableObject {
             return
         }
 
-        let input = SessionContextLookupInput(
-            sessionID: session.id,
-            cwd: session.cwd,
-            title: session.title,
-            titleURL: session.titleURL,
-            displayTitle: session.displayTitle
-        )
         guard force || input.signature != selectedContextSignature else { return }
 
         selectedContextSignature = input.signature
@@ -1074,6 +1070,41 @@ final class SessionStore: ObservableObject {
                 self.selectedContextResolvedAt = Date()
             }
         }
+    }
+
+    private func resolveSelectedContextForOpenPullRequest() {
+        guard let input = selectedContextLookupInput() else { return }
+        selectedContextSignature = input.signature
+        selectedContextTask?.cancel()
+        selectedContextTask = Task.detached(priority: .userInitiated) {
+            let info = SessionContextResolver.resolve(input: input) {
+                Task.isCancelled
+            }
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.selectedSessionID == input.sessionID,
+                      self.selectedContextSignature == input.signature else {
+                    return
+                }
+                self.selectedContextInfo = info
+                self.selectedContextResolvedAt = Date()
+                guard let value = info.pullRequestURL, let url = URL(string: value) else { return }
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
+    private func selectedContextLookupInput() -> SessionContextLookupInput? {
+        guard let session = selectedSession, session.status != .closed else {
+            return nil
+        }
+        return SessionContextLookupInput(
+            sessionID: session.id,
+            cwd: session.cwd,
+            title: session.title,
+            titleURL: session.titleURL,
+            displayTitle: session.displayTitle
+        )
     }
 
     private func refreshSelectedContextInfoIfStale() {

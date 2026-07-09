@@ -52,7 +52,7 @@ struct BanyanApp: App {
                     store.openSelectedPullRequest()
                 }
                 .keyboardShortcut("g")
-                .disabled(store.selectedPullRequestURL == nil)
+                .disabled(store.selectedSession?.status == .closed || store.selectedSession == nil)
 
                 Button("Open Linear Issue") {
                     store.openSelectedLinearIssue()
