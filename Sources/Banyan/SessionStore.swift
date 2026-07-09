@@ -471,6 +471,13 @@ final class SessionStore: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func showFindInSelectedSession() {
+        guard let selectedSession, !selectedSession.isImportedHistory else { return }
+        let item = NSMenuItem()
+        item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+        selectedSession.terminalView.performFindPanelAction(item)
+    }
+
     func close(id: String) throws {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)

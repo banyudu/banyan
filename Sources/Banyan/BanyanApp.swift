@@ -32,6 +32,13 @@ struct BanyanApp: App {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(store.selectedSession == nil)
             }
+            CommandGroup(after: .pasteboard) {
+                Button("Find") {
+                    store.showFindInSelectedSession()
+                }
+                .keyboardShortcut("f")
+                .disabled(store.selectedSession?.isImportedHistory != false)
+            }
             CommandMenu("Terminal") {
                 Button("Close Current Terminal") {
                     store.requestCloseSelectedSession()
