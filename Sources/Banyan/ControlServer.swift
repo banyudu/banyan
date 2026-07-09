@@ -207,6 +207,7 @@ final class ControlServer {
             "title": window?.title ?? "",
             "titleVisibility": window?.titleVisibility == .hidden ? "hidden" : "visible"
         ]
+        state["selectedSessionID"] = store?.selectedSessionID ?? ""
         if let context = store?.selectedContextInfo {
             let selectedContext: [String: String] = [
                 "sessionID": context.sessionID,

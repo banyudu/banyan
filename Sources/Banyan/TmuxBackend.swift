@@ -92,6 +92,19 @@ struct TmuxBackend {
         return (try? run(["capture-pane", "-p", "-J", "-t", paneID, "-S", start])) ?? ""
     }
 
+    func captureCurrentVisibleText(paneID: String) -> String {
+        (try? run(["capture-pane", "-p", "-J", "-t", paneID])) ?? ""
+    }
+
+    func refreshClients(attachedTo name: String) {
+        guard let output = try? run(["list-clients", "-t", name, "-F", "#{client_name}"]) else {
+            return
+        }
+        for client in output.split(separator: "\n").map(String.init) where !client.isEmpty {
+            _ = try? run(["refresh-client", "-t", client, "-S"])
+        }
+    }
+
     func ensureSession(named name: String, cwd: String, command: String) throws {
         configureServerEnvironment()
         configureServerOptions()

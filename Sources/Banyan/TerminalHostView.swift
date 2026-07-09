@@ -65,6 +65,13 @@ struct TerminalHostView: NSViewRepresentable {
             return
         }
         session.start()
+        session.refreshTerminalClient()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            session.refreshTerminalClient()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            session.recoverBlankTerminalClientIfNeeded()
+        }
     }
 }
 

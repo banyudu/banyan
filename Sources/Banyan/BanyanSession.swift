@@ -48,6 +48,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var externalTitleSignature: String?
     private var externalTitleTask: Task<Void, Never>?
     private var isDetachingTerminalClient = false
+    private var attemptedBlankTerminalRecovery = false
     private var titleURLWasAutoDetected = false
 
     var displayTitle: String {
@@ -192,7 +193,29 @@ final class BanyanSession: ObservableObject, Identifiable {
         startTerminalClient()
     }
 
-    func reattachTerminalClient() {
+    func refreshTerminalClient() {
+        guard !isImportedHistory, terminalView.process.running else { return }
+        tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
+        terminalView.needsDisplay = true
+        terminalView.setNeedsDisplay(terminalView.bounds)
+    }
+
+    func recoverBlankTerminalClientIfNeeded() {
+        guard !isImportedHistory,
+              !attemptedBlankTerminalRecovery,
+              terminalView.process.running,
+              terminalView.hasVisibleText == false else {
+            return
+        }
+        let capturedText = tmuxBackend.captureCurrentVisibleText(paneID: tmuxSessionName)
+        guard capturedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return
+        }
+        attemptedBlankTerminalRecovery = true
+        reattachTerminalClient(resetBlankRecoveryAttempt: false)
+    }
+
+    func reattachTerminalClient(resetBlankRecoveryAttempt: Bool = true) {
         guard !isImportedHistory else { return }
         if terminalView.process.running {
             isDetachingTerminalClient = true
@@ -201,7 +224,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         isDetachingTerminalClient = false
         isProcessStarted = false
         isRestored = false
-        startTerminalClient()
+        terminalView.resetForNewProcess()
+        startTerminalClient(resetBlankRecoveryAttempt: resetBlankRecoveryAttempt)
     }
 
     func restartBackingSession() {
@@ -217,7 +241,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         startTerminalClient()
     }
 
-    private func startTerminalClient() {
+    private func startTerminalClient(resetBlankRecoveryAttempt: Bool = true) {
         do {
             try tmuxBackend.ensureSession(named: tmuxSessionName, cwd: cwd, command: command)
         } catch {
@@ -226,6 +250,9 @@ final class BanyanSession: ObservableObject, Identifiable {
         }
         isRestored = false
         isProcessStarted = true
+        if resetBlankRecoveryAttempt {
+            attemptedBlankTerminalRecovery = false
+        }
         status = .running
         terminalView.startProcess(
             executable: "/usr/bin/env",
@@ -522,6 +549,20 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
     private var preservedScrollbackTopRow: Int?
 
+    var hasVisibleText: Bool {
+        let dimensions = terminal.getDims()
+        guard dimensions.cols > 0, dimensions.rows > 0 else { return false }
+        for row in 0..<dimensions.rows {
+            for col in 0..<dimensions.cols {
+                guard let character = terminal.getCharacter(col: col, row: row) else { continue }
+                if String(character).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         configureInteraction()
@@ -549,6 +590,13 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
             return
         }
         preservedScrollbackTopRow = terminal.buffer.yDisp
+    }
+
+    func resetForNewProcess() {
+        preservedScrollbackTopRow = nil
+        terminal.resetToInitialState()
+        needsDisplay = true
+        setNeedsDisplay(bounds)
     }
 
     private func restoreScrollbackPosition(_ row: Int) {
