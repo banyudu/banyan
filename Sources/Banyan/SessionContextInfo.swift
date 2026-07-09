@@ -40,7 +40,7 @@ enum SessionContextResolver {
         let linearTitle = isCancelled() ? nil : detectedIssueID.flatMap { issueID in
             commandOutput(["linear", "issue", "title", issueID], cwd: input.cwd, isCancelled: isCancelled)
         }
-        let resolvedIssueID = linearTitle == nil ? nil : detectedIssueID
+        let resolvedIssueID = detectedIssueID
         let linearURL = resolvedIssueID.map(LinearIssueReference.issueURL(for:))
         let pullRequest = isCancelled() ? nil : pullRequest(cwd: input.cwd, isCancelled: isCancelled)
 

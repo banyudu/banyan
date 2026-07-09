@@ -266,29 +266,26 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         if let session = store.selectedSession {
-            if session.status == .closed {
-                ClosedSessionHistoryView(session: session)
-                    .accessibilityIdentifier(AccessibilityID.detail)
-            } else if session.isImportedHistory {
-                ImportedSessionHistoryView(session: session)
-                    .accessibilityIdentifier(AccessibilityID.detail)
-            } else {
-                VStack(spacing: 0) {
-                    if session.needsManualAttach {
-                        TerminalReconnectBanner(session: session)
-                        Divider()
-                    }
-                    TerminalHostView(
-                        session: session,
-                        theme: store.terminalTheme,
-                        fontFamily: store.terminalFontFamily,
-                        fontSize: store.terminalFontSize,
-                        focusRequestID: store.terminalFocusRequestID
+            HStack(spacing: 0) {
+                selectedSessionDetail(session)
+
+                if let context = store.selectedContextInfo,
+                   context.linearIssueID?.isEmpty == false,
+                   session.status != .closed {
+                    Divider()
+                    LinearIssuePanel(
+                        context: context,
+                        issue: store.selectedLinearIssueDetails,
+                        loadState: store.selectedLinearIssueLoadState,
+                        onRefresh: {
+                            store.refreshSelectedLinearIssue(force: true)
+                        },
+                        onOpen: store.openSelectedLinearIssue,
+                        onChangeState: store.updateSelectedLinearIssueState
                     )
-                        .ignoresSafeArea(edges: .bottom)
                 }
-                .accessibilityIdentifier(AccessibilityID.detail)
             }
+            .accessibilityIdentifier(AccessibilityID.detail)
         } else {
             ContentUnavailableView(
                 "No Session Selected",
@@ -296,6 +293,30 @@ struct ContentView: View {
                 description: Text("Spawn a session from the toolbar or with banyanctl.")
             )
             .accessibilityIdentifier(AccessibilityID.emptyDetail)
+        }
+    }
+
+    @ViewBuilder
+    private func selectedSessionDetail(_ session: BanyanSession) -> some View {
+        if session.status == .closed {
+            ClosedSessionHistoryView(session: session)
+        } else if session.isImportedHistory {
+            ImportedSessionHistoryView(session: session)
+        } else {
+            VStack(spacing: 0) {
+                if session.needsManualAttach {
+                    TerminalReconnectBanner(session: session)
+                    Divider()
+                }
+                TerminalHostView(
+                    session: session,
+                    theme: store.terminalTheme,
+                    fontFamily: store.terminalFontFamily,
+                    fontSize: store.terminalFontSize,
+                    focusRequestID: store.terminalFocusRequestID
+                )
+                    .ignoresSafeArea(edges: .bottom)
+            }
         }
     }
 }

@@ -51,7 +51,13 @@ struct LivePromptTitleMatchInput: Equatable {
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [BanyanSession] = []
     @Published private(set) var terminalFocusRequestID = UUID()
-    @Published private(set) var selectedContextInfo: SessionContextInfo?
+    @Published private(set) var selectedContextInfo: SessionContextInfo? {
+        didSet {
+            refreshSelectedLinearIssue()
+        }
+    }
+    @Published private(set) var selectedLinearIssueDetails: LinearIssueDetails?
+    @Published private(set) var selectedLinearIssueLoadState: LinearIssueLoadState = .idle
     @Published var addSessionDraft: AddSessionDraft?
     @Published var selectedSessionID: String? {
         didSet {
@@ -98,6 +104,10 @@ final class SessionStore: ObservableObject {
     private var selectedContextTask: Task<Void, Never>?
     private var selectedContextSignature: String?
     private var selectedContextResolvedAt = Date.distantPast
+    private var selectedLinearIssueTask: Task<Void, Never>?
+    private var selectedLinearIssueStatusTask: Task<Void, Never>?
+    private var selectedLinearIssueStatusTimer: Timer?
+    private var selectedLinearIssueIdentifier: String?
 
     init() {
         let defaults = UserDefaults.standard
@@ -471,6 +481,175 @@ final class SessionStore: ObservableObject {
     func openSelectedLinearIssue() {
         guard let url = selectedLinearIssueURL else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    func refreshSelectedLinearIssue(force: Bool = false) {
+        guard let session = selectedSession,
+              session.status != .closed,
+              let context = selectedContextInfo,
+              let issueID = context.linearIssueID,
+              !issueID.isEmpty else {
+            selectedLinearIssueTask?.cancel()
+            selectedLinearIssueTask = nil
+            selectedLinearIssueStatusTask?.cancel()
+            selectedLinearIssueStatusTask = nil
+            stopSelectedLinearIssueStatusRefresh()
+            selectedLinearIssueIdentifier = nil
+            selectedLinearIssueDetails = nil
+            selectedLinearIssueLoadState = .idle
+            return
+        }
+
+        guard force
+            || selectedLinearIssueIdentifier != issueID
+            || selectedLinearIssueDetails?.identifier != issueID else {
+            startSelectedLinearIssueStatusRefreshIfNeeded()
+            return
+        }
+
+        selectedLinearIssueTask?.cancel()
+        selectedLinearIssueStatusTask?.cancel()
+        selectedLinearIssueStatusTask = nil
+        selectedLinearIssueIdentifier = issueID
+        if selectedLinearIssueDetails?.identifier != issueID {
+            selectedLinearIssueDetails = nil
+        }
+        selectedLinearIssueLoadState = .loading
+
+        let cwd = session.cwd
+        let sessionID = session.id
+        selectedLinearIssueTask = Task.detached(priority: .utility) {
+            do {
+                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.selectedSessionID == sessionID,
+                          self.selectedContextInfo?.linearIssueID == issueID,
+                          self.selectedLinearIssueIdentifier == issueID else {
+                        return
+                    }
+                    self.selectedLinearIssueDetails = issue
+                    self.selectedLinearIssueLoadState = .loaded
+                    self.startSelectedLinearIssueStatusRefreshIfNeeded()
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.selectedSessionID == sessionID,
+                          self.selectedContextInfo?.linearIssueID == issueID,
+                          self.selectedLinearIssueIdentifier == issueID else {
+                        return
+                    }
+                    self.selectedLinearIssueLoadState = .failed("Unable to load issue details")
+                    self.stopSelectedLinearIssueStatusRefresh()
+                }
+            }
+        }
+    }
+
+    func updateSelectedLinearIssueState(_ state: LinearWorkflowState) {
+        guard let session = selectedSession,
+              session.status != .closed,
+              let issueID = selectedContextInfo?.linearIssueID else {
+            return
+        }
+
+        selectedLinearIssueTask?.cancel()
+        selectedLinearIssueIdentifier = issueID
+        selectedLinearIssueLoadState = .updating(state.name)
+
+        let cwd = session.cwd
+        let sessionID = session.id
+        selectedLinearIssueTask = Task.detached(priority: .userInitiated) {
+            do {
+                try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd)
+                let status = try await LinearIssueClient.fetchIssueStatus(identifier: issueID, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.selectedSessionID == sessionID,
+                          self.selectedContextInfo?.linearIssueID == issueID,
+                          self.selectedLinearIssueIdentifier == issueID else {
+                        return
+                    }
+                    self.applySelectedLinearIssueStatus(status)
+                    self.selectedLinearIssueLoadState = .loaded
+                    self.startSelectedLinearIssueStatusRefreshIfNeeded()
+                    self.refreshSelectedContextInfo(force: true)
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.selectedSessionID == sessionID,
+                          self.selectedContextInfo?.linearIssueID == issueID,
+                          self.selectedLinearIssueIdentifier == issueID else {
+                        return
+                    }
+                    self.selectedLinearIssueLoadState = .failed("Unable to update issue state")
+                }
+            }
+        }
+    }
+
+    private func startSelectedLinearIssueStatusRefreshIfNeeded() {
+        guard selectedLinearIssueStatusTimer == nil,
+              selectedLinearIssueDetails != nil,
+              selectedLinearIssueIdentifier != nil else {
+            return
+        }
+
+        // Linear does not expose an app-local status change event here, so keep polling
+        // scoped to the selected loaded issue and only fetch the lightweight status fields.
+        selectedLinearIssueStatusTimer = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshSelectedLinearIssueStatus()
+            }
+        }
+    }
+
+    private func stopSelectedLinearIssueStatusRefresh() {
+        selectedLinearIssueStatusTimer?.invalidate()
+        selectedLinearIssueStatusTimer = nil
+    }
+
+    private func refreshSelectedLinearIssueStatus() {
+        guard let session = selectedSession,
+              session.status != .closed,
+              let issueID = selectedLinearIssueIdentifier,
+              selectedLinearIssueDetails?.identifier == issueID,
+              selectedLinearIssueStatusTask == nil,
+              selectedLinearIssueLoadState == .loaded else {
+            return
+        }
+
+        let cwd = session.cwd
+        let sessionID = session.id
+        selectedLinearIssueStatusTask = Task.detached(priority: .utility) {
+            do {
+                let status = try await LinearIssueClient.fetchIssueStatus(identifier: issueID, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.selectedLinearIssueStatusTask = nil
+                    guard self.selectedSessionID == sessionID,
+                          self.selectedContextInfo?.linearIssueID == issueID,
+                          self.selectedLinearIssueIdentifier == issueID else {
+                        return
+                    }
+                    self.applySelectedLinearIssueStatus(status)
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.selectedLinearIssueStatusTask = nil
+                }
+            }
+        }
+    }
+
+    private func applySelectedLinearIssueStatus(_ status: LinearIssueStatusSnapshot) {
+        guard status.identifier == selectedLinearIssueIdentifier,
+              let issue = selectedLinearIssueDetails else {
+            return
+        }
+        selectedLinearIssueDetails = issue.applying(status: status)
     }
 
     func openSelectedPullRequest() {
