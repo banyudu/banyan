@@ -136,7 +136,6 @@ enum SessionContextResolver {
     }
 
     private static func processEnvironment() -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
         let additions = [
             "\(NSHomeDirectory())/bin",
             "\(NSHomeDirectory())/.bun/bin",
@@ -150,14 +149,6 @@ enum SessionContextResolver {
             "/usr/bin",
             "/bin"
         ]
-        let existingPath = environment["PATH"] ?? ""
-        environment["PATH"] = (additions + existingPath.split(separator: ":").map(String.init))
-            .reduce(into: [String]()) { paths, path in
-                if !paths.contains(path) {
-                    paths.append(path)
-                }
-            }
-            .joined(separator: ":")
-        return environment
+        return AppProcessEnvironment.make(pathAdditions: additions)
     }
 }
