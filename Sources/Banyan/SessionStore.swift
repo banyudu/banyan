@@ -56,7 +56,6 @@ final class SessionStore: ObservableObject {
     @Published var selectedSessionID: String? {
         didSet {
             saveWorkspace()
-            startSelectedSessionIfNeeded()
             requestTerminalFocus()
             refreshSelectedContextInfo(force: true)
         }
@@ -333,7 +332,6 @@ final class SessionStore: ObservableObject {
         } else {
             selectedSessionID = visibleSessions.first?.id
         }
-        startSelectedSessionIfNeeded()
         refreshSelectedContextInfo(force: true)
         saveSessions()
     }
@@ -427,7 +425,6 @@ final class SessionStore: ObservableObject {
         attach(session)
         sessions.append(session)
         selectedSessionID = session.id
-        session.start()
         refreshSelectedContextInfo(force: true)
         saveSessions()
         return session
@@ -774,11 +771,6 @@ final class SessionStore: ObservableObject {
         sessions.forEach {
             $0.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
         }
-    }
-
-    private func startSelectedSessionIfNeeded() {
-        guard let session = selectedSession, session.status != .closed, !session.isImportedHistory else { return }
-        session.start()
     }
 
     private func saveSessions() {

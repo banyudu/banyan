@@ -16,11 +16,14 @@ struct TerminalHostView: NSViewRepresentable {
         )
         container.apply(theme: theme)
         container.onLayout = {
-            session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+            handleTerminalReady()
         }
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         container.needsLayout = true
         context.coordinator.lastFocusRequestID = focusRequestID
+        container.performWhenTerminalReady(for: session.terminalView) {
+            handleTerminalReady()
+        }
         container.focusTerminalWhenReady()
         return container
     }
@@ -30,12 +33,15 @@ struct TerminalHostView: NSViewRepresentable {
         nsView.onUserSubmittedInput = { session.noteUserSubmittedInput($0) }
         nsView.apply(theme: theme)
         nsView.onLayout = {
-            session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+            handleTerminalReady()
         }
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         if didInstall {
             nsView.needsLayout = true
             nsView.syncTerminalFrameIfNeeded(markNeedsDisplay: true)
+        }
+        nsView.performWhenTerminalReady(for: session.terminalView) {
+            handleTerminalReady()
         }
         if context.coordinator.lastFocusRequestID != focusRequestID {
             context.coordinator.lastFocusRequestID = focusRequestID
@@ -49,6 +55,16 @@ struct TerminalHostView: NSViewRepresentable {
 
     final class Coordinator {
         var lastFocusRequestID: UUID?
+    }
+
+    private func handleTerminalReady() {
+        session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+        guard session.status != .closed,
+              !session.isImportedHistory,
+              !session.needsManualAttach else {
+            return
+        }
+        session.start()
     }
 }
 
@@ -152,6 +168,10 @@ final class TerminalContainerView: NSView {
         focusTerminalWhenReady(attempt: 0)
     }
 
+    func performWhenTerminalReady(for expectedTerminalView: LocalProcessTerminalView, action: @escaping () -> Void) {
+        performWhenTerminalReady(for: expectedTerminalView, attempt: 0, action: action)
+    }
+
     private func focusTerminalWhenReady(attempt: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0 : 0.03)) { [weak self] in
             guard let self else { return }
@@ -162,6 +182,24 @@ final class TerminalContainerView: NSView {
                 return
             }
             window.makeFirstResponder(self.terminalView)
+        }
+    }
+
+    private func performWhenTerminalReady(
+        for expectedTerminalView: LocalProcessTerminalView,
+        attempt: Int,
+        action: @escaping () -> Void
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0 : 0.05)) { [weak self] in
+            guard let self, self.terminalView === expectedTerminalView else { return }
+            guard self.window != nil, self.bounds.width > 40, self.bounds.height > 40 else {
+                if attempt < 20 {
+                    self.performWhenTerminalReady(for: expectedTerminalView, attempt: attempt + 1, action: action)
+                }
+                return
+            }
+            self.syncTerminalFrameIfNeeded(markNeedsDisplay: true)
+            action()
         }
     }
 
