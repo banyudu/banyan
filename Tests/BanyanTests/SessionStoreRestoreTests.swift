@@ -41,6 +41,66 @@ import Testing
     #expect(title == "banyan · Fix sidebar grouping")
 }
 
+@MainActor
+@Test func importedHistorySessionIgnoresTimestampOnlyUpdates() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let session = BanyanSession(
+        id: "history-codex-live",
+        title: "Keep history stable",
+        cwd: "/tmp/banyan",
+        command: "codex",
+        status: .completed,
+        tone: .neutral,
+        historyTranscriptURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
+        createdAt: base,
+        updatedAt: base,
+        isRestored: true,
+        theme: .system
+    )
+    let history = ImportedAgentSession(
+        id: "history-codex-live",
+        provider: .codex,
+        sourceID: "live",
+        title: "Keep history stable",
+        cwd: "/tmp/banyan",
+        transcriptURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
+        createdAt: base,
+        updatedAt: base.addingTimeInterval(20)
+    )
+
+    #expect(SessionStore.importedHistorySession(session, matches: history))
+}
+
+@MainActor
+@Test func importedHistorySessionDetectsVisibleMetadataChanges() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let session = BanyanSession(
+        id: "history-codex-live",
+        title: "Old title",
+        cwd: "/tmp/banyan",
+        command: "codex",
+        status: .completed,
+        tone: .neutral,
+        historyTranscriptURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
+        createdAt: base,
+        updatedAt: base,
+        isRestored: true,
+        theme: .system
+    )
+    let history = ImportedAgentSession(
+        id: "history-codex-live",
+        provider: .codex,
+        sourceID: "live",
+        title: "New title",
+        cwd: "/tmp/banyan",
+        transcriptURL: URL(fileURLWithPath: "/tmp/live.jsonl"),
+        createdAt: base,
+        updatedAt: base.addingTimeInterval(20)
+    )
+
+    #expect(!SessionStore.importedHistorySession(session, matches: history))
+}
+
 @Test func promptTitleMatchAfterResetUsesRecentlyUpdatedSession() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
     let old = ImportedAgentSession(

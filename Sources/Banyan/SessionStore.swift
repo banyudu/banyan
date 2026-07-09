@@ -706,8 +706,13 @@ final class SessionStore: ObservableObject {
     private func applyImportedHistory(_ imported: [ImportedAgentSession]) {
         latestImportedHistory = imported
         let importedIDs = Set(imported.map(\.id))
-        sessions.removeAll { session in
+        let staleImportedIDs = Set(sessions.compactMap { session in
             session.isImportedHistory && !importedIDs.contains(session.id) && session.status != .closed
+                ? session.id
+                : nil
+        })
+        if !staleImportedIDs.isEmpty {
+            sessions.removeAll { staleImportedIDs.contains($0.id) }
         }
 
         var sessionIndexesByID = Dictionary(
@@ -717,7 +722,7 @@ final class SessionStore: ObservableObject {
             if let index = sessionIndexesByID[history.id] {
                 let existing = sessions[index]
                 guard existing.isImportedHistory, existing.status != .closed else { continue }
-                if !importedSession(existing, matches: history) {
+                if !Self.importedHistorySession(existing, matches: history) {
                     replaceImportedSession(history, at: index)
                 }
             } else {
@@ -738,7 +743,7 @@ final class SessionStore: ObservableObject {
         sessions[index] = makeImportedSession(history)
     }
 
-    private func importedSession(_ session: BanyanSession, matches history: ImportedAgentSession) -> Bool {
+    static func importedHistorySession(_ session: BanyanSession, matches history: ImportedAgentSession) -> Bool {
         session.id == history.id
             && session.isImportedHistory
             && session.title == history.title
@@ -748,7 +753,6 @@ final class SessionStore: ObservableObject {
             && session.tone == .neutral
             && session.historyTranscriptURL == history.transcriptURL
             && session.createdAt == history.createdAt
-            && session.updatedAt == history.updatedAt
     }
 
     private func makeImportedSession(_ history: ImportedAgentSession) -> BanyanSession {
