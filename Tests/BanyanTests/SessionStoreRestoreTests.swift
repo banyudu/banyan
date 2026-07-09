@@ -63,6 +63,28 @@ import Testing
     #expect(reordered == ["project-a-1", "project-a-2", "project-b-2", "project-b-1"])
 }
 
+@Test func sidebarDragDropAfterTargetWhenDraggingDown() {
+    let reordered = SessionStore.reorderedSidebarSessionIDs(
+        activeSidebarIDs: ["one", "two", "three", "four"],
+        groupSessionIDs: ["one", "two", "three", "four"],
+        sourceID: "one",
+        targetID: "three"
+    )
+
+    #expect(reordered == ["two", "three", "one", "four"])
+}
+
+@Test func sidebarDragDropBeforeTargetWhenDraggingUp() {
+    let reordered = SessionStore.reorderedSidebarSessionIDs(
+        activeSidebarIDs: ["one", "two", "three", "four"],
+        groupSessionIDs: ["one", "two", "three", "four"],
+        sourceID: "four",
+        targetID: "two"
+    )
+
+    #expect(reordered == ["one", "four", "two", "three"])
+}
+
 @MainActor
 @Test func localHistoryIncludesClosedCodexSessionsWithLinearIssueIDs() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)

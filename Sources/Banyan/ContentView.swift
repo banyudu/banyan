@@ -1,10 +1,12 @@
 import AppKit
 import BanyanCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @State private var showingPreferences = false
+    @State private var draggingSidebarSessionID: String?
 
     var body: some View {
         NavigationSplitView {
@@ -156,14 +158,14 @@ struct ContentView: View {
             Section {
                 if allowsMove {
                     ForEach(group.items) { item in
-                        sidebarRow(item)
+                        sidebarRow(item, groupID: group.id, allowsDragSort: true)
                     }
                     .onMove { source, destination in
                         store.moveSidebarSessions(in: group.id, from: source, to: destination)
                     }
                 } else {
                     ForEach(group.items) { item in
-                        sidebarRow(item)
+                        sidebarRow(item, groupID: group.id, allowsDragSort: false)
                     }
                 }
             } header: {
@@ -175,7 +177,7 @@ struct ContentView: View {
         }
     }
 
-    private func sidebarRow(_ item: SidebarSessionItem) -> some View {
+    private func sidebarRow(_ item: SidebarSessionItem, groupID: String, allowsDragSort: Bool) -> some View {
         SessionRow(
             session: item.session,
             depth: item.depth,
@@ -199,6 +201,13 @@ struct ContentView: View {
         )
         .tag(item.session.id)
         .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+        .modifier(SidebarDragSortModifier(
+            sessionID: item.session.id,
+            groupID: groupID,
+            isEnabled: allowsDragSort,
+            draggingSessionID: $draggingSidebarSessionID,
+            onMove: store.moveSidebarSession
+        ))
     }
 
     private func historyListHeight(itemCount: Int) -> CGFloat {
@@ -475,6 +484,70 @@ private final class TitlebarConfigurationView: NSView {
             WindowTitleConfigurator.configure(window: self?.window)
         }
     }
+}
+
+private struct SidebarDragSortModifier: ViewModifier {
+    let sessionID: String
+    let groupID: String
+    let isEnabled: Bool
+    @Binding var draggingSessionID: String?
+    let onMove: (String, String, String) -> Void
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .opacity(draggingSessionID == sessionID ? 0.55 : 1)
+                .onDrag {
+                    draggingSessionID = sessionID
+                    let provider = NSItemProvider()
+                    provider.registerDataRepresentation(
+                        forTypeIdentifier: SidebarSessionDrag.type.identifier,
+                        visibility: .ownProcess
+                    ) { completion in
+                        completion(Data(sessionID.utf8), nil)
+                        return nil
+                    }
+                    return provider
+                }
+                .onDrop(
+                    of: [SidebarSessionDrag.type],
+                    delegate: SidebarSessionDropDelegate(
+                        targetSessionID: sessionID,
+                        groupID: groupID,
+                        draggingSessionID: $draggingSessionID,
+                        onMove: onMove
+                    )
+                )
+        } else {
+            content
+        }
+    }
+}
+
+private struct SidebarSessionDropDelegate: DropDelegate {
+    let targetSessionID: String
+    let groupID: String
+    @Binding var draggingSessionID: String?
+    let onMove: (String, String, String) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggingSessionID != nil && info.hasItemsConforming(to: [SidebarSessionDrag.type])
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingSessionID, draggingSessionID != targetSessionID else { return }
+        onMove(draggingSessionID, targetSessionID, groupID)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard draggingSessionID != nil else { return false }
+        self.draggingSessionID = nil
+        return true
+    }
+}
+
+private enum SidebarSessionDrag {
+    static let type = UTType(exportedAs: "dev.banyudu.banyan.sidebar-session")
 }
 
 private struct SessionRow: View {

@@ -567,6 +567,10 @@ final class SessionStore: ObservableObject {
             return
         }
 
+        applySidebarSessionOrder(activeSidebarIDs: activeSidebarIDs, reorderedIDs: reorderedIDs)
+    }
+
+    private func applySidebarSessionOrder(activeSidebarIDs: [String], reorderedIDs: [String]) {
         let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
         let reorderedSidebarSessions = reorderedIDs.compactMap { sessionsByID[$0] }
         guard reorderedSidebarSessions.count == reorderedIDs.count else { return }
@@ -583,6 +587,24 @@ final class SessionStore: ObservableObject {
         sessions = nextSessions
         sortMode = .manual
         saveSessions()
+    }
+
+    func moveSidebarSession(_ sourceID: String, to targetID: String, in groupID: String) {
+        let groups = sessionSidebarGroups
+        guard let group = groups.first(where: { $0.id == groupID }) else { return }
+
+        let groupSessionIDs = group.items.map(\.id)
+        let activeSidebarIDs = groups.flatMap { $0.items.map(\.id) }
+        guard let reorderedIDs = Self.reorderedSidebarSessionIDs(
+            activeSidebarIDs: activeSidebarIDs,
+            groupSessionIDs: groupSessionIDs,
+            sourceID: sourceID,
+            targetID: targetID
+        ), reorderedIDs != activeSidebarIDs else {
+            return
+        }
+
+        applySidebarSessionOrder(activeSidebarIDs: activeSidebarIDs, reorderedIDs: reorderedIDs)
     }
 
     nonisolated static func reorderedSidebarSessionIDs(
@@ -622,6 +644,27 @@ final class SessionStore: ObservableObject {
             }
             return id
         }
+    }
+
+    nonisolated static func reorderedSidebarSessionIDs(
+        activeSidebarIDs: [String],
+        groupSessionIDs: [String],
+        sourceID: String,
+        targetID: String
+    ) -> [String]? {
+        guard let sourceIndex = groupSessionIDs.firstIndex(of: sourceID),
+              let targetIndex = groupSessionIDs.firstIndex(of: targetID),
+              sourceIndex != targetIndex else {
+            return nil
+        }
+
+        let destinationOffset = sourceIndex < targetIndex ? targetIndex + 1 : targetIndex
+        return reorderedSidebarSessionIDs(
+            activeSidebarIDs: activeSidebarIDs,
+            groupSessionIDs: groupSessionIDs,
+            sourceOffsets: IndexSet(integer: sourceIndex),
+            destinationOffset: destinationOffset
+        )
     }
 
     func selectNextSession() {
