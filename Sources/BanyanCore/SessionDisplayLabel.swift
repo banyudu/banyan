@@ -5,6 +5,8 @@ public struct SessionProjectContext: Equatable {
     public let branch: String?
     public let groupID: String
     public let groupTitle: String
+    public let isGitWorktree: Bool
+    public let isDefaultBranch: Bool
 }
 
 public enum SessionDisplayLabel {
@@ -16,29 +18,37 @@ public enum SessionDisplayLabel {
                 project: project,
                 branch: nil,
                 groupID: "path:\(resolvedCWD)",
-                groupTitle: project
+                groupTitle: project,
+                isGitWorktree: false,
+                isDefaultBranch: false
             )
         }
 
         let project = projectName(gitTopLevel)
-        let branch = gitOutput(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: resolvedCWD)
-            ?? gitOutput(["rev-parse", "--short", "HEAD"], cwd: resolvedCWD)
+        let symbolicBranch = gitOutput(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: resolvedCWD)
+        let branch = symbolicBranch ?? gitOutput(["rev-parse", "--short", "HEAD"], cwd: resolvedCWD)
+        let mainDirectory = gitMainDirectory(cwd: resolvedCWD, fallbackTopLevel: gitTopLevel)
+        let isGitWorktree = standardizedPath(mainDirectory) != standardizedPath(gitTopLevel)
+        let isDefaultBranch = symbolicBranch.map { Self.isDefaultBranch($0, cwd: resolvedCWD) } ?? false
         if let remoteURL = gitRemoteURL(cwd: resolvedCWD) {
             let normalizedAddress = normalizedGitAddress(remoteURL)
             return SessionProjectContext(
                 project: project,
                 branch: branch,
                 groupID: "git:\(normalizedAddress)",
-                groupTitle: gitAddressTitle(normalizedAddress)
+                groupTitle: gitAddressTitle(normalizedAddress),
+                isGitWorktree: isGitWorktree,
+                isDefaultBranch: isDefaultBranch
             )
         }
 
-        let mainDirectory = gitMainDirectory(cwd: resolvedCWD, fallbackTopLevel: gitTopLevel)
         return SessionProjectContext(
             project: project,
             branch: branch,
             groupID: "path:\(mainDirectory)",
-            groupTitle: projectName(mainDirectory)
+            groupTitle: projectName(mainDirectory),
+            isGitWorktree: isGitWorktree,
+            isDefaultBranch: isDefaultBranch
         )
     }
 
@@ -170,6 +180,19 @@ public enum SessionDisplayLabel {
             return url.deletingLastPathComponent().path
         }
         return url.path
+    }
+
+    private static func isDefaultBranch(_ branch: String, cwd: String) -> Bool {
+        if branch == "main" || branch == "master" {
+            return true
+        }
+        guard let remoteHead = gitOutput(
+            ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+            cwd: cwd
+        ) else {
+            return false
+        }
+        return remoteHead.split(separator: "/").last.map(String.init) == branch
     }
 
     private static func normalizedGitAddress(_ value: String) -> String {

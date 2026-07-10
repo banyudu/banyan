@@ -74,6 +74,12 @@ struct BanyanApp: App {
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])
                 .disabled(store.sidebarSessions.count < 2)
 
+                Button("Next Workable Terminal") {
+                    store.selectNextWorkableSession()
+                }
+                .keyboardShortcut("p")
+                .disabled(!store.hasWorkableSession)
+
                 Divider()
 
                 ForEach(Array(store.sidebarSessions.prefix(9).enumerated()), id: \.element.id) { index, item in

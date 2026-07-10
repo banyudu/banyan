@@ -247,7 +247,7 @@ struct PullRequestPreviewPanel: View {
         case .loaded:
             return details.map(stateText) ?? "Loaded"
         case .failed:
-            return "Needs GitHub auth"
+            return "Load failed"
         }
     }
 

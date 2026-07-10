@@ -46,6 +46,19 @@ enum LinearIssueListLoadState: Equatable {
     case starting(String)
 }
 
+struct HandoffJob: Equatable, Identifiable {
+    let id: String
+    let sessionID: String
+    let title: String
+    let cwd: String
+    let startedAt: Date
+}
+
+private enum HandoffDispatchError: Error {
+    case commandUnavailable
+    case failed(Int32)
+}
+
 private struct SupervisorSessionInput {
     let id: String
     let tmuxSessionName: String
@@ -100,6 +113,7 @@ final class SessionStore: ObservableObject {
     }
     @Published private(set) var selectedLinearListIssueDetails: LinearIssueDetails?
     @Published private(set) var selectedLinearListIssueLoadState: LinearIssueLoadState = .idle
+    @Published private(set) var pendingHandoffJobs: [HandoffJob] = []
     @Published var addSessionDraft: AddSessionDraft?
     @Published var selectedSessionID: String? {
         didSet {
@@ -326,6 +340,12 @@ final class SessionStore: ObservableObject {
         return session.titleLinkLabel != nil
     }
 
+    nonisolated static func staleTmuxSessionNames(liveSessionNames: [String], persistedSessionNames: Set<String>) -> [String] {
+        liveSessionNames
+            .filter { !persistedSessionNames.contains($0) }
+            .sorted()
+    }
+
     var selectedSession: BanyanSession? {
         guard let selectedSessionID else { return nil }
         return sessions.first { $0.id == selectedSessionID }
@@ -378,25 +398,15 @@ final class SessionStore: ObservableObject {
             session.reportedTitle = snapshot.reportedTitle
             attach(session)
             sessions.append(session)
-            loadedTmuxSessionNames.insert(session.tmuxSessionName)
+            if session.status != .closed {
+                loadedTmuxSessionNames.insert(session.tmuxSessionName)
+            }
         }
-        for tmuxSessionName in tmuxBackend.listBanyanSessions() where !loadedTmuxSessionNames.contains(tmuxSessionName) {
-            let id = uniqueID(String(tmuxSessionName.dropFirst("banyan-".count)), avoidingLiveTmuxSessions: false)
-            let session = BanyanSession(
-                id: id,
-                tmuxSessionName: tmuxSessionName,
-                title: defaultTitle(for: NSHomeDirectory()),
-                cwd: NSHomeDirectory(),
-                command: "",
-                status: .running,
-                tone: .blue,
-                isRestored: true,
-                theme: terminalTheme,
-                fontFamily: terminalFontFamily,
-                fontSize: terminalFontSize
-            )
-            attach(session)
-            sessions.append(session)
+        for tmuxSessionName in Self.staleTmuxSessionNames(
+            liveSessionNames: tmuxBackend.listBanyanSessions(),
+            persistedSessionNames: loadedTmuxSessionNames
+        ) {
+            tmuxBackend.killSession(named: tmuxSessionName)
         }
         if let selectedSessionID, visibleSessions.contains(where: { $0.id == selectedSessionID }) {
             self.selectedSessionID = selectedSessionID
@@ -1147,6 +1157,21 @@ final class SessionStore: ObservableObject {
         selectAdjacentSession(direction: .previous)
     }
 
+    func selectNextWorkableSession() {
+        guard let id = SessionSelectionNavigator.nextMatchingID(
+            in: sidebarSessions.map(\.id),
+            selectedID: selectedSessionID,
+            isMatch: isWorkableSession
+        ) else {
+            return
+        }
+        selectedSessionID = id
+    }
+
+    var hasWorkableSession: Bool {
+        sidebarSessions.contains { isWorkableSession($0.id) }
+    }
+
     func selectSession(shortcutIndex: Int) {
         guard let id = SessionSelectionNavigator.directID(
             in: sidebarSessions.map(\.id),
@@ -1160,6 +1185,44 @@ final class SessionStore: ObservableObject {
     func requestCloseSelectedSession() {
         guard let selectedSession else { return }
         requestClose(id: selectedSession.id)
+    }
+
+    func dispatchHandoff(id: String) {
+        guard let session = sessions.first(where: { $0.id == id }),
+              session.canDispatchHandoff,
+              !pendingHandoffJobs.contains(where: { $0.sessionID == id }) else {
+            return
+        }
+
+        let job = HandoffJob(
+            id: id,
+            sessionID: id,
+            title: session.displayTitle,
+            cwd: session.cwd,
+            startedAt: Date()
+        )
+
+        do {
+            try close(id: id)
+        } catch {
+            return
+        }
+
+        pendingHandoffJobs.append(job)
+        Task.detached(priority: .utility) {
+            let result = runHandoffDispatch(cwd: job.cwd)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.pendingHandoffJobs.removeAll { $0.id == job.id }
+                if case .failure = result {
+                    try? self.respawn(id: job.sessionID)
+                }
+            }
+        }
+    }
+
+    func isHandoffPending(for sessionID: String) -> Bool {
+        pendingHandoffJobs.contains { $0.sessionID == sessionID }
     }
 
     var selectedLinearIssueURL: URL? {
@@ -1756,6 +1819,7 @@ final class SessionStore: ObservableObject {
                     self.selectedPullRequestLoadState = .loaded
                 }
             } catch {
+                let message = GitHubPullRequestClient.message(for: error)
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.selectedSessionID == sessionID,
@@ -1764,7 +1828,7 @@ final class SessionStore: ObservableObject {
                         return
                     }
                     self.selectedPullRequestTask = nil
-                    self.selectedPullRequestLoadState = .failed("Unable to load pull request")
+                    self.selectedPullRequestLoadState = .failed(message)
                 }
             }
         }
@@ -1891,6 +1955,13 @@ final class SessionStore: ObservableObject {
         selectedSessionID = id
     }
 
+    private func isWorkableSession(_ id: String) -> Bool {
+        guard let session = sessions.first(where: { $0.id == id }) else { return false }
+        return !session.isImportedHistory
+            && session.status != .closed
+            && [.asking, .needInput].contains(session.status)
+    }
+
     private func defaultTitle(for cwd: String) -> String {
         PathDisplayName.make(path: cwd)
     }
@@ -1939,6 +2010,28 @@ final class SessionStore: ObservableObject {
         }
         return true
     }
+}
+
+private func runHandoffDispatch(cwd: String) -> Result<Void, HandoffDispatchError> {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["\(NSHomeDirectory())/bin/handoff", "dispatch"]
+    process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+    process.environment = AppProcessEnvironment.make()
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+
+    do {
+        try process.run()
+    } catch {
+        return .failure(.commandUnavailable)
+    }
+
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        return .failure(.failed(process.terminationStatus))
+    }
+    return .success(())
 }
 
 enum ControlError: LocalizedError {

@@ -32,3 +32,17 @@ import Testing
     #expect(SessionSelectionNavigator.directID(in: ids, oneBasedIndex: 0) == nil)
     #expect(SessionSelectionNavigator.directID(in: ids, oneBasedIndex: 4) == nil)
 }
+
+@Test func nextMatchingSelectionCyclesThroughMatches() {
+    let ids = ["one", "two", "three", "four"]
+    let matches: Set<String> = ["two", "four"]
+
+    #expect(SessionSelectionNavigator.nextMatchingID(in: ids, selectedID: nil, isMatch: matches.contains) == "two")
+    #expect(SessionSelectionNavigator.nextMatchingID(in: ids, selectedID: "one", isMatch: matches.contains) == "two")
+    #expect(SessionSelectionNavigator.nextMatchingID(in: ids, selectedID: "two", isMatch: matches.contains) == "four")
+    #expect(SessionSelectionNavigator.nextMatchingID(in: ids, selectedID: "four", isMatch: matches.contains) == "two")
+}
+
+@Test func nextMatchingSelectionReturnsNilWithoutMatches() {
+    #expect(SessionSelectionNavigator.nextMatchingID(in: ["one", "two"], selectedID: "one") { _ in false } == nil)
+}

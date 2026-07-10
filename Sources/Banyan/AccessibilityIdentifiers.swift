@@ -25,6 +25,7 @@ enum AccessibilityID {
     static let sidebarAddSession = "banyan.sidebar.add-session"
     static let sidebarOptions = "banyan.sidebar.options"
     static let sidebarCloseSelected = "banyan.sidebar.close-selected"
+    static let sidebarPendingHandoffJobs = "banyan.sidebar.pending-handoff-jobs"
     static let sidebarModePicker = "banyan.sidebar.mode"
     static let linearIssueList = "banyan.sidebar.linear-list"
     static let linearIssueSearchField = "banyan.sidebar.linear-search"
@@ -44,5 +45,9 @@ enum AccessibilityID {
 
     static func sessionRowStatus(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id).status"
+    }
+
+    static func sessionRowHandoffButton(_ id: String) -> String {
+        "banyan.sidebar.session-row.\(id).handoff"
     }
 }

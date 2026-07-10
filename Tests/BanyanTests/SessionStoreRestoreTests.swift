@@ -20,6 +20,15 @@ import Testing
     #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .running, provider: nil))
 }
 
+@Test func startupCleanupOnlyTargetsUnpersistedBanyanTmuxSessions() {
+    let stale = SessionStore.staleTmuxSessionNames(
+        liveSessionNames: ["banyan-session-2", "banyan-session-1", "banyan-session-3"],
+        persistedSessionNames: ["banyan-session-1", "banyan-session-3"]
+    )
+
+    #expect(stale == ["banyan-session-2"])
+}
+
 @Test func historySidebarTitleUsesIssueIDInsteadOfWorktreeName() {
     let title = SessionStore.historySidebarTitle(
         projectName: "yudu-eng-6061-32baaf",

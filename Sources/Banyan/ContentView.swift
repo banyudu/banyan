@@ -133,6 +133,11 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
+            if !store.pendingHandoffJobs.isEmpty {
+                Divider()
+                PendingHandoffJobsView(jobs: store.pendingHandoffJobs)
+            }
+
             if let historyGroup = store.historySidebarGroup {
                 Divider()
                 List(selection: $store.selectedSessionID) {
@@ -540,6 +545,10 @@ struct ContentView: View {
             },
             onRespawn: {
                 try? store.respawn(id: item.session.id)
+            },
+            isHandoffPending: store.isHandoffPending(for: item.session.id),
+            onHandoff: {
+                store.dispatchHandoff(id: item.session.id)
             },
             onRemove: {
                 try? store.remove(id: item.session.id)
@@ -1147,6 +1156,43 @@ private enum SidebarSessionDrag {
     static let type = UTType(exportedAs: "dev.banyudu.banyan.sidebar-session")
 }
 
+private struct PendingHandoffJobsView: View {
+    let jobs: [HandoffJob]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Handoff")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            ForEach(jobs) { job in
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.65)
+                        .frame(width: 16, height: 16)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(job.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Text("Dispatching")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .accessibilityIdentifier(AccessibilityID.sidebarPendingHandoffJobs)
+    }
+}
+
 private struct SessionRow: View {
     @ObservedObject var session: BanyanSession
     let depth: Int
@@ -1156,11 +1202,14 @@ private struct SessionRow: View {
     let onClose: () -> Void
     let onRestart: () -> Void
     let onRespawn: () -> Void
+    let isHandoffPending: Bool
+    let onHandoff: () -> Void
     let onRemove: () -> Void
 
     @State private var isRenaming = false
     @State private var renameDraft = ""
     @State private var isIssueLinkHovered = false
+    @State private var isHandoffHovered = false
     @FocusState private var isRenameFocused: Bool
 
     var body: some View {
@@ -1197,6 +1246,26 @@ private struct SessionRow: View {
             }
 
             Spacer(minLength: 0)
+
+            if session.canDispatchHandoff && !isHandoffPending {
+                Button {
+                    onSelect()
+                    onHandoff()
+                } label: {
+                    Text("🤝")
+                        .font(.system(size: 12))
+                        .frame(width: 20, height: 20)
+                        .background(handoffButtonBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .scaleEffect(isHandoffHovered ? 1.06 : 1)
+                        .animation(.easeOut(duration: 0.12), value: isHandoffHovered)
+                }
+                .buttonStyle(.plain)
+                .onHover(perform: setHandoffHovered)
+                .help("Handoff")
+                .accessibilityLabel("Handoff")
+                .accessibilityIdentifier(AccessibilityID.sessionRowHandoffButton(session.id))
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
         .padding(.vertical, 2)
@@ -1229,7 +1298,10 @@ private struct SessionRow: View {
                 onRemove()
             }
         }
-        .onDisappear(perform: resetIssueLinkHover)
+        .onDisappear {
+            resetIssueLinkHover()
+            resetHandoffHover()
+        }
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
     }
 
@@ -1316,6 +1388,33 @@ private struct SessionRow: View {
         guard isIssueLinkHovered else { return }
         isIssueLinkHovered = false
         NSCursor.pop()
+    }
+
+    private func setHandoffHovered(_ isHovered: Bool) {
+        guard isHandoffHovered != isHovered else { return }
+        isHandoffHovered = isHovered
+        if isHovered {
+            NSCursor.pointingHand.push()
+        } else {
+            NSCursor.pop()
+        }
+    }
+
+    private func resetHandoffHover() {
+        guard isHandoffHovered else { return }
+        isHandoffHovered = false
+        NSCursor.pop()
+    }
+
+    @ViewBuilder
+    private var handoffButtonBackground: some View {
+        if isHandoffHovered {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(isSelected ? Color.white.opacity(0.22) : Color.accentColor.opacity(0.16))
+        } else {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.clear)
+        }
     }
 
     @ViewBuilder

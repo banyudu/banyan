@@ -18,18 +18,15 @@ struct AgentSupervisor {
     }
 
     private let backend: any AgentSupervisorBackend
-    private let longRunningThreshold: TimeInterval
     private let processDescendants: (Int) -> [ProcessInfoRow]
 
     init(
         backend: any AgentSupervisorBackend = TmuxBackend.shared,
-        longRunningThreshold: TimeInterval = 120,
         processDescendants: @escaping (Int) -> [ProcessInfoRow] = { rootPID in
             ProcessTable.snapshot().descendants(of: rootPID)
         }
     ) {
         self.backend = backend
-        self.longRunningThreshold = longRunningThreshold
         self.processDescendants = processDescendants
     }
 
@@ -65,10 +62,6 @@ struct AgentSupervisor {
                 && !process.isSupportedAgent
                 && !process.isShellOrWrapper
                 && !process.isTmuxPlumbing
-        }
-
-        if externalProcesses.contains(where: { $0.elapsed >= longRunningThreshold }) {
-            return Result(status: .longRunningShell, tone: .yellow, provider: provider, currentPath: pane.currentPath)
         }
 
         if !externalProcesses.isEmpty {

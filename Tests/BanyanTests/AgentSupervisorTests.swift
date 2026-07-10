@@ -111,7 +111,7 @@ import Testing
     #expect(result?.tone == .blue)
 }
 
-@Test func supervisorClassifiesLongExternalProcessAsLongRunningShell() {
+@Test func supervisorClassifiesLongExternalProcessAsExecuting() {
     let result = makeSupervisor(processes: [
         process(commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 121)
     ]).inspect(
@@ -120,8 +120,8 @@ import Testing
         currentStatus: .running
     )
 
-    #expect(result?.status == .longRunningShell)
-    #expect(result?.tone == .yellow)
+    #expect(result?.status == .executing)
+    #expect(result?.tone == .blue)
 }
 
 @Test func supervisorIgnoresShellWrapperProcesses() {
@@ -303,12 +303,10 @@ private func makeSupervisor(
     pane: TmuxPaneSnapshot? = pane(),
     sessionExists: Bool = true,
     visibleText: String = "",
-    processes: [ProcessInfoRow] = [],
-    longRunningThreshold: TimeInterval = 120
+    processes: [ProcessInfoRow] = []
 ) -> AgentSupervisor {
     AgentSupervisor(
         backend: FakeSupervisorBackend(pane: pane, sessionExists: sessionExists, visibleText: visibleText),
-        longRunningThreshold: longRunningThreshold,
         processDescendants: { _ in processes }
     )
 }

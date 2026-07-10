@@ -65,17 +65,113 @@ enum GitHubPullRequestClient {
             "url"
         ].joined(separator: ",")
 
+        let output: String
+        do {
+            output = try await pullRequestOutput(url: url, fields: fields, cwd: cwd)
+        } catch {
+            guard url == nil,
+                  let resolvedURL = try? await resolvePullRequestURL(cwd: cwd) else {
+                throw error
+            }
+            output = try await pullRequestOutput(url: resolvedURL, fields: fields, cwd: cwd)
+        }
+
+        let payload = try JSONDecoder().decode(GitHubPullRequestPayload.self, from: Data(output.utf8))
+        return payload.details
+    }
+
+    static func message(for error: Error) -> String {
+        guard let error = error as? GitHubPullRequestClientError else {
+            return "Unable to load pull request"
+        }
+        switch error {
+        case .commandUnavailable:
+            return "Unable to find gh CLI"
+        case .timedOut:
+            return "gh pr view timed out"
+        case let .requestFailed(message):
+            return message?.isEmpty == false ? message! : "gh pr view failed"
+        }
+    }
+
+    private static func pullRequestOutput(url: URL?, fields: String, cwd: String) async throws -> String {
         var arguments = ["gh", "pr", "view"]
         if let url {
             arguments.append(url.absoluteString)
         }
         arguments += ["--json", fields]
 
-        let output = try await Task.detached(priority: .utility) {
+        return try await Task.detached(priority: .utility) {
             try runCommand(arguments, cwd: cwd, timeout: 12)
         }.value
-        let payload = try JSONDecoder().decode(GitHubPullRequestPayload.self, from: Data(output.utf8))
-        return payload.details
+    }
+
+    private static func resolvePullRequestURL(cwd: String) async throws -> URL {
+        let branch = try await Task.detached(priority: .utility) {
+            try currentBranch(cwd: cwd)
+        }.value
+        guard !isDefaultBranch(branch, cwd: cwd) else {
+            throw GitHubPullRequestClientError.requestFailed("No GitHub pull request found for branch \(branch)")
+        }
+
+        let output = try await Task.detached(priority: .utility) {
+            try runCommand(
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "--head",
+                    branch,
+                    "--state",
+                    "all",
+                    "--limit",
+                    "1",
+                    "--json",
+                    "url"
+                ],
+                cwd: cwd,
+                timeout: 12
+            )
+        }.value
+        let payload = try JSONDecoder().decode([GitHubPullRequestReferencePayload].self, from: Data(output.utf8))
+        guard let rawURL = payload.first?.url,
+              let url = URL(string: rawURL) else {
+            throw GitHubPullRequestClientError.requestFailed("No GitHub pull request found for branch \(branch)")
+        }
+        return url
+    }
+
+    private static func currentBranch(cwd: String) throws -> String {
+        if let branch = try? runCommand(["git", "branch", "--show-current"], cwd: cwd, timeout: 4)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !branch.isEmpty {
+            return branch
+        }
+
+        let fallback = try runCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd: cwd, timeout: 4)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fallback.isEmpty, fallback != "HEAD" else {
+            throw GitHubPullRequestClientError.requestFailed("No current git branch found")
+        }
+        return fallback
+    }
+
+    private static func isDefaultBranch(_ branch: String, cwd: String) -> Bool {
+        if branch == "main" || branch == "master" {
+            return true
+        }
+
+        guard let remoteHead = try? runCommand(
+            ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+            cwd: cwd,
+            timeout: 4
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        else {
+            return false
+        }
+
+        return remoteHead.split(separator: "/").last.map(String.init) == branch
     }
 
     private static func runCommand(
@@ -121,6 +217,7 @@ enum GitHubPullRequestClient {
         }
 
         guard let output = String(data: data, encoding: .utf8)?
+            .cleanedGitHubCLIOutput()
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !output.isEmpty else {
             throw GitHubPullRequestClientError.requestFailed(nil)
@@ -142,7 +239,25 @@ enum GitHubPullRequestClient {
             "/usr/bin",
             "/bin"
         ]
-        return AppProcessEnvironment.make(pathAdditions: additions)
+        return AppProcessEnvironment.make(
+            pathAdditions: additions,
+            overrides: [
+                "CLICOLOR": "0",
+                "CLICOLOR_FORCE": "0",
+                "GH_NO_UPDATE_NOTIFIER": "1",
+                "NO_COLOR": "1"
+            ]
+        )
+    }
+}
+
+private extension String {
+    func cleanedGitHubCLIOutput() -> String {
+        replacingOccurrences(
+            of: "\u{001B}\\[[0-?]*[ -/]*[@-~]",
+            with: "",
+            options: .regularExpression
+        )
     }
 }
 
@@ -150,6 +265,10 @@ private enum GitHubPullRequestClientError: Error {
     case commandUnavailable
     case timedOut
     case requestFailed(String?)
+}
+
+private struct GitHubPullRequestReferencePayload: Decodable {
+    let url: String?
 }
 
 private struct GitHubPullRequestPayload: Decodable {

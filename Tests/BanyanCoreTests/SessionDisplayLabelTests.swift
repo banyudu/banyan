@@ -90,6 +90,8 @@ import Foundation
     #expect(context.branch == nil)
     #expect(context.groupID == "path:\(directory.standardizedFileURL.path)")
     #expect(context.groupTitle == directory.lastPathComponent)
+    #expect(context.isGitWorktree == false)
+    #expect(context.isDefaultBranch == false)
 }
 
 @Test func projectContextGroupsGitRepositoriesByRemoteAddress() throws {
@@ -132,6 +134,10 @@ import Foundation
     #expect(mainContext.groupID == "path:\(main.standardizedFileURL.path)")
     #expect(worktreeContext.groupID == mainContext.groupID)
     #expect(worktreeContext.groupTitle == main.lastPathComponent)
+    #expect(mainContext.isGitWorktree == false)
+    #expect(worktreeContext.isGitWorktree == true)
+    #expect(worktreeContext.branch == "feature")
+    #expect(worktreeContext.isDefaultBranch == false)
 }
 
 private func temporaryDirectory() throws -> URL {

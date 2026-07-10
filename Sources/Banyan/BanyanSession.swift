@@ -12,6 +12,8 @@ final class BanyanSession: ObservableObject, Identifiable {
     let terminalView: DetectingLocalProcessTerminalView
     private var displayProject: String
     private var displayBranch: String?
+    private var displayIsGitWorktree: Bool
+    private var displayIsDefaultBranch: Bool
     @Published private(set) var projectGroupID: String
     @Published private(set) var projectGroupTitle: String
 
@@ -86,6 +88,17 @@ final class BanyanSession: ObservableObject, Identifiable {
         historyTranscriptURL != nil
     }
 
+    var canDispatchHandoff: Bool {
+        guard !isImportedHistory,
+              status != .closed,
+              displayIsGitWorktree,
+              let branch = displayBranch,
+              !displayIsDefaultBranch else {
+            return false
+        }
+        return branch != "main" && branch != "master"
+    }
+
     init(
         id: String,
         tmuxSessionName: String? = nil,
@@ -126,6 +139,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.command = command
         self.displayProject = displayContext.project
         self.displayBranch = displayContext.branch
+        self.displayIsGitWorktree = displayContext.isGitWorktree
+        self.displayIsDefaultBranch = displayContext.isDefaultBranch
         self.projectGroupID = displayContext.groupID
         self.projectGroupTitle = displayContext.groupTitle
         self.status = status
@@ -416,6 +431,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         let displayContext = SessionDisplayLabel.context(cwd: cwd)
         displayProject = displayContext.project
         displayBranch = displayContext.branch
+        displayIsGitWorktree = displayContext.isGitWorktree
+        displayIsDefaultBranch = displayContext.isDefaultBranch
         projectGroupID = displayContext.groupID
         projectGroupTitle = displayContext.groupTitle
     }

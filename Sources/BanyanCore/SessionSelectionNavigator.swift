@@ -28,4 +28,20 @@ public enum SessionSelectionNavigator {
         }
         return orderedIDs[oneBasedIndex - 1]
     }
+
+    public static func nextMatchingID(
+        in orderedIDs: [String],
+        selectedID: String?,
+        isMatch: (String) -> Bool
+    ) -> String? {
+        let matchingIDs = orderedIDs.filter(isMatch)
+        guard !matchingIDs.isEmpty else { return nil }
+        guard let selectedID,
+              let selectedIndex = orderedIDs.firstIndex(of: selectedID) else {
+            return matchingIDs.first
+        }
+
+        let orderedAfterSelection = orderedIDs[(selectedIndex + 1)...] + orderedIDs[..<(selectedIndex + 1)]
+        return orderedAfterSelection.first(where: isMatch)
+    }
 }
