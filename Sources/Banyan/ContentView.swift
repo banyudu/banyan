@@ -455,54 +455,21 @@ struct ContentView: View {
 
     @ViewBuilder
     private var linearDetail: some View {
-        HStack(spacing: 0) {
-            if let issueID = store.selectedLinearListIssueID {
-                VStack(alignment: .leading, spacing: 14) {
-                    if let issue = store.selectedLinearListIssueDetails {
-                        Text(issue.identifier)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(issue.title)
-                            .font(.title2.weight(.semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else if let summary = store.linearIssues.first(where: { $0.identifier == issueID }) {
-                        Text(summary.identifier)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(summary.title)
-                            .font(.title2.weight(.semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text(issueID)
-                            .font(.title2.weight(.semibold))
-                    }
-
-                    Button {
-                        store.startSelectedLinearListIssueSession()
-                    } label: {
-                        Label("Start Session", systemImage: "play.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(store.linearIssueListLoadState.isStarting)
-
-                    Spacer(minLength: 0)
-                }
-                .padding(24)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-                if let context = store.selectedLinearListIssueContext {
-                    Divider()
-                    LinearIssuePanel(
-                        context: context,
-                        issue: store.selectedLinearListIssueDetails,
-                        loadState: store.selectedLinearListIssueLoadState,
-                        onRefresh: {
-                            store.refreshSelectedLinearListIssue(force: true)
-                        },
-                        onOpen: store.openSelectedLinearListIssue,
-                        onChangeState: store.updateSelectedLinearListIssueState
-                    )
-                }
+        Group {
+            if let context = store.selectedLinearListIssueContext {
+                LinearIssuePanel(
+                    context: context,
+                    issue: store.selectedLinearListIssueDetails,
+                    loadState: store.selectedLinearListIssueLoadState,
+                    onRefresh: {
+                        store.refreshSelectedLinearListIssue(force: true)
+                    },
+                    onOpen: store.openSelectedLinearListIssue,
+                    onChangeState: store.updateSelectedLinearListIssueState,
+                    onStart: store.startSelectedLinearListIssueSession,
+                    isStarting: store.linearIssueListLoadState.isStarting,
+                    presentation: .main
+                )
             } else {
                 ContentUnavailableView(
                     "No Linear Issue Selected",
@@ -511,6 +478,10 @@ struct ContentView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .onAppear {
+            store.refreshLinearIssueListIfNeeded()
+            store.refreshSelectedLinearListIssue()
         }
         .accessibilityIdentifier(AccessibilityID.detail)
     }
