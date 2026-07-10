@@ -96,6 +96,23 @@ struct LinearIssueSummary: Equatable, Identifiable, Codable {
     let labels: [LinearIssueLabel]
 }
 
+func linearIssueStateCountSummary(_ issues: [LinearIssueSummary]) -> String {
+    let counts = Dictionary(grouping: issues) { issue in
+        "\(issue.state.name) (\(issue.state.type ?? "nil"))"
+    }
+    return counts
+        .map { key, value in "\(key)=\(value.count)" }
+        .sorted()
+        .joined(separator: ", ")
+}
+
+func linearWorkflowStateSummary(_ states: [LinearWorkflowState]) -> String {
+    states
+        .map { state in "\(state.name) (\(state.type ?? "nil")):\(state.id)" }
+        .sorted()
+        .joined(separator: ", ")
+}
+
 enum LinearIssueLoadState: Equatable {
     case idle
     case loading
@@ -291,7 +308,9 @@ enum LinearIssueClient {
 
     private static func decodeIssueListResponse(_ output: String) throws -> [LinearIssueSummary] {
         let payload = try JSONDecoder().decode(LinearIssueListResponse.self, from: Data(output.utf8))
-        return payload.nodes.map(\.summary)
+        let issues = payload.nodes.map(\.summary)
+        NSLog("Banyan Linear issue list decoded count=\(issues.count) states=[\(linearIssueStateCountSummary(issues))]")
+        return issues
     }
 
     private static func decodeIssueStatusResponse(_ output: String) throws -> LinearIssueStatusSnapshot {
@@ -313,7 +332,9 @@ enum LinearIssueClient {
         let states = payload.data?.teams.nodes.flatMap { team in
             team.states?.nodes ?? []
         } ?? []
-        return sortedWorkflowStates(states)
+        let sortedStates = sortedWorkflowStates(states)
+        NSLog("Banyan Linear workflow states decoded count=\(sortedStates.count) states=[\(linearWorkflowStateSummary(sortedStates))]")
+        return sortedStates
     }
 
     private static func runCommand(
@@ -338,12 +359,16 @@ enum LinearIssueClient {
         process.environment = processEnvironment()
 
         let stdout = Pipe()
+        let stderr = Pipe()
         process.standardOutput = stdout
-        process.standardError = Pipe()
+        process.standardError = stderr
 
+        let startedAt = Date()
+        NSLog("Banyan Linear command start cwd=\(cwd) timeout=\(timeout)s command=\(arguments.joined(separator: " "))")
         do {
             try process.run()
         } catch {
+            NSLog("Banyan Linear command unavailable command=\(arguments.joined(separator: " ")) error=\(error.localizedDescription)")
             throw LinearIssueClientError.commandUnavailable
         }
 
@@ -356,19 +381,28 @@ enum LinearIssueClient {
         if semaphore.wait(timeout: .now() + timeout) != .success {
             process.terminate()
             _ = semaphore.wait(timeout: .now() + 0.5)
-            throw LinearIssueClientError.requestFailed
-        }
-
-        guard process.terminationStatus == 0 else {
+            let elapsed = Date().timeIntervalSince(startedAt)
+            NSLog("Banyan Linear command timeout elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.requestFailed
         }
 
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let elapsed = Date().timeIntervalSince(startedAt)
+        guard process.terminationStatus == 0 else {
+            let stderrOutput = cleanCommandOutput(String(decoding: stderrData, as: UTF8.self))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            NSLog("Banyan Linear command failed status=\(process.terminationStatus) elapsed=\(String(format: "%.2f", elapsed))s stderr=\(stderrOutput) command=\(arguments.joined(separator: " "))")
+            throw LinearIssueClientError.requestFailed
+        }
+
         let output = cleanCommandOutput(String(decoding: data, as: UTF8.self))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !output.isEmpty else {
+            NSLog("Banyan Linear command empty output elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.requestFailed
         }
+        NSLog("Banyan Linear command success elapsed=\(String(format: "%.2f", elapsed))s outputBytes=\(data.count) command=\(arguments.joined(separator: " "))")
         return output
     }
 

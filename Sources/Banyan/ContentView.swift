@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var draggingSidebarSessionID: String?
     @State private var linearIssueFilterText = ""
     @State private var selectedLinearIssueStateIDs: Set<String>?
+    @State private var lastLinearIssueFilterDiagnostics = ""
 
     var body: some View {
         NavigationSplitView {
@@ -231,6 +232,12 @@ struct ContentView: View {
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
+        .onAppear {
+            logLinearIssueFilterDiagnostics()
+        }
+        .onChange(of: linearIssueFilterDiagnostics) { _, _ in
+            logLinearIssueFilterDiagnostics()
+        }
     }
 
     private var linearIssueFilterHeader: some View {
@@ -414,6 +421,31 @@ struct ContentView: View {
             let matchesText = tokens.isEmpty || issue.matchesFilterTokens(tokens)
             return matchesState && matchesText
         }
+    }
+
+    private var linearIssueFilterDiagnostics: String {
+        let mode = selectedLinearIssueStateIDs == nil ? "default" : "custom"
+        let activeIDs = activeLinearIssueStateIDs.sorted().joined(separator: ",")
+        let activeKeys = activeLinearIssueStateFilterKeys.sorted().joined(separator: ",")
+        let availableStates = linearWorkflowStateSummary(availableLinearIssueStates)
+        return [
+            "mode=\(mode)",
+            "filterText=\(linearIssueFilterText)",
+            "issueCount=\(store.linearIssues.count)",
+            "filteredCount=\(filteredLinearIssues.count)",
+            "issueStates=[\(linearIssueStateCountSummary(store.linearIssues))]",
+            "filteredStates=[\(linearIssueStateCountSummary(filteredLinearIssues))]",
+            "activeIDs=[\(activeIDs)]",
+            "activeKeys=[\(activeKeys)]",
+            "availableStates=[\(availableStates)]"
+        ].joined(separator: " ")
+    }
+
+    private func logLinearIssueFilterDiagnostics() {
+        let diagnostics = linearIssueFilterDiagnostics
+        guard diagnostics != lastLinearIssueFilterDiagnostics else { return }
+        lastLinearIssueFilterDiagnostics = diagnostics
+        NSLog("Banyan Linear UI filter \(diagnostics)")
     }
 
     private var availableLinearIssueStates: [LinearWorkflowState] {

@@ -438,6 +438,7 @@ final class SessionStore: ObservableObject {
         let hasStaleIssues = !linearIssues.isEmpty
         linearIssueListLoadState = hasStaleIssues ? .loaded : .loading
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        NSLog("Banyan Linear list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]")
         linearIssueListTask = Task.detached(priority: .utility) {
             do {
                 async let issuesRequest = LinearIssueClient.fetchIssueList(cwd: cwd)
@@ -447,6 +448,7 @@ final class SessionStore: ObservableObject {
                 do {
                     workflowStates = try await workflowStatesRequest
                 } catch {
+                    NSLog("Banyan Linear workflow states refresh failed error=\(error.localizedDescription)")
                     workflowStates = nil
                 }
                 await MainActor.run { [weak self] in
@@ -455,6 +457,7 @@ final class SessionStore: ObservableObject {
                     self.linearIssues = issues
                     let workflowStateSource = workflowStates ?? self.linearIssueWorkflowStates
                     self.linearIssueWorkflowStates = Self.mergedWorkflowStates(workflowStateSource, issues: issues)
+                    NSLog("Banyan Linear list refresh applied issueCount=\(issues.count) issueStates=[\(linearIssueStateCountSummary(issues))] workflowStateCount=\(self.linearIssueWorkflowStates.count) workflowStates=[\(linearWorkflowStateSummary(self.linearIssueWorkflowStates))]")
                     if let selectedLinearListIssueID = self.selectedLinearListIssueID,
                        !issues.contains(where: { $0.identifier == selectedLinearListIssueID }) {
                         self.selectedLinearListIssueID = issues.first?.identifier
@@ -472,6 +475,7 @@ final class SessionStore: ObservableObject {
                     self.linearIssueListLoadState = .loaded
                 }
             } catch {
+                NSLog("Banyan Linear list refresh failed error=\(error.localizedDescription)")
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.linearIssueListTask = nil
@@ -494,6 +498,7 @@ final class SessionStore: ObservableObject {
 
         linearIssues = cache.issues
         linearIssueWorkflowStates = Self.mergedWorkflowStates(cache.workflowStates ?? [], issues: cache.issues)
+        NSLog("Banyan Linear list cache loaded issueCount=\(cache.issues.count) issueStates=[\(linearIssueStateCountSummary(cache.issues))] workflowStateCount=\(linearIssueWorkflowStates.count) selectedIssueID=\(cache.selectedIssueID ?? "nil") updatedAt=\(cache.updatedAt)")
         let cachedIssueIDs = Set(cache.issues.map(\.identifier))
         if let selectedLinearListIssueID, cachedIssueIDs.contains(selectedLinearListIssueID) {
             linearIssueListLoadState = .loaded
