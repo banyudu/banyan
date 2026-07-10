@@ -3,6 +3,9 @@ import BanyanCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let sidebarTitlebarHeaderHeight: CGFloat = 78
+private let sidebarTitlebarHeaderTopPadding: CGFloat = 30
+
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @State private var showingPreferences = false
@@ -85,6 +88,22 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
+            sidebarModeHeader
+
+            switch store.sidebarMode {
+            case .sessions:
+                sessionsSidebar
+            case .linear:
+                linearSidebar
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(edges: .top)
+        .accessibilityIdentifier(AccessibilityID.sidebar)
+    }
+
+    private var sidebarModeHeader: some View {
+        VStack(spacing: 0) {
             Picker("Sidebar", selection: $store.sidebarMode) {
                 ForEach(SidebarMode.allCases) { mode in
                     Text(mode.label).tag(mode)
@@ -94,18 +113,13 @@ struct ContentView: View {
             .labelsHidden()
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
+            .padding(.top, sidebarTitlebarHeaderTopPadding)
             .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
 
             Divider()
-
-            switch store.sidebarMode {
-            case .sessions:
-                sessionsSidebar
-            case .linear:
-                linearSidebar
-            }
         }
-        .accessibilityIdentifier(AccessibilityID.sidebar)
+        .frame(height: sidebarTitlebarHeaderHeight, alignment: .bottom)
+        .background(.regularMaterial)
     }
 
     private var sessionsSidebar: some View {
@@ -179,6 +193,9 @@ struct ContentView: View {
     private var linearSidebar: some View {
         VStack(spacing: 0) {
             linearListContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+                .clipped()
 
             HStack {
                 Button {
@@ -255,21 +272,28 @@ struct ContentView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: $store.selectedLinearListIssueID) {
-                    ForEach(store.linearIssues) { issue in
-                        LinearIssueRow(
-                            issue: issue,
-                            isStarting: store.linearIssueListLoadState.isStarting(issue.identifier),
-                            onStart: {
-                                store.startLinearIssueSession(issue.identifier)
-                            }
-                        )
-                        .tag(issue.identifier)
-                        .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 6))
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(store.linearIssues) { issue in
+                            LinearIssueRow(
+                                issue: issue,
+                                isSelected: store.selectedLinearListIssueID == issue.identifier,
+                                isStarting: store.linearIssueListLoadState.isStarting(issue.identifier),
+                                onSelect: {
+                                    store.selectedLinearListIssueID = issue.identifier
+                                },
+                                onStart: {
+                                    store.startLinearIssueSession(issue.identifier)
+                                }
+                            )
+                            .padding(.horizontal, 6)
+                        }
                     }
+                    .padding(.vertical, 2)
                 }
-                .listStyle(.sidebar)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .scrollIndicators(.visible)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .clipped()
                 .accessibilityIdentifier(AccessibilityID.linearIssueList)
             }
         }
@@ -526,7 +550,9 @@ private extension SessionContextInfo {
 
 private struct LinearIssueRow: View {
     let issue: LinearIssueSummary
+    let isSelected: Bool
     let isStarting: Bool
+    let onSelect: () -> Void
     let onStart: () -> Void
 
     var body: some View {
@@ -578,7 +604,22 @@ private struct LinearIssueRow: View {
             .help("Start Banyan session")
         }
         .frame(height: 52)
+        .padding(.horizontal, 8)
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .background(rowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+    }
+
+    @ViewBuilder
+    private var rowBackground: some View {
+        if isSelected {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.accentColor)
+        } else {
+            Color.clear
+        }
     }
 
     private var statusPill: some View {
