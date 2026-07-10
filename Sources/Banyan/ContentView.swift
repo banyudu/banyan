@@ -73,11 +73,10 @@ struct ContentView: View {
             store.refreshImportedHistory(spawnDefaultIfEmpty: true)
             store.startControlServer()
             store.startSupervisor()
-            store.startHistoryImport()
         }
-        .alert("Close parent session?", isPresented: closeConfirmationBinding) {
+        .alert(Text(closeConfirmationTitle), isPresented: closeConfirmationBinding) {
             Button("Cancel", role: .cancel) {}
-            Button("Detach and Close", role: .destructive) {
+            Button("Close and Kill", role: .destructive) {
                 store.confirmPendingClose()
             }
         } message: {
@@ -583,7 +582,21 @@ struct ContentView: View {
         guard let session = store.pendingCloseSession else {
             return ""
         }
-        return "Closing \(session.displayTitle) will detach its child sessions to the same level as this parent session."
+        var details = ["Closing \(session.displayTitle) will kill its tmux session."]
+        if store.pendingCloseHasOngoingAgent {
+            details.append("Any running Codex or Claude process in that session will be terminated.")
+        }
+        if store.pendingCloseHasActiveChildren {
+            details.append("Child sessions will be detached to the same level as this parent session.")
+        }
+        return details.joined(separator: " ")
+    }
+
+    private var closeConfirmationTitle: String {
+        if store.pendingCloseHasOngoingAgent {
+            return "Close running agent?"
+        }
+        return "Close parent session?"
     }
 
     private var titlebarConfigurationTrigger: String {

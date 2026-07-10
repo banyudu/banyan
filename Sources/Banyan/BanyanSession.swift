@@ -502,11 +502,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     func killBackingSession() {
         terminalRefreshTask?.cancel()
         isDetachingTerminalClient = false
+        status = .closed
         terminalView.terminate()
         tmuxBackend.killSession(named: tmuxSessionName)
         isProcessStarted = false
         isRestored = false
-        status = .closed
         touch()
     }
 

@@ -11,6 +11,15 @@ import Testing
     #expect(SessionStore.restoredStatus(snapshotStatus: .needInput, backingSessionExists: false) == .needInput)
 }
 
+@Test func closeConfirmationOnlyTreatsActiveCodexOrClaudeAsOngoingAgents() {
+    #expect(SessionStore.isOngoingCodexOrClaudeSession(status: .executing, provider: .codex))
+    #expect(SessionStore.isOngoingCodexOrClaudeSession(status: .needInput, provider: .claude))
+    #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .completed, provider: .codex))
+    #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .failed, provider: .claude))
+    #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .executing, provider: .gemini))
+    #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .running, provider: nil))
+}
+
 @Test func historySidebarTitleUsesIssueIDInsteadOfWorktreeName() {
     let title = SessionStore.historySidebarTitle(
         projectName: "yudu-eng-6061-32baaf",

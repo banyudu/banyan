@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Banyan
 
@@ -43,6 +44,34 @@ import Testing
     session.noteUserSubmittedInput()
 
     #expect(session.status == .longRunningShell)
+}
+
+@MainActor
+@Test func killBackingSessionKillsUnderlyingTmuxSession() throws {
+    let tmux = TmuxBackend.shared
+    let id = "close-kills-\(UUID().uuidString.lowercased())"
+    let tmuxSessionName = TmuxBackend.sessionName(for: id)
+    try tmux.ensureSession(named: tmuxSessionName, cwd: "/tmp", command: "")
+    defer {
+        tmux.killSession(named: tmuxSessionName)
+    }
+
+    let session = BanyanSession(
+        id: id,
+        tmuxSessionName: tmuxSessionName,
+        title: "Close kills",
+        cwd: "/tmp",
+        command: "",
+        isRestored: true,
+        theme: .system
+    )
+
+    #expect(tmux.hasSession(named: tmuxSessionName))
+
+    session.killBackingSession()
+
+    #expect(session.status == .closed)
+    #expect(!tmux.hasSession(named: tmuxSessionName))
 }
 
 @MainActor

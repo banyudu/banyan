@@ -126,6 +126,37 @@ import Testing
     #expect(session.title == "Newest Claude title after new")
 }
 
+@Test func defaultImportOnlyLoadsTenRecentSessionsPerProvider() throws {
+    let home = try makeTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let projects = home.appendingPathComponent(".claude/projects/-tmp-banyan-claude")
+    try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+    let baseDate = Date(timeIntervalSince1970: 1_788_000_000)
+
+    for index in 0..<12 {
+        let sourceID = String(format: "867ceb9b-12de-47ff-a70e-e562c00c8b%02d", index)
+        let transcript = projects.appendingPathComponent("\(sourceID).jsonl")
+        try write(
+            #"{"type":"user","message":{"role":"user","content":"Claude recent cap \#(index)"},"timestamp":"2026-07-01T11:00:00.000Z","cwd":"/tmp/banyan-claude","sessionId":"\#(sourceID)"}"#,
+            to: transcript
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: baseDate.addingTimeInterval(TimeInterval(index))],
+            ofItemAtPath: transcript.path
+        )
+    }
+
+    let imported = AgentSessionHistoryImporter.load(homeDirectory: home)
+        .filter { $0.provider == .claude }
+
+    #expect(imported.count == 10)
+    #expect(imported.contains { $0.title == "Claude recent cap 11" })
+    #expect(imported.contains { $0.title == "Claude recent cap 2" })
+    #expect(!imported.contains { $0.title == "Claude recent cap 1" })
+    #expect(!imported.contains { $0.title == "Claude recent cap 0" })
+}
+
 @Test func transcriptPreviewExtractsReadableClaudeMessages() throws {
     let home = try makeTemporaryHome()
     defer { try? FileManager.default.removeItem(at: home) }

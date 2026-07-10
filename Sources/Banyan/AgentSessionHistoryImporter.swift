@@ -15,7 +15,7 @@ struct ImportedAgentSession: Identifiable, Equatable {
 enum AgentSessionHistoryImporter {
     static func load(
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
-        maxPerProvider: Int = 80,
+        maxPerProvider: Int = 10,
         fileManager: FileManager = .default
     ) -> [ImportedAgentSession] {
         let codex = loadCodexHistory(
@@ -45,8 +45,9 @@ enum AgentSessionHistoryImporter {
         let indexURL = codexDirectory.appendingPathComponent("session_index.jsonl")
         let indexContents = (try? String(contentsOf: indexURL, encoding: .utf8)) ?? ""
 
-        let sessionFiles = codexSessionFiles(
+        let sessionFiles = recentCodexSessionFiles(
             in: codexDirectory.appendingPathComponent("sessions"),
+            maxSessions: maxSessions,
             fileManager: fileManager
         )
         let sessionFilesByID = Dictionary(uniqueKeysWithValues: sessionFiles.map { ($0.id, $0) })
@@ -57,8 +58,6 @@ enum AgentSessionHistoryImporter {
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(maxSessions)
         let recentFileRows = sessionFiles
-            .sorted { $0.modifiedAt > $1.modifiedAt }
-            .prefix(maxSessions)
             .map { CodexSessionCandidate(id: $0.id, transcriptURL: $0.url, threadName: nil, updatedAt: $0.modifiedAt) }
         let indexedRows = indexRows.compactMap { row -> CodexSessionCandidate? in
             guard let file = sessionFilesByID[row.id] else { return nil }
@@ -136,7 +135,11 @@ enum AgentSessionHistoryImporter {
         )
     }
 
-    private static func codexSessionFiles(in directory: URL, fileManager: FileManager) -> [CodexSessionFile] {
+    private static func recentCodexSessionFiles(
+        in directory: URL,
+        maxSessions: Int,
+        fileManager: FileManager
+    ) -> [CodexSessionFile] {
         guard let enumerator = fileManager.enumerator(
             at: directory,
             includingPropertiesForKeys: [.contentModificationDateKey],
@@ -155,7 +158,7 @@ enum AgentSessionHistoryImporter {
                 ?? Date.distantPast
             result.append(CodexSessionFile(id: id, url: url, modifiedAt: modifiedAt))
         }
-        return result
+        return Array(result.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(maxSessions))
     }
 
     private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, promptTitle: String?) {

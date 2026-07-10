@@ -142,9 +142,9 @@ final class SessionStore: ObservableObject {
     private let tmuxBackend = TmuxBackend.shared
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
-    private var historyImportTimer: Timer?
     private var isSupervisorTickRunning = false
     private var isHistoryImportRunning = false
+    private var isHistoryImportPending = false
     private var latestImportedHistory: [ImportedAgentSession] = []
     private var selectedContextTask: Task<Void, Never>?
     private var selectedContextSignature: String?
@@ -334,6 +334,16 @@ final class SessionStore: ObservableObject {
     var pendingCloseSession: BanyanSession? {
         guard let pendingCloseSessionID else { return nil }
         return sessions.first { $0.id == pendingCloseSessionID }
+    }
+
+    var pendingCloseHasActiveChildren: Bool {
+        guard let pendingCloseSessionID else { return false }
+        return hasActiveChildren(pendingCloseSessionID)
+    }
+
+    var pendingCloseHasOngoingAgent: Bool {
+        guard let session = pendingCloseSession else { return false }
+        return Self.isOngoingCodexOrClaudeSession(status: session.status, provider: session.agentProvider)
     }
 
     func loadPersistedSessionsIfNeeded() {
@@ -623,16 +633,6 @@ final class SessionStore: ObservableObject {
         supervisorTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.runSupervisorTick()
-            }
-        }
-    }
-
-    func startHistoryImport() {
-        guard historyImportTimer == nil else { return }
-        runHistoryImport()
-        historyImportTimer = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.runHistoryImport()
             }
         }
     }
@@ -961,11 +961,16 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
         detachChildren(of: id, to: session.parentSessionID)
-        session.terminate(markClosed: true)
+        if session.isImportedHistory {
+            session.terminate(markClosed: true)
+        } else {
+            session.killBackingSession()
+        }
         if selectedSessionID == id {
             selectedSessionID = visibleSessions.first?.id
         }
         saveSessions()
+        refreshImportedHistory()
     }
 
     func remove(id: String) throws {
@@ -977,6 +982,7 @@ final class SessionStore: ObservableObject {
             if selectedSessionID == id {
                 selectedSessionID = visibleSessions.first?.id
             }
+            refreshImportedHistory()
             return
         }
         let parentSessionID = sessions[index].parentSessionID
@@ -987,6 +993,7 @@ final class SessionStore: ObservableObject {
             selectedSessionID = visibleSessions.first?.id
         }
         saveSessions()
+        refreshImportedHistory()
     }
 
     @discardableResult
@@ -1220,7 +1227,8 @@ final class SessionStore: ObservableObject {
     }
 
     func requestClose(id: String) {
-        if hasActiveChildren(id) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        if hasActiveChildren(id) || Self.isOngoingCodexOrClaudeSession(status: session.status, provider: session.agentProvider) {
             pendingCloseSessionID = id
         } else {
             try? close(id: id)
@@ -1243,6 +1251,14 @@ final class SessionStore: ObservableObject {
 
     func hasActiveChildren(_ id: String) -> Bool {
         activeChildCount(of: id) > 0
+    }
+
+    nonisolated static func isOngoingCodexOrClaudeSession(
+        status: SessionStatus,
+        provider: CodingAgentProvider?
+    ) -> Bool {
+        guard provider == .codex || provider == .claude else { return false }
+        return ![.completed, .failed, .closed].contains(status)
     }
 
     func resolvedParentSessionIDForSpawn(_ parentSessionID: String?) throws -> String? {
@@ -1342,7 +1358,10 @@ final class SessionStore: ObservableObject {
     }
 
     private func runHistoryImport(spawnDefaultIfEmpty: Bool = false) {
-        guard !isHistoryImportRunning else { return }
+        guard !isHistoryImportRunning else {
+            isHistoryImportPending = true
+            return
+        }
         isHistoryImportRunning = true
         Task.detached(priority: .utility) {
             let imported = AgentSessionHistoryImporter.load()
@@ -1350,8 +1369,13 @@ final class SessionStore: ObservableObject {
                 guard let self else { return }
                 self.applyImportedHistory(imported)
                 self.isHistoryImportRunning = false
+                let shouldRunPendingImport = self.isHistoryImportPending
+                self.isHistoryImportPending = false
                 if spawnDefaultIfEmpty, self.visibleSessions.isEmpty {
                     self.spawn(cwd: NSHomeDirectory())
+                }
+                if shouldRunPendingImport {
+                    self.runHistoryImport()
                 }
             }
         }
