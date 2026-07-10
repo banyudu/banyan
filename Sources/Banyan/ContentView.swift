@@ -33,7 +33,7 @@ struct ContentView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if store.selectedPullRequestURL != nil {
                     Button {
-                        store.openSelectedPullRequest()
+                        store.showSelectedPullRequestPreview()
                     } label: {
                         Image(systemName: "arrow.triangle.pull")
                     }
@@ -399,15 +399,15 @@ struct ContentView: View {
 
     private var selectedPullRequestHelp: String {
         guard let context = store.selectedContextInfo else {
-            return "Open GitHub pull request (Cmd-G)"
+            return "Preview GitHub pull request (Cmd-G)"
         }
         if let number = context.pullRequestNumber {
-            return "Open GitHub pull request #\(number) (Cmd-G)"
+            return "Preview GitHub pull request #\(number) (Cmd-G)"
         }
         if let title = context.pullRequestTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-            return "Open GitHub pull request: \(title)"
+            return "Preview GitHub pull request: \(title)"
         }
-        return "Open GitHub pull request (Cmd-G)"
+        return "Preview GitHub pull request (Cmd-G)"
     }
 
     @ViewBuilder
@@ -426,9 +426,23 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 selectedSessionDetail(session)
 
-                if let context = store.selectedContextInfo,
-                   context.linearIssueID?.isEmpty == false,
+                if store.isPullRequestPreviewPresented,
+                   let context = store.selectedPullRequestPreviewContext,
                    session.status != .closed {
+                    Divider()
+                    PullRequestPreviewPanel(
+                        context: context,
+                        details: store.selectedPullRequestDetails,
+                        loadState: store.selectedPullRequestLoadState,
+                        onRefresh: {
+                            store.refreshSelectedPullRequestPreview(force: true)
+                        },
+                        onOpen: store.openSelectedPullRequest,
+                        onClose: store.closePullRequestPreview
+                    )
+                } else if let context = store.selectedContextInfo,
+                          context.linearIssueID?.isEmpty == false,
+                          session.status != .closed {
                     Divider()
                     LinearIssuePanel(
                         context: context,

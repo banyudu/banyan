@@ -80,6 +80,9 @@ final class SessionStore: ObservableObject {
     }
     @Published private(set) var selectedLinearIssueDetails: LinearIssueDetails?
     @Published private(set) var selectedLinearIssueLoadState: LinearIssueLoadState = .idle
+    @Published var isPullRequestPreviewPresented = false
+    @Published private(set) var selectedPullRequestDetails: GitHubPullRequestDetails?
+    @Published private(set) var selectedPullRequestLoadState: GitHubPullRequestLoadState = .idle
     @Published var sidebarMode: SidebarMode = .sessions {
         didSet {
             if sidebarMode == .linear {
@@ -101,6 +104,9 @@ final class SessionStore: ObservableObject {
         didSet {
             saveWorkspace()
             requestTerminalFocus()
+            if oldValue != selectedSessionID {
+                closePullRequestPreview()
+            }
             refreshSelectedContextInfo(force: true)
         }
     }
@@ -146,6 +152,8 @@ final class SessionStore: ObservableObject {
     private var selectedLinearIssueStatusTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTimer: Timer?
     private var selectedLinearIssueIdentifier: String?
+    private var selectedPullRequestTask: Task<Void, Never>?
+    private var selectedPullRequestPreviewURL: URL?
     private var linearIssueListTask: Task<Void, Never>?
     private var selectedLinearListIssueTask: Task<Void, Never>?
 
@@ -827,6 +835,36 @@ final class SessionStore: ObservableObject {
         resolveSelectedContextForOpenPullRequest()
     }
 
+    func showSelectedPullRequestPreview() {
+        isPullRequestPreviewPresented = true
+        refreshSelectedPullRequestPreview()
+    }
+
+    func closePullRequestPreview() {
+        selectedPullRequestTask?.cancel()
+        selectedPullRequestTask = nil
+        selectedPullRequestPreviewURL = nil
+        selectedPullRequestDetails = nil
+        selectedPullRequestLoadState = .idle
+        isPullRequestPreviewPresented = false
+    }
+
+    func refreshSelectedPullRequestPreview(force: Bool = false) {
+        guard isPullRequestPreviewPresented,
+              let session = selectedSession,
+              session.status != .closed else {
+            closePullRequestPreview()
+            return
+        }
+
+        if let url = selectedPullRequestURL {
+            fetchSelectedPullRequestPreview(url: url, cwd: session.cwd, sessionID: session.id, force: force)
+            return
+        }
+
+        resolveSelectedContextForPullRequestPreview()
+    }
+
     func showFindInSelectedSession() {
         guard let selectedSession, !selectedSession.isImportedHistory else { return }
         let item = NSMenuItem()
@@ -1070,8 +1108,26 @@ final class SessionStore: ObservableObject {
     }
 
     var selectedPullRequestURL: URL? {
-        guard let value = selectedContextInfo?.pullRequestURL else { return nil }
+        let value = selectedPullRequestDetails?.url ?? selectedContextInfo?.pullRequestURL
+        guard let value else { return nil }
         return URL(string: value)
+    }
+
+    var selectedPullRequestPreviewContext: SessionContextInfo? {
+        if let selectedContextInfo {
+            return selectedContextInfo
+        }
+        guard let selectedSession else { return nil }
+        return SessionContextInfo(
+            sessionID: selectedSession.id,
+            signature: selectedSession.id,
+            linearIssueID: nil,
+            linearIssueTitle: nil,
+            linearIssueURL: nil,
+            pullRequestNumber: nil,
+            pullRequestTitle: nil,
+            pullRequestURL: nil
+        )
     }
 
     func requestClose(id: String) {
@@ -1500,6 +1556,89 @@ final class SessionStore: ObservableObject {
                 self.selectedContextResolvedAt = Date()
                 guard let value = info.pullRequestURL, let url = URL(string: value) else { return }
                 NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
+    private func resolveSelectedContextForPullRequestPreview() {
+        guard let input = selectedContextLookupInput() else {
+            selectedPullRequestLoadState = .failed("No active session")
+            return
+        }
+
+        selectedPullRequestLoadState = .loading
+        selectedContextSignature = input.signature
+        selectedContextTask?.cancel()
+        selectedContextTask = Task.detached(priority: .userInitiated) {
+            let info = SessionContextResolver.resolve(input: input) {
+                Task.isCancelled
+            }
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.selectedSessionID == input.sessionID,
+                      self.selectedContextSignature == input.signature,
+                      self.isPullRequestPreviewPresented else {
+                    return
+                }
+                self.selectedContextInfo = info
+                self.selectedContextResolvedAt = Date()
+                guard let session = self.selectedSession else {
+                    self.selectedPullRequestLoadState = .failed("No active session")
+                    return
+                }
+                let url = info.pullRequestURL.flatMap(URL.init(string:))
+                self.fetchSelectedPullRequestPreview(
+                    url: url,
+                    cwd: session.cwd,
+                    sessionID: session.id,
+                    force: true
+                )
+            }
+        }
+    }
+
+    private func fetchSelectedPullRequestPreview(
+        url: URL?,
+        cwd: String,
+        sessionID: String,
+        force: Bool
+    ) {
+        guard force || selectedPullRequestPreviewURL != url || selectedPullRequestDetails == nil else {
+            selectedPullRequestLoadState = .loaded
+            return
+        }
+
+        selectedPullRequestTask?.cancel()
+        selectedPullRequestPreviewURL = url
+        selectedPullRequestDetails = nil
+        selectedPullRequestLoadState = .loading
+
+        selectedPullRequestTask = Task.detached(priority: .utility) {
+            do {
+                let details = try await GitHubPullRequestClient.fetchPullRequest(url: url, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.selectedSessionID == sessionID,
+                          self.isPullRequestPreviewPresented,
+                          self.selectedPullRequestPreviewURL == url else {
+                        return
+                    }
+                    self.selectedPullRequestTask = nil
+                    self.selectedPullRequestDetails = details
+                    self.selectedPullRequestPreviewURL = URL(string: details.url)
+                    self.selectedPullRequestLoadState = .loaded
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.selectedSessionID == sessionID,
+                          self.isPullRequestPreviewPresented,
+                          self.selectedPullRequestPreviewURL == url else {
+                        return
+                    }
+                    self.selectedPullRequestTask = nil
+                    self.selectedPullRequestLoadState = .failed("Unable to load pull request")
+                }
             }
         }
     }

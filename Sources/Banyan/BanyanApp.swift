@@ -48,8 +48,8 @@ struct BanyanApp: App {
 
                 Divider()
 
-                Button("Open GitHub Pull Request") {
-                    store.openSelectedPullRequest()
+                Button("Preview GitHub Pull Request") {
+                    store.showSelectedPullRequestPreview()
                 }
                 .keyboardShortcut("g")
                 .disabled(store.selectedSession?.status == .closed || store.selectedSession == nil)
