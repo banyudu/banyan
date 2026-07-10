@@ -107,25 +107,43 @@ enum LinearIssueLoadState: Equatable {
 enum LinearIssueClient {
     static func fetchIssueList(cwd: String, limit: Int = 0) async throws -> [LinearIssueSummary] {
         let output = try await runCommand(
-            [
-                "linear",
-                "issue",
-                "query",
-                "--all-teams",
-                "--assignee",
-                "self",
-                "--all-states",
-                "--sort",
-                "priority",
-                "--limit",
-                "\(limit)",
-                "--json",
-                "--no-pager"
-            ],
+            issueListQueryArguments(limit: limit),
             cwd: cwd,
             timeout: 20
         )
         return try decodeIssueListResponse(output)
+    }
+
+    private static func issueListQueryArguments(limit: Int) -> [String] {
+        [
+            "linear",
+            "issue",
+            "query",
+            "--all-teams",
+            "--assignee",
+            "self"
+        ]
+        + defaultIssueListStateArguments
+        + [
+            "--sort",
+            "priority",
+            "--limit",
+            "\(limit)",
+            "--json",
+            "--no-pager"
+        ]
+    }
+
+    private static let defaultIssueListStateArguments = [
+        "triage",
+        "backlog",
+        "unstarted",
+        "started"
+    ].flatMap { state in
+        [
+            "--state",
+            state
+        ]
     }
 
     static func fetchWorkflowStates(cwd: String) async throws -> [LinearWorkflowState] {

@@ -354,7 +354,7 @@ struct ContentView: View {
                 ContentUnavailableView(
                     "No Linear Issues",
                     systemImage: "list.bullet.rectangle",
-                    description: Text("Assigned Todo and In Progress issues will appear here.")
+                    description: Text("Assigned open Linear issues will appear here.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -405,24 +405,21 @@ struct ContentView: View {
             .split(whereSeparator: \.isWhitespace)
             .map { String($0) }
         let visibleStateIDs = activeLinearIssueStateIDs
+        let visibleStateKeys = activeLinearIssueStateFilterKeys
 
         return store.linearIssues.filter { issue in
-            let matchesState = availableLinearIssueStates.isEmpty || visibleStateIDs.contains(issue.state.id)
+            let matchesState = availableLinearIssueStates.isEmpty
+                || visibleStateIDs.contains(issue.state.id)
+                || visibleStateKeys.contains(issue.state.filterKey)
             let matchesText = tokens.isEmpty || issue.matchesFilterTokens(tokens)
             return matchesState && matchesText
         }
     }
 
     private var availableLinearIssueStates: [LinearWorkflowState] {
-        var statesByID: [String: LinearWorkflowState] = [:]
-        for state in store.linearIssueWorkflowStates {
-            statesByID[state.id] = state
-        }
-        for issue in store.linearIssues {
-            statesByID[issue.state.id] = issue.state
-        }
         var statesByKey: [String: LinearWorkflowState] = [:]
-        for state in statesByID.values {
+        for issue in store.linearIssues {
+            let state = issue.state
             let key = state.filterKey
             if let existing = statesByKey[key] {
                 statesByKey[key] = linearIssueStateSort(state, existing) ? state : existing
@@ -439,6 +436,15 @@ struct ContentView: View {
 
     private var activeLinearIssueStateIDs: Set<String> {
         selectedLinearIssueStateIDs ?? defaultLinearIssueStateIDs
+    }
+
+    private var activeLinearIssueStateFilterKeys: Set<String> {
+        let activeStateIDs = activeLinearIssueStateIDs
+        return Set(
+            allLinearIssueStatesForFiltering
+                .filter { activeStateIDs.contains($0.id) }
+                .map(\.filterKey)
+        )
     }
 
     private var linearIssueStateFilterLabel: String {
@@ -472,9 +478,6 @@ struct ContentView: View {
 
     private var allLinearIssueStatesForFiltering: [LinearWorkflowState] {
         var statesByID: [String: LinearWorkflowState] = [:]
-        for state in store.linearIssueWorkflowStates {
-            statesByID[state.id] = state
-        }
         for issue in store.linearIssues {
             statesByID[issue.state.id] = issue.state
         }
