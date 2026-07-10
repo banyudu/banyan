@@ -90,7 +90,8 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     var canDispatchHandoff: Bool {
         guard !isImportedHistory,
-              status != .closed,
+              agentProvider != nil,
+              status.isCodingAgentIdle,
               displayIsGitWorktree,
               let branch = displayBranch,
               !displayIsDefaultBranch else {
@@ -347,6 +348,8 @@ final class BanyanSession: ObservableObject, Identifiable {
                 externalTitleSignature = nil
             }
             touch()
+        } else {
+            markSubmittedPromptTitle(submittedInput)
         }
         guard !isImportedHistory, isProcessStarted, status != .closed, agentProvider != nil else { return }
         guard [.running, .longRunningShell, .needInput, .asking].contains(status) else { return }
@@ -358,6 +361,14 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard let provider = agentProvider, [.claude, .codex].contains(provider) else { return }
         guard let promptTitle = SessionTitleGenerator.titleFromPrompt(title) else { return }
         guard reportedTitle != promptTitle else { return }
+        reportedTitle = promptTitle
+        refreshGeneratedTitle()
+        touch()
+    }
+
+    private func markSubmittedPromptTitle(_ submittedInput: String?) {
+        guard !hasUsefulPinnedTitle, usefulAgentTitle == nil, agentProvider != nil else { return }
+        guard let promptTitle = Self.submittedPromptTitle(from: submittedInput) else { return }
         reportedTitle = promptTitle
         refreshGeneratedTitle()
         touch()
@@ -479,6 +490,19 @@ final class BanyanSession: ObservableObject, Identifiable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         return normalized == "/clear" || normalized == "/new"
+    }
+
+    private static func submittedPromptTitle(from input: String?) -> String? {
+        guard let rawInput = input?.trimmingCharacters(in: .whitespacesAndNewlines), !rawInput.isEmpty else {
+            return nil
+        }
+        guard !rawInput.hasPrefix("/") else { return nil }
+        guard let title = SessionTitleGenerator.titleFromPrompt(rawInput) else { return nil }
+        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trivialResponses: Set<String> = ["c", "continue", "exit", "n", "no", "ok", "okay", "q", "quit", "y", "yes"]
+        guard !trivialResponses.contains(normalized) else { return nil }
+        guard title.contains(where: \.isLetter), title.count >= 4 else { return nil }
+        return title
     }
 
     private func requestExternalGeneratedTitleIfNeeded(context: SessionTitleContext) {

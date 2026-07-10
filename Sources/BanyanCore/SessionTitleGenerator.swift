@@ -62,19 +62,11 @@ public enum SessionTitleGenerator {
         }
 
         var components = [provider.displayName]
-        if let project = sanitizeTitle(context.project), !project.isEmpty {
-            components.append(project)
-        } else if let cwdTitle = sanitizeTitle(URL(fileURLWithPath: context.cwd).lastPathComponent), !cwdTitle.isEmpty {
-            components.append(cwdTitle)
-        }
-        if let branch = context.branch.flatMap(sanitizeTitle), !branch.isEmpty {
-            components.append(branch)
-        }
         let id = sanitizeTitle(context.id)
         if let id, !components.contains(where: { $0.caseInsensitiveCompare(id) == .orderedSame }) {
             components.append(id)
         }
-        return truncate(components.joined(separator: " · "), limit: 56)
+        return truncate(components.joined(separator: " "), limit: 56)
     }
 
     public static func sanitizeTitle(_ value: String?) -> String? {

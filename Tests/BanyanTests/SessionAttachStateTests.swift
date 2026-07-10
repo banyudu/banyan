@@ -47,6 +47,70 @@ import Testing
 }
 
 @MainActor
+@Test func submittedInputTitlesUnpinnedAgentSession() {
+    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "codex")
+
+    session.noteUserSubmittedInput("find workable linear issues for me")
+
+    #expect(session.displayTitle == "find workable linear issues for me")
+    #expect(session.reportedTitle == "find workable linear issues for me")
+}
+
+@MainActor
+@Test func submittedInputIgnoresTrivialAgentResponsesForTitles() {
+    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "codex")
+
+    session.noteUserSubmittedInput("y")
+
+    #expect(session.reportedTitle == nil)
+}
+
+@Test func codingAgentIdleStatusOnlyIncludesWaitingStates() {
+    let idleStatuses: Set<SessionStatus> = [.needInput, .asking, .review]
+
+    for status in SessionStatus.allCases {
+        #expect(status.isCodingAgentIdle == idleStatuses.contains(status))
+    }
+}
+
+@MainActor
+@Test func handoffEligibilityRequiresIdleCodingAgentInWorktree() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let worktree = try createGitWorktree(in: root)
+
+    let idleSession = makeHandoffSession(
+        id: "idle-handoff",
+        cwd: worktree.path,
+        command: "codex",
+        status: .needInput
+    )
+    let reviewSession = makeHandoffSession(
+        id: "review-handoff",
+        cwd: worktree.path,
+        command: "codex",
+        status: .review
+    )
+    let executingSession = makeHandoffSession(
+        id: "executing-handoff",
+        cwd: worktree.path,
+        command: "codex",
+        status: .executing
+    )
+    let shellSession = makeHandoffSession(
+        id: "shell-handoff",
+        cwd: worktree.path,
+        command: "zsh",
+        status: .needInput
+    )
+
+    #expect(idleSession.canDispatchHandoff)
+    #expect(reviewSession.canDispatchHandoff)
+    #expect(!executingSession.canDispatchHandoff)
+    #expect(!shellSession.canDispatchHandoff)
+}
+
+@MainActor
 @Test func killBackingSessionKillsUnderlyingTmuxSession() throws {
     let tmux = TmuxBackend.shared
     let id = "close-kills-\(UUID().uuidString.lowercased())"
@@ -89,4 +153,73 @@ private func makeAttachStateSession(
         isRestored: isRestored,
         theme: .system
     )
+}
+
+@MainActor
+private func makeHandoffSession(
+    id: String,
+    cwd: String,
+    command: String,
+    status: SessionStatus
+) -> BanyanSession {
+    BanyanSession(
+        id: id,
+        title: "Handoff",
+        cwd: cwd,
+        command: command,
+        status: status,
+        isRestored: true,
+        theme: .system
+    )
+}
+
+private func temporaryDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("BanyanTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+}
+
+private func createGitWorktree(in root: URL) throws -> URL {
+    let main = root.appendingPathComponent("repo")
+    let worktree = root.appendingPathComponent("repo-worktree")
+    try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+    try runGit(["init"], cwd: main)
+    try runGit(["config", "user.email", "test@example.com"], cwd: main)
+    try runGit(["config", "user.name", "Banyan Tests"], cwd: main)
+    try "test".write(to: main.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    try runGit(["add", "README.md"], cwd: main)
+    try runGit(["commit", "-m", "Initial commit"], cwd: main)
+    try runGit(["worktree", "add", "-b", "feature", worktree.path], cwd: main)
+    return worktree
+}
+
+@discardableResult
+private func runGit(_ arguments: [String], cwd: URL) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["git"] + arguments
+    process.currentDirectoryURL = cwd
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+    try process.run()
+    process.waitUntilExit()
+
+    let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    if process.terminationStatus != 0 {
+        let message = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        throw GitTestError(arguments: arguments, message: message)
+    }
+    return output.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private struct GitTestError: Error, CustomStringConvertible {
+    let arguments: [String]
+    let message: String
+
+    var description: String {
+        "git \(arguments.joined(separator: " ")) failed: \(message)"
+    }
 }

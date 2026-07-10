@@ -91,7 +91,7 @@ import Testing
     #expect(title == "pull the latest code.")
 }
 
-@Test func titleGeneratorUsesProviderProjectAndIDWhenPromptIsMissing() {
+@Test func titleGeneratorUsesCompactProviderAndIDWhenPromptIsMissing() {
     let title = SessionTitleGenerator.automaticTitle(for: SessionTitleContext(
         id: "session-2",
         baseTitle: "banyan",
@@ -104,5 +104,5 @@ import Testing
         provider: .codex
     ))
 
-    #expect(title == "Codex · banyan · main · session-2")
+    #expect(title == "Codex session-2")
 }

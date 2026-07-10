@@ -15,6 +15,15 @@ enum SessionStatus: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
+    var isCodingAgentIdle: Bool {
+        switch self {
+        case .needInput, .asking, .review:
+            return true
+        case .running, .executing, .longRunningShell, .subagents, .completed, .failed, .closed:
+            return false
+        }
+    }
+
     var label: String {
         switch self {
         case .running: return "Running"
