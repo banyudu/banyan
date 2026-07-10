@@ -51,7 +51,7 @@ struct LinearIssueStatusSnapshot: Equatable {
     let workflowStates: [LinearWorkflowState]
 }
 
-struct LinearWorkflowState: Equatable, Identifiable {
+struct LinearWorkflowState: Equatable, Identifiable, Codable {
     let id: String
     let name: String
     let type: String?
@@ -59,7 +59,7 @@ struct LinearWorkflowState: Equatable, Identifiable {
     let position: Double?
 }
 
-struct LinearIssueLabel: Equatable, Identifiable {
+struct LinearIssueLabel: Equatable, Identifiable, Codable {
     var id: String { name }
     let name: String
     let color: String?
@@ -79,7 +79,7 @@ struct LinearIssueAttachment: Equatable, Identifiable {
     let url: String
 }
 
-struct LinearIssueSummary: Equatable, Identifiable {
+struct LinearIssueSummary: Equatable, Identifiable, Codable {
     let id: String
     let identifier: String
     let title: String
@@ -105,7 +105,7 @@ enum LinearIssueLoadState: Equatable {
 }
 
 enum LinearIssueClient {
-    static func fetchIssueList(cwd: String, limit: Int = 50) async throws -> [LinearIssueSummary] {
+    static func fetchIssueList(cwd: String, limit: Int = 0) async throws -> [LinearIssueSummary] {
         let output = try await runCommand(
             [
                 "linear",
@@ -114,10 +114,7 @@ enum LinearIssueClient {
                 "--all-teams",
                 "--assignee",
                 "self",
-                "--state",
-                "unstarted",
-                "--state",
-                "started",
+                "--all-states",
                 "--sort",
                 "priority",
                 "--limit",
@@ -126,9 +123,22 @@ enum LinearIssueClient {
                 "--no-pager"
             ],
             cwd: cwd,
-            timeout: 12
+            timeout: 20
         )
         return try decodeIssueListResponse(output)
+    }
+
+    static func fetchWorkflowStates(cwd: String) async throws -> [LinearWorkflowState] {
+        let output = try await runCommand(
+            [
+                "linear",
+                "api",
+                workflowStatesQuery
+            ],
+            cwd: cwd,
+            timeout: 12
+        )
+        return try decodeWorkflowStatesResponse(output)
     }
 
     static func fetchIssue(identifier: String, cwd: String) async throws -> LinearIssueDetails {
@@ -295,6 +305,17 @@ enum LinearIssueClient {
         return issue.snapshot
     }
 
+    private static func decodeWorkflowStatesResponse(_ output: String) throws -> [LinearWorkflowState] {
+        let payload = try JSONDecoder().decode(GraphQLWorkflowStatesResponse.self, from: Data(output.utf8))
+        if payload.errors?.isEmpty == false {
+            throw LinearIssueClientError.requestFailed
+        }
+        let states = payload.data?.teams.nodes.flatMap { team in
+            team.states?.nodes ?? []
+        } ?? []
+        return sortedWorkflowStates(states)
+    }
+
     private static func runCommand(
         _ arguments: [String],
         cwd: String,
@@ -440,6 +461,24 @@ enum LinearIssueClient {
     }
     """
 
+    private static let workflowStatesQuery = """
+    query BanyanWorkflowStates {
+      teams(first: 100) {
+        nodes {
+          states {
+            nodes {
+              id
+              name
+              type
+              color
+              position
+            }
+          }
+        }
+      }
+    }
+    """
+
     private static let issueStatusQuery = """
     query BanyanIssueStatus($id: String!) {
       issue(id: $id) {
@@ -549,6 +588,19 @@ private struct GraphQLIssueStatusResponse: Decodable {
 
 private struct GraphQLIssueStatusData: Decodable {
     let issue: GraphQLIssueStatus?
+}
+
+private struct GraphQLWorkflowStatesResponse: Decodable {
+    let data: GraphQLWorkflowStatesData?
+    let errors: [GraphQLError]?
+}
+
+private struct GraphQLWorkflowStatesData: Decodable {
+    let teams: GraphQLConnection<GraphQLWorkflowStatesTeam>
+}
+
+private struct GraphQLWorkflowStatesTeam: Decodable {
+    let states: GraphQLConnection<GraphQLState>?
 }
 
 private struct GraphQLError: Decodable {

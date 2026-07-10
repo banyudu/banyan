@@ -91,6 +91,7 @@ final class SessionStore: ObservableObject {
         }
     }
     @Published private(set) var linearIssues: [LinearIssueSummary] = []
+    @Published private(set) var linearIssueWorkflowStates: [LinearWorkflowState] = []
     @Published private(set) var linearIssueListLoadState: LinearIssueListLoadState = .idle
     @Published var selectedLinearListIssueID: String? {
         didSet {
@@ -102,7 +103,7 @@ final class SessionStore: ObservableObject {
     @Published var addSessionDraft: AddSessionDraft?
     @Published var selectedSessionID: String? {
         didSet {
-            saveWorkspace()
+            saveWorkspaceSoon()
             requestTerminalFocus()
             if oldValue != selectedSessionID {
                 closePullRequestPreview()
@@ -154,8 +155,10 @@ final class SessionStore: ObservableObject {
     private var selectedLinearIssueIdentifier: String?
     private var selectedPullRequestTask: Task<Void, Never>?
     private var selectedPullRequestPreviewURL: URL?
+    private var didLoadCachedLinearIssues = false
     private var linearIssueListTask: Task<Void, Never>?
     private var selectedLinearListIssueTask: Task<Void, Never>?
+    private var workspaceSaveTask: Task<Void, Never>?
 
     init() {
         let defaults = UserDefaults.standard
@@ -399,6 +402,7 @@ final class SessionStore: ObservableObject {
     }
 
     func refreshLinearIssueListIfNeeded() {
+        loadCachedLinearIssuesIfNeeded()
         guard linearIssueListTask == nil else { return }
         switch linearIssueListLoadState {
         case .idle, .loaded, .failed:
@@ -409,23 +413,36 @@ final class SessionStore: ObservableObject {
     }
 
     func refreshLinearIssueList() {
+        loadCachedLinearIssuesIfNeeded()
         linearIssueListTask?.cancel()
         let hasStaleIssues = !linearIssues.isEmpty
         linearIssueListLoadState = hasStaleIssues ? .loaded : .loading
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
         linearIssueListTask = Task.detached(priority: .utility) {
             do {
-                let issues = try await LinearIssueClient.fetchIssueList(cwd: cwd)
+                async let issuesRequest = LinearIssueClient.fetchIssueList(cwd: cwd)
+                async let workflowStatesRequest = LinearIssueClient.fetchWorkflowStates(cwd: cwd)
+                let issues = try await issuesRequest
+                let workflowStates = await (try? workflowStatesRequest) ?? []
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.linearIssueListTask = nil
                     self.linearIssues = issues
+                    self.linearIssueWorkflowStates = Self.mergedWorkflowStates(workflowStates, issues: issues)
                     if let selectedLinearListIssueID = self.selectedLinearListIssueID,
                        !issues.contains(where: { $0.identifier == selectedLinearListIssueID }) {
                         self.selectedLinearListIssueID = issues.first?.identifier
                     } else if self.selectedLinearListIssueID == nil {
                         self.selectedLinearListIssueID = issues.first?.identifier
                     }
+                    self.persistence.saveLinearIssueListCache(
+                        LinearIssueListCacheSnapshot(
+                            issues: issues,
+                            workflowStates: self.linearIssueWorkflowStates,
+                            selectedIssueID: self.selectedLinearListIssueID,
+                            updatedAt: Date()
+                        )
+                    )
                     self.linearIssueListLoadState = .loaded
                 }
             } catch {
@@ -436,6 +453,56 @@ final class SessionStore: ObservableObject {
                         ? .failed("Unable to load Linear issues")
                         : .loaded
                 }
+            }
+        }
+    }
+
+    private func loadCachedLinearIssuesIfNeeded() {
+        guard !didLoadCachedLinearIssues else { return }
+        didLoadCachedLinearIssues = true
+        guard linearIssues.isEmpty,
+              let cache = persistence.loadLinearIssueListCache(),
+              !cache.issues.isEmpty else {
+            return
+        }
+
+        linearIssues = cache.issues
+        linearIssueWorkflowStates = Self.mergedWorkflowStates(cache.workflowStates ?? [], issues: cache.issues)
+        let cachedIssueIDs = Set(cache.issues.map(\.identifier))
+        if let selectedLinearListIssueID, cachedIssueIDs.contains(selectedLinearListIssueID) {
+            linearIssueListLoadState = .loaded
+            return
+        }
+        if let selectedIssueID = cache.selectedIssueID,
+           cachedIssueIDs.contains(selectedIssueID) {
+            selectedLinearListIssueID = selectedIssueID
+        } else {
+            selectedLinearListIssueID = cache.issues.first?.identifier
+        }
+        linearIssueListLoadState = .loaded
+    }
+
+    private static func mergedWorkflowStates(
+        _ workflowStates: [LinearWorkflowState],
+        issues: [LinearIssueSummary]
+    ) -> [LinearWorkflowState] {
+        var statesByID: [String: LinearWorkflowState] = [:]
+        for state in workflowStates {
+            statesByID[state.id] = state
+        }
+        for issue in issues {
+            statesByID[issue.state.id] = issue.state
+        }
+        return statesByID.values.sorted {
+            switch ($0.position, $1.position) {
+            case let (lhs?, rhs?):
+                return lhs < rhs
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
         }
     }
@@ -1130,6 +1197,11 @@ final class SessionStore: ObservableObject {
         return URL(string: value)
     }
 
+    var canAttemptSelectedPullRequestPreview: Bool {
+        guard let selectedSession else { return false }
+        return selectedSession.status != .closed
+    }
+
     var selectedPullRequestPreviewContext: SessionContextInfo? {
         if let selectedContextInfo {
             return selectedContextInfo
@@ -1244,14 +1316,28 @@ final class SessionStore: ObservableObject {
     }
 
     private func saveWorkspace() {
-        persistence.saveWorkspace(
-            WorkspaceSnapshot(
-                selectedSessionID: selectedSessionID,
-                sortMode: sortMode,
-                terminalTheme: terminalTheme,
-                terminalFontFamily: terminalFontFamily,
-                terminalFontSize: terminalFontSize
-            )
+        workspaceSaveTask?.cancel()
+        persistence.saveWorkspace(workspaceSnapshot())
+    }
+
+    private func saveWorkspaceSoon() {
+        workspaceSaveTask?.cancel()
+        let persistence = persistence
+        let snapshot = workspaceSnapshot()
+        workspaceSaveTask = Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            persistence.saveWorkspace(snapshot)
+        }
+    }
+
+    private func workspaceSnapshot() -> WorkspaceSnapshot {
+        WorkspaceSnapshot(
+            selectedSessionID: selectedSessionID,
+            sortMode: sortMode,
+            terminalTheme: terminalTheme,
+            terminalFontFamily: terminalFontFamily,
+            terminalFontSize: terminalFontSize
         )
     }
 

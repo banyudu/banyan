@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var showingPreferences = false
     @State private var draggingSidebarSessionID: String?
     @State private var linearIssueFilterText = ""
+    @State private var selectedLinearIssueStateIDs: Set<String>?
 
     var body: some View {
         NavigationSplitView {
@@ -32,7 +33,7 @@ struct ContentView: View {
                 }
             }
             ToolbarItemGroup(placement: .primaryAction) {
-                if store.selectedPullRequestURL != nil {
+                if store.canAttemptSelectedPullRequestPreview {
                     Button {
                         store.showSelectedPullRequestPreview()
                     } label: {
@@ -193,7 +194,7 @@ struct ContentView: View {
 
     private var linearSidebar: some View {
         VStack(spacing: 0) {
-            linearIssueSearchField
+            linearIssueFilterHeader
 
             Divider()
 
@@ -228,6 +229,15 @@ struct ContentView: View {
         }
     }
 
+    private var linearIssueFilterHeader: some View {
+        VStack(spacing: 6) {
+            linearIssueSearchField
+            linearIssueStateFilterMenu
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
     private var linearIssueSearchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
@@ -253,8 +263,46 @@ struct ContentView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+    }
+
+    private var linearIssueStateFilterMenu: some View {
+        HStack(spacing: 8) {
+            Menu {
+                if availableLinearIssueStates.isEmpty {
+                    Text("No states loaded")
+                } else {
+                    ForEach(availableLinearIssueStates) { state in
+                        Toggle(isOn: linearIssueStateFilterBinding(for: state)) {
+                            Label {
+                                Text(state.name)
+                            } icon: {
+                                Circle()
+                                    .fill(Color.linearHex(state.color))
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Button("Use Default States") {
+                        selectedLinearIssueStateIDs = nil
+                    }
+
+                    Button("Show All States") {
+                        selectedLinearIssueStateIDs = Set(allLinearIssueStatesForFiltering.map(\.id))
+                    }
+                }
+            } label: {
+                Label(linearIssueStateFilterLabel, systemImage: "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityIdentifier(AccessibilityID.linearIssueStateFilterMenu)
+            .help("Filter Linear issues by state")
+
+            Spacer(minLength: 0)
+        }
     }
 
     @ViewBuilder
@@ -352,11 +400,102 @@ struct ContentView: View {
         let tokens = linearIssueFilterText
             .split(whereSeparator: \.isWhitespace)
             .map { String($0) }
-        guard !tokens.isEmpty else {
-            return store.linearIssues
-        }
+        let visibleStateIDs = activeLinearIssueStateIDs
+
         return store.linearIssues.filter { issue in
-            issue.matchesFilterTokens(tokens)
+            let matchesState = availableLinearIssueStates.isEmpty || visibleStateIDs.contains(issue.state.id)
+            let matchesText = tokens.isEmpty || issue.matchesFilterTokens(tokens)
+            return matchesState && matchesText
+        }
+    }
+
+    private var availableLinearIssueStates: [LinearWorkflowState] {
+        var statesByID: [String: LinearWorkflowState] = [:]
+        for state in store.linearIssueWorkflowStates {
+            statesByID[state.id] = state
+        }
+        for issue in store.linearIssues {
+            statesByID[issue.state.id] = issue.state
+        }
+        var statesByKey: [String: LinearWorkflowState] = [:]
+        for state in statesByID.values {
+            let key = state.filterKey
+            if let existing = statesByKey[key] {
+                statesByKey[key] = linearIssueStateSort(state, existing) ? state : existing
+            } else {
+                statesByKey[key] = state
+            }
+        }
+        return statesByKey.values.sorted(by: linearIssueStateSort)
+    }
+
+    private var defaultLinearIssueStateIDs: Set<String> {
+        Set(allLinearIssueStatesForFiltering.filter(\.isDefaultVisibleInLinearList).map(\.id))
+    }
+
+    private var activeLinearIssueStateIDs: Set<String> {
+        selectedLinearIssueStateIDs ?? defaultLinearIssueStateIDs
+    }
+
+    private var linearIssueStateFilterLabel: String {
+        guard !availableLinearIssueStates.isEmpty else { return "States" }
+        let visibleCount = availableLinearIssueStates.filter { state in
+            !activeLinearIssueStateIDs.intersection(linearIssueStateIDs(matching: state)).isEmpty
+        }.count
+        if selectedLinearIssueStateIDs == nil {
+            return "Default states"
+        }
+        if visibleCount == availableLinearIssueStates.count {
+            return "All states"
+        }
+        return "\(visibleCount) states"
+    }
+
+    private func linearIssueStateFilterBinding(for state: LinearWorkflowState) -> Binding<Bool> {
+        Binding {
+            !activeLinearIssueStateIDs.intersection(linearIssueStateIDs(matching: state)).isEmpty
+        } set: { isSelected in
+            var selectedIDs = activeLinearIssueStateIDs
+            let matchingIDs = linearIssueStateIDs(matching: state)
+            if isSelected {
+                selectedIDs.formUnion(matchingIDs)
+            } else {
+                selectedIDs.subtract(matchingIDs)
+            }
+            selectedLinearIssueStateIDs = selectedIDs
+        }
+    }
+
+    private var allLinearIssueStatesForFiltering: [LinearWorkflowState] {
+        var statesByID: [String: LinearWorkflowState] = [:]
+        for state in store.linearIssueWorkflowStates {
+            statesByID[state.id] = state
+        }
+        for issue in store.linearIssues {
+            statesByID[issue.state.id] = issue.state
+        }
+        return Array(statesByID.values)
+    }
+
+    private func linearIssueStateIDs(matching state: LinearWorkflowState) -> Set<String> {
+        Set(allLinearIssueStatesForFiltering.filter { $0.filterKey == state.filterKey }.map(\.id))
+    }
+
+    private func linearIssueStateSort(_ lhs: LinearWorkflowState, _ rhs: LinearWorkflowState) -> Bool {
+        switch (lhs.position, rhs.position) {
+        case let (lhsPosition?, rhsPosition?):
+            return lhsPosition < rhsPosition
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        case (nil, nil):
+            let lhsType = lhs.type ?? ""
+            let rhsType = rhs.type ?? ""
+            if lhsType != rhsType {
+                return lhsType.localizedCaseInsensitiveCompare(rhsType) == .orderedAscending
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
 
@@ -712,6 +851,28 @@ private extension LinearIssueSummary {
                 token.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             )
         }
+    }
+}
+
+private extension LinearWorkflowState {
+    var filterKey: String {
+        [
+            name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current),
+            type ?? ""
+        ].joined(separator: "|")
+    }
+
+    var isDefaultVisibleInLinearList: Bool {
+        guard !isOnHoldState else { return false }
+        guard let type = type?.lowercased() else { return true }
+        return ["triage", "backlog", "unstarted", "started"].contains(type)
+    }
+
+    private var isOnHoldState: Bool {
+        let normalizedName = name
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .filter { $0.isLetter || $0.isNumber }
+        return normalizedName == "onhold"
     }
 }
 

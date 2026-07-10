@@ -50,6 +50,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var isDetachingTerminalClient = false
     private var attemptedBlankTerminalRecovery = false
     private var titleURLWasAutoDetected = false
+    private var terminalRefreshTask: Task<Void, Never>?
 
     var displayTitle: String {
         if hasUsefulPinnedTitle {
@@ -195,9 +196,25 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func refreshTerminalClient() {
         guard !isImportedHistory, terminalView.process.running else { return }
-        tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
-        terminalView.needsDisplay = true
-        terminalView.setNeedsDisplay(terminalView.bounds)
+        terminalRefreshTask?.cancel()
+        let tmuxBackend = tmuxBackend
+        let tmuxSessionName = tmuxSessionName
+        terminalRefreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled else { return }
+            await Task.detached(priority: .utility) {
+                tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
+            }.value
+            guard let self,
+                  !Task.isCancelled,
+                  !self.isImportedHistory,
+                  self.terminalView.process.running else {
+                return
+            }
+            self.terminalView.needsDisplay = true
+            self.terminalView.setNeedsDisplay(self.terminalView.bounds)
+            self.terminalRefreshTask = nil
+        }
     }
 
     func recoverBlankTerminalClientIfNeeded() {
@@ -217,6 +234,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func reattachTerminalClient(resetBlankRecoveryAttempt: Bool = true) {
         guard !isImportedHistory else { return }
+        terminalRefreshTask?.cancel()
         if terminalView.process.running {
             isDetachingTerminalClient = true
             terminalView.terminate()
@@ -230,6 +248,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func restartBackingSession() {
         guard !isImportedHistory else { return }
+        terminalRefreshTask?.cancel()
         if terminalView.process.running {
             isDetachingTerminalClient = true
         }
@@ -469,6 +488,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func terminate(markClosed: Bool = true) {
+        terminalRefreshTask?.cancel()
         isDetachingTerminalClient = false
         terminalView.terminate()
         isProcessStarted = false
@@ -480,6 +500,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func killBackingSession() {
+        terminalRefreshTask?.cancel()
         isDetachingTerminalClient = false
         terminalView.terminate()
         tmuxBackend.killSession(named: tmuxSessionName)

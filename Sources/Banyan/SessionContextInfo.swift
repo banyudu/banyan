@@ -42,7 +42,11 @@ enum SessionContextResolver {
         }
         let resolvedIssueID = detectedIssueID
         let linearURL = resolvedIssueID.map(LinearIssueReference.issueURL(for:))
-        let pullRequest = isCancelled() ? nil : pullRequest(cwd: input.cwd, isCancelled: isCancelled)
+        let explicitPullRequestURL = pullRequestURL(in: input.titleURL)
+            ?? pullRequestURL(in: input.title)
+            ?? pullRequestURL(in: input.displayTitle)
+        let pullRequest = explicitPullRequestURL.map { PullRequestPayload(url: $0, title: nil, number: pullRequestNumber(in: $0)) }
+            ?? (isCancelled() ? nil : pullRequest(cwd: input.cwd, isCancelled: isCancelled))
 
         return SessionContextInfo(
             sessionID: input.sessionID,
@@ -60,6 +64,23 @@ enum SessionContextResolver {
         let url: String
         let title: String?
         let number: Int?
+    }
+
+    private static func pullRequestURL(in value: String?) -> String? {
+        guard let value else { return nil }
+        let pattern = #"https://github\.com/[^\s/]+/[^\s/]+/pull/\d+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(value.startIndex..., in: value)
+        guard let match = regex.firstMatch(in: value, range: range),
+              let matchRange = Range(match.range, in: value) else {
+            return nil
+        }
+        return String(value[matchRange])
+    }
+
+    private static func pullRequestNumber(in url: String) -> Int? {
+        guard let value = url.split(separator: "/").last else { return nil }
+        return Int(value)
     }
 
     private static func pullRequest(cwd: String, isCancelled: @escaping () -> Bool = { false }) -> PullRequestPayload? {

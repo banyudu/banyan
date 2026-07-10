@@ -95,7 +95,16 @@ struct WorkspaceSnapshot {
     let terminalFontSize: Double
 }
 
+struct LinearIssueListCacheSnapshot: Codable {
+    let issues: [LinearIssueSummary]
+    let workflowStates: [LinearWorkflowState]?
+    let selectedIssueID: String?
+    let updatedAt: Date
+}
+
 struct SessionPersistence {
+    private static let linearIssueListCacheKey = "linearIssueListCache"
+
     private let databaseURL: URL
     private let legacyJSONURL: URL
 
@@ -227,6 +236,42 @@ struct SessionPersistence {
             }
         } catch {
             NSLog("Banyan failed to persist workspace state to SQLite: \(error.localizedDescription)")
+        }
+    }
+
+    func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot? {
+        do {
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+
+            let state = try loadState(database)
+            guard let rawCache = state[Self.linearIssueListCacheKey],
+                  let data = rawCache.data(using: .utf8) else {
+                return nil
+            }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(LinearIssueListCacheSnapshot.self, from: data)
+        } catch {
+            NSLog("Banyan failed to load Linear issue list cache from SQLite: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func saveLinearIssueListCache(_ snapshot: LinearIssueListCacheSnapshot) {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(snapshot)
+            guard let rawCache = String(data: data, encoding: .utf8) else { return }
+
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+            try setState(Self.linearIssueListCacheKey, rawCache, database)
+        } catch {
+            NSLog("Banyan failed to persist Linear issue list cache to SQLite: \(error.localizedDescription)")
         }
     }
 
