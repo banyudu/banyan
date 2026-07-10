@@ -443,12 +443,18 @@ final class SessionStore: ObservableObject {
                 async let issuesRequest = LinearIssueClient.fetchIssueList(cwd: cwd)
                 async let workflowStatesRequest = LinearIssueClient.fetchWorkflowStates(cwd: cwd)
                 let issues = try await issuesRequest
-                let workflowStates = await (try? workflowStatesRequest) ?? []
+                let workflowStates: [LinearWorkflowState]?
+                do {
+                    workflowStates = try await workflowStatesRequest
+                } catch {
+                    workflowStates = nil
+                }
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.linearIssueListTask = nil
                     self.linearIssues = issues
-                    self.linearIssueWorkflowStates = Self.mergedWorkflowStates(workflowStates, issues: issues)
+                    let workflowStateSource = workflowStates ?? self.linearIssueWorkflowStates
+                    self.linearIssueWorkflowStates = Self.mergedWorkflowStates(workflowStateSource, issues: issues)
                     if let selectedLinearListIssueID = self.selectedLinearListIssueID,
                        !issues.contains(where: { $0.identifier == selectedLinearListIssueID }) {
                         self.selectedLinearListIssueID = issues.first?.identifier
@@ -527,6 +533,25 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func mergeLinearWorkflowStates(_ workflowStates: [LinearWorkflowState]) {
+        guard !workflowStates.isEmpty else { return }
+        let mergedWorkflowStates = Self.mergedWorkflowStates(
+            linearIssueWorkflowStates + workflowStates,
+            issues: linearIssues
+        )
+        guard mergedWorkflowStates != linearIssueWorkflowStates else { return }
+        linearIssueWorkflowStates = mergedWorkflowStates
+        guard !linearIssues.isEmpty else { return }
+        persistence.saveLinearIssueListCache(
+            LinearIssueListCacheSnapshot(
+                issues: linearIssues,
+                workflowStates: linearIssueWorkflowStates,
+                selectedIssueID: selectedLinearListIssueID,
+                updatedAt: Date()
+            )
+        )
+    }
+
     func refreshSelectedLinearListIssue(force: Bool = false) {
         guard let issueID = selectedLinearListIssueID else {
             selectedLinearListIssueTask?.cancel()
@@ -553,6 +578,7 @@ final class SessionStore: ObservableObject {
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
                     self.selectedLinearListIssueDetails = issue
+                    self.mergeLinearWorkflowStates(issue.workflowStates)
                     self.selectedLinearListIssueLoadState = .loaded
                 }
             } catch {
@@ -587,6 +613,7 @@ final class SessionStore: ObservableObject {
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
                     self.selectedLinearListIssueDetails = issue
+                    self.mergeLinearWorkflowStates(issue.workflowStates)
                     self.selectedLinearListIssueLoadState = .loaded
                     self.refreshLinearIssueList()
                 }
@@ -793,6 +820,7 @@ final class SessionStore: ObservableObject {
                         return
                     }
                     self.selectedLinearIssueDetails = issue
+                    self.mergeLinearWorkflowStates(issue.workflowStates)
                     self.selectedLinearIssueLoadState = .loaded
                     self.startSelectedLinearIssueStatusRefreshIfNeeded()
                 }
@@ -919,6 +947,7 @@ final class SessionStore: ObservableObject {
             return
         }
         selectedLinearIssueDetails = issue.applying(status: status)
+        mergeLinearWorkflowStates(status.workflowStates)
     }
 
     func openSelectedPullRequest() {
