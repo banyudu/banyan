@@ -10,6 +10,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @State private var showingPreferences = false
     @State private var draggingSidebarSessionID: String?
+    @State private var linearIssueFilterText = ""
 
     var body: some View {
         NavigationSplitView {
@@ -192,6 +193,10 @@ struct ContentView: View {
 
     private var linearSidebar: some View {
         VStack(spacing: 0) {
+            linearIssueSearchField
+
+            Divider()
+
             linearListContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .layoutPriority(1)
@@ -221,6 +226,35 @@ struct ContentView: View {
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
+    }
+
+    private var linearIssueSearchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            TextField("Filter issues", text: $linearIssueFilterText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .accessibilityIdentifier(AccessibilityID.linearIssueSearchField)
+
+            if !linearIssueFilterText.isEmpty {
+                Button {
+                    linearIssueFilterText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear filter")
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
@@ -272,30 +306,57 @@ struct ContentView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(store.linearIssues) { issue in
-                            LinearIssueRow(
-                                issue: issue,
-                                isSelected: store.selectedLinearListIssueID == issue.identifier,
-                                isStarting: store.linearIssueListLoadState.isStarting(issue.identifier),
-                                onSelect: {
-                                    store.selectedLinearListIssueID = issue.identifier
-                                },
-                                onStart: {
-                                    store.startLinearIssueSession(issue.identifier)
-                                }
-                            )
-                            .padding(.horizontal, 6)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                .scrollIndicators(.visible)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .clipped()
-                .accessibilityIdentifier(AccessibilityID.linearIssueList)
+                loadedLinearIssueListContent
             }
+        }
+    }
+
+    @ViewBuilder
+    private var loadedLinearIssueListContent: some View {
+        let issues = filteredLinearIssues
+        if issues.isEmpty {
+            ContentUnavailableView(
+                "No Matching Issues",
+                systemImage: "line.3.horizontal.decrease.circle",
+                description: Text("Clear or change the filter.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(issues) { issue in
+                        LinearIssueRow(
+                            issue: issue,
+                            isSelected: store.selectedLinearListIssueID == issue.identifier,
+                            isStarting: store.linearIssueListLoadState.isStarting(issue.identifier),
+                            onSelect: {
+                                store.selectedLinearListIssueID = issue.identifier
+                            },
+                            onStart: {
+                                store.startLinearIssueSession(issue.identifier)
+                            }
+                        )
+                        .padding(.horizontal, 6)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .scrollIndicators(.visible)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .clipped()
+            .accessibilityIdentifier(AccessibilityID.linearIssueList)
+        }
+    }
+
+    private var filteredLinearIssues: [LinearIssueSummary] {
+        let tokens = linearIssueFilterText
+            .split(whereSeparator: \.isWhitespace)
+            .map { String($0) }
+        guard !tokens.isEmpty else {
+            return store.linearIssues
+        }
+        return store.linearIssues.filter { issue in
+            issue.matchesFilterTokens(tokens)
         }
     }
 
@@ -454,6 +515,9 @@ struct ContentView: View {
                         onOpen: store.openSelectedLinearIssue,
                         onChangeState: store.updateSelectedLinearIssueState
                     )
+                    .onAppear {
+                        store.refreshSelectedLinearIssue(force: true)
+                    }
                 }
             }
             .accessibilityIdentifier(AccessibilityID.detail)
@@ -495,7 +559,7 @@ struct ContentView: View {
         }
         .onAppear {
             store.refreshLinearIssueListIfNeeded()
-            store.refreshSelectedLinearListIssue()
+            store.refreshSelectedLinearListIssue(force: true)
         }
         .accessibilityIdentifier(AccessibilityID.detail)
     }
@@ -620,6 +684,34 @@ private struct LinearIssueRow: View {
         .foregroundStyle(.secondary)
         .frame(maxWidth: 92, alignment: .leading)
         .clipped()
+    }
+}
+
+private extension LinearIssueSummary {
+    func matchesFilterTokens(_ tokens: [String]) -> Bool {
+        let haystack = [
+            identifier,
+            title,
+            state.name,
+            state.type,
+            priority.map { "P\($0)" },
+            priorityLabel,
+            assigneeName,
+            teamKey,
+            teamName,
+            projectName,
+            cycleName,
+            labels.map(\.name).joined(separator: " ")
+        ]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+
+        return tokens.allSatisfy { token in
+            haystack.contains(
+                token.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            )
+        }
     }
 }
 

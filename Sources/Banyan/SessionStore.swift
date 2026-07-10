@@ -399,14 +399,19 @@ final class SessionStore: ObservableObject {
     }
 
     func refreshLinearIssueListIfNeeded() {
-        if case .idle = linearIssueListLoadState {
+        guard linearIssueListTask == nil else { return }
+        switch linearIssueListLoadState {
+        case .idle, .loaded, .failed:
             refreshLinearIssueList()
+        case .loading, .starting:
+            break
         }
     }
 
     func refreshLinearIssueList() {
         linearIssueListTask?.cancel()
-        linearIssueListLoadState = .loading
+        let hasStaleIssues = !linearIssues.isEmpty
+        linearIssueListLoadState = hasStaleIssues ? .loaded : .loading
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
         linearIssueListTask = Task.detached(priority: .utility) {
             do {
@@ -427,7 +432,9 @@ final class SessionStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.linearIssueListTask = nil
-                    self.linearIssueListLoadState = .failed("Unable to load Linear issues")
+                    self.linearIssueListLoadState = self.linearIssues.isEmpty
+                        ? .failed("Unable to load Linear issues")
+                        : .loaded
                 }
             }
         }
@@ -445,8 +452,9 @@ final class SessionStore: ObservableObject {
         guard force || selectedLinearListIssueDetails?.identifier != issueID else { return }
 
         selectedLinearListIssueTask?.cancel()
-        selectedLinearListIssueLoadState = .loading
-        if selectedLinearListIssueDetails?.identifier != issueID {
+        let hasStaleDetails = selectedLinearListIssueDetails?.identifier == issueID
+        selectedLinearListIssueLoadState = hasStaleDetails ? .loaded : .loading
+        if !hasStaleDetails {
             selectedLinearListIssueDetails = nil
         }
 
@@ -464,7 +472,10 @@ final class SessionStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
-                    self.selectedLinearListIssueLoadState = .failed("Unable to load issue details")
+                    self.selectedLinearListIssueLoadState =
+                        self.selectedLinearListIssueDetails?.identifier == issueID
+                        ? .loaded
+                        : .failed("Unable to load issue details")
                 }
             }
         }
@@ -686,10 +697,11 @@ final class SessionStore: ObservableObject {
         selectedLinearIssueStatusTask?.cancel()
         selectedLinearIssueStatusTask = nil
         selectedLinearIssueIdentifier = issueID
-        if selectedLinearIssueDetails?.identifier != issueID {
+        let hasStaleDetails = selectedLinearIssueDetails?.identifier == issueID
+        if !hasStaleDetails {
             selectedLinearIssueDetails = nil
         }
-        selectedLinearIssueLoadState = .loading
+        selectedLinearIssueLoadState = hasStaleDetails ? .loaded : .loading
 
         let cwd = session.cwd
         let sessionID = session.id
@@ -715,8 +727,13 @@ final class SessionStore: ObservableObject {
                           self.selectedLinearIssueIdentifier == issueID else {
                         return
                     }
-                    self.selectedLinearIssueLoadState = .failed("Unable to load issue details")
-                    self.stopSelectedLinearIssueStatusRefresh()
+                    if self.selectedLinearIssueDetails?.identifier == issueID {
+                        self.selectedLinearIssueLoadState = .loaded
+                        self.startSelectedLinearIssueStatusRefreshIfNeeded()
+                    } else {
+                        self.selectedLinearIssueLoadState = .failed("Unable to load issue details")
+                        self.stopSelectedLinearIssueStatusRefresh()
+                    }
                 }
             }
         }
