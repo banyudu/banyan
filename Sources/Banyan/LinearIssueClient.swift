@@ -420,6 +420,12 @@ enum LinearIssueClient {
             throw LinearIssueClientError.commandUnavailable
         }
 
+        let stdoutOutput = CommandOutput()
+        let stderrOutput = CommandOutput()
+        let outputGroup = DispatchGroup()
+        readPipe(stdout, into: stdoutOutput, group: outputGroup)
+        readPipe(stderr, into: stderrOutput, group: outputGroup)
+
         let semaphore = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .utility).async {
             process.waitUntilExit()
@@ -429,13 +435,15 @@ enum LinearIssueClient {
         if semaphore.wait(timeout: .now() + timeout) != .success {
             process.terminate()
             _ = semaphore.wait(timeout: .now() + 0.5)
+            _ = outputGroup.wait(timeout: .now() + 1.0)
             let elapsed = Date().timeIntervalSince(startedAt)
             linearDebugLog("command timeout elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.requestFailed
         }
 
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        _ = outputGroup.wait(timeout: .now() + 1.0)
+        let data = stdoutOutput.data
+        let stderrData = stderrOutput.data
         let elapsed = Date().timeIntervalSince(startedAt)
         guard process.terminationStatus == 0 else {
             let stderrOutput = cleanCommandOutput(String(decoding: stderrData, as: UTF8.self))
@@ -452,6 +460,14 @@ enum LinearIssueClient {
         }
         linearDebugLog("command success elapsed=\(String(format: "%.2f", elapsed))s outputBytes=\(data.count) command=\(arguments.joined(separator: " "))")
         return output
+    }
+
+    private static func readPipe(_ pipe: Pipe, into output: CommandOutput, group: DispatchGroup) {
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            output.append(pipe.fileHandleForReading.readDataToEndOfFile())
+            group.leave()
+        }
     }
 
     private static func cleanCommandOutput(_ value: String) -> String {
@@ -626,6 +642,23 @@ private enum LinearIssueClientError: Error {
     case commandUnavailable
     case issueNotFound
     case requestFailed
+}
+
+private final class CommandOutput {
+    private let lock = NSLock()
+    private var value = Data()
+
+    var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func append(_ data: Data) {
+        lock.lock()
+        value.append(data)
+        lock.unlock()
+    }
 }
 
 private struct GraphQLRequest: Encodable {
