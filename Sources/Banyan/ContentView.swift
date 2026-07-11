@@ -445,7 +445,7 @@ struct ContentView: View {
         let diagnostics = linearIssueFilterDiagnostics
         guard diagnostics != lastLinearIssueFilterDiagnostics else { return }
         lastLinearIssueFilterDiagnostics = diagnostics
-        NSLog("Banyan Linear UI filter \(diagnostics)")
+        linearDebugLog("UI filter \(diagnostics)")
     }
 
     private var availableLinearIssueStates: [LinearWorkflowState] {
