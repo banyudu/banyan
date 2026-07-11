@@ -12,7 +12,6 @@ struct ContentView: View {
     @State private var draggingSidebarSessionID: String?
     @State private var linearIssueFilterText = ""
     @State private var selectedLinearIssueStateIDs: Set<String>?
-    @State private var lastLinearIssueFilterDiagnostics = ""
 
     var body: some View {
         NavigationSplitView {
@@ -232,12 +231,6 @@ struct ContentView: View {
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
-        .onAppear {
-            logLinearIssueFilterDiagnostics()
-        }
-        .onChange(of: linearIssueFilterDiagnostics) { _, _ in
-            logLinearIssueFilterDiagnostics()
-        }
     }
 
     private var linearIssueFilterHeader: some View {
@@ -277,12 +270,13 @@ struct ContentView: View {
     }
 
     private var linearIssueStateFilterMenu: some View {
-        HStack(spacing: 8) {
+        let states = availableLinearIssueStates
+        return HStack(spacing: 8) {
             Menu {
-                if availableLinearIssueStates.isEmpty {
+                if states.isEmpty {
                     Text("No states loaded")
                 } else {
-                    ForEach(availableLinearIssueStates) { state in
+                    ForEach(states) { state in
                         Toggle(isOn: linearIssueStateFilterBinding(for: state)) {
                             Label {
                                 Text(state.name)
@@ -304,7 +298,7 @@ struct ContentView: View {
                     }
                 }
             } label: {
-                Label(linearIssueStateFilterLabel, systemImage: "line.3.horizontal.decrease.circle")
+                Label(linearIssueStateFilterLabel(availableStates: states), systemImage: "line.3.horizontal.decrease.circle")
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
             }
@@ -411,41 +405,21 @@ struct ContentView: View {
         let tokens = linearIssueFilterText
             .split(whereSeparator: \.isWhitespace)
             .map { String($0) }
-        let visibleStateIDs = activeLinearIssueStateIDs
-        let visibleStateKeys = activeLinearIssueStateFilterKeys
+        let statesForFiltering = allLinearIssueStatesForFiltering
+        let hasKnownStates = !statesForFiltering.isEmpty
+        let visibleStateIDs = activeLinearIssueStateIDs(in: statesForFiltering)
+        let visibleStateKeys = activeLinearIssueStateFilterKeys(
+            in: statesForFiltering,
+            activeStateIDs: visibleStateIDs
+        )
 
         return store.linearIssues.filter { issue in
-            let matchesState = availableLinearIssueStates.isEmpty
+            let matchesState = !hasKnownStates
                 || visibleStateIDs.contains(issue.state.id)
                 || visibleStateKeys.contains(issue.state.filterKey)
             let matchesText = tokens.isEmpty || issue.matchesFilterTokens(tokens)
             return matchesState && matchesText
         }
-    }
-
-    private var linearIssueFilterDiagnostics: String {
-        let mode = selectedLinearIssueStateIDs == nil ? "default" : "custom"
-        let activeIDs = activeLinearIssueStateIDs.sorted().joined(separator: ",")
-        let activeKeys = activeLinearIssueStateFilterKeys.sorted().joined(separator: ",")
-        let availableStates = linearWorkflowStateSummary(availableLinearIssueStates)
-        return [
-            "mode=\(mode)",
-            "filterText=\(linearIssueFilterText)",
-            "issueCount=\(store.linearIssues.count)",
-            "filteredCount=\(filteredLinearIssues.count)",
-            "issueStates=[\(linearIssueStateCountSummary(store.linearIssues))]",
-            "filteredStates=[\(linearIssueStateCountSummary(filteredLinearIssues))]",
-            "activeIDs=[\(activeIDs)]",
-            "activeKeys=[\(activeKeys)]",
-            "availableStates=[\(availableStates)]"
-        ].joined(separator: " ")
-    }
-
-    private func logLinearIssueFilterDiagnostics() {
-        let diagnostics = linearIssueFilterDiagnostics
-        guard diagnostics != lastLinearIssueFilterDiagnostics else { return }
-        lastLinearIssueFilterDiagnostics = diagnostics
-        linearDebugLog("UI filter \(diagnostics)")
     }
 
     private var availableLinearIssueStates: [LinearWorkflowState] {
@@ -469,31 +443,44 @@ struct ContentView: View {
     }
 
     private var defaultLinearIssueStateIDs: Set<String> {
-        Set(allLinearIssueStatesForFiltering.filter(\.isDefaultVisibleInLinearList).map(\.id))
+        defaultLinearIssueStateIDs(in: allLinearIssueStatesForFiltering)
     }
 
     private var activeLinearIssueStateIDs: Set<String> {
-        selectedLinearIssueStateIDs ?? defaultLinearIssueStateIDs
+        activeLinearIssueStateIDs(in: allLinearIssueStatesForFiltering)
     }
 
     private var activeLinearIssueStateFilterKeys: Set<String> {
-        let activeStateIDs = activeLinearIssueStateIDs
-        return Set(
-            allLinearIssueStatesForFiltering
-                .filter { activeStateIDs.contains($0.id) }
-                .map(\.filterKey)
+        activeLinearIssueStateFilterKeys(
+            in: allLinearIssueStatesForFiltering,
+            activeStateIDs: activeLinearIssueStateIDs
         )
     }
 
-    private var linearIssueStateFilterLabel: String {
-        guard !availableLinearIssueStates.isEmpty else { return "States" }
-        let visibleCount = availableLinearIssueStates.filter { state in
+    private func defaultLinearIssueStateIDs(in states: [LinearWorkflowState]) -> Set<String> {
+        Set(states.filter(\.isDefaultVisibleInLinearList).map(\.id))
+    }
+
+    private func activeLinearIssueStateIDs(in states: [LinearWorkflowState]) -> Set<String> {
+        selectedLinearIssueStateIDs ?? defaultLinearIssueStateIDs(in: states)
+    }
+
+    private func activeLinearIssueStateFilterKeys(
+        in states: [LinearWorkflowState],
+        activeStateIDs: Set<String>
+    ) -> Set<String> {
+        Set(states.filter { activeStateIDs.contains($0.id) }.map(\.filterKey))
+    }
+
+    private func linearIssueStateFilterLabel(availableStates: [LinearWorkflowState]) -> String {
+        guard !availableStates.isEmpty else { return "States" }
+        let visibleCount = availableStates.filter { state in
             !activeLinearIssueStateIDs.intersection(linearIssueStateIDs(matching: state)).isEmpty
         }.count
         if selectedLinearIssueStateIDs == nil {
             return "Default states"
         }
-        if visibleCount == availableLinearIssueStates.count {
+        if visibleCount == availableStates.count {
             return "All states"
         }
         return "\(visibleCount) states"
