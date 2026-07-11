@@ -147,26 +147,42 @@ enum LinearIssueLoadState: Equatable {
 
 enum LinearIssueClient {
     static func fetchIssueList(cwd: String, limit: Int = 0) async throws -> [LinearIssueSummary] {
-        let output = try await runCommand(
-            [
-                "linear",
-                "issue",
-                "query",
-                "--all-teams",
-                "--assignee",
-                "self",
-                "--all-states",
-                "--sort",
-                "priority",
-                "--limit",
-                "\(limit)",
-                "--json",
-                "--no-pager"
-            ],
-            cwd: cwd,
-            timeout: 30
-        )
-        return try decodeIssueListResponse(output)
+        var issues: [LinearIssueSummary] = []
+        var after: String?
+        var page = 1
+        repeat {
+            let request = GraphQLIssueListPageRequest(
+                query: issueListPageQuery,
+                variables: GraphQLIssueListPageVariables(after: after)
+            )
+            let variables = String(decoding: try JSONEncoder().encode(request.variables), as: UTF8.self)
+            let output = try await runCommand(
+                [
+                    "linear",
+                    "api",
+                    request.query,
+                    "--variables-json",
+                    variables
+                ],
+                cwd: cwd,
+                timeout: 15
+            )
+            let pageResult = try decodeIssueListPageResponse(output)
+            issues.append(contentsOf: pageResult.issues)
+            linearDebugLog("issue list page decoded page=\(page) pageCount=\(pageResult.issues.count) totalCount=\(issues.count) hasNext=\(pageResult.hasNextPage) states=[\(linearIssueStateCountSummary(pageResult.issues))]")
+
+            if limit > 0, issues.count >= limit {
+                return Array(issues.prefix(limit))
+            }
+            after = pageResult.endCursor
+            page += 1
+            if !pageResult.hasNextPage {
+                break
+            }
+        } while after != nil
+
+        linearDebugLog("issue list decoded count=\(issues.count) states=[\(linearIssueStateCountSummary(issues))]")
+        return issues
     }
 
     static func fetchWorkflowStates(cwd: String) async throws -> [LinearWorkflowState] {
@@ -330,11 +346,19 @@ enum LinearIssueClient {
         return issue.details
     }
 
-    private static func decodeIssueListResponse(_ output: String) throws -> [LinearIssueSummary] {
-        let payload = try JSONDecoder().decode(LinearIssueListResponse.self, from: Data(output.utf8))
-        let issues = payload.nodes.map(\.summary)
-        linearDebugLog("issue list decoded count=\(issues.count) states=[\(linearIssueStateCountSummary(issues))]")
-        return issues
+    private static func decodeIssueListPageResponse(_ output: String) throws -> LinearIssueListPageResult {
+        let payload = try JSONDecoder().decode(GraphQLIssueListPageResponse.self, from: Data(output.utf8))
+        if payload.errors?.isEmpty == false {
+            throw LinearIssueClientError.requestFailed
+        }
+        guard let page = payload.data?.issues else {
+            throw LinearIssueClientError.requestFailed
+        }
+        return LinearIssueListPageResult(
+            issues: page.nodes.map(\.summary),
+            hasNextPage: page.pageInfo.hasNextPage,
+            endCursor: page.pageInfo.endCursor
+        )
     }
 
     private static func decodeIssueStatusResponse(_ output: String) throws -> LinearIssueStatusSnapshot {
@@ -563,6 +587,38 @@ enum LinearIssueClient {
       }
     }
     """
+
+    private static let issueListPageQuery = """
+    query BanyanIssueListPage($after: String) {
+      issues(first: 250, after: $after, filter: { assignee: { isMe: { eq: true } } }) {
+        nodes {
+          id
+          identifier
+          title
+          url
+          priority
+          priorityLabel
+          updatedAt
+          state {
+            id
+            name
+            type
+            color
+            position
+          }
+          assignee { name }
+          team { key name }
+          project { name }
+          cycle { name number }
+          labels { nodes { name color } }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+    """
 }
 
 private enum LinearIssueClientError: Error {
@@ -577,8 +633,38 @@ private struct GraphQLRequest: Encodable {
     let variables: [String: String]
 }
 
-private struct LinearIssueListResponse: Decodable {
+private struct GraphQLIssueListPageRequest: Encodable {
+    let query: String
+    let variables: GraphQLIssueListPageVariables
+}
+
+private struct GraphQLIssueListPageVariables: Encodable {
+    let after: String?
+}
+
+private struct LinearIssueListPageResult {
+    let issues: [LinearIssueSummary]
+    let hasNextPage: Bool
+    let endCursor: String?
+}
+
+private struct GraphQLIssueListPageResponse: Decodable {
+    let data: GraphQLIssueListPageData?
+    let errors: [GraphQLError]?
+}
+
+private struct GraphQLIssueListPageData: Decodable {
+    let issues: GraphQLIssueListConnection
+}
+
+private struct GraphQLIssueListConnection: Decodable {
     let nodes: [LinearIssueSummaryPayload]
+    let pageInfo: GraphQLPageInfo
+}
+
+private struct GraphQLPageInfo: Decodable {
+    let hasNextPage: Bool
+    let endCursor: String?
 }
 
 private struct LinearIssueSummaryPayload: Decodable {

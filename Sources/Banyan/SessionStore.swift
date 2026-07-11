@@ -434,7 +434,10 @@ final class SessionStore: ObservableObject {
 
     func refreshLinearIssueList() {
         loadCachedLinearIssuesIfNeeded()
-        linearIssueListTask?.cancel()
+        guard linearIssueListTask == nil else {
+            linearDebugLog("list refresh ignored because refresh is already running")
+            return
+        }
         let hasStaleIssues = !linearIssues.isEmpty
         linearIssueListLoadState = hasStaleIssues ? .loaded : .loading
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
