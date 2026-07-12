@@ -13,8 +13,8 @@ struct BanyanApp: App {
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
-                    CommandWTerminalCloseMonitor.shared.action = {
-                        store.requestCloseSelectedSession()
+                    CommandWTerminalCloseMonitor.shared.action = { window in
+                        store.handleCloseCommand(in: window)
                     }
                     CommandWTerminalCloseMonitor.shared.start()
                 }
@@ -42,10 +42,17 @@ struct BanyanApp: App {
             }
             CommandMenu("Terminal") {
                 Button("Close Current Terminal") {
-                    store.requestCloseSelectedSession()
+                    store.handleCloseCommand(in: NSApp.keyWindow)
                 }
                 .keyboardShortcut("w")
-                .disabled(store.selectedSession == nil)
+                .disabled(store.selectedSession == nil && !store.hasScratchTerminal)
+
+                Divider()
+
+                Button("Open Scratch Terminal") {
+                    store.openScratchTerminal()
+                }
+                .keyboardShortcut("d")
 
                 Divider()
 
@@ -138,7 +145,7 @@ private extension NSMenu {
 private final class CommandWTerminalCloseMonitor {
     static let shared = CommandWTerminalCloseMonitor()
 
-    var action: () -> Void = {}
+    var action: (NSWindow?) -> Void = { _ in }
     private var monitor: Any?
 
     private init() {}
@@ -153,7 +160,7 @@ private final class CommandWTerminalCloseMonitor {
             guard Self.matchesPlainCommandW(event) else {
                 return event
             }
-            self?.action()
+            self?.action(event.window ?? NSApp.keyWindow)
             return nil
         }
     }

@@ -1,6 +1,7 @@
 import BanyanCore
 import Foundation
 import AppKit
+import SwiftUI
 
 struct SidebarSessionItem: Identifiable {
     let session: BanyanSession
@@ -84,8 +85,12 @@ struct LivePromptTitleMatchInput: Equatable {
 
 @MainActor
 final class SessionStore: ObservableObject {
+    private static let scratchWindowIdentifier = NSUserInterfaceItemIdentifier("banyan.scratch-terminal")
+
     @Published private(set) var sessions: [BanyanSession] = []
     @Published private(set) var terminalFocusRequestID = UUID()
+    @Published private(set) var scratchTerminalFocusRequestID = UUID()
+    @Published private(set) var scratchSession: BanyanSession?
     @Published private(set) var selectedContextInfo: SessionContextInfo? {
         didSet {
             refreshSelectedLinearIssue()
@@ -180,6 +185,9 @@ final class SessionStore: ObservableObject {
     private var linearIssueListTask: Task<Void, Never>?
     private var selectedLinearListIssueTask: Task<Void, Never>?
     private var workspaceSaveTask: Task<Void, Never>?
+    private var scratchWindow: NSWindow?
+    private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
+    private var isClosingScratchTerminal = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -356,6 +364,10 @@ final class SessionStore: ObservableObject {
     var selectedSession: BanyanSession? {
         guard let selectedSessionID else { return nil }
         return sessions.first { $0.id == selectedSessionID }
+    }
+
+    var hasScratchTerminal: Bool {
+        scratchSession != nil
     }
 
     var pendingCloseSession: BanyanSession? {
@@ -693,6 +705,77 @@ final class SessionStore: ObservableObject {
     func spawnSiblingSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
         return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.parentSessionID)
+    }
+
+    func openScratchTerminal() {
+        if let window = scratchWindow, scratchSession != nil {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            requestScratchTerminalFocus()
+            return
+        }
+
+        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let id = uniqueID("scratch", avoidingLiveTmuxSessions: true)
+        let session = BanyanSession(
+            id: id,
+            tmuxSessionName: TmuxBackend.sessionName(for: id),
+            title: "Scratch",
+            isTitlePinned: true,
+            cwd: resolvedWorkingDirectory(cwd),
+            command: "",
+            tone: .neutral,
+            theme: terminalTheme,
+            fontFamily: terminalFontFamily,
+            fontSize: terminalFontSize
+        )
+        attachScratch(session)
+        scratchSession = session
+
+        let rootView = ScratchTerminalWindow(session: session)
+            .environmentObject(self)
+            .buttonStyle(.banyanDefault)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 880, height: 500),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.identifier = Self.scratchWindowIdentifier
+        window.title = scratchWindowTitle(for: session)
+        window.contentViewController = NSHostingController(rootView: rootView)
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.fullScreenAuxiliary]
+
+        let delegate = ScratchTerminalWindowDelegate { [weak self] in
+            Task { @MainActor in
+                self?.scratchTerminalWindowWillClose()
+            }
+        }
+        window.delegate = delegate
+        scratchWindow = window
+        scratchWindowDelegate = delegate
+
+        positionScratchWindow(window)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        requestScratchTerminalFocus()
+    }
+
+    func handleCloseCommand(in window: NSWindow?) {
+        if isScratchTerminalWindow(window) {
+            closeScratchTerminal()
+            return
+        }
+        requestCloseSelectedSession()
+    }
+
+    func closeScratchTerminal() {
+        closeScratchTerminal(closeWindow: true, killBackingSession: true)
+    }
+
+    private func scratchTerminalWindowWillClose() {
+        closeScratchTerminal(closeWindow: false, killBackingSession: true)
     }
 
     func showCustomSessionSheet() {
@@ -1407,6 +1490,57 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func attachScratch(_ session: BanyanSession) {
+        session.onDidChange = { [weak self, weak session] in
+            Task { @MainActor in
+                guard let self, let session, self.scratchSession === session else { return }
+                self.scratchWindow?.title = self.scratchWindowTitle(for: session)
+            }
+        }
+        session.onOutput = { [weak session] _ in
+            guard let session else { return }
+            PerformanceTelemetry.shared.noteSessionFirstOutput(sessionID: session.id)
+        }
+        session.onStatusSignal = nil
+        session.onProcessExit = { [weak self, weak session] _ in
+            guard let self, let session, self.scratchSession === session else { return }
+            if self.tmuxBackend.hasSession(named: session.tmuxSessionName) {
+                session.detachTerminalClient()
+            } else {
+                self.closeScratchTerminal(closeWindow: true, killBackingSession: false)
+            }
+        }
+    }
+
+    private func closeScratchTerminal(closeWindow: Bool, killBackingSession: Bool) {
+        guard !isClosingScratchTerminal else { return }
+        guard scratchSession != nil || scratchWindow != nil else { return }
+        isClosingScratchTerminal = true
+
+        let session = scratchSession
+        let window = scratchWindow
+        scratchSession = nil
+        scratchWindow = nil
+        scratchWindowDelegate = nil
+
+        if killBackingSession {
+            session?.killBackingSession()
+        } else {
+            session?.terminate(markClosed: true)
+        }
+
+        if closeWindow {
+            window?.delegate = nil
+            window?.close()
+        }
+
+        isClosingScratchTerminal = false
+    }
+
+    private func requestScratchTerminalFocus() {
+        scratchTerminalFocusRequestID = UUID()
+    }
+
     private func requestTerminalFocus() {
         terminalFocusRequestID = UUID()
     }
@@ -1415,6 +1549,7 @@ final class SessionStore: ObservableObject {
         sessions.forEach {
             $0.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
         }
+        scratchSession?.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
     }
 
     private func saveSessions() {
@@ -1936,6 +2071,27 @@ final class SessionStore: ObservableObject {
         if didUpdateProvider {
             refreshLiveAgentTitles(from: latestImportedHistory)
         }
+    }
+
+    private func isScratchTerminalWindow(_ window: NSWindow?) -> Bool {
+        window?.identifier == Self.scratchWindowIdentifier
+    }
+
+    private func scratchWindowTitle(for session: BanyanSession) -> String {
+        "Scratch - \(PathDisplayName.make(path: session.cwd))"
+    }
+
+    private func positionScratchWindow(_ window: NSWindow) {
+        let fallbackScreen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let anchorWindow = NSApp.keyWindow ?? NSApp.mainWindow
+        let anchorFrame = anchorWindow?.frame ?? fallbackScreen
+        let visibleFrame = anchorWindow?.screen?.visibleFrame ?? fallbackScreen
+
+        let width = min(max(anchorFrame.width * 0.72, 720), visibleFrame.width - 80)
+        let height = min(max(anchorFrame.height * 0.52, 420), visibleFrame.height - 80)
+        let originX = min(max(anchorFrame.midX - width / 2, visibleFrame.minX + 40), visibleFrame.maxX - width - 40)
+        let originY = min(max(anchorFrame.midY - height / 2, visibleFrame.minY + 40), visibleFrame.maxY - height - 40)
+        window.setFrame(NSRect(x: originX, y: originY, width: width, height: height), display: false)
     }
 
     private func resolvedWorkingDirectory(_ cwd: String?) -> String {
