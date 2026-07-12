@@ -211,6 +211,7 @@ enum AgentSessionHistoryImporter {
                 updatedAt = max(updatedAt, timestamp)
             }
             if object["type"] as? String == "user",
+               !isSkippableClaudeUserObject(object),
                let message = object["message"] as? [String: Any],
                let prompt = bodyFromClaudeMessage(message) {
                 titleTracker.observe(prompt)
@@ -343,6 +344,9 @@ enum AgentSessionHistoryImporter {
               let content = plainText(from: message["content"]) else {
             return nil
         }
+        if type == "user", isSkippableClaudeUserObject(object) {
+            return nil
+        }
         return "\(role.capitalized): \(content)"
     }
 
@@ -378,7 +382,55 @@ enum AgentSessionHistoryImporter {
 
     private static func sanitizedBody(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed?.isEmpty == false ? trimmed : nil
+        guard let trimmed, trimmed.isEmpty == false else { return nil }
+        guard !isClaudeLocalCommandText(trimmed) else { return nil }
+        return trimmed
+    }
+
+    private static func isSkippableClaudeUserObject(_ object: [String: Any]) -> Bool {
+        if object["isMeta"] as? Bool == true {
+            return true
+        }
+        guard let message = object["message"] as? [String: Any] else {
+            return false
+        }
+        return isClaudeLocalCommandContent(message["content"])
+    }
+
+    private static func isClaudeLocalCommandContent(_ value: Any?) -> Bool {
+        if let text = value as? String {
+            return isClaudeLocalCommandText(text)
+        }
+        guard let parts = value as? [[String: Any]] else {
+            return false
+        }
+        return parts.contains { part in
+            if let text = part["text"] as? String, isClaudeLocalCommandText(text) {
+                return true
+            }
+            if let content = part["content"] as? String, isClaudeLocalCommandText(content) {
+                return true
+            }
+            return false
+        }
+    }
+
+    private static func isClaudeLocalCommandText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let localCommandTags = [
+            "command-args",
+            "command-message",
+            "command-name",
+            "local-command-caveat",
+            "local-command-stderr",
+            "local-command-stdout"
+        ]
+        return localCommandTags.contains { tag in
+            trimmed.range(
+                of: #"^<\#(tag)(?:\s[^>]*)?>"#,
+                options: .regularExpression
+            ) != nil
+        }
     }
 
     private static func importedID(provider: CodingAgentProvider, sourceID: String) -> String {
