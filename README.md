@@ -69,6 +69,32 @@ On first launch after upgrading, Banyan migrates legacy session metadata from `s
 
 Persisted state currently includes session metadata, tmux session names, generated titles, sidebar order, selected session, sort mode, terminal theme, and terminal font settings.
 
+## Performance Telemetry
+
+Banyan collects local, CWV-like performance events for app-specific workflows such as switching sessions, attaching terminals, refreshing tmux clients, and resolving selected-session context. The data is stored locally in:
+
+```text
+~/Library/Application Support/Banyan/state.sqlite
+```
+
+Use the CLI report before investigating performance issues:
+
+```sh
+dist/bin/banyanctl perf report --since 7d
+dist/bin/banyanctl perf report --since 7d --json
+```
+
+Important metrics include `session_switch.total`, `session_switch.to_terminal_ready`, `session_switch.to_first_output`, `terminal.ready_wait`, `terminal.start_client`, `terminal.reattach_client`, `tmux.refresh_clients`, and `selected_context.resolve`.
+
+To turn the collected report into a targeted agent task:
+
+```sh
+dist/bin/banyanctl perf prompt --since 7d
+dist/bin/banyanctl perf fix --since 7d --agent codex --cwd "$PWD"
+```
+
+`perf fix` does not silently rewrite the running app. It creates a Banyan-native coding-agent session with the local telemetry report as evidence, so fixes still go through normal code review and test flow.
+
 ## Package
 
 ```sh
