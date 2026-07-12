@@ -190,7 +190,7 @@ struct ContentView: View {
                     .help("Close selected session")
                 }
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
@@ -223,11 +223,11 @@ struct ContentView: View {
                 } label: {
                     Label("Start", systemImage: "play.fill")
                 }
-                .disabled(store.selectedLinearListIssueID == nil || store.linearIssueListLoadState.isStarting)
                 .accessibilityIdentifier(AccessibilityID.linearIssueStartButton)
+                .disabled(store.selectedLinearListIssueID == nil || store.linearIssueListLoadState.isStarting)
                 .help("Start Banyan session for selected issue")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
@@ -260,7 +260,7 @@ struct ContentView: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.banyanPlain)
                 .help("Clear filter")
             }
         }
@@ -335,7 +335,7 @@ struct ContentView: View {
                 Button("Retry") {
                     store.refreshLinearIssueList()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.banyanBordered)
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -839,7 +839,7 @@ private struct LinearIssueRow: View {
                     Image(systemName: "play.fill")
                 }
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .frame(width: 24, height: 24)
             .disabled(isStarting)
             .help("Start Banyan session")
@@ -994,7 +994,7 @@ private struct TitleBarContextButton: View {
                     .font(.system(size: 11, weight: .medium))
                 Text(primary)
                     .font(.system(size: 12, weight: .semibold))
-                    .underline(isHovered)
+                    .underline(isEnabled && isHovered)
                 if let secondary = sanitizedSecondary {
                     Text(secondary)
                         .font(.system(size: 12))
@@ -1005,11 +1005,11 @@ private struct TitleBarContextButton: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.banyanPlainLabelOnly)
+        .onHover { isHovered = isEnabled && $0 }
+        .onDisappear { isHovered = false }
         .disabled(!isEnabled)
         .help(help)
-        .onHover(perform: setHovered)
-        .onDisappear(perform: resetHover)
         .accessibilityIdentifier(accessibilityIdentifier)
     }
 
@@ -1018,21 +1018,6 @@ private struct TitleBarContextButton: View {
         return trimmed?.isEmpty == false ? trimmed : nil
     }
 
-    private func setHovered(_ hovered: Bool) {
-        guard isEnabled, isHovered != hovered else { return }
-        isHovered = hovered
-        if hovered {
-            NSCursor.pointingHand.push()
-        } else {
-            NSCursor.pop()
-        }
-    }
-
-    private func resetHover() {
-        guard isHovered else { return }
-        isHovered = false
-        NSCursor.pop()
-    }
 }
 
 private struct TitleBarLogo: NSViewRepresentable {
@@ -1291,8 +1276,9 @@ private struct SessionRow: View {
                         .scaleEffect(isHandoffHovered ? 1.06 : 1)
                         .animation(.easeOut(duration: 0.12), value: isHandoffHovered)
                 }
-                .buttonStyle(.plain)
-                .onHover(perform: setHandoffHovered)
+                .buttonStyle(.banyanPlainLabelOnly)
+                .onHover { isHandoffHovered = $0 }
+                .onDisappear { isHandoffHovered = false }
                 .help("Handoff")
                 .accessibilityLabel("Handoff")
                 .accessibilityIdentifier(AccessibilityID.sessionRowHandoffButton(session.id))
@@ -1331,7 +1317,6 @@ private struct SessionRow: View {
         }
         .onDisappear {
             resetIssueLinkHover()
-            resetHandoffHover()
         }
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
     }
@@ -1418,22 +1403,6 @@ private struct SessionRow: View {
     private func resetIssueLinkHover() {
         guard isIssueLinkHovered else { return }
         isIssueLinkHovered = false
-        NSCursor.pop()
-    }
-
-    private func setHandoffHovered(_ isHovered: Bool) {
-        guard isHandoffHovered != isHovered else { return }
-        isHandoffHovered = isHovered
-        if isHovered {
-            NSCursor.pointingHand.push()
-        } else {
-            NSCursor.pop()
-        }
-    }
-
-    private func resetHandoffHover() {
-        guard isHandoffHovered else { return }
-        isHandoffHovered = false
         NSCursor.pop()
     }
 
@@ -1669,7 +1638,7 @@ private struct ClosedSessionHistoryView: View {
                 } label: {
                     Label("Reopen", systemImage: "arrow.uturn.forward.circle.fill")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.banyanBorderedProminent)
                 .controlSize(.small)
                 .help("Reopen the closed Banyan session")
             }
@@ -1720,7 +1689,7 @@ private struct ImportedSessionHistoryView: View {
                 } label: {
                     Label("Resume", systemImage: "play.fill")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.banyanBorderedProminent)
                 .controlSize(.small)
                 .help("Resume in a Banyan session")
 
@@ -1729,7 +1698,7 @@ private struct ImportedSessionHistoryView: View {
                 } label: {
                     Image(systemName: "doc.text.magnifyingglass")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.banyanBorderless)
                 .help("Reveal transcript")
             }
             .padding(.horizontal, 16)
@@ -1757,7 +1726,7 @@ private struct ImportedSessionHistoryView: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.banyanBorderless)
                 .font(.system(size: 20))
                 .help("Resume with message")
                 .disabled(resumePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1819,7 +1788,7 @@ private struct TerminalReconnectBanner: View {
             } label: {
                 Label("Attach", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.banyanBorderedProminent)
             .controlSize(.small)
             .accessibilityIdentifier(AccessibilityID.terminalAttachButton)
         }

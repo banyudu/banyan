@@ -45,21 +45,21 @@ struct PullRequestPreviewPanel: View {
             Button(action: onRefresh) {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .accessibilityIdentifier(AccessibilityID.pullRequestPreviewRefreshButton)
             .help("Refresh pull request")
 
             Button(action: onOpen) {
                 Image(systemName: "arrow.up.forward.square")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .accessibilityIdentifier(AccessibilityID.pullRequestPreviewOpenButton)
             .help("Open in GitHub")
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .accessibilityIdentifier(AccessibilityID.pullRequestPreviewCloseButton)
             .help("Close pull request preview")
         }
@@ -76,7 +76,7 @@ struct PullRequestPreviewPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 placeholder(message)
                 Button("Retry", action: onRefresh)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.banyanBordered)
             }
             .padding(14)
         case .loaded:

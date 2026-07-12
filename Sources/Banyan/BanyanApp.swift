@@ -10,6 +10,7 @@ struct BanyanApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
+                .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
                     CommandWTerminalCloseMonitor.shared.action = {

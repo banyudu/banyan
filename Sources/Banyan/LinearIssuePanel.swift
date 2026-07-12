@@ -106,14 +106,14 @@ struct LinearIssuePanel: View {
             Button(action: onRefresh) {
                 Image(systemName: "arrow.clockwise")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .accessibilityIdentifier(AccessibilityID.linearIssueRefreshButton)
             .help("Refresh Linear issue")
 
             Button(action: onOpen) {
                 Image(systemName: "arrow.up.forward.square")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .accessibilityIdentifier(AccessibilityID.linearIssueOpenButton)
             .help("Open in Linear")
         }
@@ -137,14 +137,14 @@ struct LinearIssuePanel: View {
             Button(action: action) {
                 Image(systemName: "play.fill")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.banyanBorderless)
             .disabled(isStarting)
             .help("Start Banyan session")
         case .main:
             Button(action: action) {
                 Label("Start Session", systemImage: "play.fill")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.banyanBorderedProminent)
             .controlSize(.small)
             .disabled(isStarting)
             .help("Start Banyan session")
@@ -164,7 +164,7 @@ struct LinearIssuePanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 placeholder(message)
                 Button("Retry", action: onRefresh)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.banyanBordered)
             }
             .padding(14)
         case .loaded:
@@ -256,7 +256,7 @@ struct LinearIssuePanel: View {
                                     Spacer(minLength: 0)
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.banyanPlain)
                             .foregroundStyle(.primary)
                         }
                     }
@@ -372,4 +372,3 @@ struct LinearIssuePanel: View {
         }
     }
 }
-

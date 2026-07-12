@@ -16,7 +16,7 @@ struct PreferencesSheet: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.banyanBorderless)
                 .help("Close")
             }
 
