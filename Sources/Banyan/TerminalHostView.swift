@@ -21,7 +21,13 @@ struct TerminalHostView: NSViewRepresentable {
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         container.needsLayout = true
         context.coordinator.lastFocusRequestID = focusRequestID
+        let readyStartedAt = DispatchTime.now()
         container.performWhenTerminalReady(for: session.terminalView) {
+            PerformanceTelemetry.shared.recordDuration(
+                "terminal.ready_wait",
+                durationMS: PerformanceTelemetry.elapsedMS(since: readyStartedAt),
+                sessionID: session.id
+            )
             handleTerminalReady()
         }
         container.focusTerminalWhenReady()
@@ -29,7 +35,15 @@ struct TerminalHostView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: TerminalContainerView, context: Context) {
+        let installStartedAt = DispatchTime.now()
         let didInstall = nsView.install(session.terminalView)
+        if didInstall {
+            PerformanceTelemetry.shared.recordDuration(
+                "terminal.install_view",
+                durationMS: PerformanceTelemetry.elapsedMS(since: installStartedAt),
+                sessionID: session.id
+            )
+        }
         nsView.onUserSubmittedInput = { session.noteUserSubmittedInput($0) }
         nsView.apply(theme: theme)
         nsView.onLayout = {
@@ -40,7 +54,13 @@ struct TerminalHostView: NSViewRepresentable {
             nsView.needsLayout = true
             nsView.syncTerminalFrameIfNeeded(markNeedsDisplay: true)
         }
+        let readyStartedAt = DispatchTime.now()
         nsView.performWhenTerminalReady(for: session.terminalView) {
+            PerformanceTelemetry.shared.recordDuration(
+                "terminal.ready_wait",
+                durationMS: PerformanceTelemetry.elapsedMS(since: readyStartedAt),
+                sessionID: session.id
+            )
             handleTerminalReady()
         }
         if context.coordinator.lastFocusRequestID != focusRequestID {
@@ -58,6 +78,7 @@ struct TerminalHostView: NSViewRepresentable {
     }
 
     private func handleTerminalReady() {
+        PerformanceTelemetry.shared.noteSessionTerminalReady(sessionID: session.id)
         session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         guard session.status != .closed,
               !session.isImportedHistory,

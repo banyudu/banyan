@@ -117,6 +117,13 @@ final class SessionStore: ObservableObject {
     @Published var addSessionDraft: AddSessionDraft?
     @Published var selectedSessionID: String? {
         didSet {
+            if oldValue != selectedSessionID {
+                PerformanceTelemetry.shared.beginSessionSwitch(
+                    from: oldValue,
+                    to: selectedSessionID,
+                    visibleSessionCount: visibleSessions.count
+                )
+            }
             saveWorkspaceSoon()
             requestTerminalFocus()
             if oldValue != selectedSessionID {
@@ -1383,6 +1390,7 @@ final class SessionStore: ObservableObject {
         }
         session.onOutput = { [weak self, weak session] text in
             guard let self, let session else { return }
+            PerformanceTelemetry.shared.noteSessionFirstOutput(sessionID: session.id)
             self.detectAttention(in: text, for: session)
         }
         session.onStatusSignal = { [weak session] status in
@@ -1750,9 +1758,16 @@ final class SessionStore: ObservableObject {
         }
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .utility) {
+            let startedAt = DispatchTime.now()
             let info = SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
+            PerformanceTelemetry.shared.recordDuration(
+                "selected_context.resolve",
+                durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                sessionID: input.sessionID,
+                detail: "signature=\(input.signature)"
+            )
             await MainActor.run { [weak self] in
                 guard let self,
                       self.selectedSessionID == input.sessionID,
@@ -1770,9 +1785,16 @@ final class SessionStore: ObservableObject {
         selectedContextSignature = input.signature
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .userInitiated) {
+            let startedAt = DispatchTime.now()
             let info = SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
+            PerformanceTelemetry.shared.recordDuration(
+                "selected_context.resolve",
+                durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                sessionID: input.sessionID,
+                detail: "signature=\(input.signature) open_pr"
+            )
             await MainActor.run { [weak self] in
                 guard let self,
                       self.selectedSessionID == input.sessionID,
@@ -1797,9 +1819,16 @@ final class SessionStore: ObservableObject {
         selectedContextSignature = input.signature
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .userInitiated) {
+            let startedAt = DispatchTime.now()
             let info = SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
+            PerformanceTelemetry.shared.recordDuration(
+                "selected_context.resolve",
+                durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                sessionID: input.sessionID,
+                detail: "signature=\(input.signature) pr_preview"
+            )
             await MainActor.run { [weak self] in
                 guard let self,
                       self.selectedSessionID == input.sessionID,

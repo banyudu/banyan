@@ -207,7 +207,14 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard !isImportedHistory else { return }
         guard !terminalView.process.running else { return }
         isDetachingTerminalClient = false
+        let startedAt = DispatchTime.now()
         startTerminalClient()
+        PerformanceTelemetry.shared.recordDuration(
+            "terminal.start_client",
+            durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+            sessionID: id,
+            detail: "tmux=\(tmuxSessionName)"
+        )
     }
 
     func refreshTerminalClient() {
@@ -215,12 +222,20 @@ final class BanyanSession: ObservableObject, Identifiable {
         terminalRefreshTask?.cancel()
         let tmuxBackend = tmuxBackend
         let tmuxSessionName = tmuxSessionName
+        let sessionID = id
         terminalRefreshTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard !Task.isCancelled else { return }
+            let startedAt = DispatchTime.now()
             await Task.detached(priority: .utility) {
                 tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
             }.value
+            PerformanceTelemetry.shared.recordDuration(
+                "tmux.refresh_clients",
+                durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                sessionID: sessionID,
+                detail: "tmux=\(tmuxSessionName)"
+            )
             guard let self,
                   !Task.isCancelled,
                   !self.isImportedHistory,
@@ -244,12 +259,19 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard capturedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             return
         }
+        PerformanceTelemetry.shared.recordDuration(
+            "terminal.blank_recovery",
+            durationMS: 1,
+            sessionID: id,
+            detail: "tmux=\(tmuxSessionName)"
+        )
         attemptedBlankTerminalRecovery = true
         reattachTerminalClient(resetBlankRecoveryAttempt: false)
     }
 
     func reattachTerminalClient(resetBlankRecoveryAttempt: Bool = true) {
         guard !isImportedHistory else { return }
+        let startedAt = DispatchTime.now()
         terminalRefreshTask?.cancel()
         if terminalView.process.running {
             isDetachingTerminalClient = true
@@ -260,6 +282,12 @@ final class BanyanSession: ObservableObject, Identifiable {
         isRestored = false
         terminalView.resetForNewProcess()
         startTerminalClient(resetBlankRecoveryAttempt: resetBlankRecoveryAttempt)
+        PerformanceTelemetry.shared.recordDuration(
+            "terminal.reattach_client",
+            durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+            sessionID: id,
+            detail: "tmux=\(tmuxSessionName)"
+        )
     }
 
     func restartBackingSession() {
