@@ -10,7 +10,7 @@ struct BanyanDefaultButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         DefaultButtonStyle()
             .makeBody(configuration: configuration)
-            .banyanButtonHoverEffect()
+            .banyanButtonHoverEffect(.labelOnly)
     }
 }
 
@@ -26,7 +26,7 @@ struct BanyanBorderedButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         BorderedButtonStyle()
             .makeBody(configuration: configuration)
-            .banyanButtonHoverEffect()
+            .banyanButtonHoverEffect(.labelOnly)
     }
 }
 
@@ -34,7 +34,7 @@ struct BanyanBorderedProminentButtonStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         BorderedProminentButtonStyle()
             .makeBody(configuration: configuration)
-            .banyanButtonHoverEffect()
+            .banyanButtonHoverEffect(.labelOnly)
     }
 }
 
@@ -60,7 +60,6 @@ struct BanyanButtonHoverEffect: ViewModifier {
         content
             .contentShape(Rectangle())
             .background(hoverBackground)
-            .scaleEffect(isActive ? 1.025 : 1)
             .animation(.easeOut(duration: 0.12), value: isActive)
             .onHover(perform: setHovered)
             .onChange(of: isEnabled) { _, enabled in
@@ -76,7 +75,7 @@ struct BanyanButtonHoverEffect: ViewModifier {
         if isActive, style == .standard {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Color.primary.opacity(0.08))
-                .padding(-4)
+                .padding(-2)
         }
     }
 
