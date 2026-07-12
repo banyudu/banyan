@@ -264,7 +264,13 @@ final class SessionStore: ObservableObject {
             )
         }
 
-        return groups
+        return groups.sorted {
+            let titleComparison = $0.title.localizedCaseInsensitiveCompare($1.title)
+            if titleComparison == .orderedSame {
+                return $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending
+            }
+            return titleComparison == .orderedAscending
+        }
     }
 
     var historySidebarGroup: SidebarSessionGroup? {
