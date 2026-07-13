@@ -28,6 +28,22 @@ struct SessionContextInfo: Equatable, Sendable {
     let pullRequestNumber: Int?
     let pullRequestTitle: String?
     let pullRequestURL: String?
+
+    /// Re-stamp a cached result for a new session/signature. The network-derived
+    /// fields (linear title, PR) depend only on cwd + issue/PR tokens, so a cache
+    /// entry stays valid across signatures that share the same resolver cache key.
+    func reidentified(sessionID: String, signature: String) -> SessionContextInfo {
+        SessionContextInfo(
+            sessionID: sessionID,
+            signature: signature,
+            linearIssueID: linearIssueID,
+            linearIssueTitle: linearIssueTitle,
+            linearIssueURL: linearIssueURL,
+            pullRequestNumber: pullRequestNumber,
+            pullRequestTitle: pullRequestTitle,
+            pullRequestURL: pullRequestURL
+        )
+    }
 }
 
 enum SessionContextResolver {
@@ -38,7 +54,7 @@ enum SessionContextResolver {
             ?? LinearIssueReference.issueID(in: input.displayTitle)
             ?? LinearIssueReference.detect(branch: projectContext.branch, cwd: input.cwd)?.id
         let linearTitle = isCancelled() ? nil : detectedIssueID.flatMap { issueID in
-            commandOutput(["linear", "issue", "title", issueID], cwd: input.cwd, isCancelled: isCancelled)
+            commandOutput(["linear", "issue", "title", issueID], cwd: input.cwd, timeout: networkTimeout, isCancelled: isCancelled)
         }
         let resolvedIssueID = detectedIssueID
         let linearURL = resolvedIssueID.map(LinearIssueReference.issueURL(for:))
@@ -58,6 +74,48 @@ enum SessionContextResolver {
             pullRequestTitle: pullRequest?.title,
             pullRequestURL: pullRequest?.url
         )
+    }
+
+    /// Best-effort timeout for the network CLIs (`linear`, `gh`). Kept short so a
+    /// slow/offline lookup can't stall context resolution; cache absorbs the rest.
+    private static let networkTimeout: TimeInterval = 2.5
+
+    /// Pure, subprocess-free resolution: only the issue ID and PR URL that can be
+    /// parsed directly from the session title strings. Used to populate the
+    /// titlebar instantly while the network/git enrichment runs (or on cache miss).
+    static func resolveFast(input: SessionContextLookupInput) -> SessionContextInfo {
+        let issueID = titleIssueID(input)
+        let explicitPR = titlePullRequestURL(input)
+        return SessionContextInfo(
+            sessionID: input.sessionID,
+            signature: input.signature,
+            linearIssueID: issueID,
+            linearIssueTitle: nil,
+            linearIssueURL: issueID.map(LinearIssueReference.issueURL(for:)),
+            pullRequestNumber: explicitPR.flatMap(pullRequestNumber(in:)),
+            pullRequestTitle: nil,
+            pullRequestURL: explicitPR
+        )
+    }
+
+    /// Key for the resolve cache. Captures only the inputs that actually change the
+    /// network/git result — the working directory and any issue/PR tokens embedded
+    /// in the title — so free-text title churn no longer forces a re-resolve.
+    static func cacheKey(for input: SessionContextLookupInput) -> String {
+        [input.cwd, titleIssueID(input) ?? "", titlePullRequestURL(input) ?? ""]
+            .joined(separator: "\u{1f}")
+    }
+
+    private static func titleIssueID(_ input: SessionContextLookupInput) -> String? {
+        LinearIssueReference.issueID(in: input.title)
+            ?? LinearIssueReference.issueID(in: input.titleURL)
+            ?? LinearIssueReference.issueID(in: input.displayTitle)
+    }
+
+    private static func titlePullRequestURL(_ input: SessionContextLookupInput) -> String? {
+        pullRequestURL(in: input.titleURL)
+            ?? pullRequestURL(in: input.title)
+            ?? pullRequestURL(in: input.displayTitle)
     }
 
     private struct PullRequestPayload: Decodable {
@@ -87,6 +145,7 @@ enum SessionContextResolver {
         guard let output = commandOutput(
             ["gh", "pr", "view", "--json", "url,title,number"],
             cwd: cwd,
+            timeout: networkTimeout,
             isCancelled: isCancelled
         ) else {
             return nil

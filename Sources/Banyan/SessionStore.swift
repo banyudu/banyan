@@ -175,6 +175,11 @@ final class SessionStore: ObservableObject {
     private var selectedContextTask: Task<Void, Never>?
     private var selectedContextSignature: String?
     private var selectedContextResolvedAt = Date.distantPast
+    /// Network/git-derived context keyed by `SessionContextResolver.cacheKey`.
+    /// Lets title-text churn and the periodic stale refresh reuse a recent result
+    /// instead of re-spawning `git`/`linear`/`gh` on every resolve.
+    private var selectedContextCache: [String: (info: SessionContextInfo, at: Date)] = [:]
+    private let selectedContextCacheTTL: TimeInterval = 180
     private var selectedLinearIssueTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTimer: Timer?
@@ -1882,6 +1887,15 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func storeSelectedContext(_ info: SessionContextInfo, key: String) {
+        selectedContextCache[key] = (info, Date())
+        // Distinct keys are bounded by active projects/issues, but cap defensively.
+        if selectedContextCache.count > 64,
+           let oldest = selectedContextCache.min(by: { $0.value.at < $1.value.at })?.key {
+            selectedContextCache.removeValue(forKey: oldest)
+        }
+    }
+
     private func refreshSelectedContextInfo(force: Bool = false) {
         guard let input = selectedContextLookupInput() else {
             selectedContextTask?.cancel()
@@ -1894,9 +1908,26 @@ final class SessionStore: ObservableObject {
         guard force || input.signature != selectedContextSignature else { return }
 
         selectedContextSignature = input.signature
-        if selectedContextInfo?.signature != input.signature {
-            selectedContextInfo = nil
+
+        let cacheKey = SessionContextResolver.cacheKey(for: input)
+
+        // Serve a fresh cached result instantly; this is the common case now that
+        // the cache key ignores free-text title churn, so no subprocess is spawned.
+        if let cached = selectedContextCache[cacheKey],
+           Date().timeIntervalSince(cached.at) < selectedContextCacheTTL {
+            selectedContextTask?.cancel()
+            selectedContextTask = nil
+            selectedContextInfo = cached.info.reidentified(
+                sessionID: input.sessionID,
+                signature: input.signature
+            )
+            selectedContextResolvedAt = Date()
+            return
         }
+
+        // Cache miss/expiry: show the subprocess-free fast fields immediately so the
+        // titlebar isn't blank, then enrich from git/linear/gh in the background.
+        selectedContextInfo = SessionContextResolver.resolveFast(input: input)
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .utility) {
             let startedAt = DispatchTime.now()
@@ -1910,8 +1941,9 @@ final class SessionStore: ObservableObject {
                 detail: "signature=\(input.signature)"
             )
             await MainActor.run { [weak self] in
-                guard let self,
-                      self.selectedSessionID == input.sessionID,
+                guard let self else { return }
+                self.storeSelectedContext(info, key: cacheKey)
+                guard self.selectedSessionID == input.sessionID,
                       self.selectedContextSignature == input.signature else {
                     return
                 }
@@ -1937,8 +1969,9 @@ final class SessionStore: ObservableObject {
                 detail: "signature=\(input.signature) open_pr"
             )
             await MainActor.run { [weak self] in
-                guard let self,
-                      self.selectedSessionID == input.sessionID,
+                guard let self else { return }
+                self.storeSelectedContext(info, key: SessionContextResolver.cacheKey(for: input))
+                guard self.selectedSessionID == input.sessionID,
                       self.selectedContextSignature == input.signature else {
                     return
                 }
@@ -1971,8 +2004,9 @@ final class SessionStore: ObservableObject {
                 detail: "signature=\(input.signature) pr_preview"
             )
             await MainActor.run { [weak self] in
-                guard let self,
-                      self.selectedSessionID == input.sessionID,
+                guard let self else { return }
+                self.storeSelectedContext(info, key: SessionContextResolver.cacheKey(for: input))
+                guard self.selectedSessionID == input.sessionID,
                       self.selectedContextSignature == input.signature,
                       self.isPullRequestPreviewPresented else {
                     return
