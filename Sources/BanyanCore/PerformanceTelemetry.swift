@@ -472,6 +472,12 @@ public final class PerformanceTelemetry: @unchecked Sendable {
                 return
             }
             let duration = Self.elapsedMS(since: active.startedAt)
+            guard Self.isWithinSwitchCap(duration) else {
+                // Idle/abandoned switch: the elapsed time is idle time, not switch
+                // cost. Drop it so it can't inflate the switch percentiles.
+                self.activeSwitches.removeValue(forKey: sessionID)
+                return
+            }
             self.recordLocked(
                 name: "session_switch.to_terminal_ready",
                 sessionID: sessionID,
@@ -496,11 +502,19 @@ public final class PerformanceTelemetry: @unchecked Sendable {
             guard let self, var active = self.activeSwitches[sessionID], !active.didRecordFirstOutput else {
                 return
             }
+            let duration = Self.elapsedMS(since: active.startedAt)
+            guard Self.isWithinSwitchCap(duration) else {
+                // `to_first_output` measures time until the session's *next* output,
+                // which is unbounded for a quiet session. Past the cap it's idle
+                // time, not switch cost, so discard the whole span.
+                self.activeSwitches.removeValue(forKey: sessionID)
+                return
+            }
             self.recordLocked(
                 name: "session_switch.to_first_output",
                 sessionID: sessionID,
                 correlationID: active.correlationID,
-                durationMS: Self.elapsedMS(since: active.startedAt),
+                durationMS: duration,
                 detail: active.detail
             )
             active.didRecordFirstOutput = true
@@ -529,6 +543,16 @@ public final class PerformanceTelemetry: @unchecked Sendable {
             durationMS: durationMS,
             detail: detail
         ))
+    }
+
+    /// A session switch that hasn't reached terminal-ready / first-output within
+    /// this window is treated as idle or abandoned rather than slow. `to_first_output`
+    /// especially measures time until the session's next output, which is unbounded
+    /// for a quiet session; recording it would pollute the switch percentiles.
+    static let switchMeasurementCapMS: Double = 10_000
+
+    static func isWithinSwitchCap(_ durationMS: Double) -> Bool {
+        durationMS <= switchMeasurementCapMS
     }
 
     private func expireOldSwitchesLocked() {

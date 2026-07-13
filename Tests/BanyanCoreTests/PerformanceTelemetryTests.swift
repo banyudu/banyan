@@ -63,6 +63,16 @@ import Testing
     #expect(events.first?.durationMS == 200)
 }
 
+@Test func switchCapAcceptsRealSwitchesAndRejectsIdleSpans() {
+    // Real switches (sub-cap) are recorded; idle/abandoned spans past the cap are
+    // discarded so they can't inflate the switch-latency percentiles.
+    #expect(PerformanceTelemetry.isWithinSwitchCap(41))
+    #expect(PerformanceTelemetry.isWithinSwitchCap(2_030))
+    #expect(PerformanceTelemetry.isWithinSwitchCap(PerformanceTelemetry.switchMeasurementCapMS))
+    #expect(!PerformanceTelemetry.isWithinSwitchCap(30_749))
+    #expect(!PerformanceTelemetry.isWithinSwitchCap(137_681))
+}
+
 private func temporaryDatabaseURL() -> URL {
     FileManager.default.temporaryDirectory
         .appendingPathComponent("BanyanCoreTests-\(UUID().uuidString)", isDirectory: true)
