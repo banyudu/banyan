@@ -53,16 +53,49 @@ enum SessionContextResolver {
             ?? LinearIssueReference.issueID(in: input.titleURL)
             ?? LinearIssueReference.issueID(in: input.displayTitle)
             ?? LinearIssueReference.detect(branch: projectContext.branch, cwd: input.cwd)?.id
-        let linearTitle = isCancelled() ? nil : detectedIssueID.flatMap { issueID in
-            commandOutput(["linear", "issue", "title", issueID], cwd: input.cwd, timeout: networkTimeout, isCancelled: isCancelled)
-        }
         let resolvedIssueID = detectedIssueID
         let linearURL = resolvedIssueID.map(LinearIssueReference.issueURL(for:))
         let explicitPullRequestURL = pullRequestURL(in: input.titleURL)
             ?? pullRequestURL(in: input.title)
             ?? pullRequestURL(in: input.displayTitle)
-        let pullRequest = explicitPullRequestURL.map { PullRequestPayload(url: $0, title: nil, number: pullRequestNumber(in: $0)) }
-            ?? (isCancelled() ? nil : pullRequest(cwd: input.cwd, isCancelled: isCancelled))
+
+        // The `linear issue title` and `gh pr view` lookups are independent network
+        // subprocesses. Run them concurrently so a cache-miss resolve costs one CLI
+        // round-trip (~timeout) instead of two back-to-back — the sequential form was
+        // the dominant term in the selected_context.resolve latency (avg ~2.3s).
+        var linearTitle: String?
+        var resolvedPullRequest: PullRequestPayload?
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "banyan.selected-context.resolve", attributes: .concurrent)
+
+        if let issueID = detectedIssueID, !isCancelled() {
+            group.enter()
+            queue.async {
+                linearTitle = commandOutput(
+                    ["linear", "issue", "title", issueID],
+                    cwd: input.cwd,
+                    timeout: networkTimeout,
+                    isCancelled: isCancelled
+                )
+                group.leave()
+            }
+        }
+
+        if let explicitPullRequestURL {
+            resolvedPullRequest = PullRequestPayload(
+                url: explicitPullRequestURL,
+                title: nil,
+                number: pullRequestNumber(in: explicitPullRequestURL)
+            )
+        } else if !isCancelled() {
+            group.enter()
+            queue.async {
+                resolvedPullRequest = pullRequest(cwd: input.cwd, isCancelled: isCancelled)
+                group.leave()
+            }
+        }
+
+        group.wait()
 
         return SessionContextInfo(
             sessionID: input.sessionID,
@@ -70,9 +103,9 @@ enum SessionContextResolver {
             linearIssueID: resolvedIssueID,
             linearIssueTitle: linearTitle,
             linearIssueURL: linearURL,
-            pullRequestNumber: pullRequest?.number,
-            pullRequestTitle: pullRequest?.title,
-            pullRequestURL: pullRequest?.url
+            pullRequestNumber: resolvedPullRequest?.number,
+            pullRequestTitle: resolvedPullRequest?.title,
+            pullRequestURL: resolvedPullRequest?.url
         )
     }
 

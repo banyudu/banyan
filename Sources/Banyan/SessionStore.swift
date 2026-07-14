@@ -179,7 +179,11 @@ final class SessionStore: ObservableObject {
     /// Lets title-text churn and the periodic stale refresh reuse a recent result
     /// instead of re-spawning `git`/`linear`/`gh` on every resolve.
     private var selectedContextCache: [String: (info: SessionContextInfo, at: Date)] = [:]
-    private let selectedContextCacheTTL: TimeInterval = 180
+    // Linear titles and PR URLs for a given cwd/issue/PR change rarely, so a long TTL
+    // keeps the subprocess-free fast path serving most resolves. At 180s the periodic
+    // 30s stale-refresh forced a real `linear`/`gh` resolve every ~3min per selected
+    // session; 600s cuts that ~3x while keeping the titlebar acceptably fresh.
+    private let selectedContextCacheTTL: TimeInterval = 600
     private var selectedLinearIssueTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTimer: Timer?
@@ -1887,6 +1891,18 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Returns a non-expired cached context for `input`, reidentified to the current
+    /// session/signature. Lets user-triggered PR flows reuse a recent result instead
+    /// of always re-spawning `linear`/`gh`.
+    private func freshCachedSelectedContext(for input: SessionContextLookupInput) -> SessionContextInfo? {
+        let key = SessionContextResolver.cacheKey(for: input)
+        guard let cached = selectedContextCache[key],
+              Date().timeIntervalSince(cached.at) < selectedContextCacheTTL else {
+            return nil
+        }
+        return cached.info.reidentified(sessionID: input.sessionID, signature: input.signature)
+    }
+
     private func storeSelectedContext(_ info: SessionContextInfo, key: String) {
         selectedContextCache[key] = (info, Date())
         // Distinct keys are bounded by active projects/issues, but cap defensively.
@@ -1955,6 +1971,17 @@ final class SessionStore: ObservableObject {
 
     private func resolveSelectedContextForOpenPullRequest() {
         guard let input = selectedContextLookupInput() else { return }
+        // Repeat clicks / already-resolved PRs: open straight from the fresh cache so
+        // the action is instant and spawns no subprocess. Fall through to a fresh
+        // resolve when the cache lacks a PR, so a newly-created PR is still discovered.
+        if let cached = freshCachedSelectedContext(for: input),
+           let value = cached.pullRequestURL, let url = URL(string: value) {
+            selectedContextSignature = input.signature
+            selectedContextInfo = cached
+            selectedContextResolvedAt = Date()
+            NSWorkspace.shared.open(url)
+            return
+        }
         selectedContextSignature = input.signature
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .userInitiated) {
@@ -1991,6 +2018,28 @@ final class SessionStore: ObservableObject {
 
         selectedPullRequestLoadState = .loading
         selectedContextSignature = input.signature
+        // Drive the preview from the fresh cache when it already knows the PR, avoiding
+        // a redundant `linear`/`gh` resolve. A cache miss (or cached-but-no-PR) still
+        // resolves fresh below so a just-created PR is picked up.
+        if let cached = freshCachedSelectedContext(for: input),
+           cached.pullRequestURL != nil {
+            selectedContextTask?.cancel()
+            selectedContextTask = nil
+            selectedContextInfo = cached
+            selectedContextResolvedAt = Date()
+            if let session = selectedSession {
+                let url = cached.pullRequestURL.flatMap(URL.init(string:))
+                fetchSelectedPullRequestPreview(
+                    url: url,
+                    cwd: session.cwd,
+                    sessionID: session.id,
+                    force: true
+                )
+            } else {
+                selectedPullRequestLoadState = .failed("No active session")
+            }
+            return
+        }
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .userInitiated) {
             let startedAt = DispatchTime.now()
