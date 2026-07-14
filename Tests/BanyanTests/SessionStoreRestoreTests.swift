@@ -20,6 +20,66 @@ import Testing
     #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .running, provider: nil))
 }
 
+@Test func reopenResumesClosedCodexSessionInsteadOfReplayingLaunchCommand() {
+    let codex = SessionStore.reopenResumeCommand(
+        status: .closed,
+        provider: .codex,
+        agentSessionID: "abc12345-0000-0000-0000-000000000000",
+        cwd: "/tmp/project"
+    )
+    #expect(codex == "'codex' 'resume' '-C' '/tmp/project' 'abc12345-0000-0000-0000-000000000000'")
+
+    let claude = SessionStore.reopenResumeCommand(
+        status: .closed,
+        provider: .claude,
+        agentSessionID: "session-uuid",
+        cwd: "/tmp/project"
+    )
+    #expect(claude == "'claude' '--resume' 'session-uuid'")
+}
+
+@Test func reopenKeepsOriginalCommandWhenResumeIsNotApplicable() {
+    // Still active — nothing to rebuild.
+    #expect(SessionStore.reopenResumeCommand(
+        status: .running,
+        provider: .codex,
+        agentSessionID: "abc",
+        cwd: "/tmp"
+    ) == nil)
+
+    // No underlying agent session resolved.
+    #expect(SessionStore.reopenResumeCommand(
+        status: .closed,
+        provider: .codex,
+        agentSessionID: nil,
+        cwd: "/tmp"
+    ) == nil)
+
+    // Empty agent session id is treated as unresolved.
+    #expect(SessionStore.reopenResumeCommand(
+        status: .closed,
+        provider: .claude,
+        agentSessionID: "",
+        cwd: "/tmp"
+    ) == nil)
+
+    // Provider without resume support.
+    #expect(SessionStore.reopenResumeCommand(
+        status: .closed,
+        provider: .gemini,
+        agentSessionID: "abc",
+        cwd: "/tmp"
+    ) == nil)
+
+    // Plain shell session (no agent provider).
+    #expect(SessionStore.reopenResumeCommand(
+        status: .closed,
+        provider: nil,
+        agentSessionID: "abc",
+        cwd: "/tmp"
+    ) == nil)
+}
+
 @Test func startupCleanupOnlyTargetsUnpersistedBanyanTmuxSessions() {
     let stale = SessionStore.staleTmuxSessionNames(
         liveSessionNames: ["banyan-session-2", "banyan-session-1", "banyan-session-3"],
