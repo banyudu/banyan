@@ -201,6 +201,7 @@ public struct PerformanceEventStore {
         case "terminal.blank_recovery": return 1
         case "tmux.refresh_clients": return 250
         case "selected_context.resolve": return 500
+        case "supervisor.tick": return 150
         default: return 500
         }
     }
