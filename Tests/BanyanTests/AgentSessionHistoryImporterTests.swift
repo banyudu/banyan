@@ -77,6 +77,33 @@ import Testing
 
     let session = try #require(imported.first { $0.id == "history-codex-\(id)" })
     #expect(session.title == "Newest sidebar title after new")
+    #expect(session.segmentPromptTitle == "Newest sidebar title after new")
+}
+
+@Test func codexTranscriptClearedWithoutNewPromptHasNoSegmentTitle() throws {
+    let home = try makeTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let id = "019efe8d-0514-72a2-ad62-daea0b976dcf"
+    let sessionDirectory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+    try write(
+        [
+            #"{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"session_id":"\#(id)","cwd":"/tmp/banyan-codex","timestamp":"2026-07-01T10:00:00.000Z"}}"#,
+            #"{"timestamp":"2026-07-01T10:00:10.000Z","type":"event_msg","payload":{"type":"user_message","message":"Old sidebar title"}}"#,
+            #"{"timestamp":"2026-07-01T10:05:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"/clear"}}"#
+        ].joined(separator: "\n"),
+        to: sessionDirectory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    )
+
+    let imported = AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10)
+
+    let session = try #require(imported.first { $0.id == "history-codex-\(id)" })
+    // Display title keeps the pre-clear prompt as a fallback for the sidebar,
+    // but the current segment has no prompt yet, so live sessions won't
+    // resurrect the stale title onto a freshly cleared conversation.
+    #expect(session.title == "Old sidebar title")
+    #expect(session.segmentPromptTitle == nil)
 }
 
 @Test func importsClaudeProjectLogsFromFirstHumanPrompt() throws {
@@ -124,6 +151,7 @@ import Testing
 
     let session = try #require(imported.first { $0.id == "history-claude-867ceb9b-12de-47ff-a70e-e562c00c8bf5" })
     #expect(session.title == "Newest Claude title after new")
+    #expect(session.segmentPromptTitle == "Newest Claude title after new")
 }
 
 @Test func claudeTranscriptTitleIgnoresLocalCommandCaveat() throws {

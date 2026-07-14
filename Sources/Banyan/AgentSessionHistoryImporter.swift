@@ -6,10 +6,37 @@ struct ImportedAgentSession: Identifiable, Equatable {
     let provider: CodingAgentProvider
     let sourceID: String
     let title: String
+    /// Title of the conversation's current segment (after the latest /clear or
+    /// /new), or nil when the segment has no prompt yet. `title` keeps the
+    /// pre-reset first prompt as a display fallback; this does not, so live
+    /// sessions don't resurrect a stale title onto a freshly cleared session.
+    let segmentPromptTitle: String?
     let cwd: String
     let transcriptURL: URL
     let createdAt: Date
     let updatedAt: Date
+
+    init(
+        id: String,
+        provider: CodingAgentProvider,
+        sourceID: String,
+        title: String,
+        segmentPromptTitle: String? = nil,
+        cwd: String,
+        transcriptURL: URL,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.provider = provider
+        self.sourceID = sourceID
+        self.title = title
+        self.segmentPromptTitle = segmentPromptTitle
+        self.cwd = cwd
+        self.transcriptURL = transcriptURL
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 enum AgentSessionHistoryImporter {
@@ -81,6 +108,7 @@ enum AgentSessionHistoryImporter {
                 provider: .codex,
                 sourceID: candidate.id,
                 title: metadata.promptTitle ?? sanitizedTitle(candidate.threadName) ?? "Codex \(candidate.id.prefix(8))",
+                segmentPromptTitle: metadata.segmentTitle,
                 cwd: cwd,
                 transcriptURL: candidate.transcriptURL,
                 createdAt: metadata.createdAt ?? candidate.updatedAt,
@@ -161,7 +189,7 @@ enum AgentSessionHistoryImporter {
         return Array(result.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(maxSessions))
     }
 
-    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, promptTitle: String?) {
+    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, promptTitle: String?, segmentTitle: String?) {
         var cwd: String?
         var createdAt: Date?
         var titleTracker = PromptTitleTracker()
@@ -185,7 +213,7 @@ enum AgentSessionHistoryImporter {
 
         }
 
-        return (cwd, createdAt, titleTracker.resolvedTitle)
+        return (cwd, createdAt, titleTracker.resolvedTitle, titleTracker.segmentTitle)
     }
 
     private static func parseClaudeSession(
@@ -224,6 +252,7 @@ enum AgentSessionHistoryImporter {
             provider: .claude,
             sourceID: sourceID,
             title: titleTracker.resolvedTitle ?? "Claude \(sourceID.prefix(8))",
+            segmentPromptTitle: titleTracker.segmentTitle,
             cwd: resolvedCWD,
             transcriptURL: url,
             createdAt: createdAt ?? fallbackUpdatedAt,
@@ -443,6 +472,15 @@ enum AgentSessionHistoryImporter {
 
         var resolvedTitle: String? {
             currentSegmentTitle ?? firstTitle
+        }
+
+        /// Title of the conversation's current segment — the first prompt after
+        /// the most recent /clear or /new. Nil right after a reset until a new
+        /// prompt arrives. Unlike `resolvedTitle`, it never falls back to the
+        /// pre-reset first prompt, so callers can tell a freshly cleared
+        /// conversation apart from one that still carries its original title.
+        var segmentTitle: String? {
+            currentSegmentTitle
         }
 
         mutating func observe(_ prompt: String) {
