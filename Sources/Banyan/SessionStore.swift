@@ -164,6 +164,13 @@ final class SessionStore: ObservableObject {
 
     private var controlServer: ControlServer?
     private let persistence = SessionPersistence()
+    /// Serial queue for the SQLite session write, keeping the full-table rewrite off
+    /// the main thread. Serial + ordered so concurrent saves can't collide on the
+    /// `BEGIN IMMEDIATE` transaction.
+    private let sessionPersistenceQueue = DispatchQueue(label: "com.banyan.session-persistence", qos: .utility)
+    /// Last snapshot set written to disk; lets `saveSessions()` skip the frequent
+    /// no-op saves (e.g. every supervisor tick) that re-serialized unchanged state.
+    private var lastSavedSessionSnapshots: [SessionSnapshot]?
     private let detector = AgentStateDetector()
     private let tmuxBackend = TmuxBackend.shared
     private var didLoadPersistedSessions = false
@@ -228,6 +235,22 @@ final class SessionStore: ObservableObject {
         terminalTheme = workspace.terminalTheme
         terminalFontFamily = workspace.terminalFontFamily
         terminalFontSize = workspace.terminalFontSize
+
+        // Sessions now persist off the main thread; drain the queue on quit so the
+        // final change isn't lost between the async enqueue and process exit.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.flushPendingSessionSaves()
+        }
+    }
+
+    /// Blocks until the serial session-persistence queue drains. Safe to call from a
+    /// non-isolated context (only touches the immutable, Sendable queue).
+    nonisolated private func flushPendingSessionSaves() {
+        sessionPersistenceQueue.sync {}
     }
 
     var visibleSessions: [BanyanSession] {
@@ -1586,7 +1609,17 @@ final class SessionStore: ObservableObject {
                 updatedAt: $0.updatedAt
             )
         }
-        persistence.save(snapshots)
+        // Supervisor ticks call this every cycle; skip the SQLite rewrite entirely
+        // when nothing changed. This was the dominant main-thread stall behind the
+        // "Application Not Responding" freezes.
+        guard snapshots != lastSavedSessionSnapshots else { return }
+        lastSavedSessionSnapshots = snapshots
+        let persistence = persistence
+        // Perform the actual open+migrate+DELETE+re-insert off the main thread so a
+        // real change never blocks the UI; the serial queue preserves write order.
+        sessionPersistenceQueue.async {
+            persistence.save(snapshots)
+        }
     }
 
     private func saveWorkspace() {

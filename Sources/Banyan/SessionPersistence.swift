@@ -1,7 +1,7 @@
 import Foundation
 import SQLite3
 
-struct SessionSnapshot: Codable {
+struct SessionSnapshot: Codable, Equatable {
     let id: String
     let tmuxSessionName: String?
     let title: String
