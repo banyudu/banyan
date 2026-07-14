@@ -1753,7 +1753,12 @@ final class SessionStore: ObservableObject {
                 session.markDetectedAgentProvider(match.provider)
             }
             session.markAgentSessionID(match.sourceID)
-            session.markFirstPromptTitle(match.title)
+            // Use the current-segment title so a freshly cleared conversation
+            // (segment title nil until the next prompt) does not get its
+            // pre-/clear first-prompt title resurrected onto the live session.
+            if let segmentTitle = match.segmentPromptTitle {
+                session.markFirstPromptTitle(segmentTitle)
+            }
         }
     }
 
