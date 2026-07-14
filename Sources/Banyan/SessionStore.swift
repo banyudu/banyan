@@ -445,6 +445,7 @@ final class SessionStore: ObservableObject {
                 ),
                 tone: snapshot.tone,
                 parentSessionID: snapshot.parentSessionID,
+                agentSessionID: snapshot.agentSessionID,
                 createdAt: snapshot.createdAt,
                 updatedAt: snapshot.updatedAt,
                 isRestored: true,
@@ -870,9 +871,44 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        // A closed session had its tmux backing killed, so reattaching would
+        // rerun the original launch command from scratch. For codex/claude
+        // sessions whose underlying agent session we resolved, rebuild the
+        // command as a resume so prior context is restored instead of replayed.
+        if let resumeCommand = Self.reopenResumeCommand(
+            status: session.status,
+            provider: session.agentProvider,
+            agentSessionID: session.agentSessionID,
+            cwd: session.cwd
+        ), session.command != resumeCommand {
+            session.command = resumeCommand
+        }
         session.reattachTerminalClient()
         selectedSessionID = id
         saveSessions()
+    }
+
+    /// Builds the resume command to use when reopening a closed coding-agent
+    /// session, or nil when the original launch command should be kept (session
+    /// still active, non-agent provider, resume unsupported, or the underlying
+    /// agent session was never resolved).
+    nonisolated static func reopenResumeCommand(
+        status: SessionStatus,
+        provider: CodingAgentProvider?,
+        agentSessionID: String?,
+        cwd: String
+    ) -> String? {
+        guard status == .closed,
+              let provider,
+              [.codex, .claude].contains(provider),
+              let agentSessionID, !agentSessionID.isEmpty else {
+            return nil
+        }
+        return AgentSessionHistoryImporter.resumeCommand(
+            provider: provider,
+            sourceID: agentSessionID,
+            cwd: cwd
+        )
     }
 
     func restart(id: String) throws {
@@ -1605,6 +1641,7 @@ final class SessionStore: ObservableObject {
                 status: $0.status,
                 tone: $0.tone,
                 parentSessionID: $0.parentSessionID,
+                agentSessionID: $0.agentSessionID,
                 createdAt: $0.createdAt,
                 updatedAt: $0.updatedAt
             )
@@ -1715,6 +1752,7 @@ final class SessionStore: ObservableObject {
             if session.detectedAgentProvider != match.provider {
                 session.markDetectedAgentProvider(match.provider)
             }
+            session.markAgentSessionID(match.sourceID)
             session.markFirstPromptTitle(match.title)
         }
     }

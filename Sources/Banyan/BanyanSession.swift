@@ -35,6 +35,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var isRestored: Bool
     @Published var isProcessStarted: Bool
     @Published var parentSessionID: String?
+    /// Underlying coding-agent session UUID (codex/claude), resolved by matching
+    /// live sessions against imported transcript history. Used to build a resume
+    /// command when a closed session is reopened, instead of replaying the
+    /// original launch command from scratch.
+    @Published var agentSessionID: String?
     private(set) var lastConversationResetAt: Date?
 
     private var delegate: TerminalSessionDelegate?
@@ -112,6 +117,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         status: SessionStatus = .running,
         tone: SessionTone = .blue,
         parentSessionID: String? = nil,
+        agentSessionID: String? = nil,
         historyTranscriptURL: URL? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -147,6 +153,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.status = status
         self.tone = tone
         self.parentSessionID = parentSessionID
+        self.agentSessionID = agentSessionID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isRestored = isRestored
@@ -364,6 +371,12 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard detectedAgentProvider != provider else { return }
         detectedAgentProvider = provider
         refreshGeneratedTitle()
+        touch()
+    }
+
+    func markAgentSessionID(_ sessionID: String?) {
+        guard let sessionID, !sessionID.isEmpty, agentSessionID != sessionID else { return }
+        agentSessionID = sessionID
         touch()
     }
 
