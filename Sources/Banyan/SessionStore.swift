@@ -175,6 +175,12 @@ final class SessionStore: ObservableObject {
     private let tmuxBackend = TmuxBackend.shared
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
+    /// Effective cadence the live `supervisorTimer` was installed with, so we can
+    /// skip re-installing the timer when the adaptive interval is unchanged.
+    private var currentSupervisorInterval: TimeInterval = 0
+    /// App-lifecycle / thermal / power observers that re-evaluate the supervisor
+    /// cadence. Installed once; retained so they outlive `addObserver`.
+    private var supervisorLifecycleObservers: [NSObjectProtocol] = []
     private var isSupervisorTickRunning = false
     private var isHistoryImportRunning = false
     private var isHistoryImportPending = false
@@ -731,13 +737,97 @@ final class SessionStore: ObservableObject {
     }
 
     func startSupervisor() {
+        installSupervisorLifecycleObserversIfNeeded()
         guard supervisorTimer == nil else { return }
-        runSupervisorTick()
-        supervisorTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        rescheduleSupervisor(runImmediately: true)
+    }
+
+    /// Adaptive cadence for the supervisor poll. Each tick spawns `/bin/ps` plus a
+    /// `tmux list-panes`/`capture-pane` per started session, so a fixed 2s timer
+    /// burned energy continuously even when backgrounded or idle. Per AGENTS.md the
+    /// interval is adaptive to foreground/background, battery, thermal state, and
+    /// session count. The supervisor still runs in the background (it drives the
+    /// "agent needs input" notification) — just far less often.
+    private var supervisorInterval: TimeInterval {
+        var interval: TimeInterval = NSApp.isActive ? 2.0 : 6.0
+
+        // Cost scales with the number of sessions inspected each tick.
+        let startedSessions = sessions.reduce(into: 0) { count, session in
+            if session.status != .closed && session.isProcessStarted { count += 1 }
+        }
+        if startedSessions > 8 {
+            interval *= min(3.0, Double(startedSessions) / 8.0)
+        }
+
+        if ProcessInfo.processInfo.isLowPowerModeEnabled {
+            interval *= 2.0
+        }
+        switch ProcessInfo.processInfo.thermalState {
+        case .serious, .critical: interval *= 3.0
+        case .fair: interval *= 1.5
+        default: break
+        }
+
+        return min(interval, 30.0)
+    }
+
+    /// Re-evaluate the adaptive cadence and reinstall the timer only when it
+    /// actually changed. `runImmediately` fires a tick now (used on launch and when
+    /// the app regains focus, so the sidebar refreshes without waiting a full cycle).
+    private func rescheduleSupervisor(runImmediately: Bool = false) {
+        if runImmediately {
+            runSupervisorTick()
+        }
+
+        let interval = supervisorInterval
+        if supervisorTimer != nil, abs(interval - currentSupervisorInterval) < 0.01 {
+            return
+        }
+
+        supervisorTimer?.invalidate()
+        currentSupervisorInterval = interval
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.runSupervisorTick()
+                self?.supervisorTimerFired()
             }
         }
+        // Let macOS coalesce these wakeups with other timers to cut energy use.
+        timer.tolerance = interval * 0.25
+        RunLoop.main.add(timer, forMode: .common)
+        supervisorTimer = timer
+    }
+
+    private func supervisorTimerFired() {
+        runSupervisorTick()
+        // Focus, thermal, power, or session count may have changed since the timer
+        // was installed; adopt the new cadence for the next fire.
+        rescheduleSupervisor()
+    }
+
+    private func installSupervisorLifecycleObserversIfNeeded() {
+        guard supervisorLifecycleObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        let onActive = center.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rescheduleSupervisor(runImmediately: true) }
+        }
+        let onResign = center.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rescheduleSupervisor() }
+        }
+        let onThermal = center.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rescheduleSupervisor() }
+        }
+        let onPower = center.addObserver(
+            forName: Notification.Name.NSProcessInfoPowerStateDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rescheduleSupervisor() }
+        }
+        supervisorLifecycleObservers = [onActive, onResign, onThermal, onPower]
     }
 
     @discardableResult
@@ -1931,6 +2021,10 @@ final class SessionStore: ObservableObject {
         isSupervisorTickRunning = true
 
         Task.detached(priority: .utility) { [weak self] in
+            // Time the whole tick: `ps` snapshot + per-session tmux inspection. This
+            // is the app's steady-state energy cost, previously untracked and so
+            // invisible in `banyanctl perf report`.
+            let tickStartedAt = DispatchTime.now()
             let backend = TmuxBackend.shared
             let processTable = ProcessTable.snapshot()
             let supervisor = AgentSupervisor(backend: backend) { rootPID in
@@ -1956,6 +2050,12 @@ final class SessionStore: ObservableObject {
                     currentPath: result.currentPath
                 )
             }
+
+            PerformanceTelemetry.shared.recordDuration(
+                "supervisor.tick",
+                durationMS: PerformanceTelemetry.elapsedMS(since: tickStartedAt),
+                detail: "sessions=\(inputs.count)"
+            )
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
