@@ -14,6 +14,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var displayBranch: String?
     private var displayIsGitWorktree: Bool
     private var displayIsDefaultBranch: Bool
+    /// `true` when the last git lookup for the fields above failed to run (timed
+    /// out / couldn't launch) rather than answering. Those readings are then
+    /// unreliable false-negatives, so we retry on later ticks until we get a
+    /// trustworthy one. See `updateDisplayContext` / `retryDisplayContextIfDegraded`.
+    private var displayContextDegraded: Bool
     @Published private(set) var projectGroupID: String
     @Published private(set) var projectGroupTitle: String
 
@@ -148,6 +153,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.displayBranch = displayContext.branch
         self.displayIsGitWorktree = displayContext.isGitWorktree
         self.displayIsDefaultBranch = displayContext.isDefaultBranch
+        self.displayContextDegraded = displayContext.gitLookupDegraded
         self.projectGroupID = displayContext.groupID
         self.projectGroupTitle = displayContext.groupTitle
         self.status = status
@@ -416,13 +422,32 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func updateCurrentDirectory(_ directory: String?) {
-        guard let directory = Self.normalizedDirectory(directory), directory != cwd else { return }
+        guard let directory = Self.normalizedDirectory(directory) else { return }
+        guard directory != cwd else {
+            retryDisplayContextIfDegraded(for: directory)
+            return
+        }
         let shouldUpdateTitle = Self.titleTracksCurrentDirectory(title, isTitlePinned: isTitlePinned, cwd: cwd)
         cwd = directory
         updateDisplayContext(for: directory)
         if shouldUpdateTitle {
             title = Self.titleForCurrentDirectory(directory)
         }
+        refreshAutoDetectedTitleURL()
+        refreshGeneratedTitle()
+        touch()
+    }
+
+    /// An idle session's pane cwd never changes, so a git lookup that was degraded
+    /// (timed out during a busy restore, say) would otherwise stay a false-negative
+    /// forever — hiding the handoff affordance and the auto-detected issue link.
+    /// Retry on each supervisor tick until the reading is trustworthy again.
+    private func retryDisplayContextIfDegraded(for directory: String) {
+        guard displayContextDegraded else { return }
+        let previousBranch = displayBranch
+        let previousIsGitWorktree = displayIsGitWorktree
+        updateDisplayContext(for: directory)
+        guard displayBranch != previousBranch || displayIsGitWorktree != previousIsGitWorktree else { return }
         refreshAutoDetectedTitleURL()
         refreshGeneratedTitle()
         touch()
@@ -481,12 +506,20 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     private func updateDisplayContext(for cwd: String) {
         let displayContext = SessionDisplayLabel.context(cwd: cwd)
+        // A degraded lookup can't be trusted to say "no branch / not a worktree".
+        // If we already hold a trustworthy reading, keep it and retry later rather
+        // than clobbering it with a transient false-negative.
+        guard !displayContext.gitLookupDegraded || displayContextDegraded else {
+            displayContextDegraded = true
+            return
+        }
         displayProject = displayContext.project
         displayBranch = displayContext.branch
         displayIsGitWorktree = displayContext.isGitWorktree
         displayIsDefaultBranch = displayContext.isDefaultBranch
         projectGroupID = displayContext.groupID
         projectGroupTitle = displayContext.groupTitle
+        displayContextDegraded = displayContext.gitLookupDegraded
     }
 
     private func refreshAutoDetectedTitleURL() {

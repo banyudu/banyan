@@ -92,6 +92,9 @@ import Foundation
     #expect(context.groupTitle == directory.lastPathComponent)
     #expect(context.isGitWorktree == false)
     #expect(context.isDefaultBranch == false)
+    // A directory that simply isn't a git repo is a trustworthy negative, not a
+    // failed lookup — it must not be flagged degraded (which would trigger retries).
+    #expect(context.gitLookupDegraded == false)
 }
 
 @Test func projectContextGroupsGitRepositoriesByRemoteAddress() throws {
@@ -138,6 +141,10 @@ import Foundation
     #expect(worktreeContext.isGitWorktree == true)
     #expect(worktreeContext.branch == "feature")
     #expect(worktreeContext.isDefaultBranch == false)
+    // Healthy git lookups must never be flagged degraded — a false positive here
+    // would make idle worktree sessions retry the lookup on every tick.
+    #expect(mainContext.gitLookupDegraded == false)
+    #expect(worktreeContext.gitLookupDegraded == false)
 }
 
 private func temporaryDirectory() throws -> URL {

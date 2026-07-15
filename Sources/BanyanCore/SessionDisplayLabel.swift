@@ -7,12 +7,22 @@ public struct SessionProjectContext: Equatable {
     public let groupTitle: String
     public let isGitWorktree: Bool
     public let isDefaultBranch: Bool
+    /// `true` when at least one git lookup feeding `branch` / `isGitWorktree` /
+    /// `isDefaultBranch` failed to *run* (timed out or couldn't launch) rather
+    /// than running and answering. Those three fields are then unreliable
+    /// false-negatives, so callers must not cache this result over a previously
+    /// good one — see `BanyanSession.updateDisplayContext`.
+    public let gitLookupDegraded: Bool
 }
 
 public enum SessionDisplayLabel {
     public static func context(cwd: String) -> SessionProjectContext {
         let resolvedCWD = standardizedPath(cwd)
-        guard let gitTopLevel = gitOutput(["rev-parse", "--show-toplevel"], cwd: resolvedCWD) else {
+        let topLevel = gitLookup(["rev-parse", "--show-toplevel"], cwd: resolvedCWD)
+        guard let gitTopLevel = topLevel.value else {
+            // No top level either means "not a git repo" (a trustworthy answer)
+            // or the lookup failed to run — propagate `degraded` so a transient
+            // failure isn't cached as "not a worktree".
             let project = projectName(resolvedCWD)
             return SessionProjectContext(
                 project: project,
@@ -20,16 +30,34 @@ public enum SessionDisplayLabel {
                 groupID: "path:\(resolvedCWD)",
                 groupTitle: project,
                 isGitWorktree: false,
-                isDefaultBranch: false
+                isDefaultBranch: false,
+                gitLookupDegraded: topLevel.degraded
             )
         }
 
+        var degraded = false
         let project = projectName(gitTopLevel)
-        let symbolicBranch = gitOutput(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: resolvedCWD)
-        let branch = symbolicBranch ?? gitOutput(["rev-parse", "--short", "HEAD"], cwd: resolvedCWD)
+
+        let symbolic = gitLookup(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: resolvedCWD)
+        let symbolicBranch = symbolic.value
+        degraded = degraded || symbolic.degraded
+
+        let branch: String?
+        if let symbolicBranch {
+            branch = symbolicBranch
+        } else {
+            let shortSHA = gitLookup(["rev-parse", "--short", "HEAD"], cwd: resolvedCWD)
+            branch = shortSHA.value
+            degraded = degraded || shortSHA.degraded
+        }
+
         let mainDirectory = gitMainDirectory(cwd: resolvedCWD, fallbackTopLevel: gitTopLevel)
-        let isGitWorktree = standardizedPath(mainDirectory) != standardizedPath(gitTopLevel)
-        let isDefaultBranch = symbolicBranch.map { Self.isDefaultBranch($0, cwd: resolvedCWD) } ?? false
+        degraded = degraded || mainDirectory.degraded
+        let isGitWorktree = standardizedPath(mainDirectory.value) != standardizedPath(gitTopLevel)
+
+        let defaultBranch = symbolicBranch.map { Self.isDefaultBranch($0, cwd: resolvedCWD) } ?? (value: false, degraded: false)
+        degraded = degraded || defaultBranch.degraded
+
         if let remoteURL = gitRemoteURL(cwd: resolvedCWD) {
             let normalizedAddress = normalizedGitAddress(remoteURL)
             return SessionProjectContext(
@@ -38,17 +66,19 @@ public enum SessionDisplayLabel {
                 groupID: "git:\(normalizedAddress)",
                 groupTitle: gitAddressTitle(normalizedAddress),
                 isGitWorktree: isGitWorktree,
-                isDefaultBranch: isDefaultBranch
+                isDefaultBranch: defaultBranch.value,
+                gitLookupDegraded: degraded
             )
         }
 
         return SessionProjectContext(
             project: project,
             branch: branch,
-            groupID: "path:\(mainDirectory)",
-            groupTitle: projectName(mainDirectory),
+            groupID: "path:\(mainDirectory.value)",
+            groupTitle: projectName(mainDirectory.value),
             isGitWorktree: isGitWorktree,
-            isDefaultBranch: isDefaultBranch
+            isDefaultBranch: defaultBranch.value,
+            gitLookupDegraded: degraded
         )
     }
 
@@ -167,32 +197,34 @@ public enum SessionDisplayLabel {
         return gitOutput(["remote", "get-url", firstRemote], cwd: cwd)
     }
 
-    private static func gitMainDirectory(cwd: String, fallbackTopLevel: String) -> String {
-        guard let commonGitDirectory = gitOutput(
-            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            cwd: cwd
-        ) else {
-            return standardizedPath(fallbackTopLevel)
+    private static func gitMainDirectory(cwd: String, fallbackTopLevel: String) -> (value: String, degraded: Bool) {
+        let common = gitLookup(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd: cwd)
+        guard let commonGitDirectory = common.value else {
+            // On failure we fall back to the worktree's own top level, which makes
+            // `isGitWorktree` read `false`. Flag `degraded` so that false-negative
+            // isn't cached over a good reading.
+            return (standardizedPath(fallbackTopLevel), common.degraded)
         }
 
         let url = URL(fileURLWithPath: standardizedPath(commonGitDirectory)).standardizedFileURL
         if url.lastPathComponent == ".git" {
-            return url.deletingLastPathComponent().path
+            return (url.deletingLastPathComponent().path, false)
         }
-        return url.path
+        return (url.path, false)
     }
 
-    private static func isDefaultBranch(_ branch: String, cwd: String) -> Bool {
+    private static func isDefaultBranch(_ branch: String, cwd: String) -> (value: Bool, degraded: Bool) {
         if branch == "main" || branch == "master" {
-            return true
+            return (true, false)
         }
-        guard let remoteHead = gitOutput(
+        let remoteHead = gitLookup(
             ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
             cwd: cwd
-        ) else {
-            return false
+        )
+        guard let value = remoteHead.value else {
+            return (false, remoteHead.degraded)
         }
-        return remoteHead.split(separator: "/").last.map(String.init) == branch
+        return (value.split(separator: "/").last.map(String.init) == branch, false)
     }
 
     private static func normalizedGitAddress(_ value: String) -> String {
@@ -253,17 +285,32 @@ public enum SessionDisplayLabel {
     /// `process.waitUntilExit()` this replaced had no timeout and read the pipe only
     /// after exit, so a wedged git would have frozen whoever called `context(cwd:)`.
     private static func gitOutput(_ arguments: [String], cwd: String) -> String? {
-        guard let output = try? SubprocessRunner.run(
-            arguments: ["git", "-C", cwd] + arguments,
-            cwd: cwd,
-            environment: ProcessInfo.processInfo.environment,
-            timeout: gitCommandTimeout
-        ), output.terminationStatus == 0 else {
-            return nil
+        gitLookup(arguments, cwd: cwd).value
+    }
+
+    /// Runs a git lookup, separating a *trustworthy* negative (git ran and
+    /// answered non-zero/empty — e.g. "not a repo", "detached HEAD") from a
+    /// *degraded* one (the subprocess timed out or failed to launch, so we don't
+    /// actually know the answer). `value` is `nil` in both cases; `degraded`
+    /// distinguishes them so callers can avoid caching a false-negative.
+    private static func gitLookup(_ arguments: [String], cwd: String) -> (value: String?, degraded: Bool) {
+        let output: SubprocessRunner.Output
+        do {
+            output = try SubprocessRunner.run(
+                arguments: ["git", "-C", cwd] + arguments,
+                cwd: cwd,
+                environment: ProcessInfo.processInfo.environment,
+                timeout: gitCommandTimeout
+            )
+        } catch {
+            return (nil, true)
+        }
+        guard output.terminationStatus == 0 else {
+            return (nil, false)
         }
         let text = String(decoding: output.standardOutput, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
+        return (text.isEmpty ? nil : text, false)
     }
 
     /// Bound for the local git lookups above. Generous enough for a cold cache /
