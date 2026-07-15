@@ -247,26 +247,26 @@ public enum SessionDisplayLabel {
         return String(value.dropLast(4))
     }
 
+    /// Local, fast-exiting git lookups. Routed through `SubprocessRunner` so a git
+    /// command that hangs (credential prompt, filesystem stall, a huge repo
+    /// overrunning the pipe buffer) can't block the caller indefinitely — the bare
+    /// `process.waitUntilExit()` this replaced had no timeout and read the pipe only
+    /// after exit, so a wedged git would have frozen whoever called `context(cwd:)`.
     private static func gitOutput(_ arguments: [String], cwd: String) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["git", "-C", cwd] + arguments
-
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
+        guard let output = try? SubprocessRunner.run(
+            arguments: ["git", "-C", cwd] + arguments,
+            cwd: cwd,
+            environment: ProcessInfo.processInfo.environment,
+            timeout: gitCommandTimeout
+        ), output.terminationStatus == 0 else {
             return nil
         }
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else { return nil }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)?
+        let text = String(decoding: output.standardOutput, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return output?.isEmpty == false ? output : nil
+        return text.isEmpty ? nil : text
     }
+
+    /// Bound for the local git lookups above. Generous enough for a cold cache /
+    /// large repo, short enough that a hung git can't stall session enumeration.
+    private static let gitCommandTimeout: TimeInterval = 5
 }

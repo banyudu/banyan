@@ -1,3 +1,4 @@
+import BanyanCore
 import Foundation
 
 struct LinearIssueDetails: Equatable, Identifiable {

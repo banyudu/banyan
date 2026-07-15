@@ -16,14 +16,14 @@ import Foundation
 /// drains pipes with `readabilityHandler` (event-driven dispatch source, no parked
 /// reader threads). Every wait is timeout-bounded, and the async bridge caps total
 /// concurrency so a burst of resolves can never approach the pool limits again.
-enum SubprocessRunner {
-    struct Output {
-        let terminationStatus: Int32
-        let standardOutput: Data
-        let standardError: Data
+public enum SubprocessRunner {
+    public struct Output {
+        public let terminationStatus: Int32
+        public let standardOutput: Data
+        public let standardError: Data
     }
 
-    enum RunError: Error {
+    public enum RunError: Error {
         case launchFailed
         case timedOut
         case cancelled
@@ -43,7 +43,7 @@ enum SubprocessRunner {
     }()
 
     /// Async, non-blocking entry point. Preferred by all callers.
-    static func runAsync(
+    public static func runAsync(
         arguments: [String],
         cwd: String,
         environment: [String: String],
@@ -70,7 +70,7 @@ enum SubprocessRunner {
 
     /// Synchronous, leak-free runner. Blocks the calling thread only for bounded
     /// waits. Prefer `runAsync` from async contexts.
-    static func run(
+    public static func run(
         arguments: [String],
         cwd: String,
         environment: [String: String],
