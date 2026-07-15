@@ -139,6 +139,71 @@ import Testing
     #expect(result?.tone == .yellow)
 }
 
+@Test func supervisorTreatsPersistentMCPServerAsIdleNotExecuting() {
+    // A coding agent keeps its MCP servers alive across turns as direct children.
+    // They must not pin the session to `.executing` while it waits at the prompt.
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "claude"),
+        processes: [
+            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
+            process(
+                pid: 101,
+                parentPID: 100,
+                commandName: "/Users/banyudu/go/bin/axiom-mcp",
+                arguments: "axiom-mcp -token redacted -url https://api.axiom.co",
+                elapsed: 599
+            )
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
+@Test func supervisorTreatsMCPServerWorkerSubtreeAsIdle() {
+    // A node-based MCP server that forks a worker: the whole persistent subtree
+    // is plumbing, not command execution.
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "claude"),
+        processes: [
+            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
+            process(pid: 101, parentPID: 100, commandName: "/usr/bin/node", arguments: "node mcp-server.js", elapsed: 599),
+            process(pid: 102, parentPID: 101, commandName: "/usr/bin/node", arguments: "node worker.js", elapsed: 598)
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
+@Test func supervisorStillClassifiesCommandUnderShellAsExecuting() {
+    // A genuine command execution runs under a shell wrapper (the agent's Bash
+    // tool spawns `bash -c …`), so it must still read as executing.
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "claude"),
+        processes: [
+            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
+            process(pid: 101, parentPID: 100, commandName: "/bin/bash", arguments: "bash -c swift test", elapsed: 4),
+            process(pid: 102, parentPID: 101, commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 3)
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .executing)
+    #expect(result?.tone == .blue)
+}
+
 @Test func supervisorClassifiesMultipleAgentProcessesAsSubagents() {
     let result = makeSupervisor(
         pane: pane(currentCommand: "codex"),

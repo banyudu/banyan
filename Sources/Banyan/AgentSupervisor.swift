@@ -57,11 +57,13 @@ struct AgentSupervisor {
             return Result(status: .subagents, tone: .purple, provider: provider, currentPath: pane.currentPath)
         }
 
+        let helperPIDs = Self.agentHelperPIDs(in: descendants)
         let externalProcesses = descendants.filter { process in
             process.pid != pane.rootPID
                 && !process.isSupportedAgent
                 && !process.isShellOrWrapper
                 && !process.isTmuxPlumbing
+                && !helperPIDs.contains(process.pid)
         }
 
         if !externalProcesses.isEmpty {
@@ -95,6 +97,39 @@ struct AgentSupervisor {
             return provider
         }
         return descendants.compactMap(\.supportedAgentProvider).first
+    }
+
+    /// PIDs of the persistent MCP-server helpers a coding agent spawns and keeps
+    /// alive across turns, plus any workers they fork. An MCP server is launched
+    /// as a direct child of the agent process at startup and lives for the whole
+    /// session, so — unlike a genuine command execution — it must not pin the
+    /// session to `.executing` and hide idle-only affordances like the handoff
+    /// button. We match them by name rather than by "any non-shell child" so a
+    /// real foreground command the agent runs directly is still seen as work.
+    static func agentHelperPIDs(in descendants: [ProcessInfoRow]) -> Set<Int> {
+        let agentPIDs = Set(descendants.filter(\.isSupportedAgent).map(\.pid))
+        guard !agentPIDs.isEmpty else { return [] }
+
+        var helperPIDs = Set(
+            descendants
+                .filter { process in
+                    agentPIDs.contains(process.parentPID) && process.isLikelyMCPServer
+                }
+                .map(\.pid)
+        )
+        guard !helperPIDs.isEmpty else { return [] }
+
+        // Fold in any workers a helper forks (e.g. a node MCP server spawning a
+        // child), so the whole persistent subtree is treated as idle plumbing.
+        let childrenByParent = Dictionary(grouping: descendants, by: \.parentPID)
+        var queue = Array(helperPIDs)
+        while let pid = queue.popLast() {
+            for child in childrenByParent[pid] ?? [] where !helperPIDs.contains(child.pid) {
+                helperPIDs.insert(child.pid)
+                queue.append(child.pid)
+            }
+        }
+        return helperPIDs
     }
 
     static func logicalAgentProcessCount(in descendants: [ProcessInfoRow]) -> Int {
@@ -222,6 +257,20 @@ struct ProcessInfoRow {
 
     var isNodeAgentLauncher: Bool {
         URL(fileURLWithPath: commandName).lastPathComponent.lowercased() == "node"
+    }
+
+    /// A persistent MCP server (e.g. `axiom-mcp`, `npx @modelcontextprotocol/…`,
+    /// `uvx mcp-server-foo`, `node mcp-server.js`). Matched by name so it can be
+    /// distinguished from a real foreground command an agent runs directly.
+    var isLikelyMCPServer: Bool {
+        let haystack = (commandName + " " + arguments).lowercased()
+        return haystack.contains("modelcontextprotocol")
+            || haystack.contains("mcp-server")
+            || haystack.contains("mcp_server")
+            || haystack.contains("-mcp")
+            || haystack.contains("/mcp")
+            || haystack.contains(" mcp")
+            || haystack.hasPrefix("mcp")
     }
 
     static func load() -> [ProcessInfoRow] {
