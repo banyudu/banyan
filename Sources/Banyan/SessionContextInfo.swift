@@ -47,7 +47,10 @@ struct SessionContextInfo: Equatable, Sendable {
 }
 
 enum SessionContextResolver {
-    static func resolve(input: SessionContextLookupInput, isCancelled: @escaping () -> Bool = { false }) -> SessionContextInfo {
+    static func resolve(
+        input: SessionContextLookupInput,
+        isCancelled: @escaping @Sendable () -> Bool = { false }
+    ) async -> SessionContextInfo {
         let projectContext = SessionDisplayLabel.context(cwd: input.cwd)
         let detectedIssueID = LinearIssueReference.issueID(in: input.title)
             ?? LinearIssueReference.issueID(in: input.titleURL)
@@ -63,49 +66,46 @@ enum SessionContextResolver {
         // subprocesses. Run them concurrently so a cache-miss resolve costs one CLI
         // round-trip (~timeout) instead of two back-to-back — the sequential form was
         // the dominant term in the selected_context.resolve latency (avg ~2.3s).
-        var linearTitle: String?
-        var resolvedPullRequest: PullRequestPayload?
-        let group = DispatchGroup()
-        let queue = DispatchQueue(label: "banyan.selected-context.resolve", attributes: .concurrent)
-
-        if let issueID = detectedIssueID, !isCancelled() {
-            group.enter()
-            queue.async {
-                linearTitle = commandOutput(
-                    ["linear", "issue", "title", issueID],
-                    cwd: input.cwd,
-                    timeout: networkTimeout,
-                    isCancelled: isCancelled
-                )
-                group.leave()
-            }
-        }
-
-        if let explicitPullRequestURL {
-            resolvedPullRequest = PullRequestPayload(
-                url: explicitPullRequestURL,
-                title: nil,
-                number: pullRequestNumber(in: explicitPullRequestURL)
+        //
+        // Both run through SubprocessRunner's async bridge, which suspends this Task
+        // during I/O instead of blocking a cooperative thread. The former
+        // `DispatchGroup.wait()` here blocked the Swift-concurrency pool and was half
+        // of the app-freeze deadlock.
+        let cwd = input.cwd
+        async let linearTitle: String? = {
+            guard let issueID = detectedIssueID, !isCancelled() else { return nil }
+            return await commandOutput(
+                ["linear", "issue", "title", issueID],
+                cwd: cwd,
+                timeout: networkTimeout,
+                isCancelled: isCancelled
             )
-        } else if !isCancelled() {
-            group.enter()
-            queue.async {
-                resolvedPullRequest = pullRequest(cwd: input.cwd, isCancelled: isCancelled)
-                group.leave()
-            }
-        }
+        }()
 
-        group.wait()
+        async let resolvedPullRequest: PullRequestPayload? = {
+            if let explicitPullRequestURL {
+                return PullRequestPayload(
+                    url: explicitPullRequestURL,
+                    title: nil,
+                    number: pullRequestNumber(in: explicitPullRequestURL)
+                )
+            }
+            guard !isCancelled() else { return nil }
+            return await pullRequest(cwd: cwd, isCancelled: isCancelled)
+        }()
+
+        let title = await linearTitle
+        let pr = await resolvedPullRequest
 
         return SessionContextInfo(
             sessionID: input.sessionID,
             signature: input.signature,
             linearIssueID: resolvedIssueID,
-            linearIssueTitle: linearTitle,
+            linearIssueTitle: title,
             linearIssueURL: linearURL,
-            pullRequestNumber: resolvedPullRequest?.number,
-            pullRequestTitle: resolvedPullRequest?.title,
-            pullRequestURL: resolvedPullRequest?.url
+            pullRequestNumber: pr?.number,
+            pullRequestTitle: pr?.title,
+            pullRequestURL: pr?.url
         )
     }
 
@@ -174,8 +174,11 @@ enum SessionContextResolver {
         return Int(value)
     }
 
-    private static func pullRequest(cwd: String, isCancelled: @escaping () -> Bool = { false }) -> PullRequestPayload? {
-        guard let output = commandOutput(
+    private static func pullRequest(
+        cwd: String,
+        isCancelled: @escaping @Sendable () -> Bool = { false }
+    ) async -> PullRequestPayload? {
+        guard let output = await commandOutput(
             ["gh", "pr", "view", "--json", "url,title,number"],
             cwd: cwd,
             timeout: networkTimeout,
@@ -190,53 +193,20 @@ enum SessionContextResolver {
         _ arguments: [String],
         cwd: String,
         timeout: TimeInterval = 4,
-        isCancelled: @escaping () -> Bool = { false }
-    ) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.environment = processEnvironment()
-
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
+        isCancelled: @escaping @Sendable () -> Bool = { false }
+    ) async -> String? {
+        guard let output = try? await SubprocessRunner.runAsync(
+            arguments: arguments,
+            cwd: cwd,
+            environment: processEnvironment(),
+            timeout: timeout,
+            isCancelled: isCancelled
+        ), output.terminationStatus == 0 else {
             return nil
         }
-
-        let semaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            process.waitUntilExit()
-            semaphore.signal()
-        }
-
-        let deadline = Date().addingTimeInterval(timeout)
-        var didExit = false
-        while !isCancelled(), Date() < deadline {
-            let remaining = deadline.timeIntervalSinceNow
-            let waitTime = min(0.1, max(0, remaining))
-            if semaphore.wait(timeout: .now() + waitTime) == .success {
-                didExit = true
-                break
-            }
-        }
-
-        guard didExit else {
-            process.terminate()
-            _ = semaphore.wait(timeout: .now() + 0.5)
-            return nil
-        }
-        guard process.terminationStatus == 0 else { return nil }
-
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8)
-            .map(cleanCommandOutput)?
+        let text = cleanCommandOutput(String(decoding: output.standardOutput, as: UTF8.self))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return output?.isEmpty == false ? output : nil
+        return text.isEmpty ? nil : text
     }
 
     private static func cleanCommandOutput(_ value: String) -> String {

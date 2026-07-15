@@ -390,84 +390,47 @@ enum LinearIssueClient {
         cwd: String,
         timeout: TimeInterval
     ) async throws -> String {
-        try await Task.detached(priority: .utility) {
-            try runCommandBlocking(arguments, cwd: cwd, timeout: timeout)
-        }.value
-    }
-
-    private static func runCommandBlocking(
-        _ arguments: [String],
-        cwd: String,
-        timeout: TimeInterval
-    ) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.environment = processEnvironment()
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
+        // Routed through SubprocessRunner, which completes via `terminationHandler`
+        // and drains pipes with `readabilityHandler` — no thread is parked in
+        // `waitUntilExit()` or `readDataToEndOfFile()`. The old blocking form leaked
+        // those workers under concurrency and wedged GCD's 80-thread soft limit,
+        // freezing the app.
         let startedAt = Date()
         linearDebugLog("command start cwd=\(cwd) timeout=\(timeout)s command=\(arguments.joined(separator: " "))")
+
+        let output: SubprocessRunner.Output
         do {
-            try process.run()
-        } catch {
-            linearDebugLog("command unavailable command=\(arguments.joined(separator: " ")) error=\(error.localizedDescription)")
+            output = try await SubprocessRunner.runAsync(
+                arguments: arguments,
+                cwd: cwd,
+                environment: processEnvironment(),
+                timeout: timeout
+            )
+        } catch SubprocessRunner.RunError.launchFailed {
+            linearDebugLog("command unavailable command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.commandUnavailable
-        }
-
-        let stdoutOutput = CommandOutput()
-        let stderrOutput = CommandOutput()
-        let outputGroup = DispatchGroup()
-        readPipe(stdout, into: stdoutOutput, group: outputGroup)
-        readPipe(stderr, into: stderrOutput, group: outputGroup)
-
-        let semaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            process.waitUntilExit()
-            semaphore.signal()
-        }
-
-        if semaphore.wait(timeout: .now() + timeout) != .success {
-            process.terminate()
-            _ = semaphore.wait(timeout: .now() + 0.5)
-            _ = outputGroup.wait(timeout: .now() + 1.0)
+        } catch {
             let elapsed = Date().timeIntervalSince(startedAt)
             linearDebugLog("command timeout elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.requestFailed
         }
 
-        _ = outputGroup.wait(timeout: .now() + 1.0)
-        let data = stdoutOutput.data
-        let stderrData = stderrOutput.data
         let elapsed = Date().timeIntervalSince(startedAt)
-        guard process.terminationStatus == 0 else {
-            let stderrOutput = cleanCommandOutput(String(decoding: stderrData, as: UTF8.self))
+        guard output.terminationStatus == 0 else {
+            let stderrOutput = cleanCommandOutput(String(decoding: output.standardError, as: UTF8.self))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            linearDebugLog("command failed status=\(process.terminationStatus) elapsed=\(String(format: "%.2f", elapsed))s stderr=\(stderrOutput) command=\(arguments.joined(separator: " "))")
+            linearDebugLog("command failed status=\(output.terminationStatus) elapsed=\(String(format: "%.2f", elapsed))s stderr=\(stderrOutput) command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.requestFailed
         }
 
-        let output = cleanCommandOutput(String(decoding: data, as: UTF8.self))
+        let text = cleanCommandOutput(String(decoding: output.standardOutput, as: UTF8.self))
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !output.isEmpty else {
+        guard !text.isEmpty else {
             linearDebugLog("command empty output elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.requestFailed
         }
-        linearDebugLog("command success elapsed=\(String(format: "%.2f", elapsed))s outputBytes=\(data.count) command=\(arguments.joined(separator: " "))")
-        return output
-    }
-
-    private static func readPipe(_ pipe: Pipe, into output: CommandOutput, group: DispatchGroup) {
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            output.append(pipe.fileHandleForReading.readDataToEndOfFile())
-            group.leave()
-        }
+        linearDebugLog("command success elapsed=\(String(format: "%.2f", elapsed))s outputBytes=\(output.standardOutput.count) command=\(arguments.joined(separator: " "))")
+        return text
     }
 
     private static func cleanCommandOutput(_ value: String) -> String {
@@ -642,23 +605,6 @@ private enum LinearIssueClientError: Error {
     case commandUnavailable
     case issueNotFound
     case requestFailed
-}
-
-private final class CommandOutput {
-    private let lock = NSLock()
-    private var value = Data()
-
-    var data: Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
-
-    func append(_ data: Data) {
-        lock.lock()
-        value.append(data)
-        lock.unlock()
-    }
 }
 
 private struct GraphQLRequest: Encodable {

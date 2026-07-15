@@ -2123,7 +2123,7 @@ final class SessionStore: ObservableObject {
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .utility) {
             let startedAt = DispatchTime.now()
-            let info = SessionContextResolver.resolve(input: input) {
+            let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
             PerformanceTelemetry.shared.recordDuration(
@@ -2162,7 +2162,7 @@ final class SessionStore: ObservableObject {
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .userInitiated) {
             let startedAt = DispatchTime.now()
-            let info = SessionContextResolver.resolve(input: input) {
+            let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
             PerformanceTelemetry.shared.recordDuration(
@@ -2219,7 +2219,7 @@ final class SessionStore: ObservableObject {
         selectedContextTask?.cancel()
         selectedContextTask = Task.detached(priority: .userInitiated) {
             let startedAt = DispatchTime.now()
-            let info = SessionContextResolver.resolve(input: input) {
+            let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
             PerformanceTelemetry.shared.recordDuration(
