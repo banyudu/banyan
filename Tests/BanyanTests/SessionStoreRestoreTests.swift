@@ -80,6 +80,36 @@ import Testing
     ) == nil)
 }
 
+@Test func liveAgentMatchIncludesPinnedTitleSessionsSoAgentSessionIDResolves() {
+    // Regression: pinned-title sessions (Linear worktrees launched with an
+    // explicit "ENG-1234 …" title) must still take part in the transcript match
+    // so their agentSessionID is captured — otherwise reopening a closed one
+    // replays the initial prompt instead of resuming. Pinning is not one of the
+    // predicate's inputs, so a pinned codex/claude session participates.
+    #expect(SessionStore.participatesInLiveAgentMatch(
+        isImportedHistory: false, status: .running, provider: .claude
+    ))
+    #expect(SessionStore.participatesInLiveAgentMatch(
+        isImportedHistory: false, status: .needInput, provider: .codex
+    ))
+    // Unknown provider is still allowed (it gets detected during the pass).
+    #expect(SessionStore.participatesInLiveAgentMatch(
+        isImportedHistory: false, status: .running, provider: nil
+    ))
+}
+
+@Test func liveAgentMatchExcludesClosedImportedAndNonAgentSessions() {
+    #expect(!SessionStore.participatesInLiveAgentMatch(
+        isImportedHistory: false, status: .closed, provider: .claude
+    ))
+    #expect(!SessionStore.participatesInLiveAgentMatch(
+        isImportedHistory: true, status: .running, provider: .codex
+    ))
+    #expect(!SessionStore.participatesInLiveAgentMatch(
+        isImportedHistory: false, status: .running, provider: .gemini
+    ))
+}
+
 @Test func startupCleanupOnlyTargetsUnpersistedBanyanTmuxSessions() {
     let stale = SessionStore.staleTmuxSessionNames(
         liveSessionNames: ["banyan-session-2", "banyan-session-1", "banyan-session-3"],

@@ -965,6 +965,13 @@ final class SessionStore: ObservableObject {
         // rerun the original launch command from scratch. For codex/claude
         // sessions whose underlying agent session we resolved, rebuild the
         // command as a resume so prior context is restored instead of replayed.
+        //
+        // Sessions closed before the live transcript match ran — or persisted by
+        // an older build — have no `agentSessionID`. Try to recover it from the
+        // imported history now so those still resume instead of replaying.
+        if session.agentSessionID == nil {
+            recoverAgentSessionID(for: session)
+        }
         if let resumeCommand = Self.reopenResumeCommand(
             status: session.status,
             provider: session.agentProvider,
@@ -976,6 +983,25 @@ final class SessionStore: ObservableObject {
         session.reattachTerminalClient()
         selectedSessionID = id
         saveSessions()
+    }
+
+    /// Best-effort recovery of a closed session's underlying agent session UUID
+    /// from the most recently imported transcript history, matched by provider,
+    /// cwd, and creation/reset time. Used at reopen for sessions that never had
+    /// `agentSessionID` resolved while live (closed too early, pinned title, or
+    /// persisted by an older build) so they can still resume rather than replay.
+    private func recoverAgentSessionID(for session: BanyanSession) {
+        guard let match = Self.bestPromptTitleMatch(
+            sessionCWD: session.cwd,
+            sessionCreatedAt: session.createdAt,
+            sessionResetAt: session.lastConversationResetAt,
+            provider: session.agentProvider,
+            in: latestImportedHistory
+        ) else {
+            return
+        }
+        session.markDetectedAgentProvider(match.provider)
+        session.markAgentSessionID(match.sourceID)
     }
 
     /// Builds the resume command to use when reopening a closed coding-agent
@@ -1813,15 +1839,35 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Whether a live session participates in the transcript-matching pass that
+    /// resolves both its display title and `agentSessionID`.
+    ///
+    /// Pinned-title sessions (e.g. Linear worktrees launched with an explicit
+    /// "ENG-1234 …" title) are intentionally included. Excluding them left the
+    /// pass resolving no `agentSessionID`, so reopening a closed one replayed the
+    /// initial prompt instead of resuming. The title updates in the caller are
+    /// individually guarded by `hasUsefulPinnedTitle`, so a user's pinned title is
+    /// still never overwritten.
+    nonisolated static func participatesInLiveAgentMatch(
+        isImportedHistory: Bool,
+        status: SessionStatus,
+        provider: CodingAgentProvider?
+    ) -> Bool {
+        guard !isImportedHistory, status != .closed else { return false }
+        guard let provider else { return true }
+        return [.claude, .codex].contains(provider)
+    }
+
     private func refreshLiveAgentTitles(from imported: [ImportedAgentSession]) {
         let candidates = imported.filter { [.claude, .codex].contains($0.provider) }
         guard !candidates.isEmpty else { return }
 
         let liveSessions = sessions.filter {
-            !$0.isImportedHistory
-                && $0.status != .closed
-                && !$0.isTitlePinned
-                && ($0.agentProvider == nil || [.claude, .codex].contains($0.agentProvider!))
+            Self.participatesInLiveAgentMatch(
+                isImportedHistory: $0.isImportedHistory,
+                status: $0.status,
+                provider: $0.agentProvider
+            )
         }
         let inputs = liveSessions.map {
             LivePromptTitleMatchInput(
