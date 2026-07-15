@@ -1634,6 +1634,15 @@ private struct ClosedSessionHistoryView: View {
                 }
                 Spacer()
                 Button {
+                    reopenTrimmed()
+                } label: {
+                    Image(systemName: "scissors")
+                }
+                .buttonStyle(.banyanBorderless)
+                .controlSize(.small)
+                .help("Reopen with stale tool output trimmed to save context (experimental)")
+
+                Button {
                     reopenSession()
                 } label: {
                     Label("Reopen", systemImage: "arrow.uturn.forward.circle.fill")
@@ -1657,6 +1666,10 @@ private struct ClosedSessionHistoryView: View {
 
     private func reopenSession() {
         _ = try? store.respawn(id: session.id)
+    }
+
+    private func reopenTrimmed() {
+        store.respawnTrimmed(id: session.id)
     }
 }
 
@@ -1684,6 +1697,15 @@ private struct ImportedSessionHistoryView: View {
                         .truncationMode(.middle)
                 }
                 Spacer()
+                Button {
+                    resumeTrimmed()
+                } label: {
+                    Image(systemName: "scissors")
+                }
+                .buttonStyle(.banyanBorderless)
+                .controlSize(.small)
+                .help("Resume with stale tool output trimmed to save context (experimental)")
+
                 Button {
                     resumeSession()
                 } label: {
@@ -1762,6 +1784,10 @@ private struct ImportedSessionHistoryView: View {
 
     private func resumeSession() {
         _ = try? store.resumeImportedHistory(id: session.id)
+    }
+
+    private func resumeTrimmed() {
+        store.resumeImportedHistoryTrimmed(id: session.id)
     }
 
     private func resumeWithPrompt() {

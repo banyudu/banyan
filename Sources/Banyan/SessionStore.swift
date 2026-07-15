@@ -985,6 +985,47 @@ final class SessionStore: ObservableObject {
         saveSessions()
     }
 
+    /// Reopen a closed codex/claude session, but first write a trimmed copy of
+    /// its transcript (stale tool output cleared) and resume that instead — so the
+    /// continued session replays far fewer input tokens per turn. Falls back to a
+    /// normal full `respawn` whenever there's nothing worth trimming or the
+    /// transcript can't be prepared. The original transcript is never modified.
+    func respawnTrimmed(id: String) {
+        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        if session.agentSessionID == nil {
+            recoverAgentSessionID(for: session)
+        }
+        guard session.status == .closed,
+              let provider = session.agentProvider,
+              [.codex, .claude].contains(provider),
+              let sourceID = session.agentSessionID, !sourceID.isEmpty else {
+            try? respawn(id: id)
+            return
+        }
+        let cwd = session.cwd
+        Task.detached(priority: .userInitiated) {
+            let prepared = TranscriptResumePreparer.prepare(provider: provider, sourceID: sourceID, cwd: cwd)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard let prepared,
+                      let command = AgentSessionHistoryImporter.resumeCommand(
+                        provider: provider,
+                        sourceID: prepared.newSourceID,
+                        cwd: cwd
+                      ),
+                      let session = self.sessions.first(where: { $0.id == id }) else {
+                    try? self.respawn(id: id)
+                    return
+                }
+                session.command = command
+                session.markAgentSessionID(prepared.newSourceID)
+                session.reattachTerminalClient()
+                self.selectedSessionID = id
+                self.saveSessions()
+            }
+        }
+    }
+
     /// Best-effort recovery of a closed session's underlying agent session UUID
     /// from the most recently imported transcript history, matched by provider,
     /// cwd, and creation/reset time. Used at reopen for sessions that never had
@@ -1345,6 +1386,50 @@ final class SessionStore: ObservableObject {
             command: command,
             tone: .blue
         )
+    }
+
+    /// Resume an imported history item from a trimmed copy of its transcript so
+    /// the first (and every) follow-up turn replays fewer input tokens. Falls back
+    /// to `resumeImportedHistory` when there's nothing worth trimming or the
+    /// transcript can't be prepared. The original transcript is never modified.
+    func resumeImportedHistoryTrimmed(id: String, prompt: String? = nil) {
+        guard let history = sessions.first(where: { $0.id == id && $0.isImportedHistory }),
+              let provider = history.agentProvider,
+              let sourceID = AgentSessionHistoryImporter.sourceID(fromImportedSessionID: history.id, provider: provider) else {
+            _ = try? resumeImportedHistory(id: id, prompt: prompt)
+            return
+        }
+        let cwd = history.cwd
+        let title = history.displayTitle
+        let transcriptURL = history.historyTranscriptURL
+        Task.detached(priority: .userInitiated) {
+            let prepared = TranscriptResumePreparer.prepare(
+                provider: provider,
+                sourceID: sourceID,
+                cwd: cwd,
+                transcriptURL: transcriptURL
+            )
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard let prepared,
+                      let command = AgentSessionHistoryImporter.resumeCommand(
+                        provider: provider,
+                        sourceID: prepared.newSourceID,
+                        cwd: cwd,
+                        prompt: prompt
+                      ) else {
+                    _ = try? self.resumeImportedHistory(id: id, prompt: prompt)
+                    return
+                }
+                self.spawn(
+                    id: "\(provider.rawValue)-\(String(prepared.newSourceID.prefix(8)))",
+                    title: title,
+                    cwd: cwd,
+                    command: command,
+                    tone: .blue
+                )
+            }
+        }
     }
 
     func select(id: String) {
