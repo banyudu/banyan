@@ -1979,6 +1979,12 @@ final class SessionStore: ObservableObject {
             // pre-/clear first-prompt title resurrected onto the live session.
             if let segmentTitle = match.segmentPromptTitle {
                 session.markFirstPromptTitle(segmentTitle)
+            } else if match.segmentWasCleared {
+                // The transcript shows a /clear or /new with no prompt since.
+                // Actively drop the stale title even when the keystroke path
+                // missed the reset (autocomplete, paste, unfocused terminal,
+                // or a /clear issued while Banyan was closed).
+                session.noteConversationResetFromTranscript()
             }
         }
     }

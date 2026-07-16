@@ -11,6 +11,11 @@ struct ImportedAgentSession: Identifiable, Equatable {
     /// pre-reset first prompt as a display fallback; this does not, so live
     /// sessions don't resurrect a stale title onto a freshly cleared session.
     let segmentPromptTitle: String?
+    /// True when the transcript's latest segment was reset (/clear or /new)
+    /// with no prompt since. Lets a live session drop its stale title even
+    /// when the keystroke path missed the reset (autocomplete, paste,
+    /// unfocused terminal, or a /clear issued while Banyan was closed).
+    let segmentWasCleared: Bool
     let cwd: String
     let transcriptURL: URL
     let createdAt: Date
@@ -22,6 +27,7 @@ struct ImportedAgentSession: Identifiable, Equatable {
         sourceID: String,
         title: String,
         segmentPromptTitle: String? = nil,
+        segmentWasCleared: Bool = false,
         cwd: String,
         transcriptURL: URL,
         createdAt: Date,
@@ -32,6 +38,7 @@ struct ImportedAgentSession: Identifiable, Equatable {
         self.sourceID = sourceID
         self.title = title
         self.segmentPromptTitle = segmentPromptTitle
+        self.segmentWasCleared = segmentWasCleared
         self.cwd = cwd
         self.transcriptURL = transcriptURL
         self.createdAt = createdAt
@@ -109,6 +116,7 @@ enum AgentSessionHistoryImporter {
                 sourceID: candidate.id,
                 title: metadata.promptTitle ?? sanitizedTitle(candidate.threadName) ?? "Codex \(candidate.id.prefix(8))",
                 segmentPromptTitle: metadata.segmentTitle,
+                segmentWasCleared: metadata.segmentWasCleared,
                 cwd: cwd,
                 transcriptURL: candidate.transcriptURL,
                 createdAt: metadata.createdAt ?? candidate.updatedAt,
@@ -189,7 +197,7 @@ enum AgentSessionHistoryImporter {
         return Array(result.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(maxSessions))
     }
 
-    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, promptTitle: String?, segmentTitle: String?) {
+    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, promptTitle: String?, segmentTitle: String?, segmentWasCleared: Bool) {
         var cwd: String?
         var createdAt: Date?
         var titleTracker = PromptTitleTracker()
@@ -213,7 +221,7 @@ enum AgentSessionHistoryImporter {
 
         }
 
-        return (cwd, createdAt, titleTracker.resolvedTitle, titleTracker.segmentTitle)
+        return (cwd, createdAt, titleTracker.resolvedTitle, titleTracker.segmentTitle, titleTracker.segmentWasCleared)
     }
 
     private static func parseClaudeSession(
@@ -253,6 +261,7 @@ enum AgentSessionHistoryImporter {
             sourceID: sourceID,
             title: titleTracker.resolvedTitle ?? "Claude \(sourceID.prefix(8))",
             segmentPromptTitle: titleTracker.segmentTitle,
+            segmentWasCleared: titleTracker.segmentWasCleared,
             cwd: resolvedCWD,
             transcriptURL: url,
             createdAt: createdAt ?? fallbackUpdatedAt,
@@ -469,6 +478,7 @@ enum AgentSessionHistoryImporter {
     private struct PromptTitleTracker {
         private var firstTitle: String?
         private var currentSegmentTitle: String?
+        private var sawResetWithoutPrompt = false
 
         var resolvedTitle: String? {
             currentSegmentTitle ?? firstTitle
@@ -483,9 +493,19 @@ enum AgentSessionHistoryImporter {
             currentSegmentTitle
         }
 
+        /// True when the transcript's most recent segment boundary was a
+        /// /clear or /new that has no prompt after it yet. Distinguishes a
+        /// freshly cleared conversation (title should be dropped) from a
+        /// brand-new session that simply hasn't been titled — where
+        /// `segmentTitle` is also nil but no reset was ever observed.
+        var segmentWasCleared: Bool {
+            sawResetWithoutPrompt
+        }
+
         mutating func observe(_ prompt: String) {
             if isConversationResetCommand(prompt) {
                 currentSegmentTitle = nil
+                sawResetWithoutPrompt = true
                 return
             }
             guard let title = sanitizedTitle(prompt) else { return }
@@ -495,6 +515,7 @@ enum AgentSessionHistoryImporter {
             if currentSegmentTitle == nil {
                 currentSegmentTitle = title
             }
+            sawResetWithoutPrompt = false
         }
 
         private func isConversationResetCommand(_ prompt: String) -> Bool {
