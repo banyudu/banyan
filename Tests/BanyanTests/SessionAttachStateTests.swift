@@ -65,6 +65,32 @@ import Testing
     #expect(session.reportedTitle == nil)
 }
 
+@MainActor
+@Test func transcriptResetDropsStaleTitleWhenKeystrokePathMissedClear() {
+    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "codex")
+    session.noteUserSubmittedInput("find workable linear issues for me")
+    #expect(session.reportedTitle == "find workable linear issues for me")
+
+    // Simulates the supervisor observing a /clear in the transcript that the
+    // keystroke monitor never captured (autocomplete/paste/unfocused/closed).
+    session.noteConversationResetFromTranscript()
+
+    #expect(session.reportedTitle == nil)
+    #expect(session.generatedTitle == nil)
+}
+
+@MainActor
+@Test func transcriptResetKeepsPinnedTitle() {
+    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "codex")
+    session.noteUserSubmittedInput("find workable linear issues for me")
+    session.title = "Pinned name"
+    session.isTitlePinned = true
+
+    session.noteConversationResetFromTranscript()
+
+    #expect(session.displayTitle == "Pinned name")
+}
+
 @Test func codingAgentIdleStatusOnlyIncludesWaitingStates() {
     let idleStatuses: Set<SessionStatus> = [.needInput, .asking, .review]
 

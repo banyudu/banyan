@@ -403,6 +403,20 @@ final class BanyanSession: ObservableObject, Identifiable {
         mark(status: .executing, tone: .blue)
     }
 
+    /// Drop a stale title when the agent transcript shows the current segment
+    /// was reset (/clear or /new) with no prompt since. Mirrors the reset
+    /// branch of `noteUserSubmittedInput`, but is driven by transcript
+    /// observation rather than keystroke capture, so it also fires for resets
+    /// the keystroke monitor never saw. Idempotent and pin-safe.
+    func noteConversationResetFromTranscript() {
+        guard !hasUsefulPinnedTitle else { return }
+        guard reportedTitle != nil || generatedTitle != nil || externalTitleSignature != nil else { return }
+        reportedTitle = nil
+        generatedTitle = nil
+        externalTitleSignature = nil
+        touch()
+    }
+
     func markFirstPromptTitle(_ title: String) {
         guard !hasUsefulPinnedTitle else { return }
         guard let provider = agentProvider, [.claude, .codex].contains(provider) else { return }

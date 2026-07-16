@@ -104,6 +104,34 @@ import Testing
     // resurrect the stale title onto a freshly cleared conversation.
     #expect(session.title == "Old sidebar title")
     #expect(session.segmentPromptTitle == nil)
+    // A reset with no prompt since lets live sessions actively drop the stale
+    // title, even when the keystroke path missed the /clear.
+    #expect(session.segmentWasCleared)
+}
+
+@Test func codexTranscriptWithPromptAfterClearIsNotMarkedCleared() throws {
+    let home = try makeTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let id = "019efe8d-0514-72a2-ad62-daea0b976aaa"
+    let sessionDirectory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+    try write(
+        [
+            #"{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"session_id":"\#(id)","cwd":"/tmp/banyan-codex","timestamp":"2026-07-01T10:00:00.000Z"}}"#,
+            #"{"timestamp":"2026-07-01T10:00:10.000Z","type":"event_msg","payload":{"type":"user_message","message":"Old sidebar title"}}"#,
+            #"{"timestamp":"2026-07-01T10:05:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"/clear"}}"#,
+            #"{"timestamp":"2026-07-01T10:05:20.000Z","type":"event_msg","payload":{"type":"user_message","message":"Fresh title after clear"}}"#
+        ].joined(separator: "\n"),
+        to: sessionDirectory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    )
+
+    let imported = AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10)
+
+    let session = try #require(imported.first { $0.id == "history-codex-\(id)" })
+    #expect(session.segmentPromptTitle == "Fresh title after clear")
+    // A prompt after the reset re-titles the segment, so it is not "cleared".
+    #expect(session.segmentWasCleared == false)
 }
 
 @Test func importsClaudeProjectLogsFromFirstHumanPrompt() throws {
