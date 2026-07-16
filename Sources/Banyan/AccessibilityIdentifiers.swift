@@ -27,6 +27,7 @@ enum AccessibilityID {
     static let sidebarCloseSelected = "banyan.sidebar.close-selected"
     static let sidebarPendingHandoffJobs = "banyan.sidebar.pending-handoff-jobs"
     static let sidebarModePicker = "banyan.sidebar.mode"
+    static let sidebarHeaderAddSession = "banyan.sidebar.header.add-session"
     static let linearIssueList = "banyan.sidebar.linear-list"
     static let linearIssueSearchField = "banyan.sidebar.linear-search"
     static let linearIssueStateFilterMenu = "banyan.sidebar.linear-state-filter"

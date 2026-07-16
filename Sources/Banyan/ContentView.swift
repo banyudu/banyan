@@ -105,17 +105,28 @@ struct ContentView: View {
 
     private var sidebarModeHeader: some View {
         VStack(spacing: 0) {
-            Picker("Sidebar", selection: $store.sidebarMode) {
-                ForEach(SidebarMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
+            HStack(spacing: 8) {
+                Picker("Sidebar", selection: $store.sidebarMode) {
+                    ForEach(SidebarMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
+
+                Button {
+                    store.spawnSiblingSession()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.banyanBorderless)
+                .accessibilityIdentifier(AccessibilityID.sidebarHeaderAddSession)
+                .help("New session (Cmd-N)")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .padding(.top, sidebarTitlebarHeaderTopPadding)
-            .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
 
             Divider()
         }
