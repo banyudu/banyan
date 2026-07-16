@@ -98,6 +98,50 @@ import Testing
     #expect(result?.tone == .yellow)
 }
 
+@Test func supervisorTreatsFinishedCodexSummaryAsNeedInput() {
+    // A completed Codex turn leaves a summary full of work words ("editing",
+    // "Ran …", "Worked for 3m 38s") plus an idle input box in the visible tail.
+    // None of that is a live turn, so it must not pin the session to `.executing`.
+    let finishedText = [
+        "  - Ran /design-review workflow before editing.",
+        "  - Ran git diff --check.",
+        "",
+        "─ Worked for 3m 38s ─",
+        "",
+        "› Improve documentation in @filename",
+        "",
+        "  gpt-5.5 high fast · ~/dev/repo · Context 37% used"
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(visibleText: finishedText).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "codex",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
+@Test func supervisorClassifiesLiveInterruptAffordanceAsExecuting() {
+    // While a Codex turn is in flight it renders a live interrupt hint; that,
+    // not a stray work word, is what keeps the session in `.executing`.
+    let workingText = [
+        "  Editing SessionStore.swift",
+        "",
+        "─ Working (0m 12s • Esc to interrupt) ─"
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(visibleText: workingText).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "codex",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .executing)
+    #expect(result?.tone == .blue)
+}
+
 @Test func supervisorClassifiesExternalProcessAsExecuting() {
     let result = makeSupervisor(processes: [
         process(commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 5)

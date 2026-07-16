@@ -171,24 +171,45 @@ struct AgentSupervisor {
         }
     }
 
+    /// True only when the visible tail shows the agent is *actively* working —
+    /// not merely that its finished output happens to mention work. Matching bare
+    /// words like `working`/`editing`/`running` pinned idle sessions to
+    /// `.executing` forever, because an agent's completion summary is full of them
+    /// (e.g. Codex prints `Worked for 3m 38s` and bullets like `Ran … before
+    /// editing.` while sitting at an idle prompt). TUI agents instead render a
+    /// live "interrupt" affordance only while a turn is in flight and drop it the
+    /// instant they return to the prompt, so that hint is the reliable signal.
     private static func looksLikeAgentExecuting(_ text: String) -> Bool {
-        let lowercased = text
+        let tail = text
             .lowercased()
             .split(separator: "\n")
             .suffix(8)
-            .joined(separator: "\n")
-        let executingPhrases = [
-            "thinking",
-            "working",
-            "running",
-            "executing",
-            "reading",
-            "editing",
-            "searching",
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+
+        // A live interrupt affordance is shown only while a turn is running
+        // (Claude: "esc to interrupt", Codex: "Esc to interrupt", etc.).
+        let interruptHints = [
             "esc to interrupt",
-            "ctrl-c to interrupt"
+            "esc to stop",
+            "ctrl-c to interrupt",
+            "ctrl+c to interrupt"
         ]
-        return executingPhrases.contains(where: lowercased.contains)
+        if tail.contains(where: { line in interruptHints.contains(where: line.contains) }) {
+            return true
+        }
+
+        // Fallback for agents without an interrupt hint: a work verb on a line
+        // that is still animating (trailing ellipsis). A past-tense summary line
+        // such as "Worked for 3m 38s" or "Ran git diff --check." ends in a period,
+        // not an ellipsis, so it deliberately does not match.
+        let progressVerbs = [
+            "thinking", "working", "running", "executing",
+            "reading", "editing", "searching", "generating"
+        ]
+        return tail.contains { line in
+            guard line.hasSuffix("…") || line.hasSuffix("...") else { return false }
+            return progressVerbs.contains(where: line.contains)
+        }
     }
 }
 
