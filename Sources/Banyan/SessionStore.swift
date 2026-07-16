@@ -836,6 +836,15 @@ final class SessionStore: ObservableObject {
         return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.parentSessionID)
     }
 
+    @discardableResult
+    func spawnSession(inProjectGroup groupID: String) -> BanyanSession? {
+        let groupSessions = visibleSessions.filter {
+            $0.projectGroupID == groupID && !$0.isImportedHistory
+        }
+        guard let representative = groupSessions.first else { return nil }
+        return spawn(cwd: representative.cwd, command: "", parentSessionID: representative.parentSessionID)
+    }
+
     func openScratchTerminal() {
         if let window = scratchWindow, scratchSession != nil {
             window.makeKeyAndOrderFront(nil)

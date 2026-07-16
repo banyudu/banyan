@@ -27,7 +27,6 @@ enum AccessibilityID {
     static let sidebarCloseSelected = "banyan.sidebar.close-selected"
     static let sidebarPendingHandoffJobs = "banyan.sidebar.pending-handoff-jobs"
     static let sidebarModePicker = "banyan.sidebar.mode"
-    static let sidebarHeaderAddSession = "banyan.sidebar.header.add-session"
     static let linearIssueList = "banyan.sidebar.linear-list"
     static let linearIssueSearchField = "banyan.sidebar.linear-search"
     static let linearIssueStateFilterMenu = "banyan.sidebar.linear-state-filter"
@@ -35,6 +34,10 @@ enum AccessibilityID {
     static let linearIssueStartButton = "banyan.sidebar.linear-start"
     static let addSessionSheet = "banyan.sheet.add-session"
     static let preferencesSheet = "banyan.sheet.preferences"
+
+    static func projectAddSession(_ groupID: String) -> String {
+        "banyan.sidebar.project.\(groupID).add-session"
+    }
 
     static func sessionRow(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id)"

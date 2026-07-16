@@ -105,28 +105,17 @@ struct ContentView: View {
 
     private var sidebarModeHeader: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Picker("Sidebar", selection: $store.sidebarMode) {
-                    ForEach(SidebarMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
+            Picker("Sidebar", selection: $store.sidebarMode) {
+                ForEach(SidebarMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
-
-                Button {
-                    store.spawnSiblingSession()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.banyanBorderless)
-                .accessibilityIdentifier(AccessibilityID.sidebarHeaderAddSession)
-                .help("New session (Cmd-N)")
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .padding(.top, sidebarTitlebarHeaderTopPadding)
+            .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
 
             Divider()
         }
@@ -562,10 +551,26 @@ struct ContentView: View {
                     }
                 }
             } header: {
-                Text(group.title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(group.title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    if allowsMove {
+                        Spacer(minLength: 4)
+
+                        Button {
+                            store.spawnSession(inProjectGroup: group.id)
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.banyanBorderless)
+                        .accessibilityIdentifier(AccessibilityID.projectAddSession(group.id))
+                        .help("New session in \(group.title)")
+                    }
+                }
             }
         }
     }
