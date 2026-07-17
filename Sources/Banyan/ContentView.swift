@@ -536,6 +536,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func sidebarSections(_ groups: [SidebarSessionGroup], allowsMove: Bool) -> some View {
+        let firstGroupID = groups.first?.id
         ForEach(groups) { group in
             Section {
                 if allowsMove {
@@ -563,7 +564,10 @@ struct ContentView: View {
                         ProjectNewSessionButton(groupID: group.id, groupTitle: group.title)
                     }
                 }
-                .padding(.top, 4)
+                // Only the first project gets extra top breathing room under the
+                // mode-picker divider; adding it to every header widened the gaps
+                // between projects.
+                .padding(.top, group.id == firstGroupID ? 4 : 0)
             }
         }
     }
