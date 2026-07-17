@@ -1246,7 +1246,7 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if let provider = session.agentProvider {
+            if let provider = session.displayAgentProvider {
                 AgentProviderIcon(provider: provider)
                     .accessibilityLabel(provider.displayName)
             }
