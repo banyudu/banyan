@@ -1498,6 +1498,7 @@ private struct ProjectNewSessionButton: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.visible)
         .fixedSize()
+        .banyanButtonHoverEffect()
         .help("New \(current.label) session in \(groupTitle)")
         .accessibilityIdentifier(AccessibilityID.projectAddSession(groupID))
     }
