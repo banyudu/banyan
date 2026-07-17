@@ -138,14 +138,29 @@ struct ContentView: View {
                 PendingHandoffJobsView(jobs: store.pendingHandoffJobs)
             }
 
-            if let historyGroup = store.historySidebarGroup {
+            if store.hasLocalHistorySessions {
                 Divider()
-                List(selection: $store.selectedSessionID) {
-                    sidebarSections([historyGroup], allowsMove: false)
+                historySearchField
+                    .padding(.horizontal, 10)
+                    .padding(.top, 8)
+                    .padding(.bottom, 2)
+
+                if let historyGroup = store.historySidebarGroup {
+                    List(selection: $store.selectedSessionID) {
+                        sidebarSections([historyGroup], allowsMove: false)
+                    }
+                    .listStyle(.sidebar)
+                    .frame(height: historyListHeight(itemCount: historyGroup.items.count))
+                    .accessibilityIdentifier(AccessibilityID.sidebarHistoryList)
+                } else {
+                    Text("No matching sessions")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .accessibilityIdentifier(AccessibilityID.sidebarHistoryEmptyLabel)
                 }
-                .listStyle(.sidebar)
-                .frame(height: historyListHeight(itemCount: historyGroup.items.count))
-                .accessibilityIdentifier(AccessibilityID.sidebarHistoryList)
             }
 
             HStack {
@@ -231,6 +246,33 @@ struct ContentView: View {
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
+    }
+
+    private var historySearchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            TextField("Search history", text: $store.historyFilterText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .accessibilityIdentifier(AccessibilityID.sidebarHistorySearchField)
+
+            if !store.historyFilterText.isEmpty {
+                Button {
+                    store.historyFilterText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.banyanPlain)
+                .help("Clear search")
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
     }
 
     private var linearIssueFilterHeader: some View {

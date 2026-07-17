@@ -143,6 +143,8 @@ final class SessionStore: ObservableObject {
             saveWorkspace()
         }
     }
+    /// Deliberately not persisted: a stale filter on launch would look like lost history.
+    @Published var historyFilterText: String = ""
     @Published var terminalTheme: TerminalTheme = .system {
         didSet {
             saveWorkspace()
@@ -368,22 +370,45 @@ final class SessionStore: ObservableObject {
         return result
     }
 
+    /// Unfiltered, History is a scrollable "recent work" shelf. A search is a request
+    /// for a specific session, so it reaches past that shelf into the full backlog.
+    static let historySidebarBrowseLimit = 30
+    static let historySidebarSearchLimit = 100
+
+    var hasLocalHistorySessions: Bool {
+        sessions.contains(where: Self.isLocalHistorySession)
+    }
+
     private var sidebarHistoryItems: [SidebarSessionItem] {
-        sessions
+        let query = historyFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let limit = query.isEmpty ? Self.historySidebarBrowseLimit : Self.historySidebarSearchLimit
+        return sessions
             .filter(Self.isLocalHistorySession)
             .sorted { $0.updatedAt > $1.updatedAt }
-            .prefix(10)
-            .map {
-                SidebarSessionItem(
-                    session: $0,
-                    depth: 0,
-                    titleOverride: Self.historySidebarTitle(
-                        projectName: $0.projectName,
-                        displayTitle: $0.displayTitle,
-                        issueID: $0.titleLinkLabel
+            .map { session in
+                (
+                    session: session,
+                    title: Self.historySidebarTitle(
+                        projectName: session.projectName,
+                        displayTitle: session.displayTitle,
+                        issueID: session.titleLinkLabel
                     )
                 )
             }
+            .filter { Self.matchesHistoryFilter(title: $0.title, query: query) }
+            .prefix(limit)
+            .map { SidebarSessionItem(session: $0.session, depth: 0, titleOverride: $0.title) }
+    }
+
+    /// Matches against the row's rendered title (project · issue · title), so what the
+    /// user reads is what they can search. Every whitespace-separated token must appear,
+    /// which lets "clawly eng-74" narrow without demanding the exact rendered order.
+    nonisolated static func matchesHistoryFilter(title: String, query: String) -> Bool {
+        let tokens = query.split(whereSeparator: \.isWhitespace)
+        guard !tokens.isEmpty else { return true }
+        return tokens.allSatisfy { token in
+            title.range(of: token, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        }
     }
 
     nonisolated static func historySidebarTitle(projectName: String, displayTitle: String, issueID: String?) -> String {

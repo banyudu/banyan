@@ -137,6 +137,28 @@ import Testing
     #expect(title == "ENG-6061 · Personal coding run")
 }
 
+@Test func historyFilterMatchesTokensAgainstTheRenderedRowTitle() {
+    let title = SessionStore.historySidebarTitle(
+        projectName: "clawly",
+        displayTitle: "Fix stale provider icon",
+        issueID: "ENG-6061"
+    )
+
+    #expect(SessionStore.matchesHistoryFilter(title: title, query: ""))
+    #expect(SessionStore.matchesHistoryFilter(title: title, query: "   "))
+    #expect(SessionStore.matchesHistoryFilter(title: title, query: "eng-6061"))
+    #expect(SessionStore.matchesHistoryFilter(title: title, query: "PROVIDER"))
+    // Tokens may match out of order, and all of them must match.
+    #expect(SessionStore.matchesHistoryFilter(title: title, query: "icon eng-6061"))
+    #expect(!SessionStore.matchesHistoryFilter(title: title, query: "icon eng-9999"))
+    #expect(!SessionStore.matchesHistoryFilter(title: title, query: "codex"))
+}
+
+@Test func historySidebarShowsMoreRowsWhenSearchingThanWhenBrowsing() {
+    #expect(SessionStore.historySidebarBrowseLimit == 30)
+    #expect(SessionStore.historySidebarSearchLimit > SessionStore.historySidebarBrowseLimit)
+}
+
 @Test func historySidebarTitleDoesNotDuplicateExistingIssuePrefix() {
     let title = SessionStore.historySidebarTitle(
         projectName: "yudu-eng-6061-32baaf",

@@ -3,6 +3,8 @@ enum AccessibilityID {
     static let sidebar = "banyan.sidebar"
     static let sidebarList = "banyan.sidebar.list"
     static let sidebarHistoryList = "banyan.sidebar.history-list"
+    static let sidebarHistorySearchField = "banyan.sidebar.history-search"
+    static let sidebarHistoryEmptyLabel = "banyan.sidebar.history-empty"
     static let sidebarFooter = "banyan.sidebar.footer"
     static let detail = "banyan.detail"
     static let emptyDetail = "banyan.detail.empty"
