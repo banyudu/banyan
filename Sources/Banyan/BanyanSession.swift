@@ -61,7 +61,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var externalTitleTask: Task<Void, Never>?
     private var isDetachingTerminalClient = false
     private var attemptedBlankTerminalRecovery = false
-    private var titleURLWasAutoDetected = false
+    private(set) var titleURLWasAutoDetected = false
     private var terminalRefreshTask: Task<Void, Never>?
 
     var displayTitle: String {
@@ -80,9 +80,12 @@ final class BanyanSession: ObservableObject, Identifiable {
         return title
     }
 
+    /// `titleURL` comes first because the sidebar renders this as the label of a link
+    /// *to* that URL: reading the ID off a title from an earlier chapter would show
+    /// one issue and open another. The title and cwd only fill in when nothing is bound.
     var titleLinkLabel: String? {
-        LinearIssueReference.issueID(in: title)
-            ?? LinearIssueReference.issueID(in: titleURL)
+        LinearIssueReference.issueID(in: titleURL)
+            ?? LinearIssueReference.issueID(in: title)
             ?? LinearIssueReference.detect(branch: displayBranch, cwd: cwd)?.id
     }
 
@@ -130,6 +133,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         tmuxSessionName: String? = nil,
         title: String,
         titleURL: String? = nil,
+        titleURLWasAutoDetected: Bool? = nil,
         generatedTitle: String? = nil,
         isTitlePinned: Bool = false,
         cwd: String,
@@ -153,7 +157,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.title = title
         if let normalizedTitleURL = Self.normalizedTitleURL(titleURL) {
             self.titleURL = normalizedTitleURL
-            self.titleURLWasAutoDetected = normalizedTitleURL == LinearIssueReference.detect(branch: displayContext.branch, cwd: cwd)?.url
+            // A restore passes the persisted provenance. Without one (a fresh spawn),
+            // infer it: a URL that matches what the cwd/branch says is auto-detected,
+            // and anything else was chosen deliberately by the caller.
+            self.titleURLWasAutoDetected = titleURLWasAutoDetected
+                ?? (normalizedTitleURL == LinearIssueReference.detect(branch: displayContext.branch, cwd: cwd)?.url)
         } else {
             let detectedReference = LinearIssueReference.detect(branch: displayContext.branch, cwd: cwd)
             self.titleURL = detectedReference?.url
@@ -454,6 +462,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard let directory = Self.normalizedDirectory(directory) else { return }
         guard directory != cwd else {
             retryDisplayContextIfDegraded(for: directory)
+            // Re-assert the binding even when the pane has not moved: something else
+            // may have written a titleURL the cwd/branch does not support (an agent
+            // marking the session, a snapshot restored from an earlier chapter).
+            // This is string matching over an already-cached branch — no git spawn.
+            refreshAutoDetectedTitleURL()
             return
         }
         let shouldUpdateTitle = Self.titleTracksCurrentDirectory(title, isTitlePinned: isTitlePinned, cwd: cwd)
@@ -551,6 +564,14 @@ final class BanyanSession: ObservableObject, Identifiable {
         displayContextDegraded = displayContext.gitLookupDegraded
     }
 
+    /// Keeps the issue binding tracking the pane's current working directory and
+    /// branch, which is where a session's identity actually lives: `cd` into another
+    /// issue's worktree and the link follows. A binding the cwd/branch no longer
+    /// supports is stale — a pane that has moved on, or an agent that marked the
+    /// session and has since exited — so detection replaces it rather than deferring
+    /// to it. Only an explicit binding (`banyanctl mark --title-url`) with nothing to
+    /// detect survives, since that is a deliberate choice about a directory that says
+    /// nothing on its own.
     private func refreshAutoDetectedTitleURL() {
         guard let detectedReference = LinearIssueReference.detect(branch: displayBranch, cwd: cwd) else {
             if titleURLWasAutoDetected {
@@ -560,10 +581,9 @@ final class BanyanSession: ObservableObject, Identifiable {
             return
         }
 
-        if titleURL == nil || titleURLWasAutoDetected {
-            titleURL = detectedReference.url
-            titleURLWasAutoDetected = true
-        }
+        titleURLWasAutoDetected = true
+        guard titleURL != detectedReference.url else { return }
+        titleURL = detectedReference.url
     }
 
     nonisolated private static func titleForCurrentDirectory(_ cwd: String) -> String {

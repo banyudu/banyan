@@ -91,6 +91,100 @@ import Testing
     #expect(session.displayTitle == "Pinned name")
 }
 
+@MainActor
+@Test func issueBindingFollowsTheWorkingDirectoryIntoAnotherIssuesWorktree() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = root.appendingPathComponent("clawly")
+    let worktree = root.appendingPathComponent("yudu-eng-7420-12edc9")
+    for directory in [repo, worktree] {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    // Bound deliberately, the way `banyanctl mark --title-url` does it.
+    let session = makeIssueBindingSession(cwd: repo.path)
+    session.mark(titleURL: "https://linear.app/2en/issue/ENG-7664")
+    #expect(session.titleLinkLabel == "ENG-7664")
+
+    session.updateCurrentDirectory(worktree.path)
+
+    #expect(session.titleLinkLabel == "ENG-7420")
+    #expect(session.titleURL == "https://linear.app/2en/issue/ENG-7420")
+}
+
+@MainActor
+@Test func issueChipNeverNamesADifferentIssueThanTheLinkItOpens() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let worktree = root.appendingPathComponent("yudu-eng-7420-12edc9")
+    try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+
+    // A title left over from the issue this pane used to be working on.
+    let session = makeIssueBindingSession(cwd: worktree.path)
+    session.mark(title: "ENG-7664 监听 main 分支 CI 失败")
+
+    #expect(session.titleURL == "https://linear.app/2en/issue/ENG-7420")
+    #expect(session.titleLinkLabel == "ENG-7420")
+}
+
+@MainActor
+@Test func detectedIssueBindingIsDroppedOnceTheDirectoryNoLongerSupportsIt() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = root.appendingPathComponent("clawly")
+    try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+
+    // A restored session carrying a binding detected in an earlier chapter (its pane
+    // has since moved back to the main checkout), which used to stick forever.
+    let session = makeIssueBindingSession(
+        cwd: repo.path,
+        titleURL: "https://linear.app/2en/issue/ENG-7664",
+        titleURLWasAutoDetected: true
+    )
+
+    session.updateCurrentDirectory(repo.path)
+
+    #expect(session.titleURL == nil)
+    #expect(session.titleLinkLabel == nil)
+}
+
+@MainActor
+@Test func explicitIssueBindingSurvivesWhenTheDirectorySaysNothing() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = root.appendingPathComponent("clawly")
+    try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+
+    let session = makeIssueBindingSession(
+        cwd: repo.path,
+        titleURL: "https://linear.app/2en/issue/ENG-7664",
+        titleURLWasAutoDetected: false
+    )
+
+    session.updateCurrentDirectory(repo.path)
+
+    #expect(session.titleLinkLabel == "ENG-7664")
+}
+
+@Test func legacySnapshotsWithoutBindingProvenanceDecodeAsDetected() throws {
+    let json = """
+    {
+        "id": "session-167",
+        "title": "~/dev/2enai/clawly",
+        "titleURL": "https://linear.app/2en/issue/ENG-7664",
+        "cwd": "/Users/banyudu/dev/2enai/clawly",
+        "command": "",
+        "status": "running",
+        "tone": "blue",
+        "createdAt": 771000000,
+        "updatedAt": 771000000
+    }
+    """
+    let snapshot = try JSONDecoder().decode(SessionSnapshot.self, from: Data(json.utf8))
+
+    #expect(snapshot.titleURLWasAutoDetected)
+}
+
 @Test func codingAgentIdleStatusOnlyIncludesWaitingStates() {
     let idleStatuses: Set<SessionStatus> = [.needInput, .asking, .review]
 
@@ -177,6 +271,23 @@ private func makeAttachStateSession(
         command: command,
         status: status,
         isRestored: isRestored,
+        theme: .system
+    )
+}
+
+@MainActor
+private func makeIssueBindingSession(
+    cwd: String,
+    titleURL: String? = nil,
+    titleURLWasAutoDetected: Bool? = nil
+) -> BanyanSession {
+    BanyanSession(
+        id: "issue-binding",
+        title: "Session",
+        titleURL: titleURL,
+        titleURLWasAutoDetected: titleURLWasAutoDetected,
+        cwd: cwd,
+        command: "",
         theme: .system
     )
 }

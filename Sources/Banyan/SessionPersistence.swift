@@ -6,6 +6,12 @@ struct SessionSnapshot: Codable, Equatable {
     let tmuxSessionName: String?
     let title: String
     let titleURL: String?
+    /// Whether `titleURL` came from the cwd/branch rather than an explicit choice.
+    /// Persisted so a restore does not turn a detected binding into a permanent one
+    /// that outlives the directory it was detected from. Legacy rows decode as `true`:
+    /// detection is where nearly every binding comes from, and an explicit one is
+    /// re-asserted the moment its owner marks the session again.
+    let titleURLWasAutoDetected: Bool
     let reportedTitle: String?
     let generatedTitle: String?
     let isTitlePinned: Bool
@@ -23,6 +29,7 @@ struct SessionSnapshot: Codable, Equatable {
         tmuxSessionName: String?,
         title: String,
         titleURL: String? = nil,
+        titleURLWasAutoDetected: Bool = true,
         reportedTitle: String?,
         generatedTitle: String? = nil,
         isTitlePinned: Bool = false,
@@ -39,6 +46,7 @@ struct SessionSnapshot: Codable, Equatable {
         self.tmuxSessionName = tmuxSessionName
         self.title = title
         self.titleURL = titleURL
+        self.titleURLWasAutoDetected = titleURLWasAutoDetected
         self.reportedTitle = reportedTitle
         self.generatedTitle = generatedTitle
         self.isTitlePinned = isTitlePinned
@@ -57,6 +65,7 @@ struct SessionSnapshot: Codable, Equatable {
         case tmuxSessionName
         case title
         case titleURL
+        case titleURLWasAutoDetected
         case reportedTitle
         case generatedTitle
         case isTitlePinned
@@ -77,6 +86,7 @@ struct SessionSnapshot: Codable, Equatable {
             tmuxSessionName: try container.decodeIfPresent(String.self, forKey: .tmuxSessionName),
             title: try container.decode(String.self, forKey: .title),
             titleURL: try container.decodeIfPresent(String.self, forKey: .titleURL),
+            titleURLWasAutoDetected: try container.decodeIfPresent(Bool.self, forKey: .titleURLWasAutoDetected) ?? true,
             reportedTitle: try container.decodeIfPresent(String.self, forKey: .reportedTitle),
             generatedTitle: try container.decodeIfPresent(String.self, forKey: .generatedTitle),
             isTitlePinned: try container.decodeIfPresent(Bool.self, forKey: .isTitlePinned) ?? false,
@@ -129,7 +139,7 @@ struct SessionPersistence {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id
+            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -161,6 +171,7 @@ struct SessionPersistence {
                         tmuxSessionName: columnText(statement, 1),
                         title: title,
                         titleURL: columnText(statement, 3),
+                        titleURLWasAutoDetected: sqlite3_column_int(statement, 15) != 0,
                         reportedTitle: columnText(statement, 4),
                         generatedTitle: columnText(statement, 5),
                         isTitlePinned: sqlite3_column_int(statement, 6) != 0,
@@ -331,6 +342,7 @@ struct SessionPersistence {
         try? execute(database, "ALTER TABLE sessions ADD COLUMN is_title_pinned INTEGER NOT NULL DEFAULT 0")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN agent_session_id TEXT")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN title_url_auto INTEGER NOT NULL DEFAULT 1")
         try execute(database, """
         CREATE TABLE IF NOT EXISTS workspace_state (
             key TEXT PRIMARY KEY,
@@ -351,8 +363,8 @@ struct SessionPersistence {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
@@ -368,7 +380,8 @@ struct SessionPersistence {
             created_at = excluded.created_at,
             updated_at = excluded.updated_at,
             sort_order = excluded.sort_order,
-            agent_session_id = excluded.agent_session_id
+            agent_session_id = excluded.agent_session_id,
+            title_url_auto = excluded.title_url_auto
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -392,6 +405,7 @@ struct SessionPersistence {
         bindText(statement, 14, encodeDate(snapshot.updatedAt))
         sqlite3_bind_int64(statement, 15, Int64(sortOrder))
         bindText(statement, 16, snapshot.agentSessionID)
+        sqlite3_bind_int(statement, 17, snapshot.titleURLWasAutoDetected ? 1 : 0)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw databaseError(database)
