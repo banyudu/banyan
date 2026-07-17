@@ -1243,6 +1243,13 @@ private struct SessionRow: View {
     @State private var isPointerCursorPushed = false
     @FocusState private var isRenameFocused: Bool
 
+    /// When the handoff affordance is showing, it already occupies the row's
+    /// trailing edge. The hover close button is suppressed there so it can't shift
+    /// the handoff button or be clicked by accident in its place.
+    private var showsHandoffButton: Bool {
+        session.canDispatchHandoff && !isHandoffPending
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             if let provider = session.displayAgentProvider {
@@ -1280,7 +1287,7 @@ private struct SessionRow: View {
 
             Spacer(minLength: 0)
 
-            if session.canDispatchHandoff && !isHandoffPending {
+            if showsHandoffButton {
                 Button {
                     onSelect()
                     onHandoff()
@@ -1301,7 +1308,7 @@ private struct SessionRow: View {
                 .accessibilityIdentifier(AccessibilityID.sessionRowHandoffButton(session.id))
             }
 
-            if isRowHovered && session.status != .closed {
+            if isRowHovered && session.status != .closed && !showsHandoffButton {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))
