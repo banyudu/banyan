@@ -161,6 +161,11 @@ final class SessionStore: ObservableObject {
         }
     }
     @Published private var pendingCloseSessionID: String?
+    /// Per-project last-used "new session" kind, keyed by project group ID. Drives
+    /// the project header's split "+" button so it reopens whatever was launched
+    /// last for that project. Persisted in `UserDefaults`.
+    @Published private var projectLaunchByGroup: [String: NewSessionLaunch] = [:]
+    private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
 
     private var controlServer: ControlServer?
     private let persistence = SessionPersistence()
@@ -241,6 +246,9 @@ final class SessionStore: ObservableObject {
         terminalTheme = workspace.terminalTheme
         terminalFontFamily = workspace.terminalFontFamily
         terminalFontSize = workspace.terminalFontSize
+        if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
+            projectLaunchByGroup = stored.compactMapValues(NewSessionLaunch.init(rawValue:))
+        }
 
         // Sessions now persist off the main thread; drain the queue on quit so the
         // final change isn't lost between the async enqueue and process exit.
@@ -836,13 +844,29 @@ final class SessionStore: ObservableObject {
         return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.parentSessionID)
     }
 
+    /// The kind the project header's split "+" button spawns by default —
+    /// whatever was last launched for this project, defaulting to a plain shell.
+    func projectLaunch(for groupID: String) -> NewSessionLaunch {
+        projectLaunchByGroup[groupID] ?? .zsh
+    }
+
     @discardableResult
-    func spawnSession(inProjectGroup groupID: String) -> BanyanSession? {
+    func spawnSession(inProjectGroup groupID: String, launch: NewSessionLaunch) -> BanyanSession? {
         let groupSessions = visibleSessions.filter {
             $0.projectGroupID == groupID && !$0.isImportedHistory
         }
         guard let representative = groupSessions.first else { return nil }
-        return spawn(cwd: representative.cwd, command: "", parentSessionID: representative.parentSessionID)
+        rememberProjectLaunch(launch, for: groupID)
+        return spawn(cwd: representative.cwd, command: launch.command, parentSessionID: representative.parentSessionID)
+    }
+
+    private func rememberProjectLaunch(_ launch: NewSessionLaunch, for groupID: String) {
+        guard projectLaunchByGroup[groupID] != launch else { return }
+        projectLaunchByGroup[groupID] = launch
+        UserDefaults.standard.set(
+            projectLaunchByGroup.mapValues(\.rawValue),
+            forKey: Self.projectLaunchDefaultsKey
+        )
     }
 
     func openScratchTerminal() {
