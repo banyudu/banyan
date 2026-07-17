@@ -560,15 +560,7 @@ struct ContentView: View {
                     if allowsMove {
                         Spacer(minLength: 4)
 
-                        Button {
-                            store.spawnSession(inProjectGroup: group.id)
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.banyanBorderless)
-                        .accessibilityIdentifier(AccessibilityID.projectAddSession(group.id))
-                        .help("New session in \(group.title)")
+                        ProjectNewSessionButton(groupID: group.id, groupTitle: group.title)
                     }
                 }
             }
@@ -1249,9 +1241,11 @@ private struct SessionRow: View {
             if let provider = session.displayAgentProvider {
                 AgentProviderIcon(provider: provider)
                     .accessibilityLabel(provider.displayName)
+            } else if !session.isImportedHistory {
+                ShellSessionIcon()
             }
 
-            if !session.isImportedHistory && session.status != .closed {
+            if !session.isImportedHistory && session.status != .closed && !hidesStatusEmoji {
                 Text(session.status.emoji)
                     .font(.system(size: 12))
                     .frame(width: 16, height: 18)
@@ -1449,6 +1443,12 @@ private struct SessionRow: View {
         }
     }
 
+    /// `.running` only ever means "a bare shell prompt", which the terminal icon
+    /// already says — the gear next to it just reads as a settings affordance.
+    private var hidesStatusEmoji: Bool {
+        session.displayAgentProvider == nil && session.status == .running
+    }
+
     private var singleClickSelectGesture: some Gesture {
         TapGesture(count: 1).onEnded {
             if !isRenaming {
@@ -1458,8 +1458,68 @@ private struct SessionRow: View {
     }
 }
 
+private struct ShellSessionIcon: View {
+    var body: some View {
+        Image(systemName: "terminal")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .foregroundStyle(.secondary)
+            .frame(width: 15, height: 15)
+            .frame(width: 20, height: 20)
+            .help("Shell")
+            .accessibilityLabel("Shell")
+    }
+}
+
+/// VS Code–style split "+" control for a project header: the primary action
+/// spawns the project's last-used session kind, and the dropdown picks another
+/// (remembering it). The icon reflects the remembered kind, so it becomes the
+/// Claude/Codex logo once one of those is chosen.
+private struct ProjectNewSessionButton: View {
+    @EnvironmentObject private var store: SessionStore
+    let groupID: String
+    let groupTitle: String
+
+    var body: some View {
+        let current = store.projectLaunch(for: groupID)
+        Menu {
+            ForEach(NewSessionLaunch.allCases) { launch in
+                Button {
+                    store.spawnSession(inProjectGroup: groupID, launch: launch)
+                } label: {
+                    Label(launch.label, systemImage: launch.systemImage)
+                }
+            }
+        } label: {
+            NewSessionLaunchIcon(launch: current)
+        } primaryAction: {
+            store.spawnSession(inProjectGroup: groupID, launch: current)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
+        .fixedSize()
+        .help("New \(current.label) session in \(groupTitle)")
+        .accessibilityIdentifier(AccessibilityID.projectAddSession(groupID))
+    }
+}
+
+private struct NewSessionLaunchIcon: View {
+    let launch: NewSessionLaunch
+
+    var body: some View {
+        if let provider = launch.provider {
+            AgentProviderIcon(provider: provider, size: 14)
+        } else {
+            Image(systemName: launch.systemImage)
+                .font(.caption)
+                .frame(width: 14, height: 14)
+        }
+    }
+}
+
 private struct AgentProviderIcon: View {
     let provider: CodingAgentProvider
+    var size: CGFloat = 20
 
     var body: some View {
         Group {
@@ -1467,31 +1527,31 @@ private struct AgentProviderIcon: View {
                 Image(nsImage: modelIcon)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 20, height: 20)
+                    .frame(width: size, height: size)
             } else if let templateIcon = templateIcon {
                 Image(nsImage: templateIcon)
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .foregroundStyle(.primary)
-                    .frame(width: 18, height: 18)
+                    .frame(width: size * 0.9, height: size * 0.9)
             } else if let appIcon = installedAppIcon {
                 Image(nsImage: appIcon)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 18, height: 18)
+                    .frame(width: size * 0.9, height: size * 0.9)
             } else {
                 Text(provider.badgeText)
-                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .font(.system(size: size * 0.4, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 16)
+                    .frame(width: size * 0.9, height: size * 0.8)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
                             .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1)
                     )
             }
         }
-        .frame(width: 20, height: 20)
+        .frame(width: size, height: size)
         .help(provider.displayName)
     }
 
