@@ -1236,6 +1236,7 @@ private struct SessionRow: View {
     @State private var isIssueLinkHovered = false
     @State private var isHandoffHovered = false
     @State private var isRowHovered = false
+    @State private var isPointerCursorPushed = false
     @FocusState private var isRenameFocused: Bool
 
     var body: some View {
@@ -1315,8 +1316,9 @@ private struct SessionRow: View {
         .padding(.trailing, 4)
         .background(rowBackground)
         .contentShape(Rectangle())
-        .onHover { isRowHovered = $0 }
-        .onDisappear { isRowHovered = false }
+        .onHover(perform: setRowHovered)
+        .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
+        .onDisappear(perform: resetRowHover)
         .animation(.easeOut(duration: 0.12), value: isRowHovered)
         .simultaneousGesture(singleClickSelectGesture)
         .simultaneousGesture(doubleClickRenameGesture)
@@ -1416,6 +1418,29 @@ private struct SessionRow: View {
             return displayTitle
         }
         return parts.count > 1 ? String(parts[1]) : ""
+    }
+
+    private func setRowHovered(_ isHovered: Bool) {
+        isRowHovered = isHovered
+        syncPointerCursor()
+    }
+
+    private func resetRowHover() {
+        isRowHovered = false
+        syncPointerCursor()
+    }
+
+    /// A pushed cursor outranks the text field's own I-beam cursor rect, so the
+    /// pointing hand has to come back off the stack while the row is renaming.
+    private func syncPointerCursor() {
+        let wantsPointer = isRowHovered && !isRenaming
+        guard wantsPointer != isPointerCursorPushed else { return }
+        isPointerCursorPushed = wantsPointer
+        if wantsPointer {
+            NSCursor.pointingHand.push()
+        } else {
+            NSCursor.pop()
+        }
     }
 
     private func setIssueLinkHovered(_ isHovered: Bool) {
