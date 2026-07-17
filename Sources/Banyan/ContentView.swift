@@ -563,6 +563,7 @@ struct ContentView: View {
                         ProjectNewSessionButton(groupID: group.id, groupTitle: group.title)
                     }
                 }
+                .padding(.top, 4)
             }
         }
     }
@@ -1234,6 +1235,7 @@ private struct SessionRow: View {
     @State private var renameDraft = ""
     @State private var isIssueLinkHovered = false
     @State private var isHandoffHovered = false
+    @State private var isRowHovered = false
     @FocusState private var isRenameFocused: Bool
 
     var body: some View {
@@ -1293,6 +1295,19 @@ private struct SessionRow: View {
                 .accessibilityLabel("Handoff")
                 .accessibilityIdentifier(AccessibilityID.sessionRowHandoffButton(session.id))
             }
+
+            if isRowHovered && session.status != .closed {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.banyanPlainLabelOnly)
+                .help("Close session")
+                .accessibilityLabel("Close session")
+                .accessibilityIdentifier(AccessibilityID.sessionRowCloseButton(session.id))
+                .transition(.opacity)
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
         .padding(.vertical, 2)
@@ -1300,6 +1315,9 @@ private struct SessionRow: View {
         .padding(.trailing, 4)
         .background(rowBackground)
         .contentShape(Rectangle())
+        .onHover { isRowHovered = $0 }
+        .onDisappear { isRowHovered = false }
+        .animation(.easeOut(duration: 0.12), value: isRowHovered)
         .simultaneousGesture(singleClickSelectGesture)
         .simultaneousGesture(doubleClickRenameGesture)
         .contextMenu {
@@ -1432,6 +1450,9 @@ private struct SessionRow: View {
         if isSelected {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
+        } else if isRowHovered {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.primary.opacity(0.08))
         } else {
             Color.clear
         }

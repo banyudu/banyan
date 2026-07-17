@@ -54,4 +54,8 @@ enum AccessibilityID {
     static func sessionRowHandoffButton(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id).handoff"
     }
+
+    static func sessionRowCloseButton(_ id: String) -> String {
+        "banyan.sidebar.session-row.\(id).close"
+    }
 }
