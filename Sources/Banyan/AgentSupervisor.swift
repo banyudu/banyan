@@ -40,11 +40,23 @@ struct AgentSupervisor {
         }
 
         let descendants = processDescendants(pane.rootPID)
-        let provider = Self.detectProvider(
-            launchCommand: launchCommand,
-            paneCommand: pane.currentCommand,
-            descendants: descendants
-        )
+        // Only treat this as an agent session when an agent process is actually
+        // alive in the pane. A launch command like `banyan-worktree --claude …`
+        // names the agent forever, so keying provider detection off it pinned a
+        // session to its agent long after the agent exited and the pane dropped
+        // back to a bare shell — leaving a stale provider icon and idle-agent
+        // affordances. A running claude/codex always lives as a child process of
+        // the pane's login shell (claude even renames itself to its version, so
+        // the pane's own command is an unreliable signal), so the descendant
+        // process tree is the truth for liveness. `launchCommand` is still used to
+        // *name* the provider once a live agent is present.
+        let provider = Self.hasLiveAgentProcess(paneCommand: pane.currentCommand, descendants: descendants)
+            ? Self.detectProvider(
+                launchCommand: launchCommand,
+                paneCommand: pane.currentCommand,
+                descendants: descendants
+            )
+            : nil
 
         guard let provider else {
             return Result(status: .running, tone: .blue, provider: nil, currentPath: pane.currentPath)
@@ -83,6 +95,14 @@ struct AgentSupervisor {
 
     static func isSupportedAgentCommand(_ command: String) -> Bool {
         CodingAgentProvider.isSupportedCommand(command)
+    }
+
+    /// True when an agent process is actually running in the pane — either the
+    /// pane's foreground command is a known agent, or a supported agent binary
+    /// appears anywhere in the descendant process tree. This is what separates a
+    /// live agent session from one whose agent has exited back to a bare shell.
+    static func hasLiveAgentProcess(paneCommand: String, descendants: [ProcessInfoRow]) -> Bool {
+        isSupportedAgentCommand(paneCommand) || descendants.contains(where: \.isSupportedAgent)
     }
 
     static func detectProvider(

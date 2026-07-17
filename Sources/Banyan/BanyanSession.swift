@@ -90,6 +90,21 @@ final class BanyanSession: ObservableObject, Identifiable {
         CodingAgentProvider.detect(in: command) ?? detectedAgentProvider
     }
 
+    /// Provider to show in the live sidebar row. Normally the launched identity,
+    /// but once the agent process exits the supervisor reports a bare-shell
+    /// `.running` pane — then this drops to nil so the row renders like a plain
+    /// shell instead of a stale agent (no provider icon, no idle-agent affordances).
+    /// `agentProvider` (the launched identity) is intentionally left intact so
+    /// reopen/resume still know what this session was. A live agent is never
+    /// `.running` (the supervisor only emits it when no agent process is alive), so
+    /// this never hides the icon for a genuinely running agent.
+    var displayAgentProvider: CodingAgentProvider? {
+        if status == .running, CodingAgentProvider.detect(in: command) != nil {
+            return nil
+        }
+        return agentProvider
+    }
+
     var needsManualAttach: Bool {
         isRestored && !isProcessStarted && status == .failed
     }

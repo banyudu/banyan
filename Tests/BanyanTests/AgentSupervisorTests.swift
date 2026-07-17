@@ -53,7 +53,7 @@ import Testing
 }
 
 @Test func supervisorClassifiesAgentWaitingForInput() {
-    let result = makeSupervisor(visibleText: "").inspect(
+    let result = makeSupervisor(visibleText: "", processes: [agentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -64,7 +64,10 @@ import Testing
 }
 
 @Test func supervisorClassifiesVisibleAgentQuestionAsAsking() {
-    let result = makeSupervisor(visibleText: "Can I edit these files?").inspect(
+    let result = makeSupervisor(
+        visibleText: "Can I edit these files?",
+        processes: [agentProcess("claude")]
+    ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
         currentStatus: .running
@@ -75,7 +78,10 @@ import Testing
 }
 
 @Test func supervisorClassifiesRecentAgentActivityAsExecuting() {
-    let result = makeSupervisor(visibleText: "Reading files\nEsc to interrupt").inspect(
+    let result = makeSupervisor(
+        visibleText: "Reading files\nEsc to interrupt",
+        processes: [agentProcess("opencode")]
+    ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "opencode",
         currentStatus: .running
@@ -88,7 +94,7 @@ import Testing
 @Test func supervisorIgnoresStaleActivityTextOutsideRecentLines() {
     let staleText = (["Thinking"] + Array(repeating: "idle", count: 8)).joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: staleText).inspect(
+    let result = makeSupervisor(visibleText: staleText, processes: [agentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -96,6 +102,25 @@ import Testing
 
     #expect(result?.status == .needInput)
     #expect(result?.tone == .yellow)
+}
+
+@Test func supervisorTreatsExitedAgentPaneAsPlainShell() {
+    // The agent was launched via a command that names it forever (e.g.
+    // `banyan-worktree --claude …`), then exited back to a bare login shell. With
+    // no agent process left alive, the session must read as a plain running shell
+    // — not a stale idle agent — so the provider icon and handoff affordance drop.
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "zsh"),
+        processes: [process(pid: 100, parentPID: 1, commandName: "/bin/zsh", arguments: "/bin/zsh -l", elapsed: 600)]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "banyan-worktree --claude ENG-7747",
+        currentStatus: .needInput
+    )
+
+    #expect(result?.status == .running)
+    #expect(result?.tone == .blue)
+    #expect(result?.provider == nil)
 }
 
 @Test func supervisorTreatsFinishedCodexSummaryAsNeedInput() {
@@ -113,7 +138,7 @@ import Testing
         "  gpt-5.5 high fast · ~/dev/repo · Context 37% used"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: finishedText).inspect(
+    let result = makeSupervisor(visibleText: finishedText, processes: [agentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .executing
@@ -132,7 +157,7 @@ import Testing
         "─ Working (0m 12s • Esc to interrupt) ─"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: workingText).inspect(
+    let result = makeSupervisor(visibleText: workingText, processes: [agentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -144,7 +169,8 @@ import Testing
 
 @Test func supervisorClassifiesExternalProcessAsExecuting() {
     let result = makeSupervisor(processes: [
-        process(commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 5)
+        agentProcess("codex"),
+        process(pid: 102, commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 5)
     ]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
@@ -157,7 +183,8 @@ import Testing
 
 @Test func supervisorClassifiesLongExternalProcessAsExecuting() {
     let result = makeSupervisor(processes: [
-        process(commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 121)
+        agentProcess("codex"),
+        process(pid: 102, commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 121)
     ]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
@@ -433,6 +460,14 @@ private func pane(
         isDead: isDead,
         isInMode: false
     )
+}
+
+/// A live agent process, child of the default pane's login shell (rootPID 100).
+/// A running claude/codex/opencode always appears as such a child, so tests that
+/// exercise an *active* agent session must include one — the launch command alone
+/// no longer implies a live agent.
+private func agentProcess(_ provider: String, pid: Int = 101) -> ProcessInfoRow {
+    process(pid: pid, parentPID: 100, commandName: "/opt/homebrew/bin/\(provider)", arguments: provider, elapsed: 5)
 }
 
 private func process(
