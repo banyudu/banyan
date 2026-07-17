@@ -11,6 +11,14 @@ import Testing
     #expect(SessionStore.restoredStatus(snapshotStatus: .needInput, backingSessionExists: false) == .needInput)
 }
 
+@Test func supervisorInspectsRestoredSessionsBeforeTheirTerminalClientAttaches() {
+    // Restored-but-unclicked: the row's provider icon and status come from here.
+    #expect(SessionStore.participatesInSupervisorTick(isProcessStarted: false, isRestored: true))
+    #expect(SessionStore.participatesInSupervisorTick(isProcessStarted: true, isRestored: false))
+    // Never launched, or the client terminated: nothing to inspect.
+    #expect(!SessionStore.participatesInSupervisorTick(isProcessStarted: false, isRestored: false))
+}
+
 @Test func closeConfirmationOnlyTreatsActiveCodexOrClaudeAsOngoingAgents() {
     #expect(SessionStore.isOngoingCodexOrClaudeSession(status: .executing, provider: .codex))
     #expect(SessionStore.isOngoingCodexOrClaudeSession(status: .needInput, provider: .claude))

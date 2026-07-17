@@ -65,6 +65,7 @@ private struct SupervisorSessionInput {
     let tmuxSessionName: String
     let command: String
     let status: SessionStatus
+    let isAwaitingAttach: Bool
 }
 
 private struct SupervisorSessionResult {
@@ -735,6 +736,19 @@ final class SessionStore: ObservableObject {
         let server = ControlServer(store: self)
         server.start()
         controlServer = server
+    }
+
+    /// A restored session's tmux pane is alive and inspectable long before its
+    /// terminal client attaches, and `detectedAgentProvider` is not persisted — so
+    /// gating the tick on `isProcessStarted` left every restored row showing the
+    /// stale snapshot status and no provider icon until the user clicked it (which
+    /// is what starts the client). Panes we have never started and are not restoring
+    /// have nothing to inspect.
+    nonisolated static func participatesInSupervisorTick(
+        isProcessStarted: Bool,
+        isRestored: Bool
+    ) -> Bool {
+        isProcessStarted || isRestored
     }
 
     nonisolated static func restoredStatus(snapshotStatus: SessionStatus, backingSessionExists: Bool) -> SessionStatus {
@@ -2178,12 +2192,18 @@ final class SessionStore: ObservableObject {
             guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
                 return nil
             }
-            guard session.isProcessStarted else { return nil }
+            guard Self.participatesInSupervisorTick(
+                isProcessStarted: session.isProcessStarted,
+                isRestored: session.isRestored
+            ) else {
+                return nil
+            }
             return SupervisorSessionInput(
                 id: session.id,
                 tmuxSessionName: session.tmuxSessionName,
                 command: session.command,
-                status: session.status
+                status: session.status,
+                isAwaitingAttach: !session.isProcessStarted
             )
         }
         guard !inputs.isEmpty else { return }
@@ -2210,6 +2230,12 @@ final class SessionStore: ObservableObject {
                     return nil
                 }
                 if result.status == .closed && backend.hasSession(named: input.tmuxSessionName) {
+                    return nil
+                }
+                // A restored session whose tmux session is gone is not dead — clicking
+                // it recreates the backing session. Only a session we have actually
+                // attached to may be closed out from under us.
+                if result.status == .closed && input.isAwaitingAttach {
                     return nil
                 }
                 return SupervisorSessionResult(
