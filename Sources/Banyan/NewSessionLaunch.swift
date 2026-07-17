@@ -57,6 +57,13 @@ enum NewSessionLaunch: String, CaseIterable, Identifiable, Codable {
             nsImage.size = NSSize(width: 16, height: 16)
             return Image(nsImage: nsImage)
         }
+        // Render the SF Symbol at a matching point size so it isn't visibly
+        // smaller than the 16pt brand marks next to it in the menu.
+        let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        if let symbol = NSImage(systemSymbolName: systemImage, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) {
+            return Image(nsImage: symbol)
+        }
         return Image(systemName: systemImage)
     }
 
