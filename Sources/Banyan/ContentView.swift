@@ -1487,7 +1487,11 @@ private struct ProjectNewSessionButton: View {
                 Button {
                     store.spawnSession(inProjectGroup: groupID, launch: launch)
                 } label: {
-                    Label(launch.label, systemImage: launch.systemImage)
+                    Label {
+                        Text(launch.label)
+                    } icon: {
+                        launch.menuIconImage
+                    }
                 }
             }
         } label: {
