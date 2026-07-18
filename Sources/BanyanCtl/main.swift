@@ -118,6 +118,19 @@ struct BanyanCtl {
         }
     }
 
+    /// Maps `--focus` / `--no-focus` / `--background` to a "true"/"false" flag,
+    /// or nil for any other key (which is treated as a normal `--key value` pair).
+    private static func booleanFocusFlag(for rawKey: String) -> String? {
+        switch rawKey {
+        case "focus":
+            return "true"
+        case "no-focus", "background", "bg":
+            return "false"
+        default:
+            return nil
+        }
+    }
+
     private func parsePayload(_ args: [String]) throws -> [String: String] {
         var result: [String: String] = [:]
         var index = 0
@@ -127,6 +140,11 @@ struct BanyanCtl {
                 throw CLIError.message("unexpected argument '\(token)'")
             }
             let rawKey = String(token.dropFirst(2))
+            if let flag = Self.booleanFocusFlag(for: rawKey) {
+                result["focus"] = flag
+                index += 1
+                continue
+            }
             let key: String
             switch rawKey {
             case "cmd":
@@ -281,6 +299,11 @@ struct BanyanCtl {
             }
 
             let rawKey = String(token.dropFirst(2))
+            if let flag = Self.booleanFocusFlag(for: rawKey) {
+                result["focus"] = flag
+                index += 1
+                continue
+            }
             guard index + 1 < args.count else {
                 throw CLIError.message("missing value for \(token)")
             }
@@ -396,9 +419,13 @@ struct BanyanCtl {
         banyanctl controls a running Banyan app on localhost:7842.
 
         Usage:
-          banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
-          banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue]
-          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|mimo|minimax|opencode [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--prompt TEXT] [--prompt-file PATH] [prompt...]
+          banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue] [--focus|--background]
+          banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue] [--focus|--background]
+          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|mimo|minimax|opencode [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
+
+        Spawns open in the background by default (they do not steal focus from the
+        current session). Pass --focus to select the new session, or --background
+        to force background even when nothing is currently selected.
           banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE] [--title-url URL]
           banyanctl tick   [--id ID]
           banyanctl close  --id ID

@@ -998,7 +998,8 @@ final class SessionStore: ObservableObject {
         cwd proposedCWD: String? = nil,
         command proposedCommand: String? = nil,
         parentSessionID proposedParentSessionID: String? = nil,
-        tone: SessionTone = .blue
+        tone: SessionTone = .blue,
+        select: Bool = true
     ) -> BanyanSession {
         let baseID = sanitizeID(proposedID ?? proposedTitle ?? "session")
         let id = uniqueID(baseID, avoidingLiveTmuxSessions: true)
@@ -1024,8 +1025,14 @@ final class SessionStore: ObservableObject {
         )
         attach(session)
         sessions.append(session)
-        selectedSessionID = session.id
-        refreshSelectedContextInfo(force: true)
+        if select {
+            selectedSessionID = session.id
+            refreshSelectedContextInfo(force: true)
+        } else {
+            // Keep the user's current selection/focus; still run the command so
+            // background spawns (e.g. `agent run`) actually start.
+            session.startBackgroundBackendIfNeeded()
+        }
         saveSessions()
         return session
     }

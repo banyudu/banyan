@@ -96,6 +96,10 @@ public struct ControlPayload: Codable {
     public let tone: String?
     public let parent: String?
     public let path: String?
+    /// Optional "true"/"false" flag on spawn: whether the new session should grab
+    /// focus/selection. Absent means "let the app decide" (background unless nothing
+    /// is currently selected).
+    public let focus: String?
 
     public init(
         apiVersion: String? = ControlProtocol.version,
@@ -107,7 +111,8 @@ public struct ControlPayload: Codable {
         status: String? = nil,
         tone: String? = nil,
         parent: String? = nil,
-        path: String? = nil
+        path: String? = nil,
+        focus: String? = nil
     ) {
         self.apiVersion = apiVersion
         self.id = id
@@ -119,6 +124,7 @@ public struct ControlPayload: Codable {
         self.tone = tone
         self.parent = parent
         self.path = path
+        self.focus = focus
     }
 }
 

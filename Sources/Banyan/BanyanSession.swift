@@ -253,6 +253,25 @@ final class BanyanSession: ObservableObject, Identifiable {
         )
     }
 
+    /// Start the tmux backing (and its launch command) without attaching a visible
+    /// terminal client, so a session spawned in the background actually runs without
+    /// stealing selection/focus. When the session is later selected, `start()` attaches
+    /// the visible client to this already-running tmux session (`ensureSession` is idempotent).
+    func startBackgroundBackendIfNeeded() {
+        guard !isImportedHistory, status != .closed else { return }
+        guard !isProcessStarted, !terminalView.process.running else { return }
+        do {
+            try tmuxBackend.ensureSession(named: tmuxSessionName, cwd: cwd, command: command)
+        } catch {
+            failToStart(error.localizedDescription)
+            return
+        }
+        isRestored = false
+        isProcessStarted = true
+        status = .running
+        touch()
+    }
+
     func refreshTerminalClient() {
         guard !isImportedHistory, terminalView.process.running else { return }
         terminalRefreshTask?.cancel()

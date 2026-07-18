@@ -101,6 +101,9 @@ final class ControlServer {
                 try validateVersion(body.apiVersion)
                 let tone = body.tone.flatMap(SessionTone.init(rawValue:)) ?? .blue
                 let parentSessionID = try store.resolvedParentSessionIDForSpawn(body.parent)
+                // Default to a background spawn (do not steal the user's focus) unless
+                // focus was explicitly requested, or nothing is currently selected.
+                let shouldSelect = body.focus.flatMap(Bool.init) ?? (store.selectedSessionID == nil)
                 let session = store.spawn(
                     id: body.id,
                     title: body.title,
@@ -108,7 +111,8 @@ final class ControlServer {
                     cwd: body.cwd,
                     command: body.command,
                     parentSessionID: parentSessionID,
-                    tone: tone
+                    tone: tone,
+                    select: shouldSelect
                 )
                 return (200, ["session": summary(session)], nil)
 
