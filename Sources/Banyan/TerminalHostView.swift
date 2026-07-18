@@ -266,7 +266,7 @@ final class TerminalContainerView: NSView {
 
             switch event.type {
             case .leftMouseDown:
-                if self.isEventInTerminal(event) {
+                if self.isEventInTerminal(event), self.shouldFocusTerminalOnClick(event) {
                     self.window?.makeFirstResponder(self.terminalView)
                 }
                 return event
@@ -294,6 +294,14 @@ final class TerminalContainerView: NSView {
     private func isEventInTerminal(_ event: NSEvent) -> Bool {
         let point = terminalView.convert(event.locationInWindow, from: nil)
         return terminalView.bounds.contains(point)
+    }
+
+    /// The terminal surface should reclaim first responder on click, but the find
+    /// bar (a control layered over the terminal by SwiftTerm) must not — otherwise
+    /// clicking its search field immediately steals focus back to the terminal.
+    private func shouldFocusTerminalOnClick(_ event: NSEvent) -> Bool {
+        guard let hit = window?.contentView?.hitTest(event.locationInWindow) else { return true }
+        return !(hit !== terminalView && hit.isDescendant(of: terminalView))
     }
 
     private var isTerminalFirstResponder: Bool {
@@ -348,9 +356,21 @@ final class TerminalContainerView: NSView {
         case "a":
             terminalView.selectAll(self)
             return true
+        case "f":
+            presentFindBar()
+            return true
         default:
             return false
         }
+    }
+
+    /// Open SwiftTerm's find bar. Driven from the input monitor because the SwiftUI
+    /// menu's ⌘F shortcut does not reliably fire while the terminal view holds first
+    /// responder — the same reason ⌘C/⌘V/⌘A are handled here rather than via the menu.
+    private func presentFindBar() {
+        let item = NSMenuItem()
+        item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+        terminalView.performFindPanelAction(item)
     }
 
     private func handleScroll(_ event: NSEvent) {
