@@ -109,6 +109,8 @@ final class TerminalContainerView: NSView {
     private var inputEventMonitor: Any?
     private var scrollInterpreter = TerminalScrollInterpreter()
     private var submittedInputBuffer = ""
+    private var selectionAutoScrollTimer: Timer?
+    private var lastSelectionDragEvent: NSEvent?
 
     init(terminalView: LocalProcessTerminalView, onUserSubmittedInput: ((String?) -> Void)? = nil) {
         self.terminalView = terminalView
@@ -132,6 +134,7 @@ final class TerminalContainerView: NSView {
         if let inputEventMonitor {
             NSEvent.removeMonitor(inputEventMonitor)
         }
+        selectionAutoScrollTimer?.invalidate()
     }
 
     @discardableResult
@@ -240,8 +243,26 @@ final class TerminalContainerView: NSView {
     }
 
     private func installInputEventMonitor() {
-        inputEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .keyDown]) { [weak self] event in
-            guard let self, event.window === self.window else { return event }
+        inputEventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .keyDown]
+        ) { [weak self] event in
+            guard let self else { return event }
+
+            switch event.type {
+            case .leftMouseUp:
+                // A mouse-up can land outside our window (autoscrolled past the edge),
+                // so stop the timer regardless of location.
+                self.endSelectionAutoScroll()
+                return event
+            case .leftMouseDragged:
+                guard event.window === self.window, self.isEventInTerminal(event) else { return event }
+                self.noteSelectionDrag(event)
+                return event
+            default:
+                break
+            }
+
+            guard event.window === self.window else { return event }
 
             switch event.type {
             case .leftMouseDown:
@@ -349,15 +370,76 @@ final class TerminalContainerView: NSView {
         case .scrollbackUp(let lines):
             terminalView.scrollUp(lines: lines)
             (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
+            extendSelectionDuringDrag(event)
         case .scrollbackDown(let lines):
             terminalView.scrollDown(lines: lines)
             (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
+            extendSelectionDuringDrag(event)
         case .pageUp(let count):
             sendPageScroll(up: true, count: count)
         case .pageDown(let count):
             sendPageScroll(up: false, count: count)
         case nil:
             break
+        }
+    }
+
+    /// Left button still held: re-extend the active selection to the pointer's
+    /// current buffer row after the viewport scrolled underneath it. SwiftTerm's
+    /// `mouseDragged` recomputes the hit against the new `yDisp`, so the selection
+    /// grows instead of riding along with the scrolled content.
+    private func extendSelectionDuringDrag(_ event: NSEvent) {
+        guard NSEvent.pressedMouseButtons & 0x1 != 0, terminalView.selectionActive else { return }
+        terminalView.mouseDragged(with: event)
+    }
+
+    /// Record an in-progress selection drag and start the edge auto-scroll timer,
+    /// so holding the pointer past the top/bottom edge keeps growing the selection
+    /// even while the pointer is stationary (no further drag events are delivered).
+    private func noteSelectionDrag(_ event: NSEvent) {
+        lastSelectionDragEvent = event
+        guard selectionAutoScrollTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            self?.selectionAutoScrollTick()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        selectionAutoScrollTimer = timer
+    }
+
+    private func endSelectionAutoScroll() {
+        selectionAutoScrollTimer?.invalidate()
+        selectionAutoScrollTimer = nil
+        lastSelectionDragEvent = nil
+    }
+
+    private func selectionAutoScrollTick() {
+        guard NSEvent.pressedMouseButtons & 0x1 != 0 else {
+            endSelectionAutoScroll()
+            return
+        }
+        guard let event = lastSelectionDragEvent,
+              terminalView.selectionActive,
+              terminalView.canScroll else { return }
+        let rows = max(terminalView.terminal.rows, 1)
+        let rowHeight = max(terminalView.bounds.height / CGFloat(rows), 1)
+        let point = terminalView.convert(event.locationInWindow, from: nil)
+        let screenRow = Int((terminalView.bounds.height - point.y) / rowHeight)
+        if screenRow < 0 {
+            terminalView.scrollUp(lines: selectionScrollVelocity(forOvershoot: -screenRow))
+        } else if screenRow >= rows {
+            terminalView.scrollDown(lines: selectionScrollVelocity(forOvershoot: screenRow - rows + 1))
+        } else {
+            return
+        }
+        (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
+        terminalView.mouseDragged(with: event)
+    }
+
+    private func selectionScrollVelocity(forOvershoot rows: Int) -> Int {
+        switch rows {
+        case ..<3: return 1
+        case 3..<6: return 3
+        default: return 6
         }
     }
 
