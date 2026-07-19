@@ -260,16 +260,25 @@ final class BanyanSession: ObservableObject, Identifiable {
     func startBackgroundBackendIfNeeded() {
         guard !isImportedHistory, status != .closed else { return }
         guard !isProcessStarted, !terminalView.process.running else { return }
-        do {
-            try tmuxBackend.ensureSession(named: tmuxSessionName, cwd: cwd, command: command)
-        } catch {
-            failToStart(error.localizedDescription)
-            return
-        }
+        // Optimistically mark running so the sidebar updates immediately; the actual
+        // tmux work (subprocess spawns) runs off the main thread to avoid freezing the
+        // UI while a session is created via banyanctl.
         isRestored = false
         isProcessStarted = true
         status = .running
         touch()
+        let backend = tmuxBackend
+        let name = tmuxSessionName
+        let workingDirectory = cwd
+        let launchCommand = command
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                try backend.ensureSession(named: name, cwd: workingDirectory, command: launchCommand)
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run { [weak self] in self?.failToStart(message) }
+            }
+        }
     }
 
     func refreshTerminalClient() {

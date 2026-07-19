@@ -106,10 +106,16 @@ struct TmuxBackend {
     }
 
     func ensureSession(named name: String, cwd: String, command: String) throws {
-        configureServerEnvironment()
-        configureServerOptions()
+        // Global (`-g`) env/options only need to be applied when the server starts.
+        // The server lives as long as it has ≥1 session, so a running server is
+        // already configured — re-applying per session cost ~10 tmux subprocess
+        // spawns each time and froze the main thread on spawn.
+        if !isServerRunning() {
+            configureServerEnvironment()
+            configureServerOptions()
+        }
         guard !hasSession(named: name) else {
-            configureSession(named: name)
+            configureSessionOptions(named: name)
             return
         }
 
@@ -121,17 +127,28 @@ struct TmuxBackend {
         } else {
             arguments.append(contentsOf: [shell, "-lc", trimmedCommand])
         }
-        try run(arguments)
-        configureSession(named: name)
+        do {
+            try run(arguments)
+        } catch {
+            // A concurrent ensureSession (e.g. background start racing a later
+            // foreground attach) may have already created it; tolerate that.
+            guard hasSession(named: name) else { throw error }
+        }
+        configureSessionOptions(named: name)
     }
 
     func killSession(named name: String) {
         _ = try? run(["kill-session", "-t", name])
     }
 
-    private func configureSession(named name: String) {
-        configureServerEnvironment()
-        configureServerOptions()
+    /// A banyan tmux server exits once its last session closes, so a server that
+    /// answers `list-sessions` is one we already configured when its first session
+    /// was created.
+    private func isServerRunning() -> Bool {
+        (try? run(["list-sessions", "-F", "#{session_name}"])) != nil
+    }
+
+    private func configureSessionOptions(named name: String) {
         _ = try? run(["set-option", "-t", name, "status", "off"])
         _ = try? run(["set-option", "-t", name, "mouse", "on"])
         _ = try? run(["set-option", "-t", name, "history-limit", "20000"])
