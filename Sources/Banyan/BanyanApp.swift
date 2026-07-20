@@ -17,6 +17,20 @@ struct BanyanApp: App {
                         store.handleCloseCommand(in: window)
                     }
                     CommandWTerminalCloseMonitor.shared.start()
+
+                    JumpOverlayMonitor.shared.onOverlayChanged = { visible in
+                        JumpOverlayState.shared.isVisible = visible
+                    }
+                    JumpOverlayMonitor.shared.onJump = { [weak store] index in
+                        store?.selectSession(shortcutIndex: index) ?? false
+                    }
+                    JumpOverlayMonitor.shared.onNext = { [weak store] in
+                        store?.selectNextSession()
+                    }
+                    JumpOverlayMonitor.shared.onPrevious = { [weak store] in
+                        store?.selectPreviousSession()
+                    }
+                    JumpOverlayMonitor.shared.start()
                 }
         }
         .windowStyle(.titleBar)

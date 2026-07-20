@@ -10,6 +10,16 @@ struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @State private var showingPreferences = false
     @State private var draggingSidebarSessionID: String?
+
+    private var jumpKeyLabels: [String: String] {
+        var labels: [String: String] = [:]
+        for (index, item) in store.sidebarSessions.enumerated() {
+            if let label = JumpOverlayMonitor.jumpLabel(for: index + 1) {
+                labels[item.id] = label
+            }
+        }
+        return labels
+    }
     @State private var linearIssueFilterText = ""
     @State private var selectedLinearIssueStateIDs: Set<String>?
 
@@ -619,6 +629,7 @@ struct ContentView: View {
             session: item.session,
             depth: item.depth,
             titleOverride: item.titleOverride,
+            jumpKeyLabel: jumpKeyLabels[item.session.id] ?? "",
             isSelected: store.selectedSessionID == item.session.id,
             onSelect: {
                 store.select(id: item.session.id)
@@ -1268,6 +1279,7 @@ private struct SessionRow: View {
     @ObservedObject var session: BanyanSession
     let depth: Int
     let titleOverride: String?
+    let jumpKeyLabel: String
     let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
@@ -1294,6 +1306,8 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            JumpKeyBadge(label: jumpKeyLabel)
+
             if let provider = session.displayAgentProvider {
                 AgentProviderIcon(provider: provider)
                     .accessibilityLabel(provider.displayName)
@@ -2002,5 +2016,30 @@ private struct TerminalReconnectBanner: View {
         .padding(.vertical, 8)
         .background(.bar)
         .accessibilityIdentifier(AccessibilityID.terminalReconnectBanner)
+    }
+}
+
+// MARK: - Jump overlay badge
+
+private struct JumpKeyBadge: View {
+    let label: String
+    @ObservedObject private var overlayState = JumpOverlayState.shared
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.primary.opacity(0.7))
+            .frame(width: overlayState.isVisible ? 18 : 0, height: 16)
+            .opacity(overlayState.isVisible ? 1 : 0)
+            .background(
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(.primary.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .strokeBorder(.primary.opacity(0.15), lineWidth: 0.5)
+                    )
+                    .opacity(overlayState.isVisible ? 1 : 0)
+            )
+            .animation(.easeOut(duration: 0.1), value: overlayState.isVisible)
     }
 }

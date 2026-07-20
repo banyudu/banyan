@@ -1673,14 +1673,16 @@ final class SessionStore: ObservableObject {
         sidebarSessions.contains { isWorkableSession($0.id) }
     }
 
-    func selectSession(shortcutIndex: Int) {
+    @discardableResult
+    func selectSession(shortcutIndex: Int) -> Bool {
         guard let id = SessionSelectionNavigator.directID(
             in: sidebarSessions.map(\.id),
             oneBasedIndex: shortcutIndex
         ) else {
-            return
+            return false
         }
         selectedSessionID = id
+        return true
     }
 
     func requestCloseSelectedSession() {
