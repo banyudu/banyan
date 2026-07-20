@@ -1,3 +1,4 @@
+import BanyanCore
 import Foundation
 
 struct TmuxPaneSnapshot {
@@ -174,26 +175,28 @@ struct TmuxBackend {
         ["-L", Self.socketName]
     }
 
+    /// Safety cap so a wedged tmux server can never hang a supervisor tick (or the
+    /// main thread on foreground start) forever. Raw `Process.waitUntilExit()` can
+    /// miss the child's termination notification and block indefinitely — the cause
+    /// of multi-minute `supervisor.tick` outliers. `SubprocessRunner` completes via
+    /// `terminationHandler` and enforces this timeout instead.
+    private static let commandTimeout: TimeInterval = 10
+
     @discardableResult
     private func run(_ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = baseArguments + arguments
-        process.environment = Self.processEnvironment()
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        guard process.terminationStatus == 0 else {
-            throw BackendError.commandFailed(arguments, output.trimmingCharacters(in: .whitespacesAndNewlines))
+        let output = try SubprocessRunner.run(
+            arguments: [executableURL.path] + baseArguments + arguments,
+            cwd: NSHomeDirectory(),
+            environment: Self.processEnvironment(),
+            timeout: Self.commandTimeout
+        )
+        let stdout = String(decoding: output.standardOutput, as: UTF8.self)
+        guard output.terminationStatus == 0 else {
+            let stderr = String(decoding: output.standardError, as: UTF8.self)
+            let message = (stderr.isEmpty ? stdout : stderr).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw BackendError.commandFailed(arguments, message)
         }
-        return output
+        return stdout
     }
 
     private static func resolveExecutableURL() -> URL? {
