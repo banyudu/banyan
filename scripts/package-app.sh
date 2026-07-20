@@ -8,6 +8,8 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICON_FILE="$ROOT_DIR/Assets/AppIcon.icns"
+INSTALL_DIR="${BANYAN_INSTALL_DIR:-/Applications}"
+INSTALLED_APP="$INSTALL_DIR/Banyan.app"
 
 cd "$ROOT_DIR"
 rm -rf "$ROOT_DIR/.build/arm64-apple-macosx/release/ModuleCache"
@@ -68,3 +70,28 @@ codesign --force --sign - "$APP_DIR" >/dev/null
 
 echo "Packaged $APP_DIR"
 echo "Installed CLI at $DIST_DIR/bin/banyanctl"
+
+# Install into /Applications so the app you launch from Spotlight/Dock is the one
+# just built. Set BANYAN_INSTALL_DIR to redirect, or BANYAN_SKIP_INSTALL=1 to skip.
+if [[ "${BANYAN_SKIP_INSTALL:-0}" == "1" ]]; then
+  echo "Skipped install (BANYAN_SKIP_INSTALL=1)"
+  exit 0
+fi
+
+# A running instance keeps its old image alive on a deleted inode, so replacing the
+# bundle underneath it is safe but leaves that process on stale code until relaunch.
+app_was_running=0
+if pgrep -f "$INSTALLED_APP/Contents/MacOS/Banyan" >/dev/null 2>&1; then
+  app_was_running=1
+fi
+
+rm -rf "$INSTALLED_APP"
+cp -R "$APP_DIR" "$INSTALLED_APP"
+# cp preserves the ad-hoc signature (it covers bundle contents, not path), so verify
+# rather than re-sign — a failure here means the copy, not the signing, went wrong.
+codesign --verify --deep "$INSTALLED_APP"
+
+echo "Installed $INSTALLED_APP"
+if [[ "$app_was_running" == "1" ]]; then
+  echo "NOTE: Banyan is running from an older build — quit and relaunch to pick this up."
+fi
