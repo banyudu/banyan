@@ -66,7 +66,24 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 PLIST
 
 chmod +x "$MACOS_DIR/Banyan" "$DIST_DIR/bin/banyanctl"
-codesign --force --sign - "$APP_DIR" >/dev/null
+
+# Sign with a stable identity so macOS keeps granted permissions across rebuilds.
+# An ad-hoc signature's designated requirement is a bare cdhash, which changes on
+# every build — even from identical source — so TCC treats each build as a new app
+# and drops its grants. A Developer ID requirement keys on bundle id + team id
+# instead, which is stable.
+#
+# Note this is NOT $APPLE_SIGNING_IDENTITY: that holds an "Apple Distribution"
+# identity for App Store submission, which needs a provisioning profile to launch.
+SIGNING_IDENTITY="${BANYAN_SIGNING_IDENTITY:-Developer ID Application: Yudu Ban (RYLS8UDY5D)}"
+if codesign --force --sign "$SIGNING_IDENTITY" "$APP_DIR" >/dev/null 2>&1; then
+  echo "Signed with: $SIGNING_IDENTITY"
+else
+  # Anyone without that certificate still gets a working local build.
+  codesign --force --sign - "$APP_DIR" >/dev/null
+  echo "WARNING: '$SIGNING_IDENTITY' unavailable — signed ad-hoc instead."
+  echo "         The app still runs, but macOS will reset its permissions on each rebuild."
+fi
 
 echo "Packaged $APP_DIR"
 echo "Installed CLI at $DIST_DIR/bin/banyanctl"
