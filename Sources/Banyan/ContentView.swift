@@ -7,7 +7,7 @@ private let sidebarTitlebarHeaderHeight: CGFloat = 78
 private let sidebarTitlebarHeaderTopPadding: CGFloat = 30
 
 struct ContentView: View {
-    @EnvironmentObject private var store: SessionStore
+    @Bindable var store: SessionStore
     @State private var showingPreferences = false
     @State private var draggingSidebarSessionID: String?
 
@@ -72,11 +72,11 @@ struct ContentView: View {
         }
         .sheet(item: addSessionDraftBinding) { draft in
             AddSessionSheet(draft: draft)
-                .environmentObject(store)
+                .environment(store)
         }
         .sheet(isPresented: $showingPreferences) {
             PreferencesSheet()
-                .environmentObject(store)
+                .environment(store)
         }
         .onAppear {
             store.loadPersistedSessionsIfNeeded()
@@ -1278,7 +1278,7 @@ private struct PendingHandoffJobsView: View {
 }
 
 private struct SessionRow: View {
-    @ObservedObject var session: BanyanSession
+    var session: BanyanSession
     let depth: Int
     let titleOverride: String?
     let jumpKeyLabel: String
@@ -1591,7 +1591,7 @@ private struct ShellSessionIcon: View {
 /// (remembering it). The icon reflects the remembered kind, so it becomes the
 /// Claude/Codex logo once one of those is chosen.
 private struct ProjectNewSessionButton: View {
-    @EnvironmentObject private var store: SessionStore
+    @Environment(SessionStore.self) private var store
     let groupID: String
     let groupTitle: String
 
@@ -1805,8 +1805,8 @@ private struct AgentProviderIcon: View {
 }
 
 private struct ClosedSessionHistoryView: View {
-    @EnvironmentObject private var store: SessionStore
-    @ObservedObject var session: BanyanSession
+    @Environment(SessionStore.self) private var store
+    var session: BanyanSession
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1870,8 +1870,8 @@ private struct ClosedSessionHistoryView: View {
 }
 
 private struct ImportedSessionHistoryView: View {
-    @EnvironmentObject private var store: SessionStore
-    @ObservedObject var session: BanyanSession
+    @Environment(SessionStore.self) private var store
+    var session: BanyanSession
     @State private var preview = "Loading..."
     @State private var resumePrompt = ""
     @FocusState private var isResumePromptFocused: Bool
@@ -1995,8 +1995,8 @@ private struct ImportedSessionHistoryView: View {
 }
 
 private struct TerminalReconnectBanner: View {
-    @EnvironmentObject private var store: SessionStore
-    @ObservedObject var session: BanyanSession
+    @Environment(SessionStore.self) private var store
+    var session: BanyanSession
 
     var body: some View {
         HStack(spacing: 10) {
@@ -2023,9 +2023,9 @@ private struct TerminalReconnectBanner: View {
 
 // MARK: - Jump overlay badge
 
-private struct JumpKeyBadge: View {
+struct JumpKeyBadge: View {
     let label: String
-    @ObservedObject private var overlayState = JumpOverlayState.shared
+    var overlayState = JumpOverlayState.shared
 
     var body: some View {
         Text(label)

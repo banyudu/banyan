@@ -49,7 +49,7 @@ struct AddSessionDraft: Identifiable {
 
 struct AddSessionSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var store: SessionStore
+    @Environment(SessionStore.self) private var store
 
     let draft: AddSessionDraft
 

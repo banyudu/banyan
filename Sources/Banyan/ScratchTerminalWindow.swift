@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 struct ScratchTerminalWindow: View {
-    @EnvironmentObject private var store: SessionStore
-    @ObservedObject var session: BanyanSession
+    @Environment(SessionStore.self) private var store
+    var session: BanyanSession
 
     var body: some View {
         TerminalHostView(

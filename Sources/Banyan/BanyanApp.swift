@@ -4,12 +4,12 @@ import SwiftUI
 @main
 struct BanyanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store = SessionStore()
+    @State private var store = SessionStore()
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(store)
+            ContentView(store: store)
+                .environment(store)
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
