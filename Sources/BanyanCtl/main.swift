@@ -26,6 +26,8 @@ struct BanyanCtl {
                 try runPerfCommand(Array(arguments.dropFirst()))
             case "mark":
                 try post("/mark", payload: parsePayload(Array(arguments.dropFirst())))
+            case "select":
+                try post("/select", payload: parsePayload(Array(arguments.dropFirst())))
             case "tick":
                 try post("/tick", payload: parsePayload(Array(arguments.dropFirst())))
             case "close":
@@ -427,6 +429,7 @@ struct BanyanCtl {
         current session). Pass --focus to select the new session, or --background
         to force background even when nothing is currently selected.
           banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE] [--title-url URL]
+          banyanctl select --id ID
           banyanctl tick   [--id ID]
           banyanctl close  --id ID
           banyanctl respawn --id ID

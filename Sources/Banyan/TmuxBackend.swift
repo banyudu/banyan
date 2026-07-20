@@ -97,6 +97,32 @@ struct TmuxBackend: Sendable {
         (try? run(["capture-pane", "-p", "-J", "-t", paneID])) ?? ""
     }
 
+    /// Scrolls the pane's history using tmux's own copy-mode, so the scrollback the
+    /// user sees is tmux's (already held, ~35 MB for a whole server) instead of a
+    /// duplicated SwiftTerm buffer (~123 MB per terminal at a 20k limit).
+    ///
+    /// Runs off the main thread: each call is a `tmux` subprocess, and wheel events
+    /// arrive faster than one can complete. `scrollQueue` is serial so the copy-mode
+    /// entry always precedes the scroll commands it enables, and so successive
+    /// scrolls apply in gesture order.
+    ///
+    /// `copy-mode -e` exits automatically once the user scrolls back to the bottom,
+    /// which keeps the pane out of a modal state we would otherwise have to unwind.
+    func scrollHistory(paneID: String, lines: Int, up: Bool) {
+        guard lines > 0 else { return }
+        scrollQueue.async { [self] in
+            if up {
+                // Harmless if the pane is already in copy-mode.
+                _ = try? run(["copy-mode", "-e", "-t", paneID])
+            }
+            // Fails harmlessly when scrolling down outside copy-mode (nothing to scroll).
+            _ = try? run([
+                "send-keys", "-t", paneID, "-X", "-N", String(lines),
+                up ? "scroll-up" : "scroll-down"
+            ])
+        }
+    }
+
     func refreshClients(attachedTo name: String) {
         guard let output = try? run(["list-clients", "-t", name, "-F", "#{client_name}"]) else {
             return
@@ -181,6 +207,9 @@ struct TmuxBackend: Sendable {
     /// of multi-minute `supervisor.tick` outliers. `SubprocessRunner` completes via
     /// `terminationHandler` and enforces this timeout instead.
     private static let commandTimeout: TimeInterval = 10
+
+    /// Serializes copy-mode scroll commands off the main thread — see `scrollHistory`.
+    private let scrollQueue = DispatchQueue(label: "dev.banyudu.banyan.tmux-scroll")
 
     @discardableResult
     private func run(_ arguments: [String]) throws -> String {

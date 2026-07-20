@@ -144,6 +144,17 @@ final class ControlServer {
             case .list:
                 return (200, ["sessions": store.sessions.map(summary)], nil)
 
+            case .select:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let id = body.id!
+                guard let session = store.sessions.first(where: { $0.id == id }) else {
+                    throw ControlError.notFound(id)
+                }
+                store.select(id: id)
+                return (200, ["session": summary(session)], nil)
+
             case .windowState:
                 return (200, windowState(), nil)
 

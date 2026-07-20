@@ -9,7 +9,33 @@ final class BanyanSession: ObservableObject, Identifiable {
     let tmuxSessionName: String
     let createdAt: Date
     let historyTranscriptURL: URL?
-    let terminalView: DetectingLocalProcessTerminalView
+
+    private var _terminalView: DetectingLocalProcessTerminalView?
+
+    /// The SwiftTerm view backing this session, created on first access.
+    ///
+    /// A terminal preallocates its scrollback eagerly (~4.7 MB here), so building
+    /// one per session in `init` cost ~1.7 GB across a restored workspace: every
+    /// persisted row gets a `BanyanSession`, and the overwhelming majority are
+    /// closed history entries that are never opened (only `historySidebarBrowseLimit`
+    /// of them are even browsable). Allocating on demand keeps the cost proportional
+    /// to the terminals actually shown. Use `loadedTerminalView` from paths that must
+    /// not bring one into existence.
+    var terminalView: DetectingLocalProcessTerminalView {
+        if let _terminalView {
+            return _terminalView
+        }
+        let view = makeTerminalView()
+        _terminalView = view
+        return view
+    }
+
+    /// Non-allocating peek at the terminal. `nil` until something actually needs to
+    /// display or run this session, which lets repaint and teardown paths no-op
+    /// instead of materializing a terminal just to tear it down.
+    var loadedTerminalView: DetectingLocalProcessTerminalView? {
+        _terminalView
+    }
     private var displayProject: String
     private var displayBranch: String?
     private var displayIsGitWorktree: Bool
@@ -57,6 +83,12 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var appliedTheme: TerminalTheme?
     private var appliedFontFamily: String?
     private var appliedFontSize: Double?
+    /// Desired appearance, tracked even while no terminal exists so one created
+    /// later comes up already styled rather than flashing an unthemed frame.
+    private var pendingTheme: TerminalTheme
+    private var pendingFontFamily: String?
+    private var pendingFontSize: Double
+    private var pendingTerminalMessage: String?
     private var externalTitleSignature: String?
     private var externalTitleTask: Task<Void, Never>?
     private var isDetachingTerminalClient = false
@@ -187,9 +219,9 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.updatedAt = updatedAt
         self.isRestored = isRestored
         self.isProcessStarted = !isRestored
-        self.terminalView = DetectingLocalProcessTerminalView(frame: .zero)
-
-        apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+        self.pendingTheme = theme
+        self.pendingFontFamily = fontFamily
+        self.pendingFontSize = fontSize
 
         let delegate = TerminalSessionDelegate(sessionID: id)
         delegate.onTitle = { [weak self] title in
@@ -222,16 +254,43 @@ final class BanyanSession: ObservableObject, Identifiable {
             self.touch()
         }
         self.delegate = delegate
-        self.terminalView.processDelegate = delegate
-        self.terminalView.onOutput = { [weak self] text in
-            self?.onOutput?(text)
-        }
 
         refreshGeneratedTitle()
     }
 
+    private func makeTerminalView() -> DetectingLocalProcessTerminalView {
+        let view = DetectingLocalProcessTerminalView(frame: .zero)
+        view.tmuxSessionName = tmuxSessionName
+        pendingTheme.apply(to: view, fontFamily: pendingFontFamily, fontSize: pendingFontSize)
+        appliedTheme = pendingTheme
+        appliedFontFamily = pendingFontFamily
+        appliedFontSize = pendingFontSize
+        view.processDelegate = delegate
+        view.onOutput = { [weak self] text in
+            self?.onOutput?(text)
+        }
+        if let pendingTerminalMessage {
+            view.feed(text: pendingTerminalMessage)
+            self.pendingTerminalMessage = nil
+        }
+        return view
+    }
+
+    /// Writes to the terminal if one exists, otherwise holds the text until one is
+    /// created. A background start can fail before any terminal is allocated, and
+    /// that diagnostic still needs to be there when the session is later opened.
+    private func feedOrQueue(_ text: String) {
+        if let terminalView = loadedTerminalView {
+            terminalView.feed(text: text)
+        } else {
+            pendingTerminalMessage = (pendingTerminalMessage ?? "") + text
+        }
+    }
+
     func renderRestoredMessageIfNeeded(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13) {
         guard needsManualAttach, !didRenderRestoredMessage else { return }
+        // Only meaningful once the terminal is on screen, which means it already exists.
+        guard let terminalView = loadedTerminalView else { return }
         guard terminalView.bounds.width > 80, terminalView.bounds.height > 80 else { return }
         theme.apply(to: terminalView, fontFamily: fontFamily, fontSize: fontSize)
         terminalView.resizeSubviews(withOldSize: .zero)
@@ -259,7 +318,9 @@ final class BanyanSession: ObservableObject, Identifiable {
     /// the visible client to this already-running tmux session (`ensureSession` is idempotent).
     func startBackgroundBackendIfNeeded() {
         guard !isImportedHistory, status != .closed else { return }
-        guard !isProcessStarted, !terminalView.process.running else { return }
+        // Deliberately does not attach a visible client, so it must not create a
+        // terminal either — an absent one is by definition not running.
+        guard !isProcessStarted, loadedTerminalView?.process.running != true else { return }
         // Optimistically mark running so the sidebar updates immediately; the actual
         // tmux work (subprocess spawns) runs off the main thread to avoid freezing the
         // UI while a session is created via banyanctl.
@@ -282,7 +343,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func refreshTerminalClient(immediately: Bool = false) {
-        guard !isImportedHistory, terminalView.process.running else { return }
+        guard !isImportedHistory, loadedTerminalView?.process.running == true else { return }
         let tmuxBackend = tmuxBackend
         let tmuxSessionName = tmuxSessionName
         let sessionID = id
@@ -298,9 +359,11 @@ final class BanyanSession: ObservableObject, Identifiable {
                     detail: "tmux=\(tmuxSessionName) immediate"
                 )
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, !self.isImportedHistory, self.terminalView.process.running else { return }
-                    self.terminalView.needsDisplay = true
-                    self.terminalView.setNeedsDisplay(self.terminalView.bounds)
+                    guard let self, !self.isImportedHistory,
+                          let terminalView = self.loadedTerminalView,
+                          terminalView.process.running else { return }
+                    terminalView.needsDisplay = true
+                    terminalView.setNeedsDisplay(terminalView.bounds)
                 }
             }
             return
@@ -323,11 +386,12 @@ final class BanyanSession: ObservableObject, Identifiable {
             guard let self,
                   !Task.isCancelled,
                   !self.isImportedHistory,
-                  self.terminalView.process.running else {
+                  let terminalView = self.loadedTerminalView,
+                  terminalView.process.running else {
                 return
             }
-            self.terminalView.needsDisplay = true
-            self.terminalView.setNeedsDisplay(self.terminalView.bounds)
+            terminalView.needsDisplay = true
+            terminalView.setNeedsDisplay(terminalView.bounds)
             self.terminalRefreshTask = nil
         }
     }
@@ -335,6 +399,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     func recoverBlankTerminalClientIfNeeded() {
         guard !isImportedHistory,
               !attemptedBlankTerminalRecovery,
+              let terminalView = loadedTerminalView,
               terminalView.process.running,
               terminalView.hasVisibleText == false else {
             return
@@ -377,10 +442,12 @@ final class BanyanSession: ObservableObject, Identifiable {
     func restartBackingSession() {
         guard !isImportedHistory else { return }
         terminalRefreshTask?.cancel()
-        if terminalView.process.running {
-            isDetachingTerminalClient = true
+        if let terminalView = loadedTerminalView {
+            if terminalView.process.running {
+                isDetachingTerminalClient = true
+            }
+            terminalView.terminate()
         }
-        terminalView.terminate()
         isDetachingTerminalClient = false
         tmuxBackend.killSession(named: tmuxSessionName)
         isProcessStarted = false
@@ -414,11 +481,17 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard appliedTheme != theme || appliedFontFamily != fontFamily || appliedFontSize != fontSize else {
             return
         }
-        theme.apply(to: terminalView, fontFamily: fontFamily, fontSize: fontSize)
+        pendingTheme = theme
+        pendingFontFamily = fontFamily
+        pendingFontSize = fontSize
+        // A theme change for a session with no terminal yet is just bookkeeping;
+        // `makeTerminalView` applies it if and when one is created.
+        guard let view = loadedTerminalView else { return }
+        theme.apply(to: view, fontFamily: fontFamily, fontSize: fontSize)
         appliedTheme = theme
         appliedFontFamily = fontFamily
         appliedFontSize = fontSize
-        terminalView.needsDisplay = true
+        view.needsDisplay = true
     }
 
     func mark(status: SessionStatus? = nil, tone: SessionTone? = nil, title: String? = nil, titleURL: String? = nil) {
@@ -702,7 +775,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     func terminate(markClosed: Bool = true) {
         terminalRefreshTask?.cancel()
         isDetachingTerminalClient = false
-        terminalView.terminate()
+        loadedTerminalView?.terminate()
         isProcessStarted = false
         isRestored = false
         if markClosed {
@@ -715,7 +788,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         terminalRefreshTask?.cancel()
         isDetachingTerminalClient = false
         status = .closed
-        terminalView.terminate()
+        loadedTerminalView?.terminate()
         tmuxBackend.killSession(named: tmuxSessionName)
         isProcessStarted = false
         isRestored = false
@@ -724,7 +797,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func detachTerminalClient() {
         guard status != .closed else { return }
-        if terminalView.process.running {
+        if let terminalView = loadedTerminalView, terminalView.process.running {
             isDetachingTerminalClient = true
             terminalView.terminate()
         }
@@ -758,7 +831,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         isRestored = true
         isProcessStarted = false
         status = .failed
-        terminalView.feed(text: "Banyan could not attach this session.\r\n\r\n\(message)\r\n")
+        feedOrQueue("Banyan could not attach this session.\r\n\r\n\(message)\r\n")
         onStatusSignal?(status)
         touch()
     }
@@ -780,6 +853,9 @@ final class BanyanSession: ObservableObject, Identifiable {
 
 final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
+    /// The tmux pane backing this view, so the scroll handler can hand scrollback
+    /// off to tmux's copy-mode instead of keeping a duplicate local history.
+    var tmuxSessionName: String?
     private var preservedScrollbackTopRow: Int?
 
     var hasVisibleText: Bool {

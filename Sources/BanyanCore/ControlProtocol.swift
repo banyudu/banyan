@@ -130,6 +130,7 @@ public struct ControlPayload: Codable {
 
 public enum ControlRoute: Equatable {
     case list
+    case select
     case spawn
     case mark
     case close
@@ -144,6 +145,7 @@ public enum ControlRoute: Equatable {
         switch (method, path) {
         case ("GET", "/list"): return .list
         case ("GET", "/window-state"): return .windowState
+        case ("POST", "/select"): return .select
         case ("POST", "/spawn"): return .spawn
         case ("POST", "/mark"): return .mark
         case ("POST", "/close"): return .close
@@ -158,7 +160,7 @@ public enum ControlRoute: Equatable {
 
     public var requiresID: Bool {
         switch self {
-        case .mark, .close, .respawn, .restart, .remove: return true
+        case .select, .mark, .close, .respawn, .restart, .remove: return true
         case .list, .spawn, .screenshot, .windowState, .tick: return false
         }
     }

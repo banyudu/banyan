@@ -12,14 +12,25 @@ final class SessionSelection: ObservableObject {
         didSet {
             if oldValue != selectedSessionID {
                 changedAt = .now()
-                if let clickAt = pendingClickAt {
+                let clickAt = pendingClickAt.flatMap { timestamp in
+                    PerformanceTelemetry.elapsedMS(since: timestamp) <= 1_000 ? timestamp : nil
+                }
+                if let clickAt {
                     PerformanceTelemetry.shared.recordDuration(
                         "selection.click_to_didset",
                         durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
                         sessionID: selectedSessionID
                     )
                 }
-                switcher?.switchImmediately(to: selectedSessionID, clickAt: pendingClickAt)
+                switcher?.switchImmediately(
+                    to: selectedSessionID,
+                    selectionChangedAt: changedAt,
+                    clickAt: clickAt,
+                    afterPaint: isSyncing ? nil : storeSelectionForwarder(for: selectedSessionID)
+                )
+                if switcher == nil, !isSyncing {
+                    storeSelectionForwarder(for: selectedSessionID)()
+                }
                 pendingClickAt = nil
             }
         }
@@ -30,7 +41,7 @@ final class SessionSelection: ObservableObject {
     /// Direct reference to bypass SwiftUI's view update pipeline for visibility toggles.
     weak var switcher: TerminalSwitcherContainer?
 
-    private var forwardSubscription: AnyCancellable?
+    private weak var store: SessionStore?
     private var isSyncing = false
 
     private var clickMonitor: Any?
@@ -45,18 +56,10 @@ final class SessionSelection: ObservableObject {
     }
 
     /// Wire bidirectional sync: selection ↔ store.
-    /// - UI clicks update selection first (fast), then store (deferred).
-    /// - Programmatic changes (keyboard shortcuts) update store first, then selection (sync).
+    /// - Sidebar and navigation changes update selection first, then store after paint.
+    /// - Lifecycle changes update the store first, then selection synchronously.
     func bind(to store: SessionStore) {
-        forwardSubscription = $selectedSessionID
-            .removeDuplicates()
-            .sink { [weak store, weak self] newID in
-                guard let self, let store, !self.isSyncing else { return }
-                guard store.selectedSessionID != newID else { return }
-                DispatchQueue.main.async {
-                    store.selectedSessionID = newID
-                }
-            }
+        self.store = store
     }
 
     /// Called from ``SessionStore/selectedSessionID``'s `didSet` to keep
@@ -66,5 +69,13 @@ final class SessionSelection: ObservableObject {
         isSyncing = true
         selectedSessionID = newID
         isSyncing = false
+    }
+
+    private func storeSelectionForwarder(for newID: String?) -> () -> Void {
+        { [weak self, weak store] in
+            guard let self, let store, self.selectedSessionID == newID else { return }
+            guard store.selectedSessionID != newID else { return }
+            store.selectedSessionID = newID
+        }
     }
 }

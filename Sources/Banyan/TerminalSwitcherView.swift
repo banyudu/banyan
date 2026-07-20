@@ -1,10 +1,10 @@
 import BanyanCore
+import QuartzCore
 import SwiftUI
 import SwiftTerm
 
-/// Keeps all live session terminal views alive and switches between them by
-/// toggling `isHidden`. This avoids the SwiftUI view-tree diff and tmux
-/// refresh that made session switches take ~1.3s, bringing them to ~16ms.
+/// Creates terminal views only when visited, then keeps their independently
+/// backed layers attached and switches between them with visibility toggles.
 struct TerminalSwitcherView: NSViewRepresentable {
     let sessions: [BanyanSession]
     let selectedSessionID: String?
@@ -65,15 +65,27 @@ final class TerminalSwitcherContainer: NSView {
     private var initializedSessions: Set<String> = []
     private var activeSessionID: String?
     private var lastFocusRequestID: UUID?
+    private var pendingAfterPaint: (sessionID: String, action: () -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
     }
 
-    /// Called directly from `SessionSelection.didSet` to toggle visibility
+    /// Called directly from `SessionSelection.didSet` to swap cached views
     /// without waiting for SwiftUI's view update pipeline.
-    func switchImmediately(to newID: String?, clickAt: DispatchTime?) {
+    func switchImmediately(
+        to newID: String?,
+        selectionChangedAt: DispatchTime?,
+        clickAt: DispatchTime?,
+        afterPaint: (() -> Void)? = nil
+    ) {
         guard activeSessionID != newID else { return }
+        if let newID, let afterPaint {
+            pendingAfterPaint = (newID, afterPaint)
+        } else if newID == nil {
+            pendingAfterPaint = nil
+            afterPaint?()
+        }
         let isRevisit = newID.map { containers[$0] != nil } ?? false
         if let clickAt {
             PerformanceTelemetry.shared.recordDuration(
@@ -83,15 +95,52 @@ final class TerminalSwitcherContainer: NSView {
                 detail: isRevisit ? "revisit" : "first"
             )
         }
-        if let oldID = activeSessionID, let oldContainer = containers[oldID] {
-            oldContainer.isHidden = true
-        }
+
+        // A first visit has no cached terminal to reveal yet. Leave the current
+        // terminal attached until SwiftUI supplies the selected session below.
+        guard newID == nil || isRevisit else { return }
+
+        let synchronousWorkStartedAt = DispatchTime.now()
+        hideActiveContainer()
+        recordSynchronousStage("hide", since: synchronousWorkStartedAt, sessionID: newID)
         activeSessionID = newID
         if let newID, let newContainer = containers[newID] {
-            newContainer.isHidden = false
-            newContainer.needsDisplay = true
-            newContainer.terminalView.needsDisplay = true
+            if let startedAt = clickAt ?? selectionChangedAt {
+                newContainer.measureNextSwitchPaint(
+                    startedAt: startedAt,
+                    sessionID: newID,
+                    afterPaint: takeAfterPaint(for: newID)
+                )
+            }
+            attach(newContainer)
+            recordSynchronousStage("reveal", since: synchronousWorkStartedAt, sessionID: newID)
             window?.makeFirstResponder(newContainer.terminalView)
+            recordSynchronousStage("focus", since: synchronousWorkStartedAt, sessionID: newID)
+        }
+
+        // The state change above is instant, but the frame only paints once the
+        // main thread reaches its next display cycle. Measure that separately —
+        // a blocked main thread is invisible to the state-change timestamp.
+        if let startedAt = clickAt ?? selectionChangedAt {
+            let sessionID = newID
+            CATransaction.begin()
+            CATransaction.setCompletionBlock {
+                PerformanceTelemetry.shared.recordDuration(
+                    "switcher.frame_painted",
+                    durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                    sessionID: sessionID,
+                    detail: isRevisit ? "revisit" : "first"
+                )
+            }
+            CATransaction.commit()
+
+            DispatchQueue.main.async {
+                PerformanceTelemetry.shared.recordDuration(
+                    "main_thread.free_after_switch",
+                    durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                    sessionID: sessionID
+                )
+            }
         }
     }
 
@@ -117,32 +166,32 @@ final class TerminalSwitcherContainer: NSView {
 
         // Remove containers for sessions that no longer exist
         for (id, container) in containers where !liveIDs.contains(id) {
-            container.removeFromSuperview()
+            container.removeFromSuperviewWithoutNeedingDisplay()
             containers.removeValue(forKey: id)
             initializedSessions.remove(id)
+            if activeSessionID == id {
+                activeSessionID = nil
+            }
         }
 
-        // Add containers for new sessions
-        for session in liveSessions where containers[session.id] == nil {
+        let selectedSession = selectedSessionID.flatMap { selectedID in
+            liveSessions.first { $0.id == selectedID }
+        }
+
+        // Create terminal views on first selection, not merely because a session
+        // appears in the sidebar. Visited terminals retain their own backing
+        // layers, so revisits only toggle visibility instead of reparenting.
+        if let selectedSession, containers[selectedSession.id] == nil {
             let container = TerminalContainerView(
-                terminalView: session.terminalView,
-                onUserSubmittedInput: { onUserSubmittedInput(session, $0) }
+                terminalView: selectedSession.terminalView,
+                onUserSubmittedInput: { onUserSubmittedInput(selectedSession, $0) }
             )
             container.apply(theme: theme)
-            session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
-            container.translatesAutoresizingMaskIntoConstraints = false
-            container.isHidden = true
-            addSubview(container)
-            NSLayoutConstraint.activate([
-                container.leadingAnchor.constraint(equalTo: leadingAnchor),
-                container.trailingAnchor.constraint(equalTo: trailingAnchor),
-                container.topAnchor.constraint(equalTo: topAnchor),
-                container.bottomAnchor.constraint(equalTo: bottomAnchor)
-            ])
-            containers[session.id] = container
+            selectedSession.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+            containers[selectedSession.id] = container
         }
 
-        // Apply theme to all containers
+        // Apply theme only to terminals that have actually been visited.
         for session in liveSessions {
             guard let container = containers[session.id] else { continue }
             container.apply(theme: theme)
@@ -178,23 +227,25 @@ final class TerminalSwitcherContainer: NSView {
                     detail: isRevisit ? "revisit" : "first"
                 )
             }
-            if let oldID = activeSessionID, let oldContainer = containers[oldID] {
-                oldContainer.isHidden = true
-            }
+            hideActiveContainer()
             activeSessionID = selectedSessionID
         }
 
         if let newID = selectedSessionID, let newContainer = containers[newID] {
-            if newContainer.isHidden {
-                newContainer.isHidden = false
-                newContainer.needsLayout = true
-                newContainer.needsDisplay = true
-                newContainer.terminalView.needsDisplay = true
+            if newContainer.superview !== self {
+                if selectionChanged, let startedAt = clickAt ?? selectionChangedAt ?? switchRequestedAt {
+                    newContainer.measureNextSwitchPaint(
+                        startedAt: startedAt,
+                        sessionID: newID,
+                        afterPaint: takeAfterPaint(for: newID)
+                    )
+                }
+                attach(newContainer)
             }
 
             // First-time initialization for this session
             if !initializedSessions.contains(newID),
-               let session = liveSessions.first(where: { $0.id == newID }) {
+               let session = selectedSession {
                 initializedSessions.insert(newID)
                 newContainer.syncTerminalFrameIfNeeded(markNeedsDisplay: true)
                 newContainer.performWhenTerminalReady(for: session.terminalView) {
@@ -208,5 +259,36 @@ final class TerminalSwitcherContainer: NSView {
                 newContainer.focusTerminalWhenReady()
             }
         }
+    }
+
+    private func hideActiveContainer() {
+        guard let activeSessionID, let activeContainer = containers[activeSessionID] else { return }
+        activeContainer.isHidden = true
+    }
+
+    private func attach(_ container: TerminalContainerView) {
+        if container.superview !== self {
+            container.translatesAutoresizingMaskIntoConstraints = true
+            container.autoresizingMask = [.width, .height]
+            container.frame = bounds
+            container.isHidden = true
+            addSubview(container)
+            container.needsLayout = true
+        }
+        container.isHidden = false
+    }
+
+    private func takeAfterPaint(for sessionID: String) -> (() -> Void)? {
+        guard pendingAfterPaint?.sessionID == sessionID else { return nil }
+        defer { pendingAfterPaint = nil }
+        return pendingAfterPaint?.action
+    }
+
+    private func recordSynchronousStage(_ stage: String, since startedAt: DispatchTime, sessionID: String?) {
+        PerformanceTelemetry.shared.recordDuration(
+            "switcher.sync_\(stage)",
+            durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+            sessionID: sessionID
+        )
     }
 }

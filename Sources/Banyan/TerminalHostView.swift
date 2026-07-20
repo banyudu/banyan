@@ -93,6 +93,7 @@ struct TerminalHostView: NSViewRepresentable {
 
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
+    private let paintProbe = TerminalPaintProbeView()
     var onLayout: (() -> Void)?
     var onUserSubmittedInput: ((String?) -> Void)?
     private let contentInset: CGFloat = 14
@@ -116,6 +117,9 @@ final class TerminalContainerView: NSView {
         identifier = NSUserInterfaceItemIdentifier(AccessibilityID.terminal)
         wantsLayer = true
         install(terminalView)
+        paintProbe.frame = bounds
+        paintProbe.autoresizingMask = [.width, .height]
+        addSubview(paintProbe, positioned: .above, relativeTo: terminalView)
         installScrollEventMonitor()
         installInputEventMonitor()
     }
@@ -147,6 +151,7 @@ final class TerminalContainerView: NSView {
         ].compactMap { $0 })
         self.terminalView.removeFromSuperview()
         self.terminalView = terminalView
+        terminalView.wantsLayer = true
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(terminalView)
         let leading = terminalView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: contentInset)
@@ -163,6 +168,18 @@ final class TerminalContainerView: NSView {
 
     func apply(theme: TerminalTheme) {
         layer?.backgroundColor = theme.backgroundColor.cgColor
+    }
+
+    func measureNextSwitchPaint(
+        startedAt: DispatchTime,
+        sessionID: String,
+        afterPaint: (() -> Void)? = nil
+    ) {
+        paintProbe.measureNextPaint(
+            startedAt: startedAt,
+            sessionID: sessionID,
+            afterPaint: afterPaint
+        )
     }
 
     override func layout() {
@@ -398,7 +415,12 @@ final class TerminalContainerView: NSView {
             deltaY: Double(event.deltaY),
             scrollingDeltaY: Double(event.scrollingDeltaY),
             hasPreciseScrollingDeltas: event.hasPreciseScrollingDeltas,
-            canScroll: terminalView.canScroll,
+            // A tmux-backed pane can always scroll: its history lives in tmux, so the
+            // near-empty local SwiftTerm buffer is no longer the thing to ask.
+            // Without this, `canScroll` goes false once the local scrollback shrank
+            // and the wheel would fall through to sending PageUp/PageDown to the
+            // running program instead of scrolling history.
+            canScroll: terminalView.canScroll || isTmuxBackedPane,
             mouseModeActive: terminalView.terminal.mouseMode != .off
         )
 
@@ -408,12 +430,16 @@ final class TerminalContainerView: NSView {
         case .mouseWheelDown(let count):
             sendMouseWheel(event, up: false, count: count)
         case .scrollbackUp(let lines):
-            terminalView.scrollUp(lines: lines)
-            (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
+            if !scrollHistoryViaTmux(lines: lines, up: true) {
+                terminalView.scrollUp(lines: lines)
+                (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
+            }
             extendSelectionDuringDrag(event)
         case .scrollbackDown(let lines):
-            terminalView.scrollDown(lines: lines)
-            (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
+            if !scrollHistoryViaTmux(lines: lines, up: false) {
+                terminalView.scrollDown(lines: lines)
+                (terminalView as? DetectingLocalProcessTerminalView)?.noteUserScrollbackPosition()
+            }
             extendSelectionDuringDrag(event)
         case .pageUp(let count):
             sendPageScroll(up: true, count: count)
@@ -422,6 +448,25 @@ final class TerminalContainerView: NSView {
         case nil:
             break
         }
+    }
+
+    private var isTmuxBackedPane: Bool {
+        (terminalView as? DetectingLocalProcessTerminalView)?.tmuxSessionName != nil
+    }
+
+    /// Hands wheel scrollback to tmux's copy-mode, which already holds this pane's
+    /// history. Returns `false` for a pane we can't address (no tmux name), leaving
+    /// the caller to fall back to SwiftTerm's local buffer.
+    ///
+    /// Mouse *reporting* stays disabled, so only the wheel is redirected — drag and
+    /// click keep going to SwiftTerm, preserving the native text selection added in
+    /// 7f20bcb, including while scrolled back through tmux history.
+    private func scrollHistoryViaTmux(lines: Int, up: Bool) -> Bool {
+        guard let paneID = (terminalView as? DetectingLocalProcessTerminalView)?.tmuxSessionName else {
+            return false
+        }
+        TmuxBackend.shared.scrollHistory(paneID: paneID, lines: lines, up: up)
+        return true
     }
 
     /// Left button still held: re-extend the active selection to the pointer's
@@ -519,5 +564,40 @@ final class TerminalContainerView: NSView {
                 terminalView.send(data: EscapeSequences.cmdPageDown[...])
             }
         }
+    }
+}
+
+private final class TerminalPaintProbeView: NSView {
+    private var pendingMeasurement: (
+        startedAt: DispatchTime,
+        sessionID: String,
+        afterPaint: (() -> Void)?
+    )?
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let pendingMeasurement else { return }
+        self.pendingMeasurement = nil
+        PerformanceTelemetry.shared.recordDuration(
+            "switcher.terminal_drawn",
+            durationMS: PerformanceTelemetry.elapsedMS(since: pendingMeasurement.startedAt),
+            sessionID: pendingMeasurement.sessionID
+        )
+        if let afterPaint = pendingMeasurement.afterPaint {
+            DispatchQueue.main.async(execute: afterPaint)
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    func measureNextPaint(
+        startedAt: DispatchTime,
+        sessionID: String,
+        afterPaint: (() -> Void)?
+    ) {
+        pendingMeasurement = (startedAt, sessionID, afterPaint)
+        needsDisplay = true
     }
 }
