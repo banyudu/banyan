@@ -107,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {
             Self.disableDefaultCloseWindowShortcut()
+            Self.disableWindowRestoration()
         }
         Task { @MainActor in
             AttentionNotifier.shared.requestAuthorization()
@@ -119,6 +120,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         Self.disableDefaultCloseWindowShortcut()
+        Self.disableWindowRestoration()
+    }
+
+    /// Belt-and-braces companion to `NSQuitAlwaysKeepsWindows=false` in the bundle
+    /// Info.plist: a window that already carries restorable state would otherwise be
+    /// re-encoded and replayed at next launch, where SwiftUI traps laying the restored
+    /// hosting view out and the app crash-loops before it can show a window.
+    private static func disableWindowRestoration() {
+        for window in NSApp.windows where window.isRestorable {
+            window.isRestorable = false
+        }
     }
 
     private static func disableDefaultCloseWindowShortcut() {

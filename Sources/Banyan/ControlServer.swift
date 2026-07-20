@@ -8,6 +8,11 @@ final class ControlServer {
     private var listener: NWListener?
     private let port: NWEndpoint.Port = 7842
     private let token: String
+    private let queue = DispatchQueue(label: "app.banyan.control-server")
+    private var bindAttempts = 0
+    /// ~30s of retries at 1s each, enough to outlast a previous instance releasing
+    /// the port on a quick restart, without looping forever.
+    private let maxBindAttempts = 30
 
     init(store: SessionStore) {
         self.store = store
@@ -15,15 +20,70 @@ final class ControlServer {
     }
 
     func start() {
+        startListener()
+    }
+
+    private func startListener() {
+        let listener: NWListener
         do {
-            let listener = try NWListener(using: .tcp, on: port)
-            listener.newConnectionHandler = { [weak self] connection in
-                self?.handle(connection)
-            }
-            listener.start(queue: DispatchQueue(label: "app.banyan.control-server"))
-            self.listener = listener
+            listener = try NWListener(using: .tcp, on: port)
         } catch {
-            NSLog("Banyan control server failed to start: \(error.localizedDescription)")
+            NSLog("Banyan control server could not create listener on port \(port): \(error.localizedDescription)")
+            scheduleBindRetry()
+            return
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.handle(connection)
+        }
+        // Previously the bind failure (e.g. the port still held by a restarting
+        // instance) surfaced only through this state — with no handler set, the
+        // listener silently never bound and the control server was dead until the
+        // next launch. Observe it and retry with a fresh listener.
+        listener.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                if self.bindAttempts > 0 {
+                    NSLog("Banyan control server bound to port \(self.port) after \(self.bindAttempts) retr\(self.bindAttempts == 1 ? "y" : "ies")")
+                }
+                self.bindAttempts = 0
+            case .waiting(let error):
+                // Typically EADDRINUSE while a prior instance releases the port.
+                // Network.framework auto-retries, but recreate on a delay too so we
+                // recover deterministically even if it stops.
+                NSLog("Banyan control server waiting to bind port \(self.port): \(error.localizedDescription)")
+                self.retire(listener, thenRetry: true)
+            case .failed(let error):
+                NSLog("Banyan control server listener failed: \(error.localizedDescription)")
+                self.retire(listener, thenRetry: true)
+            default:
+                break
+            }
+        }
+        self.listener = listener
+        listener.start(queue: queue)
+    }
+
+    private func retire(_ oldListener: NWListener, thenRetry: Bool) {
+        oldListener.stateUpdateHandler = nil
+        oldListener.cancel()
+        if listener === oldListener {
+            listener = nil
+        }
+        if thenRetry {
+            scheduleBindRetry()
+        }
+    }
+
+    private func scheduleBindRetry() {
+        guard bindAttempts < maxBindAttempts else {
+            NSLog("Banyan control server gave up binding port \(port) after \(bindAttempts) attempts")
+            return
+        }
+        bindAttempts += 1
+        queue.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.listener == nil else { return }
+            self.startListener()
         }
     }
 

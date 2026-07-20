@@ -59,6 +59,13 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <!-- Cocoa's persistent window restoration replays the saved SwiftUI hosting view
+       through NSHostingView.layout() at launch, which traps inside SwiftUI's own
+       appearance lookup (`fauxVibrantDark`) and crash-loops the app on every
+       relaunch. Window frames and split positions are autosaved to UserDefaults
+       independently, so opting out costs no visible state. -->
+  <key>NSQuitAlwaysKeepsWindows</key>
+  <false/>
 </dict>
 </plist>
 PLIST
