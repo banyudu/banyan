@@ -73,15 +73,20 @@ chmod +x "$MACOS_DIR/Banyan" "$DIST_DIR/bin/banyanctl"
 # and drops its grants. A Developer ID requirement keys on bundle id + team id
 # instead, which is stable.
 #
-# Note this is NOT $APPLE_SIGNING_IDENTITY: that holds an "Apple Distribution"
+# Deliberately not $APPLE_SIGNING_IDENTITY: that holds an "Apple Distribution"
 # identity for App Store submission, which needs a provisioning profile to launch.
-SIGNING_IDENTITY="${BANYAN_SIGNING_IDENTITY:-Developer ID Application: Yudu Ban (RYLS8UDY5D)}"
-if codesign --force --sign "$SIGNING_IDENTITY" "$APP_DIR" >/dev/null 2>&1; then
+SIGNING_IDENTITY="${BANYAN_SIGNING_IDENTITY:-${APPLE_SIGNING_IDENTITY_DEV:-}}"
+if [[ -n "$SIGNING_IDENTITY" ]] && codesign --force --sign "$SIGNING_IDENTITY" "$APP_DIR" >/dev/null 2>&1; then
   echo "Signed with: $SIGNING_IDENTITY"
 else
-  # Anyone without that certificate still gets a working local build.
+  # No certificate configured or available: still produce a working local build.
   codesign --force --sign - "$APP_DIR" >/dev/null
-  echo "WARNING: '$SIGNING_IDENTITY' unavailable — signed ad-hoc instead."
+  if [[ -z "$SIGNING_IDENTITY" ]]; then
+    echo "WARNING: set APPLE_SIGNING_IDENTITY_DEV (or BANYAN_SIGNING_IDENTITY) to a"
+    echo "         'Developer ID Application' identity — signed ad-hoc instead."
+  else
+    echo "WARNING: '$SIGNING_IDENTITY' unavailable — signed ad-hoc instead."
+  fi
   echo "         The app still runs, but macOS will reset its permissions on each rebuild."
 fi
 
