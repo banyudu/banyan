@@ -922,7 +922,17 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     }
 
     private func configureInteraction() {
-        changeScrollback(20_000)
+        // tmux owns this pane's history (see `TmuxBackend.scrollHistory`), so the
+        // local buffer only has to cover what tmux repaints plus a little slack —
+        // it is no longer the scrollback of record.
+        //
+        // The old 20_000 mirrored tmux's `history-limit`, which meant carrying a
+        // second copy of the same history in a far costlier representation:
+        // `BufferLine` allocates a dense `cols`-wide `CharData` array per line and
+        // fills every cell, so a line costs ~6 KB whether it holds text or not, and
+        // the count tracks the configured limit rather than actual content. That was
+        // ~118 MB per terminal against ~35 MB for tmux's whole server.
+        changeScrollback(1_000)
         allowMouseReporting = false
     }
 }
