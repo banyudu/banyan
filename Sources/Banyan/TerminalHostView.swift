@@ -81,11 +81,11 @@ struct TerminalHostView: NSViewRepresentable {
             return
         }
         session.start()
-        session.refreshTerminalClient()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+        session.refreshTerminalClient(immediately: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             session.refreshTerminalClient()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
             session.recoverBlankTerminalClientIfNeeded()
         }
     }
@@ -281,7 +281,7 @@ final class TerminalContainerView: NSView {
                 break
             }
 
-            guard event.window === self.window else { return event }
+            guard event.window === self.window, !self.isHidden else { return event }
 
             switch event.type {
             case .leftMouseDown:
@@ -305,6 +305,7 @@ final class TerminalContainerView: NSView {
     }
 
     private func shouldHandleScroll(_ event: NSEvent) -> Bool {
+        guard !isHidden else { return false }
         guard event.window === window, terminalView.window === window else { return false }
         guard isEventInTerminal(event) else { return false }
         return true

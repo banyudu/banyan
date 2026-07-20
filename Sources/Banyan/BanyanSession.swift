@@ -281,12 +281,32 @@ final class BanyanSession: ObservableObject, Identifiable {
         }
     }
 
-    func refreshTerminalClient() {
+    func refreshTerminalClient(immediately: Bool = false) {
         guard !isImportedHistory, terminalView.process.running else { return }
-        terminalRefreshTask?.cancel()
         let tmuxBackend = tmuxBackend
         let tmuxSessionName = tmuxSessionName
         let sessionID = id
+
+        if immediately {
+            let startedAt = DispatchTime.now()
+            DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+                tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
+                PerformanceTelemetry.shared.recordDuration(
+                    "tmux.refresh_clients",
+                    durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                    sessionID: sessionID,
+                    detail: "tmux=\(tmuxSessionName) immediate"
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.isImportedHistory, self.terminalView.process.running else { return }
+                    self.terminalView.needsDisplay = true
+                    self.terminalView.setNeedsDisplay(self.terminalView.bounds)
+                }
+            }
+            return
+        }
+
+        terminalRefreshTask?.cancel()
         terminalRefreshTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard !Task.isCancelled else { return }
