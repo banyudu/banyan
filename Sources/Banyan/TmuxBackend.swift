@@ -10,7 +10,7 @@ struct TmuxPaneSnapshot {
     let isInMode: Bool
 }
 
-struct TmuxBackend {
+struct TmuxBackend: Sendable {
     enum BackendError: LocalizedError {
         case tmuxNotFound
         case commandFailed([String], String)

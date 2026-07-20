@@ -1,7 +1,7 @@
 import BanyanCore
 import Foundation
 
-protocol AgentSupervisorBackend {
+protocol AgentSupervisorBackend: Sendable {
     func hasSession(named name: String) -> Bool
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot?
     func captureVisibleText(paneID: String, lineLimit: Int) -> String
@@ -9,7 +9,7 @@ protocol AgentSupervisorBackend {
 
 extension TmuxBackend: AgentSupervisorBackend {}
 
-struct AgentSupervisor {
+struct AgentSupervisor: Sendable {
     struct Result {
         let status: SessionStatus
         let tone: SessionTone
@@ -18,11 +18,11 @@ struct AgentSupervisor {
     }
 
     private let backend: any AgentSupervisorBackend
-    private let processDescendants: (Int) -> [ProcessInfoRow]
+    private let processDescendants: @Sendable (Int) -> [ProcessInfoRow]
 
     init(
         backend: any AgentSupervisorBackend = TmuxBackend.shared,
-        processDescendants: @escaping (Int) -> [ProcessInfoRow] = { rootPID in
+        processDescendants: @escaping @Sendable (Int) -> [ProcessInfoRow] = { rootPID in
             ProcessTable.snapshot().descendants(of: rootPID)
         }
     ) {
@@ -233,7 +233,7 @@ struct AgentSupervisor {
     }
 }
 
-struct ProcessTable {
+struct ProcessTable: Sendable {
     private let childrenByParent: [Int: [ProcessInfoRow]]
     private let rowByPID: [Int: ProcessInfoRow]
 
@@ -262,7 +262,7 @@ struct ProcessTable {
     }
 }
 
-struct ProcessInfoRow {
+struct ProcessInfoRow: Sendable {
     let pid: Int
     let parentPID: Int
     let state: String

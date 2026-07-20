@@ -76,6 +76,25 @@ private struct SupervisorSessionResult {
     let currentPath: String?
 }
 
+/// Lock-guarded sink so `concurrentPerform` workers can collect supervisor results
+/// from multiple threads. Order is irrelevant — results are matched back by id.
+private final class SupervisorResultCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var results: [SupervisorSessionResult] = []
+
+    func append(_ result: SupervisorSessionResult) {
+        lock.lock()
+        results.append(result)
+        lock.unlock()
+    }
+
+    func drain() -> [SupervisorSessionResult] {
+        lock.lock()
+        defer { lock.unlock() }
+        return results
+    }
+}
+
 struct LivePromptTitleMatchInput: Equatable {
     let id: String
     let cwd: String
@@ -2255,31 +2274,40 @@ final class SessionStore: ObservableObject {
                 processTable.descendants(of: rootPID)
             }
 
-            let results = inputs.compactMap { input -> SupervisorSessionResult? in
+            // Inspect sessions concurrently: each inspect() blocks on independent,
+            // timeout-bounded tmux subprocesses, so a sequential pass cost ~sum of all
+            // sessions. concurrentPerform fans them across the pool (bounded, so many
+            // sessions can't explode threads), cutting the tick to ~the slowest session.
+            let collector = SupervisorResultCollector()
+            DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
+                let input = inputs[index]
                 guard let result = supervisor.inspect(
                     tmuxSessionName: input.tmuxSessionName,
                     launchCommand: input.command,
                     currentStatus: input.status
                 ) else {
-                    return nil
+                    return
                 }
                 if result.status == .closed && backend.hasSession(named: input.tmuxSessionName) {
-                    return nil
+                    return
                 }
                 // A restored session whose tmux session is gone is not dead — clicking
                 // it recreates the backing session. Only a session we have actually
                 // attached to may be closed out from under us.
                 if result.status == .closed && input.isAwaitingAttach {
-                    return nil
+                    return
                 }
-                return SupervisorSessionResult(
-                    id: input.id,
-                    status: result.status,
-                    tone: result.tone,
-                    provider: result.provider,
-                    currentPath: result.currentPath
+                collector.append(
+                    SupervisorSessionResult(
+                        id: input.id,
+                        status: result.status,
+                        tone: result.tone,
+                        provider: result.provider,
+                        currentPath: result.currentPath
+                    )
                 )
             }
+            let results = collector.drain()
 
             PerformanceTelemetry.shared.recordDuration(
                 "supervisor.tick",
