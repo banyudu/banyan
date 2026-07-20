@@ -141,8 +141,10 @@ final class SessionStore: ObservableObject {
     @Published private(set) var pendingHandoffJobs: [HandoffJob] = []
     @Published var addSessionDraft: AddSessionDraft?
     private(set) var sessionSwitchRequestedAt: DispatchTime?
+    let selection = SessionSelection()
     @Published var selectedSessionID: String? {
         didSet {
+            selection.syncFromStore(selectedSessionID)
             if oldValue != selectedSessionID {
                 sessionSwitchRequestedAt = .now()
                 PerformanceTelemetry.shared.beginSessionSwitch(
@@ -274,8 +276,8 @@ final class SessionStore: ObservableObject {
             projectLaunchByGroup = stored.compactMapValues(NewSessionLaunch.init(rawValue:))
         }
 
-        // Sessions now persist off the main thread; drain the queue on quit so the
-        // final change isn't lost between the async enqueue and process exit.
+        selection.bind(to: self)
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,

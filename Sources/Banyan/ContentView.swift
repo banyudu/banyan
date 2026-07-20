@@ -8,8 +8,13 @@ private let sidebarTitlebarHeaderTopPadding: CGFloat = 30
 
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
+    @ObservedObject private var selection: SessionSelection
     @State private var showingPreferences = false
     @State private var draggingSidebarSessionID: String?
+
+    init(selection: SessionSelection) {
+        self._selection = ObservedObject(wrappedValue: selection)
+    }
 
     private var jumpKeyLabels: [String: String] {
         var labels: [String: String] = [:]
@@ -135,7 +140,7 @@ struct ContentView: View {
 
     private var sessionsSidebar: some View {
         VStack(spacing: 0) {
-            List(selection: $store.selectedSessionID) {
+            List(selection: $selection.selectedSessionID) {
                 sidebarSections(store.sessionSidebarGroups, allowsMove: true)
             }
             .listStyle(.sidebar)
@@ -156,7 +161,7 @@ struct ContentView: View {
                     .padding(.bottom, 2)
 
                 if let historyGroup = store.historySidebarGroup {
-                    List(selection: $store.selectedSessionID) {
+                    List(selection: $selection.selectedSessionID) {
                         sidebarSections([historyGroup], allowsMove: false)
                     }
                     .listStyle(.sidebar)
@@ -745,12 +750,13 @@ struct ContentView: View {
             ZStack {
                 TerminalSwitcherView(
                     sessions: store.visibleSessions,
-                    selectedSessionID: store.selectedSessionID,
+                    selectedSessionID: selection.selectedSessionID,
                     theme: store.terminalTheme,
                     fontFamily: store.terminalFontFamily,
                     fontSize: store.terminalFontSize,
                     focusRequestID: store.terminalFocusRequestID,
-                    switchRequestedAt: store.sessionSwitchRequestedAt
+                    switchRequestedAt: store.sessionSwitchRequestedAt,
+                    selectionChangedAt: selection.changedAt
                 )
                 .ignoresSafeArea(edges: .bottom)
 

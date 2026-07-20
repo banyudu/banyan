@@ -8,7 +8,7 @@ struct BanyanApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(selection: store.selection)
                 .environmentObject(store)
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
