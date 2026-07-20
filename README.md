@@ -69,6 +69,19 @@ On first launch after upgrading, Banyan migrates legacy session metadata from `s
 
 Persisted state currently includes session metadata, tmux session names, generated titles, sidebar order, selected session, sort mode, terminal theme, and terminal font settings.
 
+## iTerm2 Rescue
+
+If the Banyan app is hung or broken, all sessions are still reachable — they are plain tmux sessions. The rescue script lays them out in iTerm2, one tab per project and one pane per session:
+
+```sh
+scripts/iterm-rescue.sh              # attach everything
+scripts/iterm-rescue.sh --dry-run    # print the tab/pane plan
+scripts/iterm-rescue.sh -p clawly    # only one project
+scripts/iterm-rescue.sh -d           # kick other clients (including a wedged Banyan)
+```
+
+It talks to tmux and `state.sqlite` directly and never depends on the Banyan app or control server. Terminal content stays in sync with Banyan automatically because both are tmux clients of the same sessions; closing panes only detaches them.
+
 ## Performance Telemetry
 
 Banyan collects local, CWV-like performance events for app-specific workflows such as switching sessions, attaching terminals, refreshing tmux clients, and resolving selected-session context. The data is stored locally in:
