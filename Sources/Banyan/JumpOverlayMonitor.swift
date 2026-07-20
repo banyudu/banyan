@@ -113,9 +113,15 @@ final class JumpOverlayMonitor {
 
     private func handleJumpKey(_ event: NSEvent) -> Bool {
         guard isOverlayVisible else { return false }
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers == .command else { return false }
+        let modifiers = event.modifierFlags.intersection(Self.interestingModifiers)
         guard let char = event.charactersIgnoringModifiers?.lowercased().first else { return false }
+
+        if char.isNumber {
+            guard modifiers == .command else { return false }
+        } else {
+            guard modifiers == [.command, .shift] else { return false }
+        }
+
         guard let index = Self.jumpIndex(for: char) else { return false }
         return onJump?(index) ?? false
     }
@@ -128,30 +134,29 @@ final class JumpOverlayMonitor {
 
     // MARK: - Key ↔ index mapping
 
-    /// Letters available as jump targets. J and K are reserved for ⌘J/⌘K navigation.
-    private static let jumpLetters: [Character] = {
-        let reserved: Set<Character> = ["j", "k"]
-        return Array("abcdefghijklmnopqrstuvwxyz").filter { !reserved.contains($0) }
-    }()
-
     /// Maps a key character to a 1-based session index.
-    /// "1"–"9" → 1–9, then the available letters (skipping J/K) map to 10+.
+    /// "1"–"9" → 1–9, "a"–"z" → 10–35.
     static func jumpIndex(for char: Character) -> Int? {
         if let digit = char.wholeNumberValue, digit >= 1, digit <= 9 {
             return digit
         }
-        guard let index = jumpLetters.firstIndex(of: char) else { return nil }
-        return 10 + index
+        guard let ascii = char.asciiValue else { return nil }
+        let a = Character("a").asciiValue!
+        let z = Character("z").asciiValue!
+        guard ascii >= a, ascii <= z else { return nil }
+        return 10 + Int(ascii - a)
     }
 
     /// Maps a 1-based session index to its jump key label.
-    /// 1–9 → "1"–"9", 10+ → available letters (skipping J/K) uppercased.
+    /// 1–9 → "1"–"9", 10–35 → "A"–"Z" (uppercase hints at ⌘⇧).
     static func jumpLabel(for oneBasedIndex: Int) -> String? {
         if oneBasedIndex >= 1, oneBasedIndex <= 9 {
             return String(oneBasedIndex)
         }
-        let letterIndex = oneBasedIndex - 10
-        guard letterIndex >= 0, letterIndex < jumpLetters.count else { return nil }
-        return String(jumpLetters[letterIndex]).uppercased()
+        if oneBasedIndex >= 10, oneBasedIndex <= 35 {
+            let offset = oneBasedIndex - 10
+            return String(UnicodeScalar(UInt8(Character("A").asciiValue!) + UInt8(offset)))
+        }
+        return nil
     }
 }

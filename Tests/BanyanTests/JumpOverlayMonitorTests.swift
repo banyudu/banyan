@@ -7,16 +7,12 @@ import Testing
     #expect(JumpOverlayMonitor.jumpIndex(for: "0") == nil)
 }
 
-@Test func jumpIndexMapsLettersSkippingReservedKeys() {
+@Test func jumpIndexMapsAllLetters() {
     #expect(JumpOverlayMonitor.jumpIndex(for: "a") == 10)
     #expect(JumpOverlayMonitor.jumpIndex(for: "b") == 11)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "i") == 18)
-    // J and K are reserved for ⌘J/⌘K navigation
-    #expect(JumpOverlayMonitor.jumpIndex(for: "j") == nil)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "k") == nil)
-    // L follows I (skipping J, K)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "l") == 19)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "z") == 33)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "j") == 19)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "k") == 20)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "z") == 35)
 }
 
 @Test func jumpIndexRejectsInvalidCharacters() {
@@ -29,27 +25,18 @@ import Testing
     #expect(JumpOverlayMonitor.jumpLabel(for: 1) == "1")
     #expect(JumpOverlayMonitor.jumpLabel(for: 9) == "9")
     #expect(JumpOverlayMonitor.jumpLabel(for: 10) == "A")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 18) == "I")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 19) == "L")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 33) == "Z")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 19) == "J")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 20) == "K")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 35) == "Z")
 }
 
 @Test func jumpLabelReturnsNilForOutOfRange() {
     #expect(JumpOverlayMonitor.jumpLabel(for: 0) == nil)
-    #expect(JumpOverlayMonitor.jumpLabel(for: 34) == nil)
-}
-
-@Test func jumpLabelNeverIncludesReservedKeys() {
-    for index in 1...33 {
-        guard let label = JumpOverlayMonitor.jumpLabel(for: index) else { continue }
-        #expect(label != "J")
-        #expect(label != "K")
-    }
+    #expect(JumpOverlayMonitor.jumpLabel(for: 36) == nil)
 }
 
 @Test func jumpIndexAndLabelAreInverses() {
-    // 9 digits + 24 letters (26 minus J, K) = 33 total
-    for index in 1...33 {
+    for index in 1...35 {
         guard let label = JumpOverlayMonitor.jumpLabel(for: index) else {
             Issue.record("No label for index \(index)")
             continue
