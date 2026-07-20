@@ -31,6 +31,7 @@ struct BanyanApp: App {
                         store?.selectPreviousSession()
                     }
                     JumpOverlayMonitor.shared.start()
+                    store.selection.startClickMonitor()
                 }
         }
         .windowStyle(.titleBar)

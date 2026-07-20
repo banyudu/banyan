@@ -1,3 +1,5 @@
+import AppKit
+import BanyanCore
 import Combine
 import Foundation
 
@@ -10,13 +12,34 @@ final class SessionSelection: ObservableObject {
         didSet {
             if oldValue != selectedSessionID {
                 changedAt = .now()
+                if let clickAt = pendingClickAt {
+                    PerformanceTelemetry.shared.recordDuration(
+                        "selection.click_to_didset",
+                        durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
+                        sessionID: selectedSessionID
+                    )
+                    pendingClickAt = nil
+                }
             }
         }
     }
     private(set) var changedAt: DispatchTime?
+    /// Set by an NSEvent monitor the moment a mouse click lands in the sidebar.
+    var pendingClickAt: DispatchTime?
 
     private var forwardSubscription: AnyCancellable?
     private var isSyncing = false
+
+    private var clickMonitor: Any?
+
+    /// Start monitoring mouse clicks to timestamp the moment a sidebar click lands.
+    func startClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            self?.pendingClickAt = .now()
+            return event
+        }
+    }
 
     /// Wire bidirectional sync: selection ↔ store.
     /// - UI clicks update selection first (fast), then store (deferred).

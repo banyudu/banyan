@@ -756,7 +756,8 @@ struct ContentView: View {
                     fontSize: store.terminalFontSize,
                     focusRequestID: store.terminalFocusRequestID,
                     switchRequestedAt: store.sessionSwitchRequestedAt,
-                    selectionChangedAt: selection.changedAt
+                    selectionChangedAt: selection.changedAt,
+                    clickAt: selection.pendingClickAt
                 )
                 .ignoresSafeArea(edges: .bottom)
 

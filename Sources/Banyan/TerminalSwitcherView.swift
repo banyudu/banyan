@@ -14,6 +14,7 @@ struct TerminalSwitcherView: NSViewRepresentable {
     let focusRequestID: UUID
     var switchRequestedAt: DispatchTime?
     var selectionChangedAt: DispatchTime?
+    var clickAt: DispatchTime?
 
     func makeNSView(context: Context) -> TerminalSwitcherContainer {
         let container = TerminalSwitcherContainer()
@@ -24,6 +25,7 @@ struct TerminalSwitcherView: NSViewRepresentable {
         nsView.update(
             switchRequestedAt: switchRequestedAt,
             selectionChangedAt: selectionChangedAt,
+            clickAt: clickAt,
             sessions: sessions,
             selectedSessionID: selectedSessionID,
             theme: theme,
@@ -73,6 +75,7 @@ final class TerminalSwitcherContainer: NSView {
     func update(
         switchRequestedAt: DispatchTime?,
         selectionChangedAt: DispatchTime?,
+        clickAt: DispatchTime?,
         sessions: [BanyanSession],
         selectedSessionID: String?,
         theme: TerminalTheme,
@@ -128,6 +131,14 @@ final class TerminalSwitcherContainer: NSView {
                 PerformanceTelemetry.shared.recordDuration(
                     "switcher.from_selection",
                     durationMS: PerformanceTelemetry.elapsedMS(since: selAt),
+                    sessionID: selectedSessionID,
+                    detail: isRevisit ? "revisit" : "first"
+                )
+            }
+            if let clickAt {
+                PerformanceTelemetry.shared.recordDuration(
+                    "switcher.from_click",
+                    durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
                     sessionID: selectedSessionID,
                     detail: isRevisit ? "revisit" : "first"
                 )

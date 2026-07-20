@@ -87,6 +87,8 @@ final class JumpOverlayMonitor {
             }
             overlayTimer = timer
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdDelay, execute: timer)
+        } else if modifiers == [.command, .shift] {
+            // Keep overlay visible when Shift is added to Cmd (needed for Cmd+Shift+letter jumps).
         } else {
             overlayTimer?.cancel()
             overlayTimer = nil
