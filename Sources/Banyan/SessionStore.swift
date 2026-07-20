@@ -1536,7 +1536,7 @@ final class SessionStore: ObservableObject {
     }
 
     func select(id: String) {
-        selectedSessionID = id
+        selection.selectedSessionID = id
     }
 
     func moveSidebarSessions(in groupID: String, from sourceOffsets: IndexSet, to destinationOffset: Int) {
@@ -1665,12 +1665,12 @@ final class SessionStore: ObservableObject {
     func selectNextWorkableSession() {
         guard let id = SessionSelectionNavigator.nextMatchingID(
             in: sidebarSessions.map(\.id),
-            selectedID: selectedSessionID,
+            selectedID: selection.selectedSessionID,
             isMatch: isWorkableSession
         ) else {
             return
         }
-        selectedSessionID = id
+        selection.selectedSessionID = id
     }
 
     var hasWorkableSession: Bool {
@@ -1685,7 +1685,7 @@ final class SessionStore: ObservableObject {
         ) else {
             return false
         }
-        selectedSessionID = id
+        selection.selectedSessionID = id
         return true
     }
 
@@ -2698,12 +2698,12 @@ final class SessionStore: ObservableObject {
     private func selectAdjacentSession(direction: SessionSelectionDirection) {
         guard let id = SessionSelectionNavigator.adjacentID(
             in: sidebarSessions.map(\.id),
-            selectedID: selectedSessionID,
+            selectedID: selection.selectedSessionID,
             direction: direction
         ) else {
             return
         }
-        selectedSessionID = id
+        selection.selectedSessionID = id
     }
 
     private func isWorkableSession(_ id: String) -> Bool {

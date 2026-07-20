@@ -260,6 +260,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     private func makeTerminalView() -> DetectingLocalProcessTerminalView {
         let view = DetectingLocalProcessTerminalView(frame: .zero)
+        view.tmuxSessionName = tmuxSessionName
         pendingTheme.apply(to: view, fontFamily: pendingFontFamily, fontSize: pendingFontSize)
         appliedTheme = pendingTheme
         appliedFontFamily = pendingFontFamily
@@ -852,6 +853,9 @@ final class BanyanSession: ObservableObject, Identifiable {
 
 final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
+    /// The tmux pane backing this view, so the scroll handler can hand scrollback
+    /// off to tmux's copy-mode instead of keeping a duplicate local history.
+    var tmuxSessionName: String?
     private var preservedScrollbackTopRow: Int?
 
     var hasVisibleText: Bool {

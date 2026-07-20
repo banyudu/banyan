@@ -8,12 +8,12 @@ private let sidebarTitlebarHeaderTopPadding: CGFloat = 30
 
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
-    @ObservedObject private var selection: SessionSelection
+    private let selection: SessionSelection
     @State private var showingPreferences = false
     @State private var draggingSidebarSessionID: String?
 
     init(selection: SessionSelection) {
-        self._selection = ObservedObject(wrappedValue: selection)
+        self.selection = selection
     }
 
     private var jumpKeyLabels: [String: String] {
@@ -141,7 +141,7 @@ struct ContentView: View {
 
     private var sessionsSidebar: some View {
         VStack(spacing: 0) {
-            List(selection: $selection.selectedSessionID) {
+            List {
                 sidebarSections(store.sessionSidebarGroups, allowsMove: true)
             }
             .listStyle(.sidebar)
@@ -162,7 +162,7 @@ struct ContentView: View {
                     .padding(.bottom, 2)
 
                 if let historyGroup = store.historySidebarGroup {
-                    List(selection: $selection.selectedSessionID) {
+                    List {
                         sidebarSections([historyGroup], allowsMove: false)
                     }
                     .listStyle(.sidebar)
@@ -633,12 +633,12 @@ struct ContentView: View {
     private func sidebarRow(_ item: SidebarSessionItem, groupID: String, allowsDragSort: Bool) -> some View {
         SessionRow(
             session: item.session,
+            selection: selection,
             depth: item.depth,
             titleOverride: item.titleOverride,
             jumpKeyLabel: jumpKeyLabels[item.session.id] ?? "",
-            isSelected: store.selectedSessionID == item.session.id,
             onSelect: {
-                store.select(id: item.session.id)
+                selection.selectedSessionID = item.session.id
             },
             onClose: {
                 store.requestClose(id: item.session.id)
@@ -749,17 +749,14 @@ struct ContentView: View {
     private var sessionDetail: some View {
         HStack(spacing: 0) {
             ZStack {
-                TerminalSwitcherView(
+                SelectionAwareTerminalSwitcher(
+                    selection: selection,
                     sessions: store.visibleSessions,
-                    selectedSessionID: selection.selectedSessionID,
                     theme: store.terminalTheme,
                     fontFamily: store.terminalFontFamily,
                     fontSize: store.terminalFontSize,
                     focusRequestID: store.terminalFocusRequestID,
-                    switchRequestedAt: store.sessionSwitchRequestedAt,
-                    selectionChangedAt: selection.changedAt,
-                    clickAt: selection.pendingClickAt,
-                    selection: selection
+                    switchRequestedAt: store.sessionSwitchRequestedAt
                 )
                 .ignoresSafeArea(edges: .bottom)
 
@@ -1287,12 +1284,39 @@ private struct PendingHandoffJobsView: View {
     }
 }
 
+/// Keeps fast selection invalidation scoped to the terminal representable instead
+/// of rebuilding the entire navigation split rooted at `ContentView`.
+private struct SelectionAwareTerminalSwitcher: View {
+    @ObservedObject var selection: SessionSelection
+    let sessions: [BanyanSession]
+    let theme: TerminalTheme
+    let fontFamily: String
+    let fontSize: Double
+    let focusRequestID: UUID
+    let switchRequestedAt: DispatchTime?
+
+    var body: some View {
+        TerminalSwitcherView(
+            sessions: sessions,
+            selectedSessionID: selection.selectedSessionID,
+            theme: theme,
+            fontFamily: fontFamily,
+            fontSize: fontSize,
+            focusRequestID: focusRequestID,
+            switchRequestedAt: switchRequestedAt,
+            selectionChangedAt: selection.changedAt,
+            clickAt: selection.pendingClickAt,
+            selection: selection
+        )
+    }
+}
+
 private struct SessionRow: View {
     @ObservedObject var session: BanyanSession
+    @ObservedObject var selection: SessionSelection
     let depth: Int
     let titleOverride: String?
     let jumpKeyLabel: String
-    let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
     let onRestart: () -> Void
@@ -1308,6 +1332,10 @@ private struct SessionRow: View {
     @State private var isRowHovered = false
     @State private var isPointerCursorPushed = false
     @FocusState private var isRenameFocused: Bool
+
+    private var isSelected: Bool {
+        selection.selectedSessionID == session.id
+    }
 
     /// When the handoff affordance is showing, it already occupies the row's
     /// trailing edge. The hover close button is suppressed there so it can't shift
@@ -1566,16 +1594,16 @@ private struct SessionRow: View {
         }
     }
 
-    private var doubleClickRenameGesture: some Gesture {
-        TapGesture(count: 2).onEnded {
-            beginRename()
-        }
-    }
-
     /// `.running` only ever means "a bare shell prompt", which the terminal icon
     /// already says — the gear next to it just reads as a settings affordance.
     private var hidesStatusEmoji: Bool {
         session.displayAgentProvider == nil && session.status == .running
+    }
+
+    private var doubleClickRenameGesture: some Gesture {
+        TapGesture(count: 2).onEnded {
+            beginRename()
+        }
     }
 
     private var singleClickSelectGesture: some Gesture {
