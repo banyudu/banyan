@@ -23,10 +23,21 @@ public enum SubprocessRunner {
         public let standardError: Data
     }
 
-    public enum RunError: Error {
-        case launchFailed
+    public enum RunError: LocalizedError {
+        case launchFailed(underlying: Error)
         case timedOut
         case cancelled
+
+        public var errorDescription: String? {
+            switch self {
+            case .launchFailed(let underlying):
+                return "Launch failed: \(underlying.localizedDescription)"
+            case .timedOut:
+                return "Subprocess timed out"
+            case .cancelled:
+                return "Subprocess cancelled"
+            }
+        }
     }
 
     /// Bridges the blocking runner onto a bounded background queue so awaiting
@@ -106,7 +117,7 @@ public enum SubprocessRunner {
         } catch {
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
-            throw RunError.launchFailed
+            throw RunError.launchFailed(underlying: error)
         }
 
         let deadline = Date().addingTimeInterval(timeout)

@@ -407,7 +407,7 @@ enum LinearIssueClient {
                 environment: processEnvironment(),
                 timeout: timeout
             )
-        } catch SubprocessRunner.RunError.launchFailed {
+        } catch SubprocessRunner.RunError.launchFailed(_) {
             linearDebugLog("command unavailable command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.commandUnavailable
         } catch {

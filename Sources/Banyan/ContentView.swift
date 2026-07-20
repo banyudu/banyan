@@ -758,7 +758,8 @@ struct ContentView: View {
                     focusRequestID: store.terminalFocusRequestID,
                     switchRequestedAt: store.sessionSwitchRequestedAt,
                     selectionChangedAt: selection.changedAt,
-                    clickAt: selection.pendingClickAt
+                    clickAt: selection.pendingClickAt,
+                    selection: selection
                 )
                 .ignoresSafeArea(edges: .bottom)
 
@@ -773,6 +774,7 @@ struct ContentView: View {
                             Divider()
                             Spacer()
                         }
+                        .background(.background)
                     }
                 } else {
                     ContentUnavailableView(
@@ -1337,7 +1339,7 @@ private struct SessionRow: View {
             if isRenaming {
                 TextField("Session title", text: $renameDraft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .font(titleFont)
                     .focused($isRenameFocused)
                     .onSubmit(commitRename)
                     .onExitCommand(perform: cancelRename)
@@ -1454,6 +1456,10 @@ private struct SessionRow: View {
         titleOverride ?? session.displayTitle
     }
 
+    private var titleFont: Font {
+        Font(NSFont.systemFont(ofSize: 13, weight: isSelected ? .medium : .regular))
+    }
+
     @ViewBuilder
     private var titleLabel: some View {
         if let titleURL = session.titleURL,
@@ -1462,7 +1468,7 @@ private struct SessionRow: View {
             HStack(spacing: 4) {
                 Link(destination: url) {
                     Text(titleLinkLabel)
-                        .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                        .font(titleFont)
                         .underline(isIssueLinkHovered)
                         .lineLimit(1)
                 }
@@ -1470,7 +1476,7 @@ private struct SessionRow: View {
                 let remainder = linkedTitleRemainder(issueID: titleLinkLabel)
                 if !remainder.isEmpty {
                     Text(remainder)
-                        .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                        .font(titleFont)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -1480,7 +1486,7 @@ private struct SessionRow: View {
                 .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
         } else {
             Text(displayTitle)
-                .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                .font(titleFont)
                 .foregroundStyle(session.isImportedHistory || session.status == .closed ? .secondary : .primary)
                 .lineLimit(1)
                 .truncationMode(.tail)

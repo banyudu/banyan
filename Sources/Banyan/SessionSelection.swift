@@ -18,14 +18,17 @@ final class SessionSelection: ObservableObject {
                         durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
                         sessionID: selectedSessionID
                     )
-                    pendingClickAt = nil
                 }
+                switcher?.switchImmediately(to: selectedSessionID, clickAt: pendingClickAt)
+                pendingClickAt = nil
             }
         }
     }
     private(set) var changedAt: DispatchTime?
     /// Set by an NSEvent monitor the moment a mouse click lands in the sidebar.
     var pendingClickAt: DispatchTime?
+    /// Direct reference to bypass SwiftUI's view update pipeline for visibility toggles.
+    weak var switcher: TerminalSwitcherContainer?
 
     private var forwardSubscription: AnyCancellable?
     private var isSyncing = false

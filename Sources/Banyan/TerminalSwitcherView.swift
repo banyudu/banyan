@@ -15,9 +15,11 @@ struct TerminalSwitcherView: NSViewRepresentable {
     var switchRequestedAt: DispatchTime?
     var selectionChangedAt: DispatchTime?
     var clickAt: DispatchTime?
+    var selection: SessionSelection?
 
     func makeNSView(context: Context) -> TerminalSwitcherContainer {
         let container = TerminalSwitcherContainer()
+        selection?.switcher = container
         return container
     }
 
@@ -66,6 +68,31 @@ final class TerminalSwitcherContainer: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+    }
+
+    /// Called directly from `SessionSelection.didSet` to toggle visibility
+    /// without waiting for SwiftUI's view update pipeline.
+    func switchImmediately(to newID: String?, clickAt: DispatchTime?) {
+        guard activeSessionID != newID else { return }
+        let isRevisit = newID.map { containers[$0] != nil } ?? false
+        if let clickAt {
+            PerformanceTelemetry.shared.recordDuration(
+                "switcher.from_click",
+                durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
+                sessionID: newID,
+                detail: isRevisit ? "revisit" : "first"
+            )
+        }
+        if let oldID = activeSessionID, let oldContainer = containers[oldID] {
+            oldContainer.isHidden = true
+        }
+        activeSessionID = newID
+        if let newID, let newContainer = containers[newID] {
+            newContainer.isHidden = false
+            newContainer.needsDisplay = true
+            newContainer.terminalView.needsDisplay = true
+            window?.makeFirstResponder(newContainer.terminalView)
+        }
     }
 
     required init?(coder: NSCoder) {
