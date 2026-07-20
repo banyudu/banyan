@@ -69,6 +69,26 @@ On first launch after upgrading, Banyan migrates legacy session metadata from `s
 
 Persisted state currently includes session metadata, tmux session names, generated titles, sidebar order, selected session, sort mode, terminal theme, and terminal font settings.
 
+## Dev / Stable Builds
+
+Two channels, never running at the same time (they share control port 7842 and `state.sqlite`):
+
+- **dev** — `scripts/dev-watch.sh` (debug build, auto-rebuild on change) or `dist/Banyan.app` (packaged candidate).
+- **stable** — `/Applications/Banyan.app`. Promoted explicitly by running `scripts/package-app.sh`, which stamps the git SHA into `CFBundleVersion` and archives the outgoing install to `dist/Banyan-previous.app`.
+
+Switching is one command; it gracefully stops whichever instance is running (packaged or dev-watch debug binary), waits for the port, and launches the requested channel. Sessions survive every switch because tmux owns them:
+
+```sh
+scripts/restart-app.sh                    # relaunch the packaged candidate
+scripts/restart-app.sh --stable           # switch to /Applications/Banyan.app
+scripts/restart-app.sh --stable --force   # dev build is hung: SIGKILL it first
+scripts/restart-app.sh --previous         # roll back to the pre-promotion stable
+```
+
+Check which build an install is: `defaults read /Applications/Banyan.app/Contents/Info CFBundleVersion`.
+
+Older stable builds can read a newer `state.sqlite` because migrations are additive only (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN`) — keep them that way.
+
 ## iTerm2 Rescue
 
 If the Banyan app is hung or broken, all sessions are still reachable — they are plain tmux sessions. The rescue script lays them out in iTerm2, one tab per project and one pane per session:

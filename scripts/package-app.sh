@@ -34,7 +34,14 @@ if [[ -n "$BANYAN_RESOURCE_BUNDLE" ]]; then
   cp -R "$BANYAN_RESOURCE_BUNDLE" "$RESOURCES_DIR/"
 fi
 
-cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
+# Stamp the build so About/Info.plist identifies which commit a stable install is.
+GIT_BUILD="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if ! git -C "$ROOT_DIR" diff --quiet HEAD 2>/dev/null; then
+  GIT_BUILD="$GIT_BUILD-dirty"
+fi
+GIT_BUILD="$GIT_BUILD ($(date '+%Y-%m-%d %H:%M'))"
+
+cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -56,7 +63,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <key>CFBundleShortVersionString</key>
   <string>0.1.0</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>${GIT_BUILD}</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
@@ -105,6 +112,13 @@ fi
 app_was_running=0
 if pgrep -f "$INSTALLED_APP/Contents/MacOS/Banyan" >/dev/null 2>&1; then
   app_was_running=1
+fi
+
+# Keep the outgoing stable install as a rollback target for restart-app.sh --previous.
+if [[ -d "$INSTALLED_APP" ]]; then
+  rm -rf "$DIST_DIR/Banyan-previous.app"
+  cp -R "$INSTALLED_APP" "$DIST_DIR/Banyan-previous.app"
+  echo "Archived previous install to $DIST_DIR/Banyan-previous.app"
 fi
 
 rm -rf "$INSTALLED_APP"
