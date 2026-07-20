@@ -15,9 +15,6 @@ struct TerminalHostView: NSViewRepresentable {
             onUserSubmittedInput: { session.noteUserSubmittedInput($0) }
         )
         container.apply(theme: theme)
-        container.onLayout = {
-            handleTerminalReady()
-        }
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         container.needsLayout = true
         context.coordinator.lastFocusRequestID = focusRequestID
@@ -46,9 +43,7 @@ struct TerminalHostView: NSViewRepresentable {
         }
         nsView.onUserSubmittedInput = { session.noteUserSubmittedInput($0) }
         nsView.apply(theme: theme)
-        nsView.onLayout = {
-            handleTerminalReady()
-        }
+        nsView.onLayout = nil
         session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         if didInstall {
             nsView.needsLayout = true
@@ -111,6 +106,8 @@ final class TerminalContainerView: NSView {
     private var submittedInputBuffer = ""
     private var selectionAutoScrollTimer: Timer?
     private var lastSelectionDragEvent: NSEvent?
+    private var pendingReadyCallback: (() -> Void)?
+    private weak var pendingReadyTerminalView: LocalProcessTerminalView?
 
     init(terminalView: LocalProcessTerminalView, onUserSubmittedInput: ((String?) -> Void)? = nil) {
         self.terminalView = terminalView
@@ -172,6 +169,7 @@ final class TerminalContainerView: NSView {
         super.layout()
         syncTerminalFrameIfNeeded(markNeedsDisplay: false)
         onLayout?()
+        drainPendingReadyCallback()
     }
 
     func syncTerminalFrameIfNeeded(markNeedsDisplay: Bool) {
@@ -200,7 +198,46 @@ final class TerminalContainerView: NSView {
     }
 
     func performWhenTerminalReady(for expectedTerminalView: LocalProcessTerminalView, action: @escaping () -> Void) {
-        performWhenTerminalReady(for: expectedTerminalView, attempt: 0, action: action)
+        pendingReadyTerminalView = expectedTerminalView
+        if isTerminalReady(for: expectedTerminalView) {
+            pendingReadyCallback = nil
+            syncTerminalFrameIfNeeded(markNeedsDisplay: true)
+            action()
+        } else {
+            pendingReadyCallback = action
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if pendingReadyCallback != nil && window != nil {
+            needsLayout = true
+        }
+        drainPendingReadyCallback()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        drainPendingReadyCallback()
+    }
+
+    private func drainPendingReadyCallback() {
+        guard let callback = pendingReadyCallback,
+              let tv = pendingReadyTerminalView,
+              isTerminalReady(for: tv) else {
+            return
+        }
+        pendingReadyCallback = nil
+        pendingReadyTerminalView = nil
+        syncTerminalFrameIfNeeded(markNeedsDisplay: true)
+        callback()
+    }
+
+    private func isTerminalReady(for expectedTerminalView: LocalProcessTerminalView) -> Bool {
+        terminalView === expectedTerminalView
+            && window != nil
+            && bounds.width > 40
+            && bounds.height > 40
     }
 
     private func focusTerminalWhenReady(attempt: Int) {
@@ -213,24 +250,6 @@ final class TerminalContainerView: NSView {
                 return
             }
             window.makeFirstResponder(self.terminalView)
-        }
-    }
-
-    private func performWhenTerminalReady(
-        for expectedTerminalView: LocalProcessTerminalView,
-        attempt: Int,
-        action: @escaping () -> Void
-    ) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0 : 0.05)) { [weak self] in
-            guard let self, self.terminalView === expectedTerminalView else { return }
-            guard self.window != nil, self.bounds.width > 40, self.bounds.height > 40 else {
-                if attempt < 20 {
-                    self.performWhenTerminalReady(for: expectedTerminalView, attempt: attempt + 1, action: action)
-                }
-                return
-            }
-            self.syncTerminalFrameIfNeeded(markNeedsDisplay: true)
-            action()
         }
     }
 

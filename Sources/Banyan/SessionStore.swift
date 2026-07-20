@@ -148,12 +148,12 @@ final class SessionStore: ObservableObject {
                     to: selectedSessionID,
                     visibleSessionCount: visibleSessions.count
                 )
+                if isPullRequestPreviewPresented {
+                    closePullRequestPreview()
+                }
             }
             saveWorkspaceSoon()
             requestTerminalFocus()
-            if oldValue != selectedSessionID {
-                closePullRequestPreview()
-            }
             refreshSelectedContextInfo(force: true)
         }
     }
@@ -1213,8 +1213,8 @@ final class SessionStore: ObservableObject {
             selectedLinearIssueStatusTask = nil
             stopSelectedLinearIssueStatusRefresh()
             selectedLinearIssueIdentifier = nil
-            selectedLinearIssueDetails = nil
-            selectedLinearIssueLoadState = .idle
+            if selectedLinearIssueDetails != nil { selectedLinearIssueDetails = nil }
+            if selectedLinearIssueLoadState != .idle { selectedLinearIssueLoadState = .idle }
             return
         }
 
@@ -1395,9 +1395,9 @@ final class SessionStore: ObservableObject {
         selectedPullRequestTask?.cancel()
         selectedPullRequestTask = nil
         selectedPullRequestPreviewURL = nil
-        selectedPullRequestDetails = nil
-        selectedPullRequestLoadState = .idle
-        isPullRequestPreviewPresented = false
+        if selectedPullRequestDetails != nil { selectedPullRequestDetails = nil }
+        if selectedPullRequestLoadState != .idle { selectedPullRequestLoadState = .idle }
+        if isPullRequestPreviewPresented { isPullRequestPreviewPresented = false }
     }
 
     func refreshSelectedPullRequestPreview(force: Bool = false) {
