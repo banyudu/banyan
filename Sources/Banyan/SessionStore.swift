@@ -499,10 +499,7 @@ final class SessionStore: ObservableObject {
                 isTitlePinned: snapshot.isTitlePinned,
                 cwd: snapshot.cwd,
                 command: snapshot.command,
-                status: Self.restoredStatus(
-                    snapshotStatus: snapshot.status,
-                    backingSessionExists: tmuxBackend.hasSession(named: tmuxSessionName)
-                ),
+                status: Self.restoredStatus(snapshotStatus: snapshot.status),
                 tone: snapshot.tone,
                 parentSessionID: snapshot.parentSessionID,
                 agentSessionID: snapshot.agentSessionID,
@@ -796,7 +793,10 @@ final class SessionStore: ObservableObject {
         isProcessStarted || isRestored
     }
 
-    nonisolated static func restoredStatus(snapshotStatus: SessionStatus, backingSessionExists: Bool) -> SessionStatus {
+    /// Deliberately does not probe tmux for a backing session: the supervisor
+    /// reconciles live state on its first tick, and probing here cost one blocking
+    /// `tmux has-session` per persisted session on the main thread at launch.
+    nonisolated static func restoredStatus(snapshotStatus: SessionStatus) -> SessionStatus {
         if snapshotStatus == .closed {
             return .closed
         }

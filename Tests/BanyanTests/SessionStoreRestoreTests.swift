@@ -3,12 +3,12 @@ import Testing
 @testable import Banyan
 
 @Test func restoreKeepsClosedSessionsHiddenEvenWhenBackingTmuxSessionExists() {
-    #expect(SessionStore.restoredStatus(snapshotStatus: .closed, backingSessionExists: true) == .closed)
+    #expect(SessionStore.restoredStatus(snapshotStatus: .closed) == .closed)
 }
 
 @Test func restorePreservesActiveSessionStatus() {
-    #expect(SessionStore.restoredStatus(snapshotStatus: .running, backingSessionExists: true) == .running)
-    #expect(SessionStore.restoredStatus(snapshotStatus: .needInput, backingSessionExists: false) == .needInput)
+    #expect(SessionStore.restoredStatus(snapshotStatus: .running) == .running)
+    #expect(SessionStore.restoredStatus(snapshotStatus: .needInput) == .needInput)
 }
 
 @Test func supervisorInspectsRestoredSessionsBeforeTheirTerminalClientAttaches() {
