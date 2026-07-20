@@ -1,7 +1,6 @@
 import BanyanCore
 import Foundation
 import AppKit
-import Observation
 import SwiftUI
 
 struct SidebarSessionItem: Identifiable {
@@ -104,45 +103,45 @@ struct LivePromptTitleMatchInput: Equatable {
     let provider: CodingAgentProvider?
 }
 
-@MainActor @Observable
-final class SessionStore {
+@MainActor
+final class SessionStore: ObservableObject {
     private static let scratchWindowIdentifier = NSUserInterfaceItemIdentifier("banyan.scratch-terminal")
 
-    private(set) var sessions: [BanyanSession] = []
-    private(set) var terminalFocusRequestID = UUID()
-    private(set) var scratchTerminalFocusRequestID = UUID()
-    private(set) var scratchSession: BanyanSession?
-    private(set) var selectedContextInfo: SessionContextInfo? {
+    @Published private(set) var sessions: [BanyanSession] = []
+    @Published private(set) var terminalFocusRequestID = UUID()
+    @Published private(set) var scratchTerminalFocusRequestID = UUID()
+    @Published private(set) var scratchSession: BanyanSession?
+    @Published private(set) var selectedContextInfo: SessionContextInfo? {
         didSet {
             refreshSelectedLinearIssue()
         }
     }
-    private(set) var selectedLinearIssueDetails: LinearIssueDetails?
-    private(set) var selectedLinearIssueLoadState: LinearIssueLoadState = .idle
-    var isPullRequestPreviewPresented = false
-    private(set) var selectedPullRequestDetails: GitHubPullRequestDetails?
-    private(set) var selectedPullRequestLoadState: GitHubPullRequestLoadState = .idle
-    var sidebarMode: SidebarMode = .sessions {
+    @Published private(set) var selectedLinearIssueDetails: LinearIssueDetails?
+    @Published private(set) var selectedLinearIssueLoadState: LinearIssueLoadState = .idle
+    @Published var isPullRequestPreviewPresented = false
+    @Published private(set) var selectedPullRequestDetails: GitHubPullRequestDetails?
+    @Published private(set) var selectedPullRequestLoadState: GitHubPullRequestLoadState = .idle
+    @Published var sidebarMode: SidebarMode = .sessions {
         didSet {
             if sidebarMode == .linear {
                 refreshLinearIssueListIfNeeded()
             }
         }
     }
-    private(set) var linearIssues: [LinearIssueSummary] = []
-    private(set) var linearIssueWorkflowStates: [LinearWorkflowState] = []
-    private(set) var linearIssueListLoadState: LinearIssueListLoadState = .idle
-    var selectedLinearListIssueID: String? {
+    @Published private(set) var linearIssues: [LinearIssueSummary] = []
+    @Published private(set) var linearIssueWorkflowStates: [LinearWorkflowState] = []
+    @Published private(set) var linearIssueListLoadState: LinearIssueListLoadState = .idle
+    @Published var selectedLinearListIssueID: String? {
         didSet {
             refreshSelectedLinearListIssue()
         }
     }
-    private(set) var selectedLinearListIssueDetails: LinearIssueDetails?
-    private(set) var selectedLinearListIssueLoadState: LinearIssueLoadState = .idle
-    private(set) var pendingHandoffJobs: [HandoffJob] = []
-    var addSessionDraft: AddSessionDraft?
-    @ObservationIgnored private(set) var sessionSwitchRequestedAt: DispatchTime?
-    var selectedSessionID: String? {
+    @Published private(set) var selectedLinearListIssueDetails: LinearIssueDetails?
+    @Published private(set) var selectedLinearListIssueLoadState: LinearIssueLoadState = .idle
+    @Published private(set) var pendingHandoffJobs: [HandoffJob] = []
+    @Published var addSessionDraft: AddSessionDraft?
+    private(set) var sessionSwitchRequestedAt: DispatchTime?
+    @Published var selectedSessionID: String? {
         didSet {
             if oldValue != selectedSessionID {
                 sessionSwitchRequestedAt = .now()
@@ -160,70 +159,86 @@ final class SessionStore {
             refreshSelectedContextInfo(force: true)
         }
     }
-    var sortMode: SortMode = .manual {
+    @Published var sortMode: SortMode = .manual {
         didSet {
             saveWorkspace()
         }
     }
     /// Deliberately not persisted: a stale filter on launch would look like lost history.
-    var historyFilterText: String = ""
-    var terminalTheme: TerminalTheme = .system {
+    @Published var historyFilterText: String = ""
+    @Published var terminalTheme: TerminalTheme = .system {
         didSet {
             saveWorkspace()
             applyAppearance()
         }
     }
-    var terminalFontFamily: String = "Menlo" {
+    @Published var terminalFontFamily: String = "Menlo" {
         didSet {
             saveWorkspace()
             applyAppearance()
         }
     }
-    var terminalFontSize: Double = 13 {
+    @Published var terminalFontSize: Double = 13 {
         didSet {
             saveWorkspace()
             applyAppearance()
         }
     }
-    private var pendingCloseSessionID: String?
+    @Published private var pendingCloseSessionID: String?
     /// Per-project last-used "new session" kind, keyed by project group ID. Drives
     /// the project header's split "+" button so it reopens whatever was launched
     /// last for that project. Persisted in `UserDefaults`.
-    private var projectLaunchByGroup: [String: NewSessionLaunch] = [:]
+    @Published private var projectLaunchByGroup: [String: NewSessionLaunch] = [:]
     private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
 
-    @ObservationIgnored private var controlServer: ControlServer?
+    private var controlServer: ControlServer?
     private let persistence = SessionPersistence()
+    /// Serial queue for the SQLite session write, keeping the full-table rewrite off
+    /// the main thread. Serial + ordered so concurrent saves can't collide on the
+    /// `BEGIN IMMEDIATE` transaction.
     private let sessionPersistenceQueue = DispatchQueue(label: "com.banyan.session-persistence", qos: .utility)
-    @ObservationIgnored private var lastSavedSessionSnapshots: [SessionSnapshot]?
+    /// Last snapshot set written to disk; lets `saveSessions()` skip the frequent
+    /// no-op saves (e.g. every supervisor tick) that re-serialized unchanged state.
+    private var lastSavedSessionSnapshots: [SessionSnapshot]?
     private let detector = AgentStateDetector()
     private let tmuxBackend = TmuxBackend.shared
-    @ObservationIgnored private var didLoadPersistedSessions = false
-    @ObservationIgnored private var supervisorTimer: Timer?
-    @ObservationIgnored private var currentSupervisorInterval: TimeInterval = 0
-    @ObservationIgnored private var supervisorLifecycleObservers: [NSObjectProtocol] = []
-    @ObservationIgnored private var isSupervisorTickRunning = false
-    @ObservationIgnored private var isHistoryImportRunning = false
-    @ObservationIgnored private var isHistoryImportPending = false
-    @ObservationIgnored private var latestImportedHistory: [ImportedAgentSession] = []
-    @ObservationIgnored private var selectedContextTask: Task<Void, Never>?
-    @ObservationIgnored private var selectedContextSignature: String?
-    @ObservationIgnored private var selectedContextResolvedAt = Date.distantPast
-    @ObservationIgnored private var selectedContextCache: [String: (info: SessionContextInfo, at: Date)] = [:]
+    private var didLoadPersistedSessions = false
+    private var supervisorTimer: Timer?
+    /// Effective cadence the live `supervisorTimer` was installed with, so we can
+    /// skip re-installing the timer when the adaptive interval is unchanged.
+    private var currentSupervisorInterval: TimeInterval = 0
+    /// App-lifecycle / thermal / power observers that re-evaluate the supervisor
+    /// cadence. Installed once; retained so they outlive `addObserver`.
+    private var supervisorLifecycleObservers: [NSObjectProtocol] = []
+    private var isSupervisorTickRunning = false
+    private var isHistoryImportRunning = false
+    private var isHistoryImportPending = false
+    private var latestImportedHistory: [ImportedAgentSession] = []
+    private var selectedContextTask: Task<Void, Never>?
+    private var selectedContextSignature: String?
+    private var selectedContextResolvedAt = Date.distantPast
+    /// Network/git-derived context keyed by `SessionContextResolver.cacheKey`.
+    /// Lets title-text churn and the periodic stale refresh reuse a recent result
+    /// instead of re-spawning `git`/`linear`/`gh` on every resolve.
+    private var selectedContextCache: [String: (info: SessionContextInfo, at: Date)] = [:]
+    // Linear titles and PR URLs for a given cwd/issue/PR change rarely, so a long TTL
+    // keeps the subprocess-free fast path serving most resolves. At 180s the periodic
+    // 30s stale-refresh forced a real `linear`/`gh` resolve every ~3min per selected
+    // session; 600s cuts that ~3x while keeping the titlebar acceptably fresh.
     private let selectedContextCacheTTL: TimeInterval = 600
-    @ObservationIgnored private var selectedLinearIssueTask: Task<Void, Never>?
-    @ObservationIgnored private var selectedLinearIssueStatusTask: Task<Void, Never>?
-    @ObservationIgnored private var selectedLinearIssueStatusTimer: Timer?
-    @ObservationIgnored private var selectedLinearIssueIdentifier: String?
-    @ObservationIgnored private var selectedPullRequestTask: Task<Void, Never>?
-    @ObservationIgnored private var selectedPullRequestPreviewURL: URL?
-    @ObservationIgnored private var didLoadCachedLinearIssues = false
-    @ObservationIgnored private var linearIssueListTask: Task<Void, Never>?
-    @ObservationIgnored private var selectedLinearListIssueTask: Task<Void, Never>?
-    @ObservationIgnored private var workspaceSaveTask: Task<Void, Never>?
-    @ObservationIgnored private var scratchWindow: NSWindow?
-    @ObservationIgnored private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
-    @ObservationIgnored private var isClosingScratchTerminal = false
+    private var selectedLinearIssueTask: Task<Void, Never>?
+    private var selectedLinearIssueStatusTask: Task<Void, Never>?
+    private var selectedLinearIssueStatusTimer: Timer?
+    private var selectedLinearIssueIdentifier: String?
+    private var selectedPullRequestTask: Task<Void, Never>?
+    private var selectedPullRequestPreviewURL: URL?
+    private var didLoadCachedLinearIssues = false
+    private var linearIssueListTask: Task<Void, Never>?
+    private var selectedLinearListIssueTask: Task<Void, Never>?
+    private var workspaceSaveTask: Task<Void, Never>?
+    private var scratchWindow: NSWindow?
+    private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
+    private var isClosingScratchTerminal = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -941,7 +956,7 @@ final class SessionStore {
         scratchSession = session
 
         let rootView = ScratchTerminalWindow(session: session)
-            .environment(self)
+            .environmentObject(self)
             .buttonStyle(.banyanDefault)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 880, height: 500),

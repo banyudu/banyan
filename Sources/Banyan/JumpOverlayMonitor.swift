@@ -1,13 +1,12 @@
 import AppKit
-import Observation
 
 /// Lightweight observable for the overlay's visibility, kept separate from
 /// ``SessionStore`` so toggling it only re-renders the small badge views
 /// rather than the entire sidebar List.
-@MainActor @Observable
-final class JumpOverlayState {
+@MainActor
+final class JumpOverlayState: ObservableObject {
     static let shared = JumpOverlayState()
-    var isVisible = false
+    @Published var isVisible = false
     private init() {}
 }
 

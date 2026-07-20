@@ -1,66 +1,68 @@
 import AppKit
 import BanyanCore
 import Foundation
-import Observation
 import SwiftTerm
 
 @MainActor
-@Observable
-final class BanyanSession: Identifiable {
+final class BanyanSession: ObservableObject, Identifiable {
     let id: String
     let tmuxSessionName: String
     let createdAt: Date
     let historyTranscriptURL: URL?
     let terminalView: DetectingLocalProcessTerminalView
-    @ObservationIgnored private var displayProject: String
-    @ObservationIgnored private var displayBranch: String?
-    @ObservationIgnored private var displayIsGitWorktree: Bool
-    @ObservationIgnored private var displayIsDefaultBranch: Bool
-    @ObservationIgnored private var displayContextDegraded: Bool
-    private(set) var projectGroupID: String
-    private(set) var projectGroupTitle: String
+    private var displayProject: String
+    private var displayBranch: String?
+    private var displayIsGitWorktree: Bool
+    private var displayIsDefaultBranch: Bool
+    /// `true` when the last git lookup for the fields above failed to run (timed
+    /// out / couldn't launch) rather than answering. Those readings are then
+    /// unreliable false-negatives, so we retry on later ticks until we get a
+    /// trustworthy one. See `updateDisplayContext` / `retryDisplayContextIfDegraded`.
+    private var displayContextDegraded: Bool
+    @Published private(set) var projectGroupID: String
+    @Published private(set) var projectGroupTitle: String
 
     var projectName: String {
         displayProject
     }
 
-    var title: String
-    var titleURL: String?
-    var reportedTitle: String?
-    var generatedTitle: String?
-    var detectedAgentProvider: CodingAgentProvider?
-    var isTitlePinned: Bool
-    var cwd: String
-    var command: String
-    var status: SessionStatus
-    var tone: SessionTone
-    var updatedAt: Date
-    var isRestored: Bool
-    var isProcessStarted: Bool
-    var parentSessionID: String?
+    @Published var title: String
+    @Published var titleURL: String?
+    @Published var reportedTitle: String?
+    @Published var generatedTitle: String?
+    @Published var detectedAgentProvider: CodingAgentProvider?
+    @Published var isTitlePinned: Bool
+    @Published var cwd: String
+    @Published var command: String
+    @Published var status: SessionStatus
+    @Published var tone: SessionTone
+    @Published var updatedAt: Date
+    @Published var isRestored: Bool
+    @Published var isProcessStarted: Bool
+    @Published var parentSessionID: String?
     /// Underlying coding-agent session UUID (codex/claude), resolved by matching
     /// live sessions against imported transcript history. Used to build a resume
     /// command when a closed session is reopened, instead of replaying the
     /// original launch command from scratch.
-    var agentSessionID: String?
+    @Published var agentSessionID: String?
     private(set) var lastConversationResetAt: Date?
 
-    @ObservationIgnored private var delegate: TerminalSessionDelegate?
-    @ObservationIgnored private let tmuxBackend = TmuxBackend.shared
-    @ObservationIgnored var onDidChange: (() -> Void)?
-    @ObservationIgnored var onOutput: ((String) -> Void)?
-    @ObservationIgnored var onStatusSignal: ((SessionStatus) -> Void)?
-    @ObservationIgnored var onProcessExit: ((Int32?) -> Void)?
-    @ObservationIgnored private var didRenderRestoredMessage = false
-    @ObservationIgnored private var appliedTheme: TerminalTheme?
-    @ObservationIgnored private var appliedFontFamily: String?
-    @ObservationIgnored private var appliedFontSize: Double?
-    @ObservationIgnored private var externalTitleSignature: String?
-    @ObservationIgnored private var externalTitleTask: Task<Void, Never>?
-    @ObservationIgnored private var isDetachingTerminalClient = false
-    @ObservationIgnored private var attemptedBlankTerminalRecovery = false
+    private var delegate: TerminalSessionDelegate?
+    private let tmuxBackend = TmuxBackend.shared
+    var onDidChange: (() -> Void)?
+    var onOutput: ((String) -> Void)?
+    var onStatusSignal: ((SessionStatus) -> Void)?
+    var onProcessExit: ((Int32?) -> Void)?
+    private var didRenderRestoredMessage = false
+    private var appliedTheme: TerminalTheme?
+    private var appliedFontFamily: String?
+    private var appliedFontSize: Double?
+    private var externalTitleSignature: String?
+    private var externalTitleTask: Task<Void, Never>?
+    private var isDetachingTerminalClient = false
+    private var attemptedBlankTerminalRecovery = false
     private(set) var titleURLWasAutoDetected = false
-    @ObservationIgnored private var terminalRefreshTask: Task<Void, Never>?
+    private var terminalRefreshTask: Task<Void, Never>?
 
     var displayTitle: String {
         if hasUsefulPinnedTitle {
@@ -778,7 +780,7 @@ final class BanyanSession: Identifiable {
 
 final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
-    @ObservationIgnored private var preservedScrollbackTopRow: Int?
+    private var preservedScrollbackTopRow: Int?
 
     var hasVisibleText: Bool {
         let dimensions = terminal.getDims()

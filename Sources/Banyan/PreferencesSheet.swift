@@ -2,11 +2,10 @@ import SwiftUI
 
 struct PreferencesSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(SessionStore.self) private var store
+    @EnvironmentObject private var store: SessionStore
     private let fontFamilies = ["Menlo", "SF Mono", "Monaco", "Andale Mono", "Courier New"]
 
     var body: some View {
-        @Bindable var store = store
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text("Preferences")
