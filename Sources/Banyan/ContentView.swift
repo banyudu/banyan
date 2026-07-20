@@ -94,6 +94,7 @@ struct ContentView: View {
             Button("Close and Kill", role: .destructive) {
                 store.confirmPendingClose()
             }
+            .keyboardShortcut(.defaultAction)
         } message: {
             Text(closeConfirmationMessage)
         }
