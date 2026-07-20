@@ -1,4 +1,5 @@
 import BanyanCore
+import QuartzCore
 import SwiftUI
 import SwiftTerm
 
@@ -92,6 +93,31 @@ final class TerminalSwitcherContainer: NSView {
             newContainer.needsDisplay = true
             newContainer.terminalView.needsDisplay = true
             window?.makeFirstResponder(newContainer.terminalView)
+        }
+
+        // The state change above is instant, but the frame only paints once the
+        // main thread reaches its next display cycle. Measure that separately —
+        // a blocked main thread is invisible to the state-change timestamp.
+        if let clickAt {
+            let sessionID = newID
+            CATransaction.begin()
+            CATransaction.setCompletionBlock {
+                PerformanceTelemetry.shared.recordDuration(
+                    "switcher.frame_painted",
+                    durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
+                    sessionID: sessionID,
+                    detail: isRevisit ? "revisit" : "first"
+                )
+            }
+            CATransaction.commit()
+
+            DispatchQueue.main.async {
+                PerformanceTelemetry.shared.recordDuration(
+                    "main_thread.free_after_switch",
+                    durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
+                    sessionID: sessionID
+                )
+            }
         }
     }
 
