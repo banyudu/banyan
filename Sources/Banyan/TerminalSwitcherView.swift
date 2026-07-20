@@ -12,6 +12,7 @@ struct TerminalSwitcherView: NSViewRepresentable {
     let fontFamily: String
     let fontSize: Double
     let focusRequestID: UUID
+    var switchRequestedAt: DispatchTime?
 
     func makeNSView(context: Context) -> TerminalSwitcherContainer {
         let container = TerminalSwitcherContainer()
@@ -20,6 +21,7 @@ struct TerminalSwitcherView: NSViewRepresentable {
 
     func updateNSView(_ nsView: TerminalSwitcherContainer, context: Context) {
         nsView.update(
+            switchRequestedAt: switchRequestedAt,
             sessions: sessions,
             selectedSessionID: selectedSessionID,
             theme: theme,
@@ -67,6 +69,7 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     func update(
+        switchRequestedAt: DispatchTime?,
         sessions: [BanyanSession],
         selectedSessionID: String?,
         theme: TerminalTheme,
@@ -117,6 +120,15 @@ final class TerminalSwitcherContainer: NSView {
         // Switch visibility
         let selectionChanged = activeSessionID != selectedSessionID
         if selectionChanged {
+            if let switchAt = switchRequestedAt {
+                let isRevisit = selectedSessionID.map { initializedSessions.contains($0) } ?? false
+                PerformanceTelemetry.shared.recordDuration(
+                    "switcher.switch_visible",
+                    durationMS: PerformanceTelemetry.elapsedMS(since: switchAt),
+                    sessionID: selectedSessionID,
+                    detail: isRevisit ? "revisit" : "first"
+                )
+            }
             if let oldID = activeSessionID, let oldContainer = containers[oldID] {
                 oldContainer.isHidden = true
             }

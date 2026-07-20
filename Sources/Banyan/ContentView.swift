@@ -749,7 +749,8 @@ struct ContentView: View {
                     theme: store.terminalTheme,
                     fontFamily: store.terminalFontFamily,
                     fontSize: store.terminalFontSize,
-                    focusRequestID: store.terminalFocusRequestID
+                    focusRequestID: store.terminalFocusRequestID,
+                    switchRequestedAt: store.sessionSwitchRequestedAt
                 )
                 .ignoresSafeArea(edges: .bottom)
 

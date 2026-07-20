@@ -140,9 +140,11 @@ final class SessionStore: ObservableObject {
     @Published private(set) var selectedLinearListIssueLoadState: LinearIssueLoadState = .idle
     @Published private(set) var pendingHandoffJobs: [HandoffJob] = []
     @Published var addSessionDraft: AddSessionDraft?
+    private(set) var sessionSwitchRequestedAt: DispatchTime?
     @Published var selectedSessionID: String? {
         didSet {
             if oldValue != selectedSessionID {
+                sessionSwitchRequestedAt = .now()
                 PerformanceTelemetry.shared.beginSessionSwitch(
                     from: oldValue,
                     to: selectedSessionID,
