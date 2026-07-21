@@ -73,3 +73,11 @@ import Testing
         onJump: nil
     ))
 }
+
+@Test func handoffShortcutRequiresCommandOptionShiftH() {
+    #expect(JumpOverlayMonitor.isHandoffShortcut(for: "h", modifiers: [.command, .option, .shift]))
+    #expect(JumpOverlayMonitor.isHandoffShortcut(for: "H", modifiers: [.command, .option, .shift]))
+    #expect(!JumpOverlayMonitor.isHandoffShortcut(for: "h", modifiers: [.command, .option]))
+    #expect(!JumpOverlayMonitor.isHandoffShortcut(for: "h", modifiers: [.command, .shift]))
+    #expect(!JumpOverlayMonitor.isHandoffShortcut(for: "j", modifiers: [.command, .option, .shift]))
+}

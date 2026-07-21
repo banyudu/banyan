@@ -8,6 +8,7 @@ final class JumpOverlayMonitor {
     var onJump: ((Int) -> Bool)?
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
+    var onHandoff: (() -> Bool)?
 
     private var keyMonitor: Any?
 
@@ -23,6 +24,7 @@ final class JumpOverlayMonitor {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
 
+            if self.handleHandoff(event) { return nil }
             if self.handleCmdJK(event) { return nil }
             if self.handleJumpKey(event) { return nil }
             return event
@@ -39,6 +41,14 @@ final class JumpOverlayMonitor {
     // MARK: - Event handling
 
     private static let interestingModifiers: NSEvent.ModifierFlags = [.command, .shift, .control, .option]
+
+    private func handleHandoff(_ event: NSEvent) -> Bool {
+        guard let char = event.charactersIgnoringModifiers?.lowercased().first,
+              Self.isHandoffShortcut(for: char, modifiers: event.modifierFlags) else {
+            return false
+        }
+        return onHandoff?() ?? false
+    }
 
     private func handleCmdJK(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -102,6 +112,15 @@ final class JumpOverlayMonitor {
         }
         _ = onJump?(index)
         return true
+    }
+
+    static func isHandoffShortcut(
+        for char: Character,
+        modifiers: NSEvent.ModifierFlags
+    ) -> Bool {
+        let normalizedModifiers = modifiers.intersection(interestingModifiers)
+        return char.lowercased() == "h"
+            && normalizedModifiers == [.command, .option, .shift]
     }
 
     /// Maps a 1-based session index to its jump key label.
