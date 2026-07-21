@@ -133,13 +133,15 @@ struct TmuxBackend: Sendable {
     }
 
     func ensureSession(named name: String, cwd: String, command: String) throws {
-        // Global (`-g`) env/options only need to be applied when the server starts.
-        // The server lives as long as it has ≥1 session, so a running server is
-        // already configured — re-applying per session cost ~10 tmux subprocess
-        // spawns each time and froze the main thread on spawn.
+        // Most global options only need to be applied when the server starts.
+        // The server lives as long as it has ≥1 session, but terminal capability
+        // settings must also be migrated when the app is upgraded underneath an
+        // existing server.
         if !isServerRunning() {
             configureServerEnvironment()
             configureServerOptions()
+        } else {
+            configureServerTerminalColors()
         }
         guard !hasSession(named: name) else {
             configureSessionOptions(named: name)
@@ -186,7 +188,11 @@ struct TmuxBackend: Sendable {
         _ = try? run(["set-option", "-g", "mouse", "on"])
         _ = try? run(["set-option", "-g", "history-limit", "20000"])
         _ = try? run(["set-option", "-g", "default-terminal", "tmux-256color"])
-        _ = try? run(["set-option", "-g", "terminal-overrides", "xterm-256color:RGB"])
+        configureServerTerminalColors()
+    }
+
+    private func configureServerTerminalColors() {
+        _ = try? run(["set-option", "-g", "terminal-overrides", "tmux-256color:RGB,xterm-256color:RGB"])
     }
 
     private func configureServerEnvironment() {
