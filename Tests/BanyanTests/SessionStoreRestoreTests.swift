@@ -116,6 +116,16 @@ import Testing
     ))
 }
 
+@Test func missingHistoryResumeDoesNotPromiseAFreshRestart() {
+    let message = SessionStore.missingHistoryResumeMessage(provider: .claude)
+    #expect(message.contains("No resumable Claude session"))
+    #expect(message.contains("original command was not restarted"))
+}
+
+@Test func missingHistoryResumeFallbackLaunchesZsh() {
+    #expect(SessionStore.historyFallbackShellCommand == "/bin/zsh -l")
+}
+
 @Test func backgroundHistoryImportCoversEveryBoundedSearchResult() {
     #expect(SessionStore.historyRecoveryImportLimit >= SessionStore.historySidebarSearchLimit)
 }

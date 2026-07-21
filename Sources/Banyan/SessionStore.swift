@@ -215,7 +215,8 @@ final class SessionStore: ObservableObject {
     private var isSupervisorTickRunning = false
     private var isHistoryImportRunning = false
     private var isHistoryImportPending = false
-    private var pendingRespawnRecoveryIDs = Set<String>()
+    @Published private(set) var pendingRespawnRecoveryIDs = Set<String>()
+    @Published private(set) var historyResumeErrors: [String: String] = [:]
     private var latestImportedHistory: [ImportedAgentSession] = []
     private var selectedContextTask: Task<Void, Never>?
     private var selectedContextSignature: String?
@@ -1084,6 +1085,7 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        historyResumeErrors.removeValue(forKey: id)
         // A closed session had its tmux backing killed, so reattaching would
         // rerun the original launch command from scratch. For codex/claude
         // sessions whose underlying agent session we resolved, rebuild the
@@ -1102,6 +1104,20 @@ final class SessionStore: ObservableObject {
         }
         try respawnAfterHistoryRecovery(id: id)
     }
+
+    @discardableResult
+    func openShellForClosedSession(id: String) throws -> BanyanSession {
+        guard let session = sessions.first(where: { $0.id == id && $0.status == .closed }) else {
+            throw ControlError.notFound(id)
+        }
+        return spawn(
+            title: "zsh",
+            cwd: session.cwd,
+            command: Self.historyFallbackShellCommand
+        )
+    }
+
+    nonisolated static let historyFallbackShellCommand = "/bin/zsh -l"
 
     /// Reopen a closed codex/claude session, but first write a trimmed copy of
     /// its transcript (stale tool output cleared) and resume that instead — so the
@@ -1166,9 +1182,9 @@ final class SessionStore: ObservableObject {
         return true
     }
 
-    /// Search beyond the bounded sidebar import before allowing a resume-capable
-    /// history row to fall back to its original command. The scan stays off the main
-    /// actor because old searchable rows may be much deeper than the recent shelf.
+    /// Search beyond the bounded sidebar import before declaring a resume-capable
+    /// history row unavailable. The scan stays off the main actor because old
+    /// searchable rows may be much deeper than the recent shelf.
     private func recoverAgentSessionIDAndRespawn(id: String) {
         guard pendingRespawnRecoveryIDs.insert(id).inserted,
               let session = sessions.first(where: { $0.id == id }) else {
@@ -1200,13 +1216,25 @@ final class SessionStore: ObservableObject {
                 if let match {
                     session.markDetectedAgentProvider(match.provider)
                     session.markAgentSessionID(match.sourceID)
+                    try? self.respawnAfterHistoryRecovery(id: id)
+                } else {
+                    self.historyResumeErrors[id] = Self.missingHistoryResumeMessage(provider: provider)
                 }
-                // If an exhaustive scan still found no transcript, preserve the
-                // historical fresh-start fallback; otherwise this call now builds
-                // the provider-native resume command from the recovered ID.
-                try? self.respawnAfterHistoryRecovery(id: id)
             }
         }
+    }
+
+    func isRecoveringHistoryResume(id: String) -> Bool {
+        pendingRespawnRecoveryIDs.contains(id)
+    }
+
+    func historyResumeError(id: String) -> String? {
+        historyResumeErrors[id]
+    }
+
+    nonisolated static func missingHistoryResumeMessage(provider: CodingAgentProvider?) -> String {
+        let providerName = provider?.displayName ?? "coding-agent"
+        return "No resumable \(providerName) session was found for this working directory. The original command was not restarted."
     }
 
     private func respawnAfterHistoryRecovery(id: String) throws {

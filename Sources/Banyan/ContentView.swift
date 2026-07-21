@@ -1928,24 +1928,48 @@ private struct ClosedSessionHistoryView: View {
                 .controlSize(.small)
                 .help("Reopen with stale tool output trimmed to save context (experimental)")
 
-                Button {
-                    reopenSession()
-                } label: {
-                    Label("Reopen", systemImage: "arrow.uturn.forward.circle.fill")
+                if store.isRecoveringHistoryResume(id: session.id) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .help("Finding the agent session for this working directory")
+                } else {
+                    Button {
+                        reopenSession()
+                    } label: {
+                        Label("Reopen", systemImage: "arrow.uturn.forward.circle.fill")
+                    }
+                    .buttonStyle(.banyanBorderedProminent)
+                    .controlSize(.small)
+                    .help("Resume the closed Banyan session")
                 }
-                .buttonStyle(.banyanBorderedProminent)
-                .controlSize(.small)
-                .help("Reopen the closed Banyan session")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(.bar)
 
-            ContentUnavailableView(
-                "Closed Session",
-                systemImage: "archivebox",
-                description: Text("This history item was closed in Banyan. Reopen it to attach the terminal again.")
-            )
+            Group {
+                if let error = store.historyResumeError(id: session.id) {
+                    VStack(spacing: 16) {
+                        ContentUnavailableView(
+                            "Resume Unavailable",
+                            systemImage: "exclamationmark.triangle",
+                            description: Text(error)
+                        )
+                        Button {
+                            openShell()
+                        } label: {
+                            Label("Open zsh in Working Directory", systemImage: "terminal")
+                        }
+                        .buttonStyle(.banyanBorderedProminent)
+                    }
+                } else {
+                    ContentUnavailableView(
+                        "Closed Session",
+                        systemImage: "archivebox",
+                        description: Text("This history item was closed in Banyan. Reopen it to resume the agent session.")
+                    )
+                }
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -1956,6 +1980,10 @@ private struct ClosedSessionHistoryView: View {
 
     private func reopenTrimmed() {
         store.respawnTrimmed(id: session.id)
+    }
+
+    private func openShell() {
+        _ = try? store.openShellForClosedSession(id: session.id)
     }
 }
 
