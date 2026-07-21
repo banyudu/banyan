@@ -53,3 +53,23 @@ import Testing
     #expect(JumpOverlayMonitor.shortcutIndex(for: "3", modifiers: []) == nil)
     #expect(JumpOverlayMonitor.shortcutIndex(for: "A", modifiers: .command) == nil)
 }
+
+@Test func jumpShortcutIsConsumedWhenDestinationDoesNotExist() {
+    var requestedIndex: Int?
+    let consumed = JumpOverlayMonitor.dispatchJumpShortcut(
+        for: "C",
+        modifiers: [.command, .shift],
+        onJump: { index in
+            requestedIndex = index
+            return false
+        }
+    )
+
+    #expect(requestedIndex == 12)
+    #expect(consumed)
+    #expect(!JumpOverlayMonitor.dispatchJumpShortcut(
+        for: "C",
+        modifiers: .command,
+        onJump: nil
+    ))
+}

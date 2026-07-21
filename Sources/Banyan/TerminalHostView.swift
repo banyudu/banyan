@@ -376,8 +376,9 @@ final class TerminalContainerView: NSView {
     }
 
     private func handleTerminalShortcut(_ event: NSEvent) -> Bool {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard flags.contains(.command), !flags.contains(.control), !flags.contains(.option),
+        // These are plain-Command editing shortcuts. In particular, do not swallow
+        // ⌘⇧A/C/F before the global session-jump monitor can handle those chords.
+        guard Self.isPlainCommandTerminalShortcut(event.modifierFlags),
               let key = event.charactersIgnoringModifiers?.lowercased() else {
             return false
         }
@@ -399,6 +400,10 @@ final class TerminalContainerView: NSView {
         default:
             return false
         }
+    }
+
+    static func isPlainCommandTerminalShortcut(_ modifiers: NSEvent.ModifierFlags) -> Bool {
+        modifiers.intersection([.command, .shift, .control, .option]) == .command
     }
 
     /// Open SwiftTerm's find bar. Driven from the input monitor because the SwiftUI

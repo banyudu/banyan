@@ -65,6 +65,13 @@ import Testing
     #expect(visibleContainers.isEmpty)
 }
 
+@Test func terminalEditingShortcutsDoNotCaptureShiftedJumpChords() {
+    #expect(TerminalContainerView.isPlainCommandTerminalShortcut(.command))
+    #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .shift]))
+    #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .option]))
+    #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .control]))
+}
+
 @MainActor
 private func update(
     _ switcher: TerminalSwitcherContainer,

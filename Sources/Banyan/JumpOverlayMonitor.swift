@@ -60,8 +60,7 @@ final class JumpOverlayMonitor {
     private func handleJumpKey(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(Self.interestingModifiers)
         guard let char = event.charactersIgnoringModifiers?.lowercased().first else { return false }
-        guard let index = Self.shortcutIndex(for: char, modifiers: modifiers) else { return false }
-        return onJump?(index) ?? false
+        return Self.dispatchJumpShortcut(for: char, modifiers: modifiers, onJump: onJump)
     }
 
     // MARK: - Key ↔ index mapping
@@ -87,6 +86,22 @@ final class JumpOverlayMonitor {
             guard modifiers == [.command, .shift] else { return nil }
         }
         return jumpIndex(for: Character(char.lowercased()))
+    }
+
+    /// Jump chords are reserved even when their numbered destination does not
+    /// currently exist. Letting an unhandled chord propagate makes ⌘⇧A/C/F fall
+    /// through to terminal select-all/copy/find behavior, which is surprising
+    /// while the sidebar advertises those keys as session shortcuts.
+    static func dispatchJumpShortcut(
+        for char: Character,
+        modifiers: NSEvent.ModifierFlags,
+        onJump: ((Int) -> Bool)?
+    ) -> Bool {
+        guard let index = shortcutIndex(for: char, modifiers: modifiers) else {
+            return false
+        }
+        _ = onJump?(index)
+        return true
     }
 
     /// Maps a 1-based session index to its jump key label.
