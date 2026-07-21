@@ -16,15 +16,6 @@ struct ContentView: View {
         self.selection = selection
     }
 
-    private var jumpKeyLabels: [String: String] {
-        var labels: [String: String] = [:]
-        for (index, item) in store.sidebarSessions.enumerated() {
-            if let label = JumpOverlayMonitor.jumpLabel(for: index + 1) {
-                labels[item.id] = label
-            }
-        }
-        return labels
-    }
     @State private var linearIssueFilterText = ""
     @State private var selectedLinearIssueStateIDs: Set<String>?
 
@@ -140,9 +131,19 @@ struct ContentView: View {
     }
 
     private var sessionsSidebar: some View {
-        VStack(spacing: 0) {
+        let sessionGroups = store.sessionSidebarGroups
+        let historyGroup = store.historySidebarGroup
+        let jumpKeyLabels = makeJumpKeyLabels(
+            sessionGroups: sessionGroups,
+            historyGroup: historyGroup
+        )
+        return VStack(spacing: 0) {
             List {
-                sidebarSections(store.sessionSidebarGroups, allowsMove: true)
+                sidebarSections(
+                    sessionGroups,
+                    allowsMove: true,
+                    jumpKeyLabels: jumpKeyLabels
+                )
             }
             .listStyle(.sidebar)
             .accessibilityIdentifier(AccessibilityID.sidebarList)
@@ -161,9 +162,13 @@ struct ContentView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 2)
 
-                if let historyGroup = store.historySidebarGroup {
+                if let historyGroup {
                     List {
-                        sidebarSections([historyGroup], allowsMove: false)
+                        sidebarSections(
+                            [historyGroup],
+                            allowsMove: false,
+                            jumpKeyLabels: jumpKeyLabels
+                        )
                     }
                     .listStyle(.sidebar)
                     .frame(height: historyListHeight(itemCount: historyGroup.items.count))
@@ -593,20 +598,34 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func sidebarSections(_ groups: [SidebarSessionGroup], allowsMove: Bool) -> some View {
+    private func sidebarSections(
+        _ groups: [SidebarSessionGroup],
+        allowsMove: Bool,
+        jumpKeyLabels: [String: String]
+    ) -> some View {
         let firstGroupID = groups.first?.id
         ForEach(groups) { group in
             Section {
                 if allowsMove {
                     ForEach(group.items) { item in
-                        sidebarRow(item, groupID: group.id, allowsDragSort: true)
+                        sidebarRow(
+                            item,
+                            groupID: group.id,
+                            allowsDragSort: true,
+                            jumpKeyLabel: jumpKeyLabels[item.id] ?? ""
+                        )
                     }
                     .onMove { source, destination in
                         store.moveSidebarSessions(in: group.id, from: source, to: destination)
                     }
                 } else {
                     ForEach(group.items) { item in
-                        sidebarRow(item, groupID: group.id, allowsDragSort: false)
+                        sidebarRow(
+                            item,
+                            groupID: group.id,
+                            allowsDragSort: false,
+                            jumpKeyLabel: jumpKeyLabels[item.id] ?? ""
+                        )
                     }
                 }
             } header: {
@@ -630,13 +649,42 @@ struct ContentView: View {
         }
     }
 
-    private func sidebarRow(_ item: SidebarSessionItem, groupID: String, allowsDragSort: Bool) -> some View {
+    private func makeJumpKeyLabels(
+        sessionGroups: [SidebarSessionGroup],
+        historyGroup: SidebarSessionGroup?
+    ) -> [String: String] {
+        // Use the projections already produced for this render. Looking labels up
+        // through SessionStore for every row rebuilt and resorted the full history
+        // backlog once per displayed session.
+        var groups = sessionGroups
+        if let historyGroup {
+            groups.append(historyGroup)
+        }
+        var labels: [String: String] = [:]
+        var position = 1
+        for group in groups {
+            for item in group.items {
+                if let label = JumpOverlayMonitor.jumpLabel(for: position) {
+                    labels[item.id] = label
+                }
+                position += 1
+            }
+        }
+        return labels
+    }
+
+    private func sidebarRow(
+        _ item: SidebarSessionItem,
+        groupID: String,
+        allowsDragSort: Bool,
+        jumpKeyLabel: String
+    ) -> some View {
         SessionRow(
             session: item.session,
             selection: selection,
             depth: item.depth,
             titleOverride: item.titleOverride,
-            jumpKeyLabel: jumpKeyLabels[item.session.id] ?? "",
+            jumpKeyLabel: jumpKeyLabel,
             onSelect: {
                 selection.selectedSessionID = item.session.id
             },

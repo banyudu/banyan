@@ -2323,9 +2323,11 @@ final class SessionStore: ObservableObject {
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.applySupervisorResults(results)
+                let didChangePersistentState = self.applySupervisorResults(results)
                 self.isSupervisorTickRunning = false
-                self.saveSessions()
+                if didChangePersistentState {
+                    self.saveSessions()
+                }
                 self.refreshSelectedContextInfoIfStale()
             }
         }
@@ -2582,8 +2584,10 @@ final class SessionStore: ObservableObject {
         refreshSelectedContextInfo(force: true)
     }
 
-    private func applySupervisorResults(_ results: [SupervisorSessionResult]) {
+    @discardableResult
+    private func applySupervisorResults(_ results: [SupervisorSessionResult]) -> Bool {
         var didUpdateProvider = false
+        var didChangePersistentState = false
         for result in results {
             guard let session = sessions.first(where: { $0.id == result.id }), session.status != .closed else {
                 continue
@@ -2591,15 +2595,21 @@ final class SessionStore: ObservableObject {
             if session.detectedAgentProvider != result.provider {
                 session.markDetectedAgentProvider(result.provider)
                 didUpdateProvider = true
+                didChangePersistentState = true
             }
-            session.updateCurrentDirectory(result.currentPath)
+            if let currentPath = result.currentPath, session.cwd != currentPath {
+                session.updateCurrentDirectory(currentPath)
+                didChangePersistentState = true
+            }
             if session.status != result.status || session.tone != result.tone {
                 session.mark(status: result.status, tone: result.tone)
+                didChangePersistentState = true
             }
         }
         if didUpdateProvider {
             refreshLiveAgentTitles(from: latestImportedHistory)
         }
+        return didChangePersistentState
     }
 
     private func isScratchTerminalWindow(_ window: NSWindow?) -> Bool {

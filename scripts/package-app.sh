@@ -83,6 +83,10 @@ chmod +x "$MACOS_DIR/Banyan" "$DIST_DIR/bin/banyanctl"
 # Deliberately not $APPLE_SIGNING_IDENTITY: that holds an "Apple Distribution"
 # identity for App Store submission, which needs a provisioning profile to launch.
 SIGNING_IDENTITY="${BANYAN_SIGNING_IDENTITY:-${APPLE_SIGNING_IDENTITY_DEV:-}}"
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+  SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)"
+fi
 if [[ -n "$SIGNING_IDENTITY" ]] && codesign --force --sign "$SIGNING_IDENTITY" "$APP_DIR" >/dev/null 2>&1; then
   echo "Signed with: $SIGNING_IDENTITY"
 else

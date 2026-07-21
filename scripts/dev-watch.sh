@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Banyan"
 DEBUG_BIN="$ROOT_DIR/.build/debug/$APP_NAME"
+DEV_APP="$ROOT_DIR/.build/dev/Banyan.app"
 PID=""
 
 cd "$ROOT_DIR"
@@ -29,7 +30,52 @@ fingerprint() {
 stop_running_client() {
   osascript -e 'tell application id "dev.banyudu.banyan" to quit' >/dev/null 2>&1 || true
   pkill -f "$ROOT_DIR/dist/Banyan.app/Contents/MacOS/Banyan" >/dev/null 2>&1 || true
+  pkill -f "$DEV_APP/Contents/MacOS/Banyan" >/dev/null 2>&1 || true
   pkill -f "$DEBUG_BIN" >/dev/null 2>&1 || true
+}
+
+package_dev_app() {
+  local contents="$DEV_APP/Contents"
+  local macos="$contents/MacOS"
+  local resources="$contents/Resources"
+
+  mkdir -p "$macos" "$resources"
+  cp "$DEBUG_BIN" "$macos/Banyan"
+  find "$ROOT_DIR/.build" -path '*debug*' -name '*.bundle' -type d -exec cp -R {} "$resources/" \;
+
+  cat > "$contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleExecutable</key><string>Banyan</string>
+  <key>CFBundleIdentifier</key><string>dev.banyudu.banyan</string>
+  <key>CFBundleName</key><string>Banyan</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>dev</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
+  chmod +x "$macos/Banyan"
+
+  local identity="${BANYAN_SIGNING_IDENTITY:-${APPLE_SIGNING_IDENTITY_DEV:-}}"
+  if [[ -z "$identity" ]]; then
+    identity="$(security find-identity -v -p codesigning 2>/dev/null \
+      | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)"
+  fi
+  if [[ -z "$identity" ]]; then
+    identity="$(security find-identity -v -p codesigning 2>/dev/null \
+      | sed -n 's/.*"\(Apple Development:.*\)"/\1/p' | head -n 1)"
+  fi
+
+  if [[ -n "$identity" ]] && codesign --force --sign "$identity" "$DEV_APP" >/dev/null 2>&1; then
+    printf '[%s] Signed dev app with: %s\n' "$(date '+%H:%M:%S')" "$identity"
+  else
+    codesign --force --sign - "$DEV_APP" >/dev/null
+    printf '[%s] WARNING: no stable signing identity; TCC permissions may reset.\n' "$(date '+%H:%M:%S')"
+  fi
 }
 
 build_and_restart() {
@@ -39,12 +85,14 @@ build_and_restart() {
     return
   fi
 
+  package_dev_app
+
   cleanup
   stop_running_client
 
-  printf '[%s] Launching %s\n' "$(date '+%H:%M:%S')" "$DEBUG_BIN"
-  "$DEBUG_BIN" &
-  PID="$!"
+  printf '[%s] Launching %s\n' "$(date '+%H:%M:%S')" "$DEV_APP"
+  open --new "$DEV_APP"
+  PID=""
 }
 
 last_fingerprint=""
