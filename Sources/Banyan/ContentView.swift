@@ -1393,7 +1393,7 @@ private struct SessionRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             JumpKeyBadge(label: jumpKeyLabel)
 
             if let provider = session.displayAgentProvider {
@@ -1467,7 +1467,7 @@ private struct SessionRow: View {
         }
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
         .padding(.vertical, 2)
-        .padding(.leading, 4 + CGFloat(depth) * 18)
+        .padding(.leading, CGFloat(depth) * 18)
         .padding(.trailing, 4)
         .background(rowBackground)
         .contentShape(Rectangle())
@@ -2115,14 +2115,12 @@ private struct TerminalReconnectBanner: View {
 
 private struct JumpKeyBadge: View {
     let label: String
-    @ObservedObject private var overlayState = JumpOverlayState.shared
 
     var body: some View {
         Text(label)
             .font(.system(size: 10, weight: .semibold, design: .monospaced))
             .foregroundStyle(.primary.opacity(0.7))
-            .frame(width: overlayState.isVisible ? 18 : 0, height: 16)
-            .opacity(overlayState.isVisible ? 1 : 0)
+            .frame(width: 18, height: 16)
             .background(
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(.primary.opacity(0.08))
@@ -2130,8 +2128,6 @@ private struct JumpKeyBadge: View {
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
                             .strokeBorder(.primary.opacity(0.15), lineWidth: 0.5)
                     )
-                    .opacity(overlayState.isVisible ? 1 : 0)
             )
-            .animation(.easeOut(duration: 0.1), value: overlayState.isVisible)
     }
 }

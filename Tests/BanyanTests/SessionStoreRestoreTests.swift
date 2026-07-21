@@ -88,6 +88,38 @@ import Testing
     ) == nil)
 }
 
+@Test func closedAgentWithoutSessionIDRequiresRecoveryBeforeRespawn() {
+    #expect(SessionStore.requiresDeepHistoryRecovery(
+        status: .closed,
+        provider: .codex,
+        agentSessionID: nil
+    ))
+    #expect(SessionStore.requiresDeepHistoryRecovery(
+        status: .closed,
+        provider: .claude,
+        agentSessionID: ""
+    ))
+    #expect(!SessionStore.requiresDeepHistoryRecovery(
+        status: .closed,
+        provider: .codex,
+        agentSessionID: "session-id"
+    ))
+    #expect(!SessionStore.requiresDeepHistoryRecovery(
+        status: .running,
+        provider: .codex,
+        agentSessionID: nil
+    ))
+    #expect(!SessionStore.requiresDeepHistoryRecovery(
+        status: .closed,
+        provider: .gemini,
+        agentSessionID: nil
+    ))
+}
+
+@Test func backgroundHistoryImportCoversEveryBoundedSearchResult() {
+    #expect(SessionStore.historyRecoveryImportLimit >= SessionStore.historySidebarSearchLimit)
+}
+
 @Test func liveAgentMatchIncludesPinnedTitleSessionsSoAgentSessionIDResolves() {
     // Regression: pinned-title sessions (Linear worktrees launched with an
     // explicit "ENG-1234 …" title) must still take part in the transcript match
@@ -404,6 +436,76 @@ import Testing
     )
 
     #expect(match?.id == "history-codex-launch")
+}
+
+@Test func historyResumeFallsBackToExactWorkingDirectoryBeyondCreationWindow() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let resumedTranscript = ImportedAgentSession(
+        id: "history-codex-worktree",
+        provider: .codex,
+        sourceID: "worktree",
+        title: "Earlier session in the same worktree",
+        cwd: "/tmp/.worktrees/eng-1234",
+        transcriptURL: URL(fileURLWithPath: "/tmp/worktree.jsonl"),
+        createdAt: base.addingTimeInterval(-86_400),
+        updatedAt: base.addingTimeInterval(3_590)
+    )
+    let otherWorktree = ImportedAgentSession(
+        id: "history-codex-other",
+        provider: .codex,
+        sourceID: "other",
+        title: "Another issue",
+        cwd: "/tmp/.worktrees/eng-9999",
+        transcriptURL: URL(fileURLWithPath: "/tmp/other.jsonl"),
+        createdAt: base,
+        updatedAt: base.addingTimeInterval(3_600)
+    )
+
+    let match = SessionStore.bestHistoryResumeMatch(
+        sessionCWD: "/tmp/.worktrees/eng-1234/../eng-1234",
+        sessionCreatedAt: base,
+        sessionUpdatedAt: base.addingTimeInterval(3_600),
+        sessionResetAt: nil,
+        provider: .codex,
+        in: [otherWorktree, resumedTranscript]
+    )
+
+    #expect(match?.id == "history-codex-worktree")
+}
+
+@Test func historyResumeUsesActivityNearestSessionCloseForSharedDirectory() {
+    let base = Date(timeIntervalSince1970: 1_787_500_000)
+    let older = ImportedAgentSession(
+        id: "history-claude-older",
+        provider: .claude,
+        sourceID: "older",
+        title: "Older session",
+        cwd: "/tmp/shared",
+        transcriptURL: URL(fileURLWithPath: "/tmp/older.jsonl"),
+        createdAt: base.addingTimeInterval(-20_000),
+        updatedAt: base.addingTimeInterval(1_000)
+    )
+    let current = ImportedAgentSession(
+        id: "history-claude-current",
+        provider: .claude,
+        sourceID: "current",
+        title: "Current session",
+        cwd: "/tmp/shared",
+        transcriptURL: URL(fileURLWithPath: "/tmp/current.jsonl"),
+        createdAt: base.addingTimeInterval(-10_000),
+        updatedAt: base.addingTimeInterval(3_590)
+    )
+
+    let match = SessionStore.bestHistoryResumeMatch(
+        sessionCWD: "/tmp/shared",
+        sessionCreatedAt: base,
+        sessionUpdatedAt: base.addingTimeInterval(3_600),
+        sessionResetAt: nil,
+        provider: .claude,
+        in: [older, current]
+    )
+
+    #expect(match?.id == "history-claude-current")
 }
 
 @Test func promptTitleAssignmentsDoNotReuseOneHistoryTitleForMultipleSessions() {

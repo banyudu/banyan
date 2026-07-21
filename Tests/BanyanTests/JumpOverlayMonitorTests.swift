@@ -1,4 +1,5 @@
 @testable import Banyan
+import AppKit
 import Testing
 
 @Test func jumpIndexMapsDigitsToOneBasedPositions() {
@@ -44,4 +45,11 @@ import Testing
         let char = Character(label.lowercased())
         #expect(JumpOverlayMonitor.jumpIndex(for: char) == index)
     }
+}
+
+@Test func visibleJumpShortcutsActivateWithoutOverlayState() {
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "3", modifiers: .command) == 3)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "A", modifiers: [.command, .shift]) == 10)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "3", modifiers: []) == nil)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "A", modifiers: .command) == nil)
 }

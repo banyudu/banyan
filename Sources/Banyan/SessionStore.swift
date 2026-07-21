@@ -215,6 +215,7 @@ final class SessionStore: ObservableObject {
     private var isSupervisorTickRunning = false
     private var isHistoryImportRunning = false
     private var isHistoryImportPending = false
+    private var pendingRespawnRecoveryIDs = Set<String>()
     private var latestImportedHistory: [ImportedAgentSession] = []
     private var selectedContextTask: Task<Void, Never>?
     private var selectedContextSignature: String?
@@ -395,8 +396,13 @@ final class SessionStore: ObservableObject {
 
     /// Unfiltered, History is a scrollable "recent work" shelf. A search is a request
     /// for a specific session, so it reaches past that shelf into the full backlog.
-    static let historySidebarBrowseLimit = 30
-    static let historySidebarSearchLimit = 100
+    nonisolated static let historySidebarBrowseLimit = 30
+    nonisolated static let historySidebarSearchLimit = 100
+    /// Keep the ordinary background import deep enough to resolve every history
+    /// row that can be returned by the sidebar's bounded search. An older mismatch
+    /// (10 imported transcripts vs. 30/100 visible rows) made Reopen silently fall
+    /// back to the original launch command for older rows.
+    nonisolated static let historyRecoveryImportLimit = historySidebarSearchLimit
 
     var hasLocalHistorySessions: Bool {
         sessions.contains(where: Self.isLocalHistorySession)
@@ -1086,20 +1092,15 @@ final class SessionStore: ObservableObject {
         // Sessions closed before the live transcript match ran — or persisted by
         // an older build — have no `agentSessionID`. Try to recover it from the
         // imported history now so those still resume instead of replaying.
-        if session.agentSessionID == nil {
-            recoverAgentSessionID(for: session)
-        }
-        if let resumeCommand = Self.reopenResumeCommand(
+        if Self.requiresDeepHistoryRecovery(
             status: session.status,
             provider: session.agentProvider,
-            agentSessionID: session.agentSessionID,
-            cwd: session.cwd
-        ), session.command != resumeCommand {
-            session.command = resumeCommand
+            agentSessionID: session.agentSessionID
+        ), !recoverAgentSessionID(for: session) {
+            recoverAgentSessionIDAndRespawn(id: id)
+            return
         }
-        session.reattachTerminalClient()
-        selectedSessionID = id
-        saveSessions()
+        try respawnAfterHistoryRecovery(id: id)
     }
 
     /// Reopen a closed codex/claude session, but first write a trimmed copy of
@@ -1148,18 +1149,91 @@ final class SessionStore: ObservableObject {
     /// cwd, and creation/reset time. Used at reopen for sessions that never had
     /// `agentSessionID` resolved while live (closed too early, pinned title, or
     /// persisted by an older build) so they can still resume rather than replay.
-    private func recoverAgentSessionID(for session: BanyanSession) {
-        guard let match = Self.bestPromptTitleMatch(
+    @discardableResult
+    private func recoverAgentSessionID(for session: BanyanSession) -> Bool {
+        guard let match = Self.bestHistoryResumeMatch(
             sessionCWD: session.cwd,
             sessionCreatedAt: session.createdAt,
+            sessionUpdatedAt: session.updatedAt,
             sessionResetAt: session.lastConversationResetAt,
             provider: session.agentProvider,
             in: latestImportedHistory
         ) else {
-            return
+            return false
         }
         session.markDetectedAgentProvider(match.provider)
         session.markAgentSessionID(match.sourceID)
+        return true
+    }
+
+    /// Search beyond the bounded sidebar import before allowing a resume-capable
+    /// history row to fall back to its original command. The scan stays off the main
+    /// actor because old searchable rows may be much deeper than the recent shelf.
+    private func recoverAgentSessionIDAndRespawn(id: String) {
+        guard pendingRespawnRecoveryIDs.insert(id).inserted,
+              let session = sessions.first(where: { $0.id == id }) else {
+            return
+        }
+        let cwd = session.cwd
+        let createdAt = session.createdAt
+        let updatedAt = session.updatedAt
+        let resetAt = session.lastConversationResetAt
+        let provider = session.agentProvider
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let imported = AgentSessionHistoryImporter.load(maxPerProvider: .max)
+            let match = Self.bestHistoryResumeMatch(
+                sessionCWD: cwd,
+                sessionCreatedAt: createdAt,
+                sessionUpdatedAt: updatedAt,
+                sessionResetAt: resetAt,
+                provider: provider,
+                in: imported
+            )
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.pendingRespawnRecoveryIDs.remove(id)
+                guard let session = self.sessions.first(where: { $0.id == id }),
+                      session.status == .closed else {
+                    return
+                }
+                if let match {
+                    session.markDetectedAgentProvider(match.provider)
+                    session.markAgentSessionID(match.sourceID)
+                }
+                // If an exhaustive scan still found no transcript, preserve the
+                // historical fresh-start fallback; otherwise this call now builds
+                // the provider-native resume command from the recovered ID.
+                try? self.respawnAfterHistoryRecovery(id: id)
+            }
+        }
+    }
+
+    private func respawnAfterHistoryRecovery(id: String) throws {
+        guard let session = sessions.first(where: { $0.id == id }) else {
+            throw ControlError.notFound(id)
+        }
+        if let resumeCommand = Self.reopenResumeCommand(
+            status: session.status,
+            provider: session.agentProvider,
+            agentSessionID: session.agentSessionID,
+            cwd: session.cwd
+        ), session.command != resumeCommand {
+            session.command = resumeCommand
+        }
+        session.reattachTerminalClient()
+        selectedSessionID = id
+        saveSessions()
+    }
+
+    nonisolated static func requiresDeepHistoryRecovery(
+        status: SessionStatus,
+        provider: CodingAgentProvider?,
+        agentSessionID: String?
+    ) -> Bool {
+        status == .closed
+            && provider.map { [.codex, .claude].contains($0) } == true
+            && (agentSessionID?.isEmpty != false)
     }
 
     /// Builds the resume command to use when reopening a closed coding-agent
@@ -2013,7 +2087,7 @@ final class SessionStore: ObservableObject {
         }
         isHistoryImportRunning = true
         Task.detached(priority: .utility) {
-            let imported = AgentSessionHistoryImporter.load()
+            let imported = AgentSessionHistoryImporter.load(maxPerProvider: Self.historyRecoveryImportLimit)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.applyImportedHistory(imported)
@@ -2134,6 +2208,47 @@ final class SessionStore: ObservableObject {
             .filter { abs($0.createdAt.timeIntervalSince(sessionCreatedAt)) <= matchWindow }
             .min {
                 abs($0.createdAt.timeIntervalSince(sessionCreatedAt)) < abs($1.createdAt.timeIntervalSince(sessionCreatedAt))
+            }
+    }
+
+    /// Resolve the provider session behind a closed Banyan row. The live title
+    /// matcher intentionally uses a narrow launch-time window to avoid assigning
+    /// the wrong title among concurrent sessions. Reopen can be more practical:
+    /// Codex and Claude scope their resume pickers by cwd, and Linear worktrees are
+    /// normally unique. Prefer the strict match, then use the exact provider + cwd;
+    /// if several transcripts share that directory, choose the one whose last
+    /// activity is closest to when the Banyan session was last active.
+    nonisolated static func bestHistoryResumeMatch(
+        sessionCWD: String,
+        sessionCreatedAt: Date,
+        sessionUpdatedAt: Date,
+        sessionResetAt: Date?,
+        provider: CodingAgentProvider?,
+        in candidates: [ImportedAgentSession]
+    ) -> ImportedAgentSession? {
+        if let strictMatch = bestPromptTitleMatch(
+            sessionCWD: sessionCWD,
+            sessionCreatedAt: sessionCreatedAt,
+            sessionResetAt: sessionResetAt,
+            provider: provider,
+            in: candidates
+        ) {
+            return strictMatch
+        }
+
+        let normalizedCWD = standardizedPath(sessionCWD)
+        return candidates
+            .filter {
+                (provider == nil || $0.provider == provider)
+                    && standardizedPath($0.cwd) == normalizedCWD
+            }
+            .min {
+                let lhsDistance = abs($0.updatedAt.timeIntervalSince(sessionUpdatedAt))
+                let rhsDistance = abs($1.updatedAt.timeIntervalSince(sessionUpdatedAt))
+                if lhsDistance == rhsDistance {
+                    return $0.updatedAt > $1.updatedAt
+                }
+                return lhsDistance < rhsDistance
             }
     }
 
