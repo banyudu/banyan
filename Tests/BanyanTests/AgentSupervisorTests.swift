@@ -210,6 +210,29 @@ import Testing
     #expect(result?.tone == .yellow)
 }
 
+@Test func supervisorDoesNotCountBanyanAgentWrapperAsSubagent() {
+    let result = makeSupervisor(processes: [
+        process(
+            commandName: "/bin/bash",
+            arguments: "/Users/banyudu/.agents/bin/banyan-agent-wrapper --agent claude -- claude",
+            elapsed: 300
+        ),
+        process(
+            commandName: "/usr/bin/tee",
+            arguments: "tee -a /Users/banyudu/.agents/logs/banyan-agent-process.log",
+            elapsed: 300
+        ),
+        agentProcess("claude", pid: 102)
+    ]).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "banyan-agent-wrapper --agent claude -- claude",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
 @Test func supervisorTreatsPersistentMCPServerAsIdleNotExecuting() {
     // A coding agent keeps its MCP servers alive across turns as direct children.
     // They must not pin the session to `.executing` while it waits at the prompt.

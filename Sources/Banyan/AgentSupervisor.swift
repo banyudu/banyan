@@ -75,6 +75,7 @@ struct AgentSupervisor: Sendable {
                 && !process.isSupportedAgent
                 && !process.isShellOrWrapper
                 && !process.isTmuxPlumbing
+                && !process.isBanyanAgentLogProcess
                 && !helperPIDs.contains(process.pid)
         }
 
@@ -271,7 +272,12 @@ struct ProcessInfoRow: Sendable {
     let arguments: String
 
     var isSupportedAgent: Bool {
-        supportedAgentProvider != nil
+        // A Banyan launch wrapper carries the real agent name in its argument
+        // list (for example `bash banyan-agent-wrapper ... --agent claude ...
+        // -- claude`).  The wrapper is not a second agent and must not make a
+        // single Claude session look like a sub-agent session.
+        guard !isBanyanAgentWrapper else { return false }
+        return supportedAgentProvider != nil
     }
 
     var supportedAgentProvider: CodingAgentProvider? {
@@ -287,8 +293,20 @@ struct ProcessInfoRow: Sendable {
     var isShellOrWrapper: Bool {
         let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
         return [
-            "bash", "zsh", "sh", "fish", "login", "env", "script"
+            "bash", "zsh", "sh", "fish", "login", "env", "script",
+            "banyan-agent-wrapper"
         ].contains(name)
+    }
+
+    private var isBanyanAgentWrapper: Bool {
+        let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
+        return name == "banyan-agent-wrapper"
+            || arguments.lowercased().contains("banyan-agent-wrapper")
+    }
+
+    var isBanyanAgentLogProcess: Bool {
+        let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
+        return name == "tee" && arguments.contains("banyan-agent-process.log")
     }
 
     var isTmuxPlumbing: Bool {
