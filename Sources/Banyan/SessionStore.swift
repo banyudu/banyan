@@ -491,8 +491,21 @@ final class SessionStore: ObservableObject {
         didLoadPersistedSessions = true
         let snapshots = persistence.load()
         var loadedTmuxSessionNames = Set<String>()
+        // Hundreds of historical rows often share a cwd. Repository context is a
+        // property of that directory, not of an individual session, so resolve it
+        // once during this restore pass instead of spawning the same local git
+        // commands for every row.
+        var displayContextsByCWD: [String: SessionProjectContext] = [:]
         for snapshot in snapshots {
             let tmuxSessionName = snapshot.tmuxSessionName ?? TmuxBackend.sessionName(for: snapshot.id)
+            let displayContext: SessionProjectContext
+            if let cached = displayContextsByCWD[snapshot.cwd] {
+                displayContext = cached
+            } else {
+                let resolved = SessionDisplayLabel.context(cwd: snapshot.cwd)
+                displayContextsByCWD[snapshot.cwd] = resolved
+                displayContext = resolved
+            }
             let session = BanyanSession(
                 id: uniqueID(snapshot.id, avoidingLiveTmuxSessions: false),
                 tmuxSessionName: tmuxSessionName,
@@ -510,6 +523,7 @@ final class SessionStore: ObservableObject {
                 createdAt: snapshot.createdAt,
                 updatedAt: snapshot.updatedAt,
                 isRestored: true,
+                displayContext: displayContext,
                 theme: terminalTheme,
                 fontFamily: terminalFontFamily,
                 fontSize: terminalFontSize

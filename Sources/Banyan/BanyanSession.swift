@@ -178,11 +178,12 @@ final class BanyanSession: ObservableObject, Identifiable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         isRestored: Bool = false,
+        displayContext: SessionProjectContext? = nil,
         theme: TerminalTheme,
         fontFamily: String? = nil,
         fontSize: Double = 13
     ) {
-        let displayContext = SessionDisplayLabel.context(cwd: cwd)
+        let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(cwd: cwd)
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
         self.historyTranscriptURL = historyTranscriptURL
@@ -193,9 +194,9 @@ final class BanyanSession: ObservableObject, Identifiable {
             // infer it: a URL that matches what the cwd/branch says is auto-detected,
             // and anything else was chosen deliberately by the caller.
             self.titleURLWasAutoDetected = titleURLWasAutoDetected
-                ?? (normalizedTitleURL == LinearIssueReference.detect(branch: displayContext.branch, cwd: cwd)?.url)
+                ?? (normalizedTitleURL == LinearIssueReference.detect(branch: resolvedDisplayContext.branch, cwd: cwd)?.url)
         } else {
-            let detectedReference = LinearIssueReference.detect(branch: displayContext.branch, cwd: cwd)
+            let detectedReference = LinearIssueReference.detect(branch: resolvedDisplayContext.branch, cwd: cwd)
             self.titleURL = detectedReference?.url
             self.titleURLWasAutoDetected = detectedReference != nil
         }
@@ -204,13 +205,13 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.isTitlePinned = isTitlePinned
         self.cwd = cwd
         self.command = command
-        self.displayProject = displayContext.project
-        self.displayBranch = displayContext.branch
-        self.displayIsGitWorktree = displayContext.isGitWorktree
-        self.displayIsDefaultBranch = displayContext.isDefaultBranch
-        self.displayContextDegraded = displayContext.gitLookupDegraded
-        self.projectGroupID = displayContext.groupID
-        self.projectGroupTitle = displayContext.groupTitle
+        self.displayProject = resolvedDisplayContext.project
+        self.displayBranch = resolvedDisplayContext.branch
+        self.displayIsGitWorktree = resolvedDisplayContext.isGitWorktree
+        self.displayIsDefaultBranch = resolvedDisplayContext.isDefaultBranch
+        self.displayContextDegraded = resolvedDisplayContext.gitLookupDegraded
+        self.projectGroupID = resolvedDisplayContext.groupID
+        self.projectGroupTitle = resolvedDisplayContext.groupTitle
         self.status = status
         self.tone = tone
         self.parentSessionID = parentSessionID

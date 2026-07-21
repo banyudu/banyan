@@ -36,6 +36,36 @@ import Testing
 }
 
 @MainActor
+@Test func terminalSwitcherForwardsHistorySelectionWithoutWaitingForTerminalPaint() async {
+    let live = makeSwitcherSession(id: "live")
+    let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    let focusRequestID = UUID()
+
+    update(switcher, sessions: [live], selectedID: live.id, focusRequestID: focusRequestID)
+
+    var didForwardSelection = false
+    switcher.switchImmediately(
+        to: "closed-history",
+        selectionChangedAt: nil,
+        clickAt: nil,
+        afterPaint: { didForwardSelection = true }
+    )
+    update(
+        switcher,
+        sessions: [live],
+        selectedID: "closed-history",
+        focusRequestID: focusRequestID
+    )
+    try? await Task.sleep(for: .milliseconds(10))
+
+    let visibleContainers = switcher.subviews
+        .compactMap { $0 as? TerminalContainerView }
+        .filter { !$0.isHidden }
+    #expect(didForwardSelection)
+    #expect(visibleContainers.isEmpty)
+}
+
+@MainActor
 private func update(
     _ switcher: TerminalSwitcherContainer,
     sessions: [BanyanSession],

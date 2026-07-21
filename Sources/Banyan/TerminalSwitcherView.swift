@@ -231,6 +231,18 @@ final class TerminalSwitcherContainer: NSView {
             activeSessionID = selectedSessionID
         }
 
+        // Closed and imported-history selections intentionally have no terminal
+        // container. Their detail UI is rendered by SwiftUI after SessionStore's
+        // selection catches up, so there will never be a terminal paint from which
+        // to run the deferred forwarder. Forward on the next main-loop turn instead
+        // (publishing synchronously from updateNSView would mutate view state while
+        // SwiftUI is updating it).
+        if let selectedSessionID,
+           selectedSession == nil,
+           let afterPaint = takeAfterPaint(for: selectedSessionID) {
+            DispatchQueue.main.async(execute: afterPaint)
+        }
+
         if let newID = selectedSessionID, let newContainer = containers[newID] {
             if newContainer.superview !== self {
                 if selectionChanged, let startedAt = clickAt ?? selectionChangedAt ?? switchRequestedAt {

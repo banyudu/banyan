@@ -13,9 +13,11 @@ import Foundation
 /// in `DispatchGroup.wait`).
 ///
 /// This runner completes via `terminationHandler` (no parked wait thread) and
-/// drains pipes with `readabilityHandler` (event-driven dispatch source, no parked
-/// reader threads). Every wait is timeout-bounded, and the async bridge caps total
-/// concurrency so a burst of resolves can never approach the pool limits again.
+/// captures output in temporary files. Regular files are intentional: a detached
+/// grandchild can inherit stdout/stderr and keep a pipe open long after the command
+/// itself exits, making an EOF-based drain add latency to every invocation. Every
+/// wait is timeout-bounded, and the async bridge caps total concurrency so a burst
+/// of resolves can never approach the pool limits again.
 public enum SubprocessRunner {
     public struct Output {
         public let terminationStatus: Int32
@@ -96,16 +98,31 @@ public enum SubprocessRunner {
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         process.environment = environment
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        let stdoutSink = DataSink()
-        let stderrSink = DataSink()
-        let drainGroup = DispatchGroup()
-        installDrain(stdoutPipe, into: stdoutSink, group: drainGroup)
-        installDrain(stderrPipe, into: stderrSink, group: drainGroup)
+        let captureDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("banyan-subprocess-\(UUID().uuidString)", isDirectory: true)
+        let stdoutURL = captureDirectory.appendingPathComponent("stdout")
+        let stderrURL = captureDirectory.appendingPathComponent("stderr")
+        let stdoutHandle: FileHandle
+        let stderrHandle: FileHandle
+        do {
+            try FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: false)
+            guard FileManager.default.createFile(atPath: stdoutURL.path, contents: nil),
+                  FileManager.default.createFile(atPath: stderrURL.path, contents: nil) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
+            stderrHandle = try FileHandle(forWritingTo: stderrURL)
+        } catch {
+            try? FileManager.default.removeItem(at: captureDirectory)
+            throw RunError.launchFailed(underlying: error)
+        }
+        defer {
+            try? stdoutHandle.close()
+            try? stderrHandle.close()
+            try? FileManager.default.removeItem(at: captureDirectory)
+        }
+        process.standardOutput = stdoutHandle
+        process.standardError = stderrHandle
 
         // Completion is signaled by Foundation from its own queue — no thread of
         // ours is parked waiting for the child.
@@ -115,8 +132,6 @@ public enum SubprocessRunner {
         do {
             try process.run()
         } catch {
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
             throw RunError.launchFailed(underlying: error)
         }
 
@@ -124,7 +139,7 @@ public enum SubprocessRunner {
         var didExit = false
         while Date() < deadline {
             if isCancelled() {
-                terminate(process, exited: exited, drainGroup: drainGroup)
+                terminate(process, exited: exited)
                 throw RunError.cancelled
             }
             let slice = min(0.1, max(0, deadline.timeIntervalSinceNow))
@@ -135,66 +150,27 @@ public enum SubprocessRunner {
         }
 
         guard didExit else {
-            terminate(process, exited: exited, drainGroup: drainGroup)
+            terminate(process, exited: exited)
             throw RunError.timedOut
         }
 
-        // Let the readability handlers flush the tail and report EOF. Bounded, so a
-        // pipe inherited by a stray grandchild can't hang us.
-        _ = drainGroup.wait(timeout: .now() + 1.0)
+        try? stdoutHandle.close()
+        try? stderrHandle.close()
 
         return Output(
             terminationStatus: process.terminationStatus,
-            standardOutput: stdoutSink.data,
-            standardError: stderrSink.data
+            standardOutput: (try? Data(contentsOf: stdoutURL)) ?? Data(),
+            standardError: (try? Data(contentsOf: stderrURL)) ?? Data()
         )
     }
 
     private static func terminate(
         _ process: Process,
-        exited: DispatchSemaphore,
-        drainGroup: DispatchGroup
+        exited: DispatchSemaphore
     ) {
         if process.isRunning {
             process.terminate()
         }
         _ = exited.wait(timeout: .now() + 0.5)
-        _ = drainGroup.wait(timeout: .now() + 1.0)
-    }
-
-    /// Drains a pipe via its dispatch-source readability handler: no dedicated
-    /// reader thread, and continuous draining means a child that outruns the 64 KB
-    /// pipe buffer can never deadlock waiting for us to read.
-    private static func installDrain(_ pipe: Pipe, into sink: DataSink, group: DispatchGroup) {
-        group.enter()
-        let handle = pipe.fileHandleForReading
-        handle.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            if chunk.isEmpty {
-                handle.readabilityHandler = nil
-                group.leave()
-            } else {
-                sink.append(chunk)
-            }
-        }
-    }
-}
-
-/// Thread-safe byte accumulator: the readability handler fires on a background
-/// queue while the caller reads `data` from another.
-private final class DataSink: @unchecked Sendable {
-    private let lock = NSLock()
-    private var buffer = Data()
-
-    func append(_ chunk: Data) {
-        lock.lock()
-        buffer.append(chunk)
-        lock.unlock()
-    }
-
-    var data: Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return buffer
     }
 }
