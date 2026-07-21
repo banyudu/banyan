@@ -1547,6 +1547,9 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        let replacementID = selectedSessionID == id
+            ? preferredSelectionAfterClosing(id: id)
+            : nil
         detachChildren(of: id, to: session.parentSessionID)
         if session.isImportedHistory {
             session.terminate(markClosed: true)
@@ -1554,7 +1557,7 @@ final class SessionStore: ObservableObject {
             session.killBackingSession()
         }
         if selectedSessionID == id {
-            selectedSessionID = visibleSessions.first?.id
+            selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
         saveSessions()
         refreshImportedHistory()
@@ -1564,10 +1567,13 @@ final class SessionStore: ObservableObject {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        let replacementID = selectedSessionID == id
+            ? preferredSelectionAfterClosing(id: id)
+            : nil
         if sessions[index].isImportedHistory {
             sessions[index].status = .closed
             if selectedSessionID == id {
-                selectedSessionID = visibleSessions.first?.id
+                selectedSessionID = replacementID ?? visibleSessions.first?.id
             }
             refreshImportedHistory()
             return
@@ -1577,7 +1583,7 @@ final class SessionStore: ObservableObject {
         sessions[index].killBackingSession()
         sessions.remove(at: index)
         if selectedSessionID == id {
-            selectedSessionID = visibleSessions.first?.id
+            selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
         saveSessions()
         refreshImportedHistory()
@@ -2781,6 +2787,44 @@ final class SessionStore: ObservableObject {
 
     private func scratchWindowTitle(for session: BanyanSession) -> String {
         "Scratch - \(PathDisplayName.make(path: session.cwd))"
+    }
+
+    /// Chooses the nearest visible session before the closing session is removed.
+    /// Sidebar groups are already in their rendered order, so this preserves the
+    /// user's project/session navigation order across all sort modes.
+    private func preferredSelectionAfterClosing(id: String) -> String? {
+        guard let closingSession = sessions.first(where: { $0.id == id }),
+              let groupIndex = sessionSidebarGroups.firstIndex(where: {
+                  $0.id == closingSession.projectGroupID
+              }) else {
+            return nil
+        }
+
+        let groups = sessionSidebarGroups
+        let group = groups[groupIndex]
+        guard let closingIndex = group.items.firstIndex(where: { $0.id == id }) else {
+            return nil
+        }
+
+        let siblings = group.items.enumerated().filter { index, item in
+            item.session.parentSessionID == closingSession.parentSessionID
+                && item.id != id
+                && index != closingIndex
+        }
+        if let nextSibling = siblings.first(where: { $0.offset > closingIndex }) {
+            return nextSibling.element.id
+        }
+        if let previousSibling = siblings.last(where: { $0.offset < closingIndex }) {
+            return previousSibling.element.id
+        }
+
+        if groupIndex + 1 < groups.count {
+            return groups[groupIndex + 1].items.first?.id
+        }
+        if groupIndex > 0 {
+            return groups[groupIndex - 1].items.last?.id
+        }
+        return nil
     }
 
     private func positionScratchWindow(_ window: NSWindow) {
