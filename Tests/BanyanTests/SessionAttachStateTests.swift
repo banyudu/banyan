@@ -142,6 +142,30 @@ import Testing
         titleURLWasAutoDetected: true
     )
 
+    // Restoring on a checkout that no longer supports the persisted automatic
+    // binding clears it immediately; no cwd change is required.
+    #expect(session.titleURL == nil)
+    #expect(session.titleLinkLabel == nil)
+}
+
+@MainActor
+@Test func sameDirectoryBranchSwitchRefreshesDetectedIssueBinding() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = root.appendingPathComponent("clawly")
+    try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+    try runGit(["init", "-b", "main"], cwd: repo)
+    try runGit(["config", "user.email", "test@example.com"], cwd: repo)
+    try runGit(["config", "user.name", "Banyan Tests"], cwd: repo)
+    try "initial".write(to: repo.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    try runGit(["add", "README.md"], cwd: repo)
+    try runGit(["commit", "-m", "initial"], cwd: repo)
+    try runGit(["checkout", "-b", "yudu/ENG-7944-fix"], cwd: repo)
+
+    let session = makeIssueBindingSession(cwd: repo.path)
+    #expect(session.titleLinkLabel == "ENG-7944")
+
+    try runGit(["checkout", "main"], cwd: repo)
     session.updateCurrentDirectory(repo.path)
 
     #expect(session.titleURL == nil)

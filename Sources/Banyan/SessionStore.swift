@@ -1976,6 +1976,12 @@ final class SessionStore: ObservableObject {
             guard let session else { return }
             AttentionNotifier.shared.notifyIfNeeded(session: session, status: status)
         }
+        session.onProjectContextObserved = { [weak self, weak session] cwd, context in
+            guard let self else { return }
+            for sibling in self.sessions where sibling !== session && sibling.status != .closed && sibling.cwd == cwd {
+                sibling.applyProjectContext(context)
+            }
+        }
         session.onProcessExit = { [weak self, weak session] _ in
             guard let self, let session, session.status != .closed else { return }
             if self.tmuxBackend.hasSession(named: session.tmuxSessionName) {

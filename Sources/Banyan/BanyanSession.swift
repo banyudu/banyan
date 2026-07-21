@@ -79,6 +79,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     var onOutput: ((String) -> Void)?
     var onStatusSignal: ((SessionStatus) -> Void)?
     var onProcessExit: ((Int32?) -> Void)?
+    var onProjectContextObserved: ((String, SessionProjectContext) -> Void)?
     private var didRenderRestoredMessage = false
     private var appliedTheme: TerminalTheme?
     private var appliedFontFamily: String?
@@ -188,15 +189,24 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
         self.historyTranscriptURL = historyTranscriptURL
         self.title = title
+        let detectedReference = LinearIssueReference.detect(branch: resolvedDisplayContext.branch, cwd: cwd)
         if let normalizedTitleURL = Self.normalizedTitleURL(titleURL) {
-            self.titleURL = normalizedTitleURL
             // A restore passes the persisted provenance. Without one (a fresh spawn),
             // infer it: a URL that matches what the cwd/branch says is auto-detected,
             // and anything else was chosen deliberately by the caller.
-            self.titleURLWasAutoDetected = titleURLWasAutoDetected
-                ?? (normalizedTitleURL == LinearIssueReference.detect(branch: resolvedDisplayContext.branch, cwd: cwd)?.url)
+            let wasAutoDetected = titleURLWasAutoDetected
+                ?? (normalizedTitleURL == detectedReference?.url)
+            if wasAutoDetected && !resolvedDisplayContext.gitLookupDegraded {
+                // Repository-derived bindings describe the current checkout, not a
+                // permanent choice. Reconcile persisted rows immediately so a branch
+                // switched while Banyan was stopped cannot revive a stale issue chip.
+                self.titleURL = detectedReference?.url
+                self.titleURLWasAutoDetected = detectedReference != nil
+            } else {
+                self.titleURL = normalizedTitleURL
+                self.titleURLWasAutoDetected = wasAutoDetected
+            }
         } else {
-            let detectedReference = LinearIssueReference.detect(branch: resolvedDisplayContext.branch, cwd: cwd)
             self.titleURL = detectedReference?.url
             self.titleURLWasAutoDetected = detectedReference != nil
         }
@@ -582,37 +592,50 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func updateCurrentDirectory(_ directory: String?) {
         guard let directory = Self.normalizedDirectory(directory) else { return }
+        let displayContext = SessionDisplayLabel.context(cwd: directory)
         guard directory != cwd else {
-            retryDisplayContextIfDegraded(for: directory)
-            // Re-assert the binding even when the pane has not moved: something else
-            // may have written a titleURL the cwd/branch does not support (an agent
-            // marking the session, a snapshot restored from an earlier chapter).
-            // This is string matching over an already-cached branch — no git spawn.
-            refreshAutoDetectedTitleURL()
+            applyProjectContext(displayContext)
+            if !displayContext.gitLookupDegraded {
+                onProjectContextObserved?(directory, displayContext)
+            }
             return
         }
         let shouldUpdateTitle = Self.titleTracksCurrentDirectory(title, isTitlePinned: isTitlePinned, cwd: cwd)
         cwd = directory
-        updateDisplayContext(for: directory)
+        updateDisplayContext(displayContext)
         if shouldUpdateTitle {
             title = Self.titleForCurrentDirectory(directory)
         }
         refreshAutoDetectedTitleURL()
         refreshGeneratedTitle()
         touch()
+        if !displayContext.gitLookupDegraded {
+            onProjectContextObserved?(directory, displayContext)
+        }
     }
 
-    /// An idle session's pane cwd never changes, so a git lookup that was degraded
-    /// (timed out during a busy restore, say) would otherwise stay a false-negative
-    /// forever — hiding the handoff affordance and the auto-detected issue link.
-    /// Retry on each supervisor tick until the reading is trustworthy again.
-    private func retryDisplayContextIfDegraded(for directory: String) {
-        guard displayContextDegraded else { return }
+    /// Apply one repository lookup to this session. SessionStore shares the same
+    /// result with sibling panes in this directory so a branch switch updates every
+    /// affected row without running duplicate git commands per session.
+    func applyProjectContext(_ displayContext: SessionProjectContext) {
+        let previousProject = displayProject
         let previousBranch = displayBranch
         let previousIsGitWorktree = displayIsGitWorktree
-        updateDisplayContext(for: directory)
-        guard displayBranch != previousBranch || displayIsGitWorktree != previousIsGitWorktree else { return }
+        let previousIsDefaultBranch = displayIsDefaultBranch
+        let previousGroupID = projectGroupID
+        let previousGroupTitle = projectGroupTitle
+        let previousDegraded = displayContextDegraded
+        let previousTitleURL = titleURL
+        updateDisplayContext(displayContext)
         refreshAutoDetectedTitleURL()
+        let contextChanged = previousProject != displayProject
+            || previousBranch != displayBranch
+            || previousIsGitWorktree != displayIsGitWorktree
+            || previousIsDefaultBranch != displayIsDefaultBranch
+            || previousGroupID != projectGroupID
+            || previousGroupTitle != projectGroupTitle
+            || previousDegraded != displayContextDegraded
+        guard contextChanged || titleURL != previousTitleURL else { return }
         refreshGeneratedTitle()
         touch()
     }
@@ -668,8 +691,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         requestExternalGeneratedTitleIfNeeded(context: context)
     }
 
-    private func updateDisplayContext(for cwd: String) {
-        let displayContext = SessionDisplayLabel.context(cwd: cwd)
+    private func updateDisplayContext(_ displayContext: SessionProjectContext) {
         // A degraded lookup can't be trusted to say "no branch / not a worktree".
         // Keep the last reading and retry later rather than clobbering it with a
         // transient false-negative. This also prevents a second consecutive failure
