@@ -97,6 +97,22 @@ import Foundation
     #expect(context.gitLookupDegraded == false)
 }
 
+@Test func projectContextCanonicalizesSymlinkedWorkingDirectoryOutsideGit() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("project")
+    let alias = root.appendingPathComponent("project-alias")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
+
+    let directContext = SessionDisplayLabel.context(cwd: directory.path)
+    let aliasContext = SessionDisplayLabel.context(cwd: alias.path)
+
+    #expect(aliasContext.groupID == directContext.groupID)
+    #expect(aliasContext.groupTitle == directContext.groupTitle)
+    #expect(aliasContext.project == directContext.project)
+}
+
 @Test func projectContextGroupsGitRepositoriesByRemoteAddress() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

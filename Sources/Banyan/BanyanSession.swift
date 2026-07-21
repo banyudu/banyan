@@ -670,9 +670,10 @@ final class BanyanSession: ObservableObject, Identifiable {
     private func updateDisplayContext(for cwd: String) {
         let displayContext = SessionDisplayLabel.context(cwd: cwd)
         // A degraded lookup can't be trusted to say "no branch / not a worktree".
-        // If we already hold a trustworthy reading, keep it and retry later rather
-        // than clobbering it with a transient false-negative.
-        guard !displayContext.gitLookupDegraded || displayContextDegraded else {
+        // Keep the last reading and retry later rather than clobbering it with a
+        // transient false-negative. This also prevents a second consecutive failure
+        // from replacing the trustworthy reading retained after the first one.
+        guard !displayContext.gitLookupDegraded else {
             displayContextDegraded = true
             return
         }

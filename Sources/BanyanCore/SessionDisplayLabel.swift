@@ -58,7 +58,9 @@ public enum SessionDisplayLabel {
         let defaultBranch = symbolicBranch.map { Self.isDefaultBranch($0, cwd: resolvedCWD) } ?? (value: false, degraded: false)
         degraded = degraded || defaultBranch.degraded
 
-        if let remoteURL = gitRemoteURL(cwd: resolvedCWD) {
+        let remote = gitRemoteURL(cwd: resolvedCWD)
+        degraded = degraded || remote.degraded
+        if let remoteURL = remote.value {
             let normalizedAddress = normalizedGitAddress(remoteURL)
             return SessionProjectContext(
                 project: project,
@@ -179,22 +181,31 @@ public enum SessionDisplayLabel {
 
     private static func standardizedPath(_ path: String) -> String {
         let expanded = NSString(string: path).expandingTildeInPath
-        return URL(fileURLWithPath: expanded).standardizedFileURL.path
+        return URL(fileURLWithPath: expanded)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
     }
 
-    private static func gitRemoteURL(cwd: String) -> String? {
-        if let originURL = gitOutput(["remote", "get-url", "origin"], cwd: cwd) {
-            return originURL
+    private static func gitRemoteURL(cwd: String) -> (value: String?, degraded: Bool) {
+        let origin = gitLookup(["remote", "get-url", "origin"], cwd: cwd)
+        if let originURL = origin.value {
+            return (originURL, false)
         }
+        guard !origin.degraded else { return (nil, true) }
 
-        guard let remotes = gitOutput(["remote"], cwd: cwd) else { return nil }
+        let availableRemotes = gitLookup(["remote"], cwd: cwd)
+        guard let remotes = availableRemotes.value else {
+            return (nil, availableRemotes.degraded)
+        }
         guard let firstRemote = remotes
             .split(whereSeparator: \.isNewline)
             .map(String.init)
             .first else {
-            return nil
+            return (nil, false)
         }
-        return gitOutput(["remote", "get-url", firstRemote], cwd: cwd)
+        let fallback = gitLookup(["remote", "get-url", firstRemote], cwd: cwd)
+        return (fallback.value, fallback.degraded)
     }
 
     private static func gitMainDirectory(cwd: String, fallbackTopLevel: String) -> (value: String, degraded: Bool) {
@@ -277,15 +288,6 @@ public enum SessionDisplayLabel {
     private static func removeGitSuffix(_ value: String) -> String {
         guard value.lowercased().hasSuffix(".git") else { return value }
         return String(value.dropLast(4))
-    }
-
-    /// Local, fast-exiting git lookups. Routed through `SubprocessRunner` so a git
-    /// command that hangs (credential prompt, filesystem stall, a huge repo
-    /// overrunning the pipe buffer) can't block the caller indefinitely — the bare
-    /// `process.waitUntilExit()` this replaced had no timeout and read the pipe only
-    /// after exit, so a wedged git would have frozen whoever called `context(cwd:)`.
-    private static func gitOutput(_ arguments: [String], cwd: String) -> String? {
-        gitLookup(arguments, cwd: cwd).value
     }
 
     /// Runs a git lookup, separating a *trustworthy* negative (git ran and

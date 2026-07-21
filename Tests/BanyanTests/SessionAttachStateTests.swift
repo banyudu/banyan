@@ -166,6 +166,26 @@ import Testing
     #expect(session.titleLinkLabel == "ENG-7664")
 }
 
+@MainActor
+@Test func repeatedDegradedGitLookupsKeepTheLastTrustworthyProjectGroup() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = root.appendingPathComponent("banyan")
+    try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+    try runGit(["init"], cwd: repo)
+    try runGit(["remote", "add", "origin", "git@github.com:banyudu/banyan.git"], cwd: repo)
+
+    let session = makeIssueBindingSession(cwd: repo.path)
+    let trustworthyGroupID = session.projectGroupID
+    let missingDirectory = root.appendingPathComponent("missing")
+
+    session.updateCurrentDirectory(missingDirectory.path)
+    session.updateCurrentDirectory(missingDirectory.path)
+
+    #expect(session.projectGroupID == trustworthyGroupID)
+    #expect(session.projectGroupTitle == "banyudu/banyan")
+}
+
 @Test func legacySnapshotsWithoutBindingProvenanceDecodeAsDetected() throws {
     let json = """
     {
