@@ -570,6 +570,10 @@ final class SessionStore: ObservableObject {
         } else {
             selectedSessionID = visibleSessions.first?.id
         }
+        // A machine restart kills the dedicated tmux server, but not this
+        // persisted metadata. Recreate all missing sessions automatically so
+        // agents resume in the background as soon as Banyan launches.
+        recoverAll(selectRecoveredSession: false)
         refreshSelectedContextInfo(force: true)
         saveSessions()
     }
@@ -1156,33 +1160,37 @@ final class SessionStore: ObservableObject {
         try respawnAfterHistoryRecovery(id: id)
     }
 
-    func recover(id: String) throws {
+    func recover(id: String, select: Bool = true) throws {
         guard let session = sessions.first(where: { $0.id == id && $0.needsRecovery }) else {
             throw ControlError.notFound(id)
         }
 
-        let recoveryCommand: String?
-        if let provider = session.agentProvider,
-           let agentSessionID = session.agentSessionID,
-           [.codex, .claude].contains(provider) {
-            recoveryCommand = AgentSessionHistoryImporter.resumeCommand(
-                provider: provider,
-                sourceID: agentSessionID,
-                cwd: session.cwd
-            )
-        } else {
-            recoveryCommand = nil
-        }
+        let recoveryCommand = Self.recoveryCommand(for: session)
 
-        session.recoverFromMissingBackingSession(command: recoveryCommand)
-        selectedSessionID = id
+        session.recoverFromMissingBackingSessionInBackground(command: recoveryCommand)
+        if select {
+            selectedSessionID = id
+        }
         saveSessions()
     }
 
-    func recoverAll() {
+    func recoverAll(selectRecoveredSession: Bool = true) {
         for session in recoverySessions {
-            try? recover(id: session.id)
+            try? recover(id: session.id, select: selectRecoveredSession)
         }
+    }
+
+    private static func recoveryCommand(for session: BanyanSession) -> String? {
+        guard let provider = session.agentProvider,
+              let agentSessionID = session.agentSessionID,
+              [.codex, .claude].contains(provider) else {
+            return nil
+        }
+        return AgentSessionHistoryImporter.resumeCommand(
+            provider: provider,
+            sourceID: agentSessionID,
+            cwd: session.cwd
+        )
     }
 
     nonisolated static func shouldMarkForRecovery(

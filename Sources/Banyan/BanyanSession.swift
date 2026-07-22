@@ -474,6 +474,40 @@ final class BanyanSession: ObservableObject, Identifiable {
         reattachTerminalClient()
     }
 
+    /// Recreates the backing tmux session without allocating or attaching a
+    /// visible terminal client. Used for automatic launch recovery so every
+    /// session resumes in the background while only the selected session is
+    /// rendered by the UI.
+    func recoverFromMissingBackingSessionInBackground(command recoveryCommand: String? = nil) {
+        guard !isImportedHistory, !isProcessStarted else { return }
+        if let recoveryCommand, !recoveryCommand.isEmpty {
+            command = recoveryCommand
+        }
+        needsRecovery = false
+        isRestored = false
+        status = .running
+        touch()
+
+        let backend = tmuxBackend
+        let name = tmuxSessionName
+        let workingDirectory = cwd
+        let launchCommand = command
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do {
+                try backend.ensureSession(named: name, cwd: workingDirectory, command: launchCommand)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.isProcessStarted = true
+                    self.touch()
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.failToStart(error.localizedDescription)
+                }
+            }
+        }
+    }
+
     func restartBackingSession() {
         guard !isImportedHistory else { return }
         terminalRefreshTask?.cancel()

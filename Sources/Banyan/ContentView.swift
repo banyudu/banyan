@@ -163,7 +163,7 @@ struct ContentView: View {
             }
 
             if !store.recoverySessions.isEmpty {
-                RecoverySessionsView(count: store.recoverySessions.count, onRecover: store.recoverAll)
+                RecoverySessionsView(count: store.recoverySessions.count, onRecover: { store.recoverAll() })
                 Divider()
             }
 
