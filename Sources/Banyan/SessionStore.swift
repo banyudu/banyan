@@ -321,6 +321,10 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    var recoverySessions: [BanyanSession] {
+        sessions.filter { $0.needsRecovery && !$0.isImportedHistory }
+    }
+
     var sessionSidebarGroups: [SidebarSessionGroup] {
         let active = visibleSessions.filter { !$0.isImportedHistory }
         var sessionsByProject: [String: [BanyanSession]] = [:]
@@ -504,6 +508,7 @@ final class SessionStore: ObservableObject {
         guard !didLoadPersistedSessions else { return }
         didLoadPersistedSessions = true
         let snapshots = persistence.load()
+        let liveTmuxSessionNames = Set(tmuxBackend.listBanyanSessions())
         var loadedTmuxSessionNames = Set<String>()
         // Hundreds of historical rows often share a cwd. Repository context is a
         // property of that directory, not of an individual session, so resolve it
@@ -537,6 +542,11 @@ final class SessionStore: ObservableObject {
                 createdAt: snapshot.createdAt,
                 updatedAt: snapshot.updatedAt,
                 isRestored: true,
+                needsRecovery: Self.shouldMarkForRecovery(
+                    status: snapshot.status,
+                    tmuxSessionName: tmuxSessionName,
+                    liveTmuxSessionNames: liveTmuxSessionNames
+                ),
                 displayContext: displayContext,
                 theme: terminalTheme,
                 fontFamily: terminalFontFamily,
@@ -1144,6 +1154,44 @@ final class SessionStore: ObservableObject {
             return
         }
         try respawnAfterHistoryRecovery(id: id)
+    }
+
+    func recover(id: String) throws {
+        guard let session = sessions.first(where: { $0.id == id && $0.needsRecovery }) else {
+            throw ControlError.notFound(id)
+        }
+
+        let recoveryCommand: String?
+        if let provider = session.agentProvider,
+           let agentSessionID = session.agentSessionID,
+           [.codex, .claude].contains(provider) {
+            recoveryCommand = AgentSessionHistoryImporter.resumeCommand(
+                provider: provider,
+                sourceID: agentSessionID,
+                cwd: session.cwd
+            )
+        } else {
+            recoveryCommand = nil
+        }
+
+        session.recoverFromMissingBackingSession(command: recoveryCommand)
+        selectedSessionID = id
+        saveSessions()
+    }
+
+    func recoverAll() {
+        for session in recoverySessions {
+            try? recover(id: session.id)
+        }
+    }
+
+    nonisolated static func shouldMarkForRecovery(
+        status: SessionStatus,
+        tmuxSessionName: String,
+        liveTmuxSessionNames: Set<String>
+    ) -> Bool {
+        ![.closed, .completed, .failed].contains(status)
+            && !liveTmuxSessionNames.contains(tmuxSessionName)
     }
 
     @discardableResult

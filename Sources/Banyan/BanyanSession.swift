@@ -65,6 +65,8 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var updatedAt: Date
     @Published var isRestored: Bool
     @Published var isProcessStarted: Bool
+    /// Persisted metadata can outlive the dedicated tmux session after reboot.
+    @Published var needsRecovery: Bool
     @Published var parentSessionID: String?
     /// Underlying coding-agent session UUID (codex/claude), resolved by matching
     /// live sessions against imported transcript history. Used to build a resume
@@ -142,7 +144,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     var needsManualAttach: Bool {
-        isRestored && !isProcessStarted && status == .failed
+        isRestored && !isProcessStarted && (status == .failed || needsRecovery)
     }
 
     var isImportedHistory: Bool {
@@ -179,6 +181,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         isRestored: Bool = false,
+        needsRecovery: Bool = false,
         displayContext: SessionProjectContext? = nil,
         theme: TerminalTheme,
         fontFamily: String? = nil,
@@ -229,6 +232,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isRestored = isRestored
+        self.needsRecovery = needsRecovery
         // A freshly spawned background session has no tmux backing yet. Keep this
         // false until ensureSession succeeds; otherwise the supervisor can race
         // the async tmux creation, observe a missing session, and mark the row
@@ -456,6 +460,18 @@ final class BanyanSession: ObservableObject, Identifiable {
             sessionID: id,
             detail: "tmux=\(tmuxSessionName)"
         )
+    }
+
+    /// Starts a session whose tmux server disappeared while Banyan was stopped.
+    /// The caller may supply a provider-specific resume command.
+    func recoverFromMissingBackingSession(command recoveryCommand: String? = nil) {
+        guard !isImportedHistory else { return }
+        if let recoveryCommand, !recoveryCommand.isEmpty {
+            command = recoveryCommand
+        }
+        needsRecovery = false
+        isRestored = false
+        reattachTerminalClient()
     }
 
     func restartBackingSession() {
@@ -845,6 +861,9 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     private func restoredMessage() -> String {
         let commandText = command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "default login shell" : command
+        let recoveryText = needsRecovery
+            ? "The tmux session disappeared while Banyan was stopped. Use Recover to recreate it."
+            : "The tmux session is not currently attached in Banyan. Use Attach to reconnect."
         return [
             "Restored Banyan session metadata.",
             "",
@@ -853,8 +872,8 @@ final class BanyanSession: ObservableObject, Identifiable {
             "Command: \(commandText)",
             "tmux: \(tmuxSessionName)",
             "",
-            "The tmux session is not currently attached in Banyan.",
-            "Use Attach to reconnect, or Remove to kill it.",
+            recoveryText,
+            "Use Remove to kill the persisted session entry.",
             ""
         ].joined(separator: "\r\n")
     }

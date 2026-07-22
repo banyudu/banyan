@@ -162,6 +162,11 @@ struct ContentView: View {
                 PendingHandoffJobsView(jobs: store.pendingHandoffJobs)
             }
 
+            if !store.recoverySessions.isEmpty {
+                RecoverySessionsView(count: store.recoverySessions.count, onRecover: store.recoverAll)
+                Divider()
+            }
+
             if store.hasLocalHistorySessions {
                 Divider()
                 historySearchField
@@ -720,6 +725,9 @@ struct ContentView: View {
             },
             onRespawn: {
                 try? store.respawn(id: item.session.id)
+            },
+            onRecover: {
+                try? store.recover(id: item.session.id)
             },
             isHandoffPending: store.isHandoffPending(for: item.session.id),
             onHandoff: {
@@ -1368,6 +1376,28 @@ private struct PendingHandoffJobsView: View {
     }
 }
 
+private struct RecoverySessionsView: View {
+    let count: Int
+    let onRecover: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.clockwise.circle")
+                .foregroundStyle(.orange)
+            Text(count == 1 ? "1 session needs recovery" : "\(count) sessions need recovery")
+                .font(.caption)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Button("Recover All", action: onRecover)
+                .buttonStyle(.banyanBorderedProminent)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .accessibilityIdentifier("banyan.sidebar.recovery")
+    }
+}
+
 /// Keeps fast selection invalidation scoped to the terminal representable instead
 /// of rebuilding the entire navigation split rooted at `ContentView`.
 private struct SelectionAwareTerminalSwitcher: View {
@@ -1405,6 +1435,7 @@ private struct SessionRow: View {
     let onClose: () -> Void
     let onRestart: () -> Void
     let onRespawn: () -> Void
+    let onRecover: () -> Void
     let isHandoffPending: Bool
     let onHandoff: () -> Void
     let onRemove: () -> Void
@@ -1521,6 +1552,10 @@ private struct SessionRow: View {
             if session.status == .closed {
                 Button("Reopen") {
                     onRespawn()
+                }
+            } else if session.needsRecovery {
+                Button("Recover") {
+                    onRecover()
                 }
             } else {
                 Button("Close") {
@@ -2156,13 +2191,17 @@ private struct TerminalReconnectBanner: View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.clockwise.circle")
                 .foregroundStyle(Color(nsColor: session.tone.nsColor))
-            Text("Session is detached")
+            Text(session.needsRecovery ? "Session needs recovery after restart" : "Session is detached")
                 .font(.callout)
             Spacer()
             Button {
-                try? store.respawn(id: session.id)
+                if session.needsRecovery {
+                    try? store.recover(id: session.id)
+                } else {
+                    try? store.respawn(id: session.id)
+                }
             } label: {
-                Label("Attach", systemImage: "arrow.clockwise")
+                Label(session.needsRecovery ? "Recover" : "Attach", systemImage: "arrow.clockwise")
             }
             .buttonStyle(.banyanBorderedProminent)
             .controlSize(.small)

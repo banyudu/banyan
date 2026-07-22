@@ -6,6 +6,29 @@ import Testing
     #expect(SessionStore.restoredStatus(snapshotStatus: .closed) == .closed)
 }
 
+@Test func missingBackingTmuxSessionRequiresRecoveryForActiveSnapshot() {
+    #expect(SessionStore.shouldMarkForRecovery(
+        status: .running,
+        tmuxSessionName: "banyan-1",
+        liveTmuxSessionNames: []
+    ))
+    #expect(!SessionStore.shouldMarkForRecovery(
+        status: .running,
+        tmuxSessionName: "banyan-1",
+        liveTmuxSessionNames: ["banyan-1"]
+    ))
+}
+
+@Test func terminalSnapshotsDoNotRequireRecovery() {
+    for status in [SessionStatus.closed, .completed, .failed] {
+        #expect(!SessionStore.shouldMarkForRecovery(
+            status: status,
+            tmuxSessionName: "banyan-1",
+            liveTmuxSessionNames: []
+        ))
+    }
+}
+
 @Test func restorePreservesActiveSessionStatus() {
     #expect(SessionStore.restoredStatus(snapshotStatus: .running) == .running)
     #expect(SessionStore.restoredStatus(snapshotStatus: .needInput) == .needInput)

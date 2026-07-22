@@ -85,6 +85,18 @@ scripts/restart-app.sh --stable --force   # dev build is hung: SIGKILL it first
 scripts/restart-app.sh --previous         # roll back to the pre-promotion stable
 ```
 
+### Reboot recovery
+
+Cmd+Q leaves the dedicated tmux server and running sessions alive. A machine
+restart stops that tmux server and its child processes, while Banyan's metadata
+remains in `state.sqlite`. On the next launch, active sessions whose tmux
+backing disappeared are marked **needs recovery** instead of silently replaying
+their commands. Use the selected-session **Recover** button, the row context
+menu, or **Recover All** in the sidebar. Codex and Claude sessions use their
+saved provider session ID to resume when available; ordinary shells and
+sessions without a resumable provider session recreate their saved launch
+command.
+
 Check which build an install is: `defaults read /Applications/Banyan.app/Contents/Info CFBundleVersion`.
 
 Older stable builds can read a newer `state.sqlite` because migrations are additive only (`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ADD COLUMN`) — keep them that way.
