@@ -76,6 +76,7 @@ struct AgentSupervisor: Sendable {
                 && !process.isShellOrWrapper
                 && !process.isTmuxPlumbing
                 && !process.isBanyanAgentLogProcess
+                && !process.isCodexRuntimeHelper
                 && !helperPIDs.contains(process.pid)
         }
 
@@ -276,7 +277,7 @@ struct ProcessInfoRow: Sendable {
         // list (for example `bash banyan-agent-wrapper ... --agent claude ...
         // -- claude`).  The wrapper is not a second agent and must not make a
         // single Claude session look like a sub-agent session.
-        guard !isBanyanAgentWrapper else { return false }
+        guard !isBanyanAgentWrapper, !isCodexRuntimeHelper else { return false }
         return supportedAgentProvider != nil
     }
 
@@ -307,6 +308,13 @@ struct ProcessInfoRow: Sendable {
     var isBanyanAgentLogProcess: Bool {
         let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
         return name == "tee" && arguments.contains("banyan-agent-process.log")
+    }
+
+    /// Codex launches this internal runtime alongside the actual agent. Its
+    /// command line contains `codex`, so generic provider detection otherwise
+    /// counts it as a second Codex agent and incorrectly reports Subagents.
+    var isCodexRuntimeHelper: Bool {
+        (commandName + " " + arguments).lowercased().contains("codex-code-mode-host")
     }
 
     var isTmuxPlumbing: Bool {
