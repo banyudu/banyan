@@ -124,13 +124,14 @@ final class SessionStore: ObservableObject {
     @Published var sidebarMode: SidebarMode = .sessions {
         didSet {
             if sidebarMode == .linear {
-                refreshLinearIssueListIfNeeded()
+                refreshLinearIssueListOnEnter()
             }
         }
     }
     @Published private(set) var linearIssues: [LinearIssueSummary] = []
     @Published private(set) var linearIssueWorkflowStates: [LinearWorkflowState] = []
     @Published private(set) var linearIssueListLoadState: LinearIssueListLoadState = .idle
+    @Published private(set) var isLinearIssueListRefreshing = false
     @Published var selectedLinearListIssueID: String? {
         didSet {
             refreshSelectedLinearListIssue()
@@ -238,6 +239,9 @@ final class SessionStore: ObservableObject {
     private var selectedPullRequestPreviewURL: URL?
     private var didLoadCachedLinearIssues = false
     private var linearIssueListTask: Task<Void, Never>?
+    private var linearIssueListRefreshTimer: Timer?
+    private static let linearIssueListRefreshInterval: TimeInterval = 30 * 60
+    private static let linearIssueListLoadTimeout: TimeInterval = 45
     private var selectedLinearListIssueTask: Task<Void, Never>?
     private var workspaceSaveTask: Task<Void, Never>?
     private var scratchWindow: NSWindow?
@@ -287,6 +291,8 @@ final class SessionStore: ObservableObject {
         ) { [weak self] _ in
             self?.flushPendingSessionSaves()
         }
+
+        installLinearIssueListRefreshTimer()
     }
 
     /// Blocks until the serial session-persistence queue drains. Safe to call from a
@@ -561,6 +567,12 @@ final class SessionStore: ObservableObject {
         runHistoryImport(spawnDefaultIfEmpty: spawnDefaultIfEmpty)
     }
 
+    /// Shows the cached list immediately, then refreshes it in the background
+    /// whenever the Linear tab becomes visible.
+    func refreshLinearIssueListOnEnter() {
+        refreshLinearIssueList()
+    }
+
     func refreshLinearIssueListIfNeeded() {
         loadCachedLinearIssuesIfNeeded()
         guard linearIssueListTask == nil else { return }
@@ -580,12 +592,14 @@ final class SessionStore: ObservableObject {
         }
         let hasStaleIssues = !linearIssues.isEmpty
         linearIssueListLoadState = hasStaleIssues ? .loaded : .loading
+        isLinearIssueListRefreshing = true
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let deadline = Date().addingTimeInterval(Self.linearIssueListLoadTimeout)
         linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]")
         linearIssueListTask = Task.detached(priority: .utility) {
             do {
-                async let issuesRequest = LinearIssueClient.fetchIssueList(cwd: cwd)
-                async let workflowStatesRequest = LinearIssueClient.fetchWorkflowStates(cwd: cwd)
+                async let issuesRequest = LinearIssueClient.fetchIssueList(cwd: cwd, deadline: deadline)
+                async let workflowStatesRequest = LinearIssueClient.fetchWorkflowStates(cwd: cwd, deadline: deadline)
                 let issues = try await issuesRequest
                 let workflowStates: [LinearWorkflowState]?
                 do {
@@ -597,6 +611,7 @@ final class SessionStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.linearIssueListTask = nil
+                    self.isLinearIssueListRefreshing = false
                     self.linearIssues = issues
                     let workflowStateSource = workflowStates ?? self.linearIssueWorkflowStates
                     self.linearIssueWorkflowStates = Self.mergedWorkflowStates(workflowStateSource, issues: issues)
@@ -622,12 +637,37 @@ final class SessionStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.linearIssueListTask = nil
-                    self.linearIssueListLoadState = self.linearIssues.isEmpty
-                        ? .failed("Unable to load Linear issues")
-                        : .loaded
+                    self.isLinearIssueListRefreshing = false
+                    let timedOut: Bool
+                    if let clientError = error as? LinearIssueClientError,
+                       case .requestTimedOut = clientError {
+                        timedOut = true
+                    } else {
+                        timedOut = false
+                    }
+                    self.linearIssueListLoadState = .failed(
+                        timedOut
+                            ? "Linear refresh timed out. Click refresh to try again."
+                            : "Unable to refresh Linear issues. Click refresh to try again."
+                    )
                 }
             }
         }
+    }
+
+    /// The Linear list is also refreshed while the user is working elsewhere in
+    /// Banyan. This timer only starts the existing detached network task, so it
+    /// does not block the main actor or replace the stale list while loading.
+    private func installLinearIssueListRefreshTimer() {
+        let interval = Self.linearIssueListRefreshInterval
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshLinearIssueList()
+            }
+        }
+        timer.tolerance = interval * 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        linearIssueListRefreshTimer = timer
     }
 
     private func loadCachedLinearIssuesIfNeeded() {

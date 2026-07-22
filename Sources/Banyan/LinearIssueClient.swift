@@ -147,7 +147,11 @@ enum LinearIssueLoadState: Equatable {
 }
 
 enum LinearIssueClient {
-    static func fetchIssueList(cwd: String, limit: Int = 0) async throws -> [LinearIssueSummary] {
+    static func fetchIssueList(
+        cwd: String,
+        limit: Int = 0,
+        deadline: Date? = nil
+    ) async throws -> [LinearIssueSummary] {
         var issues: [LinearIssueSummary] = []
         var after: String?
         var page = 1
@@ -166,7 +170,7 @@ enum LinearIssueClient {
                     variables
                 ],
                 cwd: cwd,
-                timeout: 15
+                timeout: try requestTimeout(maximum: 15, deadline: deadline)
             )
             let pageResult = try decodeIssueListPageResponse(output)
             issues.append(contentsOf: pageResult.issues)
@@ -186,7 +190,7 @@ enum LinearIssueClient {
         return issues
     }
 
-    static func fetchWorkflowStates(cwd: String) async throws -> [LinearWorkflowState] {
+    static func fetchWorkflowStates(cwd: String, deadline: Date? = nil) async throws -> [LinearWorkflowState] {
         let output = try await runCommand(
             [
                 "linear",
@@ -194,7 +198,7 @@ enum LinearIssueClient {
                 workflowStatesQuery
             ],
             cwd: cwd,
-            timeout: 12
+            timeout: try requestTimeout(maximum: 12, deadline: deadline)
         )
         return try decodeWorkflowStatesResponse(output)
     }
@@ -434,6 +438,13 @@ enum LinearIssueClient {
         return text
     }
 
+    private static func requestTimeout(maximum: TimeInterval, deadline: Date?) throws -> TimeInterval {
+        guard let deadline else { return maximum }
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else { throw LinearIssueClientError.requestTimedOut }
+        return min(maximum, remaining)
+    }
+
     private static func cleanCommandOutput(_ value: String) -> String {
         let pattern = #"\u{001B}\[[0-?]*[ -/]*[@-~]"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
@@ -601,11 +612,12 @@ enum LinearIssueClient {
     """
 }
 
-private enum LinearIssueClientError: Error {
+enum LinearIssueClientError: Error {
     case authenticationUnavailable
     case commandUnavailable
     case issueNotFound
     case requestFailed
+    case requestTimedOut
 }
 
 private struct GraphQLRequest: Encodable {

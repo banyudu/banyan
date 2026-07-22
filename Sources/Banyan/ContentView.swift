@@ -247,10 +247,16 @@ struct ContentView: View {
                 Button {
                     store.refreshLinearIssueList()
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    if store.isLinearIssueListRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
                 .accessibilityIdentifier(AccessibilityID.linearIssueListRefreshButton)
                 .help("Refresh Linear issues")
+                .disabled(store.isLinearIssueListRefreshing)
 
                 Spacer()
 
@@ -387,22 +393,33 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onAppear {
-                store.refreshLinearIssueListIfNeeded()
+                store.refreshLinearIssueListOnEnter()
             }
         case let .failed(message):
-            VStack(spacing: 10) {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Retry") {
-                    store.refreshLinearIssueList()
+            if store.linearIssues.isEmpty {
+                VStack(spacing: 10) {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Retry") {
+                        store.refreshLinearIssueList()
+                    }
+                    .buttonStyle(.banyanBordered)
                 }
-                .buttonStyle(.banyanBordered)
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+            } else {
+                VStack(spacing: 0) {
+                    loadedLinearIssueListContent
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
             }
-            .padding()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
         case let .starting(issueID):
             VStack(spacing: 8) {
                 ProgressView()
