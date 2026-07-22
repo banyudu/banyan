@@ -2,6 +2,7 @@ import AppKit
 
 /// Handles the always-visible session jump shortcuts and ⌘J/⌘K navigation.
 /// Digits use ⌘+1…9; letters use ⌘⇧+A…Z so ordinary editing shortcuts remain free.
+/// L and S are reserved for switching between the Linear and Sessions sidebars.
 final class JumpOverlayMonitor {
     static let shared = JumpOverlayMonitor()
 
@@ -75,17 +76,19 @@ final class JumpOverlayMonitor {
 
     // MARK: - Key ↔ index mapping
 
+    private static let sessionJumpLetters = Array("abcdefghijkmnopqrtuvwxyz")
+
     /// Maps a key character to a 1-based session index.
-    /// "1"–"9" → 1–9, "a"–"z" → 10–35.
+    /// "1"–"9" → 1–9; letters other than L and S → 10–33.
     static func jumpIndex(for char: Character) -> Int? {
         if let digit = char.wholeNumberValue, digit >= 1, digit <= 9 {
             return digit
         }
-        guard let ascii = char.asciiValue else { return nil }
-        let a = Character("a").asciiValue!
-        let z = Character("z").asciiValue!
-        guard ascii >= a, ascii <= z else { return nil }
-        return 10 + Int(ascii - a)
+        guard char == Character(char.lowercased()),
+              let offset = sessionJumpLetters.firstIndex(of: char) else {
+            return nil
+        }
+        return 10 + offset
     }
 
     static func shortcutIndex(for char: Character, modifiers: NSEvent.ModifierFlags) -> Int? {
@@ -124,14 +127,15 @@ final class JumpOverlayMonitor {
     }
 
     /// Maps a 1-based session index to its jump key label.
-    /// 1–9 → "1"–"9", 10–35 → "A"–"Z" (uppercase hints at ⌘⇧).
+    /// 1–9 → "1"–"9", 10–33 → letters excluding L and S.
     static func jumpLabel(for oneBasedIndex: Int) -> String? {
         if oneBasedIndex >= 1, oneBasedIndex <= 9 {
             return String(oneBasedIndex)
         }
-        if oneBasedIndex >= 10, oneBasedIndex <= 35 {
+        if oneBasedIndex >= 10 {
             let offset = oneBasedIndex - 10
-            return String(UnicodeScalar(UInt8(Character("A").asciiValue!) + UInt8(offset)))
+            guard sessionJumpLetters.indices.contains(offset) else { return nil }
+            return String(sessionJumpLetters[offset]).uppercased()
         }
         return nil
     }

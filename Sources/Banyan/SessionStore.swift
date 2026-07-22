@@ -1414,6 +1414,10 @@ final class SessionStore: ObservableObject {
     }
 
     func openSelectedLinearIssue() {
+        if sidebarMode == .linear {
+            openSelectedLinearListIssue()
+            return
+        }
         guard let url = selectedLinearIssueURL else { return }
         NSWorkspace.shared.open(url)
     }
@@ -1879,6 +1883,25 @@ final class SessionStore: ObservableObject {
 
     func selectPreviousSession() {
         selectAdjacentSession(direction: .previous)
+    }
+
+    func selectNextLinearIssue() {
+        selectAdjacentLinearIssue(direction: .next)
+    }
+
+    func selectPreviousLinearIssue() {
+        selectAdjacentLinearIssue(direction: .previous)
+    }
+
+    private func selectAdjacentLinearIssue(direction: SessionSelectionDirection) {
+        guard let issueID = SessionSelectionNavigator.adjacentID(
+            in: linearIssues.map(\.identifier),
+            selectedID: selectedLinearListIssueID,
+            direction: direction
+        ) else {
+            return
+        }
+        selectedLinearListIssueID = issueID
     }
 
     func selectNextWorkableSession() {

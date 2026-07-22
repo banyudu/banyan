@@ -22,10 +22,20 @@ struct BanyanApp: App {
                         store?.selectSession(shortcutIndex: index) ?? false
                     }
                     JumpOverlayMonitor.shared.onNext = { [weak store] in
-                        store?.selectNextSession()
+                        guard let store else { return }
+                        if store.sidebarMode == .linear {
+                            store.selectNextLinearIssue()
+                        } else {
+                            store.selectNextSession()
+                        }
                     }
                     JumpOverlayMonitor.shared.onPrevious = { [weak store] in
-                        store?.selectPreviousSession()
+                        guard let store else { return }
+                        if store.sidebarMode == .linear {
+                            store.selectPreviousLinearIssue()
+                        } else {
+                            store.selectPreviousSession()
+                        }
                     }
                     JumpOverlayMonitor.shared.onHandoff = { [weak store] in
                         store?.handleHandoffShortcut()
@@ -82,7 +92,25 @@ struct BanyanApp: App {
                     store.openSelectedLinearIssue()
                 }
                 .keyboardShortcut("l")
-                .disabled(store.selectedLinearIssueURL == nil)
+                .disabled(store.sidebarMode == .linear
+                    ? store.selectedLinearListIssueURL == nil
+                    : store.selectedLinearIssueURL == nil)
+
+                Button("Show Linear Issues") {
+                    store.sidebarMode = .linear
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+
+                Button("Show Sessions") {
+                    store.sidebarMode = .sessions
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+
+                Button("Start Selected Linear Issue") {
+                    store.startSelectedLinearListIssueSession()
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(store.sidebarMode != .linear || store.selectedLinearListIssueID == nil)
 
                 Divider()
 

@@ -9,6 +9,14 @@ The first screen is the working surface:
 - each session is backed by a persistent `tmux` session, so agents keep running across Banyan restarts
 - programmatic control is available through `banyanctl`
 
+### Linear keyboard navigation
+
+When the Linear sidebar is active, use `Cmd+J` / `Cmd+K` to move through issues,
+`Cmd+L` to open the selected issue, and `Cmd+Return` to start a session for it.
+`Cmd+Shift+L` switches to the Linear sidebar and `Cmd+Shift+S` switches back to
+Sessions. The existing `Cmd+J` / `Cmd+K` shortcuts continue to move through
+terminals when the Sessions sidebar is active.
+
 The toolbar is intentionally small:
 
 - `+` forks the selected session's working directory into a new default shell.
