@@ -310,11 +310,13 @@ struct ProcessInfoRow: Sendable {
         return name == "tee" && arguments.contains("banyan-agent-process.log")
     }
 
-    /// Codex launches this internal runtime alongside the actual agent. Its
-    /// command line contains `codex`, so generic provider detection otherwise
-    /// counts it as a second Codex agent and incorrectly reports Subagents.
+    /// Codex launches these internal runtimes alongside the actual agent. Their
+    /// command lines contain agent/runtime names, so generic process detection
+    /// otherwise reports either Subagents or an active external command while
+    /// the agent is idle.
     var isCodexRuntimeHelper: Bool {
-        (commandName + " " + arguments).lowercased().contains("codex-code-mode-host")
+        let haystack = (commandName + " " + arguments).lowercased()
+        return haystack.contains("codex-code-mode-host") || haystack.contains("cua_node")
     }
 
     var isTmuxPlumbing: Bool {

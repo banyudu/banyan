@@ -380,6 +380,42 @@ import Testing
     #expect(result?.tone == .yellow)
 }
 
+@Test func supervisorIgnoresCodexCuaRuntimeAsExternalWork() {
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "node"),
+        processes: [
+            process(
+                pid: 100,
+                parentPID: 1,
+                commandName: "node",
+                arguments: "node /Users/example/bin/codex",
+                elapsed: 5
+            ),
+            process(
+                pid: 101,
+                parentPID: 100,
+                commandName: "/Users/example/lib/codex",
+                arguments: "/Users/example/lib/codex",
+                elapsed: 5
+            ),
+            process(
+                pid: 102,
+                parentPID: 101,
+                commandName: "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
+                arguments: "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
+                elapsed: 5
+            )
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "codex",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
 @Test func supervisorDoesNotDoubleCountRootAgentProcess() {
     let result = makeSupervisor(
         pane: pane(rootPID: 100, currentCommand: "codex"),
