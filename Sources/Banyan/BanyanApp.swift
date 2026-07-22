@@ -28,12 +28,7 @@ struct BanyanApp: App {
                         store?.selectPreviousSession()
                     }
                     JumpOverlayMonitor.shared.onHandoff = { [weak store] in
-                        guard let store,
-                              let session = store.selectedSession,
-                              session.canDispatchHandoff else {
-                            return false
-                        }
-                        store.dispatchHandoff(id: session.id)
+                        store?.handleHandoffShortcut()
                         return true
                     }
                     JumpOverlayMonitor.shared.start()

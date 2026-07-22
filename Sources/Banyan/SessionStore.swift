@@ -140,6 +140,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var selectedLinearListIssueDetails: LinearIssueDetails?
     @Published private(set) var selectedLinearListIssueLoadState: LinearIssueLoadState = .idle
     @Published private(set) var pendingHandoffJobs: [HandoffJob] = []
+    @Published var handoffNotice: String?
     @Published var addSessionDraft: AddSessionDraft?
     private(set) var sessionSwitchRequestedAt: DispatchTime?
     let selection = SessionSelection()
@@ -1856,11 +1857,12 @@ final class SessionStore: ObservableObject {
         requestClose(id: selectedSession.id)
     }
 
-    func dispatchHandoff(id: String) {
+    @discardableResult
+    func dispatchHandoff(id: String, bypassEligibility: Bool = false) -> Bool {
         guard let session = sessions.first(where: { $0.id == id }),
-              session.canDispatchHandoff,
+              (bypassEligibility || session.canDispatchHandoff),
               !pendingHandoffJobs.contains(where: { $0.sessionID == id }) else {
-            return
+            return false
         }
 
         let job = HandoffJob(
@@ -1874,7 +1876,7 @@ final class SessionStore: ObservableObject {
         do {
             try close(id: id)
         } catch {
-            return
+            return false
         }
 
         pendingHandoffJobs.append(job)
@@ -1885,8 +1887,25 @@ final class SessionStore: ObservableObject {
                 self.pendingHandoffJobs.removeAll { $0.id == job.id }
                 if case .failure = result {
                     try? self.respawn(id: job.sessionID)
+                    self.handoffNotice = "Handoff could not be started. The session was restored."
                 }
             }
+        }
+        return true
+    }
+
+    func handleHandoffShortcut() {
+        guard let session = selectedSession else {
+            handoffNotice = "Select a session before starting handoff."
+            return
+        }
+        guard !pendingHandoffJobs.contains(where: { $0.sessionID == session.id }) else {
+            handoffNotice = "Handoff is already running for this session."
+            return
+        }
+        guard dispatchHandoff(id: session.id, bypassEligibility: true) else {
+            handoffNotice = "Handoff could not be started."
+            return
         }
     }
 

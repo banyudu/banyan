@@ -89,6 +89,13 @@ struct ContentView: View {
         } message: {
             Text(closeConfirmationMessage)
         }
+        .alert("Handoff", isPresented: handoffNoticeBinding) {
+            Button("OK") {
+                store.handoffNotice = nil
+            }
+        } message: {
+            Text(store.handoffNotice ?? "")
+        }
         .background(WindowTitleConfigurator(trigger: titlebarConfigurationTrigger))
         .preferredColorScheme(store.terminalTheme.colorScheme)
         .accessibilityIdentifier(AccessibilityID.root)
@@ -768,6 +775,18 @@ struct ContentView: View {
         }
         return details.joined(separator: " ")
     }
+
+    private var handoffNoticeBinding: Binding<Bool> {
+        Binding(
+            get: { store.handoffNotice != nil },
+            set: { isPresented in
+                if !isPresented {
+                    store.handoffNotice = nil
+                }
+            }
+        )
+    }
+
 
     private var closeConfirmationTitle: String {
         if store.pendingCloseHasOngoingAgent {
