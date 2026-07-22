@@ -750,7 +750,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         } else {
             path = NSString(string: rawDirectory).expandingTildeInPath
         }
-        return URL(fileURLWithPath: path).standardizedFileURL.path
+        return PathDisplayName.canonicalPath(path)
     }
 
     private static func isConversationResetCommand(_ input: String?) -> Bool {

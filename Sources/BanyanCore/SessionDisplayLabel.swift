@@ -171,20 +171,19 @@ public enum SessionDisplayLabel {
     }
 
     private static func projectName(_ path: String) -> String {
-        let url = URL(fileURLWithPath: standardizedPath(path)).standardizedFileURL
-        let component = url.lastPathComponent
-        if component.isEmpty {
-            return url.path
+        let canonicalPath = standardizedPath(path)
+        let homePath = PathDisplayName.canonicalPath(NSHomeDirectory())
+        if canonicalPath == homePath || canonicalPath.hasPrefix(homePath + "/") {
+            return PathDisplayName.make(path: canonicalPath)
         }
-        return component
+
+        let url = URL(fileURLWithPath: canonicalPath).standardizedFileURL
+        let component = url.lastPathComponent
+        return component.isEmpty ? url.path : component
     }
 
     private static func standardizedPath(_ path: String) -> String {
-        let expanded = NSString(string: path).expandingTildeInPath
-        return URL(fileURLWithPath: expanded)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
+        PathDisplayName.canonicalPath(path)
     }
 
     private static func gitRemoteURL(cwd: String) -> (value: String?, degraded: Bool) {

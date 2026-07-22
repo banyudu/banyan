@@ -2402,9 +2402,7 @@ final class SessionStore: ObservableObject {
     }
 
     nonisolated private static func standardizedPath(_ path: String) -> String {
-        URL(fileURLWithPath: NSString(string: path).expandingTildeInPath)
-            .standardizedFileURL
-            .path
+        PathDisplayName.canonicalPath(path)
     }
 
     private func detectAttention(in text: String, for session: BanyanSession) {
@@ -2845,9 +2843,9 @@ final class SessionStore: ObservableObject {
         let expanded = NSString(string: raw).expandingTildeInPath
         var isDirectory: ObjCBool = false
         if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue {
-            return expanded
+            return PathDisplayName.canonicalPath(expanded)
         }
-        return NSHomeDirectory()
+        return PathDisplayName.canonicalPath(NSHomeDirectory())
     }
 
     private func normalizedParentSessionID(_ parentSessionID: String?) -> String? {
