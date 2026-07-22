@@ -229,7 +229,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.isRestored = isRestored
-        self.isProcessStarted = !isRestored
+        // A freshly spawned background session has no tmux backing yet. Keep this
+        // false until ensureSession succeeds; otherwise the supervisor can race
+        // the async tmux creation, observe a missing session, and mark the row
+        // closed before the command ever starts.
+        self.isProcessStarted = false
         self.pendingTheme = theme
         self.pendingFontFamily = fontFamily
         self.pendingFontSize = fontSize
@@ -336,7 +340,6 @@ final class BanyanSession: ObservableObject, Identifiable {
         // tmux work (subprocess spawns) runs off the main thread to avoid freezing the
         // UI while a session is created via banyanctl.
         isRestored = false
-        isProcessStarted = true
         status = .running
         touch()
         let backend = tmuxBackend
@@ -346,6 +349,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try backend.ensureSession(named: name, cwd: workingDirectory, command: launchCommand)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.isProcessStarted = true
+                    self.touch()
+                }
             } catch {
                 let message = error.localizedDescription
                 await MainActor.run { [weak self] in self?.failToStart(message) }

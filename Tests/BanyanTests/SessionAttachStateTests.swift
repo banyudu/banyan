@@ -14,6 +14,14 @@ import Testing
 }
 
 @MainActor
+@Test func freshSessionIsNotMarkedStartedBeforeItsBackingSessionExists() {
+    let session = makeAttachStateSession(isRestored: false)
+
+    #expect(!session.isProcessStarted)
+    #expect(session.status == .running)
+}
+
+@MainActor
 @Test func restoredRunningSessionDoesNotRequireManualAttachBeforeSelection() {
     let session = makeAttachStateSession(isRestored: true)
 
