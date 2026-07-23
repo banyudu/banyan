@@ -1461,7 +1461,7 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            JumpKeyBadge(label: jumpKeyLabel)
+            JumpKeyBadge(label: jumpKeyLabel, provider: session.displayAgentProvider)
 
             if let provider = session.displayAgentProvider {
                 AgentProviderIcon(provider: provider)
@@ -2218,18 +2218,30 @@ private struct TerminalReconnectBanner: View {
 
 private struct JumpKeyBadge: View {
     let label: String
+    let provider: CodingAgentProvider?
+
+    private var tint: Color {
+        switch provider {
+        case .claude:
+            return .orange
+        case .codex:
+            return .cyan
+        case .none, .deepseek, .gemini, .minimax, .opencode, .xiaomiMiMo, .zai:
+            return .secondary
+        }
+    }
 
     var body: some View {
         Text(label)
             .font(.system(size: 10, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.primary.opacity(0.7))
+            .foregroundStyle(tint)
             .frame(width: 18, height: 16)
             .background(
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(.primary.opacity(0.08))
+                    .fill(tint.opacity(0.14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .strokeBorder(.primary.opacity(0.15), lineWidth: 0.5)
+                            .strokeBorder(tint.opacity(0.32), lineWidth: 0.5)
                     )
             )
     }
