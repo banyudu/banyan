@@ -49,6 +49,16 @@ struct TmuxBackend: Sendable {
         baseArguments + ["attach-session", "-t", name]
     }
 
+    func configureTerminalTheme(_ theme: TerminalTheme, for sessionName: String? = nil) {
+        let targetArguments: [String]
+        if let sessionName {
+            targetArguments = ["-t", sessionName]
+        } else {
+            targetArguments = ["-g"]
+        }
+        _ = try? run(["set-option"] + targetArguments + ["window-style", theme.tmuxDefaultStyle])
+    }
+
     func listBanyanSessions() -> [String] {
         guard let output = try? run(["list-sessions", "-F", "#{session_name}"]) else {
             return []
@@ -188,10 +198,20 @@ struct TmuxBackend: Sendable {
         _ = try? run(["set-option", "-g", "mouse", "on"])
         _ = try? run(["set-option", "-g", "history-limit", "20000"])
         _ = try? run(["set-option", "-g", "default-terminal", "tmux-256color"])
+        configureServerFocusEvents()
         configureServerTerminalColors()
     }
 
+    private func configureServerFocusEvents() {
+        // Codex re-probes OSC 10/11 colors after FocusGained. This matters for
+        // sessions started in the background before Banyan attaches SwiftTerm.
+        _ = try? run(["set-option", "-g", "focus-events", "on"])
+    }
+
     private func configureServerTerminalColors() {
+        // Existing servers skip configureServerOptions(), so migrate this
+        // behavior whenever we touch their terminal capabilities as well.
+        configureServerFocusEvents()
         _ = try? run(["set-option", "-g", "terminal-overrides", "tmux-256color:RGB,xterm-256color:RGB"])
     }
 

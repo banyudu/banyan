@@ -43,6 +43,17 @@ struct BanyanApp: App {
                     }
                     JumpOverlayMonitor.shared.start()
                     store.selection.startClickMonitor()
+
+                    SessionRenameShortcutMonitor.shared.action = { [weak store] in
+                        guard let store,
+                              store.sidebarMode == .sessions,
+                              store.selectedSession != nil else {
+                            return false
+                        }
+                        store.selection.requestRenameSelectedSession()
+                        return true
+                    }
+                    SessionRenameShortcutMonitor.shared.start()
                 }
         }
         .windowStyle(.titleBar)
@@ -70,6 +81,13 @@ struct BanyanApp: App {
                 .disabled(store.sidebarMode == .linear
                     ? false
                     : store.selectedSession?.isImportedHistory != false)
+            }
+            CommandMenu("Session") {
+                Button("Rename Session") {
+                    store.selection.requestRenameSelectedSession()
+                }
+                .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(0xF705)!)))
+                .disabled(store.sidebarMode != .sessions || store.selectedSession == nil)
             }
             CommandMenu("Terminal") {
                 Button("Close Current Terminal") {
@@ -185,6 +203,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.keyEquivalent = ""
             item.keyEquivalentModifierMask = []
         }
+    }
+}
+
+private final class SessionRenameShortcutMonitor {
+    static let shared = SessionRenameShortcutMonitor()
+
+    var action: () -> Bool = { false }
+    private var monitor: Any?
+
+    private init() {}
+
+    deinit {
+        stop()
+    }
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard Self.isF2(event), self?.action() == true else {
+                return event
+            }
+            return nil
+        }
+    }
+
+    func stop() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+
+    private static func isF2(_ event: NSEvent) -> Bool {
+        guard !event.isARepeat, event.keyCode == 120 else { return false }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return !modifiers.contains(.command)
+            && !modifiers.contains(.option)
+            && !modifiers.contains(.control)
+            && !modifiers.contains(.shift)
     }
 }
 

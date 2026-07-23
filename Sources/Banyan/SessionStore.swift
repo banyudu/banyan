@@ -246,6 +246,10 @@ final class SessionStore: ObservableObject {
     private static let linearIssueListRefreshInterval: TimeInterval = 30 * 60
     private static let linearIssueListLoadTimeout: TimeInterval = 45
     private var selectedLinearListIssueTask: Task<Void, Never>?
+    /// Recently loaded issue details stay available while the user moves
+    /// through the Linear list. Re-selecting an issue can render this stale
+    /// snapshot immediately while the network refresh runs in the background.
+    private var linearIssueDetailsCache: [String: LinearIssueDetails] = [:]
     private var workspaceSaveTask: Task<Void, Never>?
     private var scratchWindow: NSWindow?
     private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
@@ -769,9 +773,13 @@ final class SessionStore: ObservableObject {
         guard force || selectedLinearListIssueDetails?.identifier != issueID else { return }
 
         selectedLinearListIssueTask?.cancel()
-        let hasStaleDetails = selectedLinearListIssueDetails?.identifier == issueID
+        let cachedDetails = linearIssueDetailsCache[issueID]
+        let hasStaleDetails = cachedDetails != nil
+            || selectedLinearListIssueDetails?.identifier == issueID
         selectedLinearListIssueLoadState = hasStaleDetails ? .loaded : .loading
-        if !hasStaleDetails {
+        if let cachedDetails {
+            selectedLinearListIssueDetails = cachedDetails
+        } else if !hasStaleDetails {
             selectedLinearListIssueDetails = nil
         }
 
@@ -782,6 +790,7 @@ final class SessionStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
+                    self.linearIssueDetailsCache[issueID] = issue
                     self.selectedLinearListIssueDetails = issue
                     self.mergeLinearWorkflowStates(issue.workflowStates)
                     self.selectedLinearListIssueLoadState = .loaded
@@ -791,7 +800,8 @@ final class SessionStore: ObservableObject {
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
                     self.selectedLinearListIssueLoadState =
-                        self.selectedLinearListIssueDetails?.identifier == issueID
+                        self.linearIssueDetailsCache[issueID] != nil
+                        || self.selectedLinearListIssueDetails?.identifier == issueID
                         ? .loaded
                         : .failed("Unable to load issue details")
                 }
@@ -831,6 +841,7 @@ final class SessionStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
+                    self.linearIssueDetailsCache[issueID] = issue
                     self.selectedLinearListIssueDetails = issue
                     self.mergeLinearWorkflowStates(issue.workflowStates)
                     self.selectedLinearListIssueLoadState = .loaded
@@ -1484,8 +1495,12 @@ final class SessionStore: ObservableObject {
         selectedLinearIssueStatusTask?.cancel()
         selectedLinearIssueStatusTask = nil
         selectedLinearIssueIdentifier = issueID
-        let hasStaleDetails = selectedLinearIssueDetails?.identifier == issueID
-        if !hasStaleDetails {
+        let cachedDetails = linearIssueDetailsCache[issueID]
+        let hasStaleDetails = cachedDetails != nil
+            || selectedLinearIssueDetails?.identifier == issueID
+        if let cachedDetails {
+            selectedLinearIssueDetails = cachedDetails
+        } else if !hasStaleDetails {
             selectedLinearIssueDetails = nil
         }
         selectedLinearIssueLoadState = hasStaleDetails ? .loaded : .loading
@@ -1502,6 +1517,7 @@ final class SessionStore: ObservableObject {
                           self.selectedLinearIssueIdentifier == issueID else {
                         return
                     }
+                    self.linearIssueDetailsCache[issueID] = issue
                     self.selectedLinearIssueDetails = issue
                     self.mergeLinearWorkflowStates(issue.workflowStates)
                     self.selectedLinearIssueLoadState = .loaded
@@ -1515,7 +1531,8 @@ final class SessionStore: ObservableObject {
                           self.selectedLinearIssueIdentifier == issueID else {
                         return
                     }
-                    if self.selectedLinearIssueDetails?.identifier == issueID {
+                    if self.linearIssueDetailsCache[issueID] != nil
+                        || self.selectedLinearIssueDetails?.identifier == issueID {
                         self.selectedLinearIssueLoadState = .loaded
                         self.startSelectedLinearIssueStatusRefreshIfNeeded()
                     } else {
@@ -1629,7 +1646,9 @@ final class SessionStore: ObservableObject {
               let issue = selectedLinearIssueDetails else {
             return
         }
-        selectedLinearIssueDetails = issue.applying(status: status)
+        let updatedIssue = issue.applying(status: status)
+        selectedLinearIssueDetails = updatedIssue
+        linearIssueDetailsCache[updatedIssue.identifier] = updatedIssue
         mergeLinearWorkflowStates(status.workflowStates)
     }
 
@@ -2224,6 +2243,10 @@ final class SessionStore: ObservableObject {
 
     private func requestTerminalFocus() {
         terminalFocusRequestID = UUID()
+    }
+
+    func focusSelectedTerminal() {
+        requestTerminalFocus()
     }
 
     private func applyAppearance() {

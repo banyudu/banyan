@@ -805,6 +805,9 @@ struct ContentView: View {
             },
             onRemove: {
                 try? store.remove(id: item.session.id)
+            },
+            onFocusTerminal: {
+                store.focusSelectedTerminal()
             }
         )
         .tag(item.session.id)
@@ -1509,6 +1512,7 @@ private struct SessionRow: View {
     let isHandoffPending: Bool
     let onHandoff: () -> Void
     let onRemove: () -> Void
+    let onFocusTerminal: () -> Void
 
     @State private var isRenaming = false
     @State private var renameDraft = ""
@@ -1554,7 +1558,7 @@ private struct SessionRow: View {
                     .textFieldStyle(.plain)
                     .font(titleFont)
                     .focused($isRenameFocused)
-                    .onSubmit(commitRename)
+                    .onSubmit(commitRenameAndFocusTerminal)
                     .onExitCommand(perform: cancelRename)
                     .onChange(of: isRenameFocused) { _, isFocused in
                         if !isFocused, isRenaming {
@@ -1610,6 +1614,11 @@ private struct SessionRow: View {
         .contentShape(Rectangle())
         .onHover(perform: setRowHovered)
         .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
+        .onChange(of: selection.renameRequestID) { _, _ in
+            if isSelected {
+                beginRename()
+            }
+        }
         .onDisappear(perform: resetRowHover)
         .animation(.easeOut(duration: 0.12), value: isRowHovered)
         .simultaneousGesture(singleClickSelectGesture)
@@ -1663,6 +1672,13 @@ private struct SessionRow: View {
             session.mark(title: trimmed)
         }
         isRenaming = false
+    }
+
+    private func commitRenameAndFocusTerminal() {
+        commitRename()
+        DispatchQueue.main.async {
+            onFocusTerminal()
+        }
     }
 
     private func cancelRename() {
