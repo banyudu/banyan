@@ -71,6 +71,13 @@ struct BanyanApp: App {
                     ? false
                     : store.selectedSession?.isImportedHistory != false)
             }
+            CommandMenu("Session") {
+                Button("Rename Session") {
+                    store.selection.requestRenameSelectedSession()
+                }
+                .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(0xF705)!)))
+                .disabled(store.sidebarMode != .sessions || store.selectedSession == nil)
+            }
             CommandMenu("Terminal") {
                 Button("Close Current Terminal") {
                     store.handleCloseCommand(in: NSApp.keyWindow)

@@ -8,6 +8,11 @@ import Foundation
 /// store's heavy view-tree re-evaluation.
 @MainActor
 final class SessionSelection: ObservableObject {
+    /// Changes each time the selected session should enter inline rename mode.
+    /// A request ID is used so pressing F2 repeatedly still produces a distinct
+    /// event even when the selected session has not changed.
+    @Published private(set) var renameRequestID = UUID()
+
     @Published var selectedSessionID: String? {
         didSet {
             if oldValue != selectedSessionID {
@@ -69,6 +74,11 @@ final class SessionSelection: ObservableObject {
         isSyncing = true
         selectedSessionID = newID
         isSyncing = false
+    }
+
+    func requestRenameSelectedSession() {
+        guard selectedSessionID != nil else { return }
+        renameRequestID = UUID()
     }
 
     private func storeSelectionForwarder(for newID: String?) -> () -> Void {

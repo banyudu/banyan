@@ -1610,6 +1610,11 @@ private struct SessionRow: View {
         .contentShape(Rectangle())
         .onHover(perform: setRowHovered)
         .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
+        .onChange(of: selection.renameRequestID) { _, _ in
+            if isSelected {
+                beginRename()
+            }
+        }
         .onDisappear(perform: resetRowHover)
         .animation(.easeOut(duration: 0.12), value: isRowHovered)
         .simultaneousGesture(singleClickSelectGesture)
