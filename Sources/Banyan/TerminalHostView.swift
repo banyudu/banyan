@@ -308,6 +308,9 @@ final class TerminalContainerView: NSView {
                 return event
             case .keyDown:
                 guard self.isTerminalFirstResponder else { return event }
+                if self.handlePageScrollShortcut(event) {
+                    return nil
+                }
                 if self.isSubmitKey(event) {
                     self.onUserSubmittedInput?(self.submittedInputBuffer)
                     self.submittedInputBuffer = ""
@@ -354,6 +357,26 @@ final class TerminalContainerView: NSView {
 
     private func isSubmitKey(_ event: NSEvent) -> Bool {
         event.keyCode == 36 || event.keyCode == 76
+    }
+
+    /// Page Up/Down are almost exclusively scrollback commands in an embedded
+    /// agent terminal. Route them to the tmux-owned history before SwiftTerm can
+    /// forward them to Claude, Codex, or the shell.
+    private func handlePageScrollShortcut(_ event: NSEvent) -> Bool {
+        let direction: Bool
+        switch event.keyCode {
+        case 116: // Page Up
+            direction = true
+        case 121: // Page Down
+            direction = false
+        default:
+            return false
+        }
+
+        guard isTmuxBackedPane else { return false }
+        let lines = max(1, (terminalView.terminal?.rows ?? 1) - 1)
+        _ = scrollHistoryViaTmux(lines: lines, up: direction)
+        return true
     }
 
     private func recordInput(_ event: NSEvent) {
