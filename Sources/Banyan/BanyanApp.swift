@@ -48,16 +48,15 @@ struct BanyanApp: App {
         .windowStyle(.titleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Terminal") {
+                Button("New Session") {
                     store.spawnSiblingSession()
                 }
                 .keyboardShortcut("n")
 
-                Button("New Child Terminal...") {
-                    store.showChildSessionSheet()
+                Button("New Terminal") {
+                    store.spawnTerminalSiblingSession()
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
-                .disabled(store.selectedSession == nil)
             }
             CommandGroup(after: .pasteboard) {
                 Button("Find") {

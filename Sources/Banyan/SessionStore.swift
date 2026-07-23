@@ -996,7 +996,25 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func spawnSiblingSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let command = Self.siblingRuntimeCommand(for: selectedSession?.agentProvider)
+        return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
+    }
+
+    /// Spawn a sibling using the selected session's coding-agent runtime when it
+    /// is one of the runtimes supported by the quick new-session shortcut.
+    @discardableResult
+    func spawnTerminalSiblingSession() -> BanyanSession {
+        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
         return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.parentSessionID)
+    }
+
+    nonisolated static func siblingRuntimeCommand(for provider: CodingAgentProvider?) -> String {
+        switch provider {
+        case .claude, .codex:
+            return provider?.defaultExecutableName ?? ""
+        default:
+            return ""
+        }
     }
 
     /// The kind the project header's split "+" button spawns by default —

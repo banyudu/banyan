@@ -14,9 +14,10 @@ import Testing
     #expect(JumpOverlayMonitor.jumpIndex(for: "j") == 19)
     #expect(JumpOverlayMonitor.jumpIndex(for: "k") == 20)
     #expect(JumpOverlayMonitor.jumpIndex(for: "l") == nil)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "n") == nil)
     #expect(JumpOverlayMonitor.jumpIndex(for: "s") == nil)
     #expect(JumpOverlayMonitor.jumpIndex(for: "m") == 21)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "z") == 33)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "z") == 32)
 }
 
 @Test func jumpIndexRejectsInvalidCharacters() {
@@ -32,7 +33,7 @@ import Testing
     #expect(JumpOverlayMonitor.jumpLabel(for: 19) == "J")
     #expect(JumpOverlayMonitor.jumpLabel(for: 20) == "K")
     #expect(JumpOverlayMonitor.jumpLabel(for: 21) == "M")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 33) == "Z")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 32) == "Z")
 }
 
 @Test func jumpLabelReturnsNilForOutOfRange() {
@@ -41,7 +42,7 @@ import Testing
 }
 
 @Test func jumpIndexAndLabelAreInverses() {
-    for index in 1...33 {
+    for index in 1...32 {
         guard let label = JumpOverlayMonitor.jumpLabel(for: index) else {
             Issue.record("No label for index \(index)")
             continue

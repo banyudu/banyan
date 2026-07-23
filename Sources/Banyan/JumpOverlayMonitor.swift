@@ -2,7 +2,8 @@ import AppKit
 
 /// Handles the always-visible session jump shortcuts and ⌘J/⌘K navigation.
 /// Digits use ⌘+1…9; letters use ⌘⇧+A…Z so ordinary editing shortcuts remain free.
-/// L and S are reserved for switching between the Linear and Sessions sidebars.
+/// L and S are reserved for switching between the Linear and Sessions sidebars;
+/// N is reserved for Cmd+Shift+N, the plain-terminal fallback.
 final class JumpOverlayMonitor {
     static let shared = JumpOverlayMonitor()
 
@@ -76,10 +77,10 @@ final class JumpOverlayMonitor {
 
     // MARK: - Key ↔ index mapping
 
-    private static let sessionJumpLetters = Array("abcdefghijkmnopqrtuvwxyz")
+    private static let sessionJumpLetters = Array("abcdefghijkmopqrtuvwxyz")
 
     /// Maps a key character to a 1-based session index.
-    /// "1"–"9" → 1–9; letters other than L and S → 10–33.
+    /// "1"–"9" → 1–9; letters other than L, N, and S → 10–32.
     static func jumpIndex(for char: Character) -> Int? {
         if let digit = char.wholeNumberValue, digit >= 1, digit <= 9 {
             return digit
@@ -127,7 +128,7 @@ final class JumpOverlayMonitor {
     }
 
     /// Maps a 1-based session index to its jump key label.
-    /// 1–9 → "1"–"9", 10–33 → letters excluding L and S.
+    /// 1–9 → "1"–"9", 10–32 → letters excluding L, N, and S.
     static func jumpLabel(for oneBasedIndex: Int) -> String? {
         if oneBasedIndex >= 1, oneBasedIndex <= 9 {
             return String(oneBasedIndex)
