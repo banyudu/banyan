@@ -2245,6 +2245,10 @@ final class SessionStore: ObservableObject {
         terminalFocusRequestID = UUID()
     }
 
+    func focusSelectedTerminal() {
+        requestTerminalFocus()
+    }
+
     private func applyAppearance() {
         sessions.forEach {
             $0.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
