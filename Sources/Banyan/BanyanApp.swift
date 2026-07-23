@@ -61,10 +61,16 @@ struct BanyanApp: App {
             }
             CommandGroup(after: .pasteboard) {
                 Button("Find") {
-                    store.showFindInSelectedSession()
+                    if store.sidebarMode == .linear {
+                        store.requestLinearFilterFocus()
+                    } else {
+                        store.showFindInSelectedSession()
+                    }
                 }
                 .keyboardShortcut("f")
-                .disabled(store.selectedSession?.isImportedHistory != false)
+                .disabled(store.sidebarMode == .linear
+                    ? false
+                    : store.selectedSession?.isImportedHistory != false)
             }
             CommandMenu("Terminal") {
                 Button("Close Current Terminal") {
@@ -111,6 +117,12 @@ struct BanyanApp: App {
                 }
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(store.sidebarMode != .linear || store.selectedLinearListIssueID == nil)
+
+                Button("Refresh Linear Issues") {
+                    store.refreshLinearIssueList()
+                }
+                .keyboardShortcut("r")
+                .disabled(store.sidebarMode != .linear || store.isLinearIssueListRefreshing)
 
                 Divider()
 

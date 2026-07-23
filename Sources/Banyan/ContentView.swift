@@ -6,6 +6,12 @@ import UniformTypeIdentifiers
 private let sidebarTitlebarHeaderHeight: CGFloat = 78
 private let sidebarTitlebarHeaderTopPadding: CGFloat = 30
 
+private enum LinearFocusTarget: Hashable {
+    case filter
+    case stateFilter
+    case issueList
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     private let selection: SessionSelection
@@ -18,6 +24,7 @@ struct ContentView: View {
 
     @State private var linearIssueFilterText = ""
     @State private var selectedLinearIssueStateIDs: Set<String>?
+    @FocusState private var linearFocusTarget: LinearFocusTarget?
 
     var body: some View {
         NavigationSplitView {
@@ -285,6 +292,16 @@ struct ContentView: View {
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
         }
+        .onAppear {
+            linearFocusTarget = .issueList
+            store.updateLinearIssueNavigationIDs(filteredLinearIssueIDs)
+        }
+        .onChange(of: store.linearFilterFocusRequestID) {
+            linearFocusTarget = .filter
+        }
+        .onChange(of: filteredLinearIssueIDs) { _, ids in
+            store.updateLinearIssueNavigationIDs(ids)
+        }
     }
 
     private var historySearchField: some View {
@@ -332,7 +349,13 @@ struct ContentView: View {
             TextField("Filter issues", text: $linearIssueFilterText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
+                .focused($linearFocusTarget, equals: .filter)
                 .accessibilityIdentifier(AccessibilityID.linearIssueSearchField)
+                .onKeyPress(.escape) {
+                    linearIssueFilterText = ""
+                    linearFocusTarget = .issueList
+                    return .handled
+                }
 
             if !linearIssueFilterText.isEmpty {
                 Button {
@@ -384,6 +407,7 @@ struct ContentView: View {
                     .lineLimit(1)
             }
             .menuStyle(.borderlessButton)
+            .focused($linearFocusTarget, equals: .stateFilter)
             .accessibilityIdentifier(AccessibilityID.linearIssueStateFilterMenu)
             .help("Filter Linear issues by state")
 
@@ -467,30 +491,76 @@ struct ContentView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(issues) { issue in
-                        LinearIssueRow(
-                            issue: issue,
-                            isSelected: store.selectedLinearListIssueID == issue.identifier,
-                            isStarting: store.linearIssueListLoadState.isStarting(issue.identifier),
-                            onSelect: {
-                                store.selectedLinearListIssueID = issue.identifier
-                            },
-                            onStart: {
-                                store.startLinearIssueSession(issue.identifier)
-                            }
-                        )
-                        .padding(.horizontal, 6)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(issues) { issue in
+                            LinearIssueRow(
+                                issue: issue,
+                                isSelected: store.selectedLinearListIssueID == issue.identifier,
+                                isStarting: store.linearIssueListLoadState.isStarting(issue.identifier),
+                                onSelect: {
+                                    store.selectedLinearListIssueID = issue.identifier
+                                },
+                                onStart: {
+                                    store.startLinearIssueSession(issue.identifier)
+                                }
+                            )
+                            .id(issue.identifier)
+                            .padding(.horizontal, 6)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .scrollIndicators(.visible)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .clipped()
+                .focusable()
+                .focused($linearFocusTarget, equals: .issueList)
+                .onChange(of: store.selectedLinearListIssueID) { _, issueID in
+                    guard let issueID, issues.contains(where: { $0.identifier == issueID }) else { return }
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo(issueID, anchor: .center)
                     }
                 }
-                .padding(.vertical, 2)
+                .onKeyPress(.upArrow) {
+                    moveLinearIssue(in: issues, direction: .previous)
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    moveLinearIssue(in: issues, direction: .next)
+                    return .handled
+                }
+                .onKeyPress(.return) {
+                    store.openSelectedLinearListIssue()
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    linearFocusTarget = .filter
+                    return .handled
+                }
+                .accessibilityIdentifier(AccessibilityID.linearIssueList)
             }
-            .scrollIndicators(.visible)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipped()
-            .accessibilityIdentifier(AccessibilityID.linearIssueList)
         }
+    }
+
+    private var filteredLinearIssueIDs: [String] {
+        filteredLinearIssues.map(\.identifier)
+    }
+
+    private func moveLinearIssue(
+        in issues: [LinearIssueSummary],
+        direction: SessionSelectionDirection
+    ) {
+        let ids = issues.map(\.identifier)
+        guard let issueID = SessionSelectionNavigator.adjacentID(
+            in: ids,
+            selectedID: store.selectedLinearListIssueID,
+            direction: direction
+        ) else {
+            return
+        }
+        store.selectedLinearListIssueID = issueID
     }
 
     private var filteredLinearIssues: [LinearIssueSummary] {

@@ -132,6 +132,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var linearIssueWorkflowStates: [LinearWorkflowState] = []
     @Published private(set) var linearIssueListLoadState: LinearIssueListLoadState = .idle
     @Published private(set) var isLinearIssueListRefreshing = false
+    @Published private(set) var linearIssueNavigationIDs: [String]?
     @Published var selectedLinearListIssueID: String? {
         didSet {
             refreshSelectedLinearListIssue()
@@ -139,6 +140,7 @@ final class SessionStore: ObservableObject {
     }
     @Published private(set) var selectedLinearListIssueDetails: LinearIssueDetails?
     @Published private(set) var selectedLinearListIssueLoadState: LinearIssueLoadState = .idle
+    @Published private(set) var linearFilterFocusRequestID = UUID()
     @Published private(set) var pendingHandoffJobs: [HandoffJob] = []
     @Published var handoffNotice: String?
     @Published var addSessionDraft: AddSessionDraft?
@@ -800,6 +802,20 @@ final class SessionStore: ObservableObject {
     func openSelectedLinearListIssue() {
         guard let url = selectedLinearListIssueURL else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    func requestLinearFilterFocus() {
+        linearFilterFocusRequestID = UUID()
+    }
+
+    func updateLinearIssueNavigationIDs(_ ids: [String]) {
+        guard linearIssueNavigationIDs != ids else { return }
+        linearIssueNavigationIDs = ids
+        if let selectedLinearListIssueID,
+           ids.contains(selectedLinearListIssueID) {
+            return
+        }
+        selectedLinearListIssueID = ids.first
     }
 
     func updateSelectedLinearListIssueState(_ state: LinearWorkflowState) {
@@ -1894,8 +1910,9 @@ final class SessionStore: ObservableObject {
     }
 
     private func selectAdjacentLinearIssue(direction: SessionSelectionDirection) {
+        let orderedIDs = linearIssueNavigationIDs ?? linearIssues.map(\.identifier)
         guard let issueID = SessionSelectionNavigator.adjacentID(
-            in: linearIssues.map(\.identifier),
+            in: orderedIDs,
             selectedID: selectedLinearListIssueID,
             direction: direction
         ) else {
