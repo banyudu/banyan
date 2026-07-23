@@ -62,6 +62,30 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    /// The default colors exposed through tmux to applications running in the pane.
+    ///
+    /// Codex queries OSC 10/11 to choose its adaptive styles. Keeping tmux's pane
+    /// defaults in sync with SwiftTerm lets that query work even though tmux is
+    /// the process between Codex and the terminal view.
+    var tmuxDefaultStyle: String {
+        let background = tmuxHex(backgroundColor, fallback: "0e0f12")
+        let foreground = tmuxHex(foregroundColor ?? NSColor.textColor, fallback: "e0e3e7")
+        return "fg=#\(foreground),bg=#\(background)"
+    }
+
+    private func tmuxHex(_ color: NSColor, fallback: String) -> String {
+        guard let color = color.usingColorSpace(.sRGB) else { return fallback }
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return String(format: "%02x%02x%02x",
+                      Int((red * 255).rounded()),
+                      Int((green * 255).rounded()),
+                      Int((blue * 255).rounded()))
+    }
+
     func apply(to terminalView: LocalProcessTerminalView, fontFamily: String? = nil, fontSize: Double = 13) {
         if let fontFamily,
            let font = NSFont(name: fontFamily, size: fontSize) {

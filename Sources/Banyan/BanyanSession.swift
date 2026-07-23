@@ -525,12 +525,16 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     private func startTerminalClient(resetBlankRecoveryAttempt: Bool = true) {
+        // Set the server default before creating a new pane. Codex probes OSC
+        // 10/11 during startup, before SwiftTerm has necessarily attached.
+        tmuxBackend.configureTerminalTheme(pendingTheme)
         do {
             try tmuxBackend.ensureSession(named: tmuxSessionName, cwd: cwd, command: command)
         } catch {
             failToStart(error.localizedDescription)
             return
         }
+        tmuxBackend.configureTerminalTheme(pendingTheme, for: tmuxSessionName)
         isRestored = false
         isProcessStarted = true
         if resetBlankRecoveryAttempt {
@@ -557,6 +561,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         // `makeTerminalView` applies it if and when one is created.
         guard let view = loadedTerminalView else { return }
         theme.apply(to: view, fontFamily: fontFamily, fontSize: fontSize)
+        tmuxBackend.configureTerminalTheme(theme, for: tmuxSessionName)
         appliedTheme = theme
         appliedFontFamily = fontFamily
         appliedFontSize = fontSize
