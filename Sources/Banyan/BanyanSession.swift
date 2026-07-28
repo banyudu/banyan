@@ -860,7 +860,8 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     private func requestExternalGeneratedTitleIfNeeded(context: SessionTitleContext) {
-        guard ExternalSessionTitleGenerator.isConfigured else { return }
+        let environment = ProcessInfo.processInfo.environment
+        guard ExternalSessionTitleGenerator.isConfigured(environment: environment) else { return }
         let signature = [
             context.id,
             context.command,
@@ -873,7 +874,10 @@ final class BanyanSession: ObservableObject, Identifiable {
         externalTitleTask?.cancel()
 
         externalTitleTask = Task.detached(priority: .utility) { [weak self] in
-            guard let title = ExternalSessionTitleGenerator.generateTitle(for: context) else { return }
+            guard let title = ExternalSessionTitleGenerator.generateTitle(
+                for: context,
+                environment: environment
+            ) else { return }
             await MainActor.run { [weak self] in
                 guard let self, !self.hasUsefulPinnedTitle, self.agentProvider != nil else { return }
                 self.generatedTitle = title

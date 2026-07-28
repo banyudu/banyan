@@ -4,14 +4,17 @@ import Foundation
 /// The command receives a JSON description of the session on standard input and
 /// returns the title on its first output line.
 public enum ExternalSessionTitleGenerator {
-    public static var isConfigured: Bool {
-        configuredCommand != nil
+    public static func isConfigured(environment: [String: String]) -> Bool {
+        configuredCommand(environment: environment) != nil
     }
 
-    public static func generateTitle(for context: SessionTitleContext) -> String? {
-        guard let command = configuredCommand else { return nil }
+    public static func generateTitle(
+        for context: SessionTitleContext,
+        environment: [String: String]
+    ) -> String? {
+        guard let command = configuredCommand(environment: environment) else { return nil }
         let process = Process()
-        process.executableURL = HostShell.executableURL(environment: ProcessInfo.processInfo.environment)
+        process.executableURL = HostShell.executableURL(environment: environment)
         process.arguments = ["-lc", command]
 
         let stdin = Pipe()
@@ -50,8 +53,8 @@ public enum ExternalSessionTitleGenerator {
         return output.flatMap(SessionTitleGenerator.sanitizeTitle)
     }
 
-    private static var configuredCommand: String? {
-        let environmentValue = ProcessInfo.processInfo.environment["BANYAN_TITLE_COMMAND"]
+    private static func configuredCommand(environment: [String: String]) -> String? {
+        let environmentValue = environment["BANYAN_TITLE_COMMAND"]
         let defaultsValue = UserDefaults.standard.string(forKey: "titleGeneratorCommand")
         let value = environmentValue ?? defaultsValue
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
