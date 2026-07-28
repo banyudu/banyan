@@ -1,0 +1,45 @@
+import Foundation
+import Testing
+@testable import BanyanCore
+
+@Test func sessionActionsCreatesAndPersistsShellSessionsThroughProtocols() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-actions-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let backend = SessionActionsTestBackend()
+    let catalog = SessionCatalog(
+        persistence: database,
+        runtime: SessionRuntimeCoordinator(backend: backend)
+    )
+    let actions = SessionActions(database: database, tmux: backend, catalog: catalog)
+
+    let id = try actions.createShellSession(cwd: "/tmp/project")
+
+    #expect(id == "tui-shell")
+    #expect(database.load().first?.cwd == "/tmp/project")
+    #expect(backend.events == ["ensure:banyan-tui-shell"])
+}
+
+private final class SessionActionsTestBackend: TmuxSessionLifecycleBackend, @unchecked Sendable {
+    var events: [String] = []
+
+    func hasSession(named name: String) -> Bool {
+        events.contains("ensure:\(name)")
+    }
+
+    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
+    func captureVisibleText(paneID: String, lineLimit: Int) -> String { "" }
+
+    func ensureSession(named name: String, cwd: String, command: String) throws {
+        events.append("ensure:\(name)")
+    }
+
+    func killSession(named name: String) {
+        events.append("kill:\(name)")
+    }
+}

@@ -3,12 +3,12 @@ import Foundation
 /// Shared session lifecycle actions used by terminal frontends.
 public struct SessionActions: Sendable {
     private let database: SessionDatabase
-    private let tmux: TmuxBackend
+    private let tmux: any TmuxSessionBackend
     private let catalog: SessionCatalog
 
     public init(
         database: SessionDatabase,
-        tmux: TmuxBackend,
+        tmux: any TmuxSessionBackend,
         catalog: SessionCatalog
     ) {
         self.database = database
