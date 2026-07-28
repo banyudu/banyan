@@ -1,0 +1,37 @@
+import Foundation
+
+public struct SessionRestorationPlan: Sendable, Equatable {
+    public let tmuxSessionName: String
+    public let status: SessionStatus
+    public let needsRecovery: Bool
+
+    public init(
+        tmuxSessionName: String,
+        status: SessionStatus,
+        needsRecovery: Bool
+    ) {
+        self.tmuxSessionName = tmuxSessionName
+        self.status = status
+        self.needsRecovery = needsRecovery
+    }
+}
+
+/// Produces the runtime fields needed to turn a persisted row into a live
+/// frontend session.
+public enum SessionRestorationPolicy {
+    public static func plan(
+        for snapshot: SessionSnapshot,
+        liveTmuxSessionNames: Set<String>
+    ) -> SessionRestorationPlan {
+        let tmuxSessionName = snapshot.tmuxSessionName ?? TmuxBackend.sessionName(for: snapshot.id)
+        return SessionRestorationPlan(
+            tmuxSessionName: tmuxSessionName,
+            status: SessionLifecyclePolicy.restoredStatus(snapshotStatus: snapshot.status),
+            needsRecovery: SessionLifecyclePolicy.shouldMarkForRecovery(
+                status: snapshot.status,
+                tmuxSessionName: tmuxSessionName,
+                liveTmuxSessionNames: liveTmuxSessionNames
+            )
+        )
+    }
+}

@@ -488,7 +488,10 @@ final class SessionStore: ObservableObject {
         // commands for every row.
         var displayContextsByCWD: [String: SessionProjectContext] = [:]
         for snapshot in snapshots {
-            let tmuxSessionName = snapshot.tmuxSessionName ?? TmuxBackend.sessionName(for: snapshot.id)
+            let restorationPlan = SessionRestorationPolicy.plan(
+                for: snapshot,
+                liveTmuxSessionNames: liveTmuxSessionNames
+            )
             let displayContext: SessionProjectContext
             if let cached = displayContextsByCWD[snapshot.cwd] {
                 displayContext = cached
@@ -499,7 +502,7 @@ final class SessionStore: ObservableObject {
             }
             let session = BanyanSession(
                 id: uniqueID(snapshot.id, avoidingLiveTmuxSessions: false),
-                tmuxSessionName: tmuxSessionName,
+                tmuxSessionName: restorationPlan.tmuxSessionName,
                 title: restoredTitle(from: snapshot),
                 titleURL: snapshot.titleURL,
                 titleURLWasAutoDetected: snapshot.titleURLWasAutoDetected,
@@ -507,18 +510,14 @@ final class SessionStore: ObservableObject {
                 isTitlePinned: snapshot.isTitlePinned,
                 cwd: snapshot.cwd,
                 command: snapshot.command,
-                status: Self.restoredStatus(snapshotStatus: snapshot.status),
+                status: restorationPlan.status,
                 tone: snapshot.tone,
                 parentSessionID: snapshot.parentSessionID,
                 agentSessionID: snapshot.agentSessionID,
                 createdAt: snapshot.createdAt,
                 updatedAt: snapshot.updatedAt,
                 isRestored: true,
-                needsRecovery: Self.shouldMarkForRecovery(
-                    status: snapshot.status,
-                    tmuxSessionName: tmuxSessionName,
-                    liveTmuxSessionNames: liveTmuxSessionNames
-                ),
+                needsRecovery: restorationPlan.needsRecovery,
                 displayContext: displayContext,
                 theme: terminalTheme,
                 fontFamily: terminalFontFamily,
