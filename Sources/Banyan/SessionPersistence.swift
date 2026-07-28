@@ -21,97 +21,22 @@ struct SessionPersistence: SessionPersistenceBackend {
     private static let linearIssueListCacheKey = "linearIssueListCache"
 
     private let databaseURL: URL
-    private let legacyJSONURL: URL
+    private let sessionDatabase: SessionDatabase
 
     init(
         databaseURL: URL = SessionPersistence.defaultDatabaseURL(),
         legacyJSONURL: URL = SessionPersistence.defaultLegacyJSONURL()
     ) {
         self.databaseURL = databaseURL
-        self.legacyJSONURL = legacyJSONURL
-        migrateLegacyJSONIfNeeded()
+        self.sessionDatabase = SessionDatabase(databaseURL: databaseURL, legacyJSONURL: legacyJSONURL)
     }
 
     func load() -> [SessionSnapshot] {
-        do {
-            let database = try openDatabase()
-            defer { sqlite3_close(database) }
-            try migrate(database)
-
-            let sql = """
-            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto
-            FROM sessions
-            ORDER BY sort_order ASC, created_at ASC
-            """
-            var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-                throw databaseError(database)
-            }
-            defer { sqlite3_finalize(statement) }
-
-            var snapshots: [SessionSnapshot] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
-                guard
-                    let id = columnText(statement, 0),
-                    let title = columnText(statement, 2),
-                    let cwd = columnText(statement, 7),
-                    let command = columnText(statement, 8),
-                    let rawStatus = columnText(statement, 9),
-                    let status = SessionStatus(rawValue: rawStatus),
-                    let rawTone = columnText(statement, 10),
-                    let tone = SessionTone(rawValue: rawTone),
-                    let createdAt = decodeDate(columnText(statement, 12)),
-                    let updatedAt = decodeDate(columnText(statement, 13))
-                else {
-                    continue
-                }
-                snapshots.append(
-                    SessionSnapshot(
-                        id: id,
-                        tmuxSessionName: columnText(statement, 1),
-                        title: title,
-                        titleURL: columnText(statement, 3),
-                        titleURLWasAutoDetected: sqlite3_column_int(statement, 15) != 0,
-                        reportedTitle: columnText(statement, 4),
-                        generatedTitle: columnText(statement, 5),
-                        isTitlePinned: sqlite3_column_int(statement, 6) != 0,
-                        cwd: cwd,
-                        command: command,
-                        status: status,
-                        tone: tone,
-                        parentSessionID: columnText(statement, 11),
-                        agentSessionID: columnText(statement, 14),
-                        createdAt: createdAt,
-                        updatedAt: updatedAt
-                    )
-                )
-            }
-            return snapshots
-        } catch {
-            NSLog("Banyan failed to load sessions from SQLite: \(error.localizedDescription)")
-            return []
-        }
+        sessionDatabase.load()
     }
 
     func save(_ snapshots: [SessionSnapshot]) {
-        do {
-            let database = try openDatabase()
-            defer { sqlite3_close(database) }
-            try migrate(database)
-            try execute(database, "BEGIN IMMEDIATE TRANSACTION")
-            do {
-                try execute(database, "DELETE FROM sessions")
-                for (index, snapshot) in snapshots.enumerated() {
-                    try upsert(snapshot, sortOrder: index, database: database)
-                }
-                try execute(database, "COMMIT")
-            } catch {
-                try? execute(database, "ROLLBACK")
-                throw error
-            }
-        } catch {
-            NSLog("Banyan failed to persist sessions to SQLite: \(error.localizedDescription)")
-        }
+        sessionDatabase.save(snapshots)
     }
 
     func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot {
@@ -192,18 +117,6 @@ struct SessionPersistence: SessionPersistenceBackend {
         }
     }
 
-    private func migrateLegacyJSONIfNeeded() {
-        guard FileManager.default.fileExists(atPath: legacyJSONURL.path) else { return }
-        guard load().isEmpty else { return }
-        guard let data = try? Data(contentsOf: legacyJSONURL) else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let snapshots = try? decoder.decode([SessionSnapshot].self, from: data), !snapshots.isEmpty else {
-            return
-        }
-        save(snapshots)
-    }
-
     private func openDatabase() throws -> OpaquePointer {
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -258,58 +171,6 @@ struct SessionPersistence: SessionPersistenceBackend {
             created_at TEXT NOT NULL
         )
         """)
-    }
-
-    private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
-        let sql = """
-        INSERT INTO sessions (
-            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            tmux_session_name = excluded.tmux_session_name,
-            title = excluded.title,
-            title_url = excluded.title_url,
-            reported_title = excluded.reported_title,
-            generated_title = excluded.generated_title,
-            is_title_pinned = excluded.is_title_pinned,
-            cwd = excluded.cwd,
-            command = excluded.command,
-            status = excluded.status,
-            tone = excluded.tone,
-            parent_session_id = excluded.parent_session_id,
-            created_at = excluded.created_at,
-            updated_at = excluded.updated_at,
-            sort_order = excluded.sort_order,
-            agent_session_id = excluded.agent_session_id,
-            title_url_auto = excluded.title_url_auto
-        """
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw databaseError(database)
-        }
-        defer { sqlite3_finalize(statement) }
-
-        bindText(statement, 1, snapshot.id)
-        bindText(statement, 2, snapshot.tmuxSessionName)
-        bindText(statement, 3, snapshot.title)
-        bindText(statement, 4, snapshot.titleURL)
-        bindText(statement, 5, snapshot.reportedTitle)
-        bindText(statement, 6, snapshot.generatedTitle)
-        sqlite3_bind_int(statement, 7, snapshot.isTitlePinned ? 1 : 0)
-        bindText(statement, 8, snapshot.cwd)
-        bindText(statement, 9, snapshot.command)
-        bindText(statement, 10, snapshot.status.rawValue)
-        bindText(statement, 11, snapshot.tone.rawValue)
-        bindText(statement, 12, snapshot.parentSessionID)
-        bindText(statement, 13, encodeDate(snapshot.createdAt))
-        bindText(statement, 14, encodeDate(snapshot.updatedAt))
-        sqlite3_bind_int64(statement, 15, Int64(sortOrder))
-        bindText(statement, 16, snapshot.agentSessionID)
-        sqlite3_bind_int(statement, 17, snapshot.titleURLWasAutoDetected ? 1 : 0)
-
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw databaseError(database)
-        }
     }
 
     private func loadState(_ database: OpaquePointer) throws -> [String: String] {
@@ -386,14 +247,6 @@ struct SessionPersistence: SessionPersistenceBackend {
         return String(cString: text)
     }
 
-    private func encodeDate(_ date: Date) -> String {
-        Self.dateFormatter.string(from: date)
-    }
-
-    private func decodeDate(_ value: String?) -> Date? {
-        value.flatMap { Self.dateFormatter.date(from: $0) }
-    }
-
     static func defaultDatabaseURL() -> URL {
         let base = applicationSupportURL()
         return base.appendingPathComponent("Banyan/state.sqlite")
@@ -409,11 +262,6 @@ struct SessionPersistence: SessionPersistenceBackend {
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
     }
 
-    private static let dateFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
 }
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
