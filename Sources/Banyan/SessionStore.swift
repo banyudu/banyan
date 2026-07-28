@@ -2161,7 +2161,10 @@ final class SessionStore: ObservableObject {
             return url
         }
         guard let selectedLinearListIssueID else { return nil }
-        return URL(string: LinearIssueReference.issueURL(for: selectedLinearListIssueID))
+        return URL(string: LinearIssueReference.issueURL(
+            for: selectedLinearListIssueID,
+            environment: ProcessInfo.processInfo.environment
+        ))
     }
 
     var selectedLinearListIssueContext: SessionContextInfo? {
@@ -2880,6 +2883,7 @@ final class SessionStore: ObservableObject {
             sessionID: session.id,
             cwd: session.cwd,
             homeDirectory: NSHomeDirectory(),
+            environment: ProcessInfo.processInfo.environment,
             title: session.title,
             titleURL: session.titleURL,
             displayTitle: session.displayTitle

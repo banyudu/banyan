@@ -123,7 +123,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     var titleLinkLabel: String? {
         LinearIssueReference.issueID(in: titleURL)
             ?? LinearIssueReference.issueID(in: title)
-            ?? LinearIssueReference.detect(branch: displayBranch, cwd: cwd)?.id
+            ?? LinearIssueReference.detect(
+                branch: displayBranch,
+                cwd: cwd,
+                environment: ProcessInfo.processInfo.environment
+            )?.id
     }
 
     var agentProvider: CodingAgentProvider? {
@@ -204,7 +208,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.tmuxSessionName = tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id)
         self.historyTranscriptURL = historyTranscriptURL
         self.title = title
-        let detectedReference = LinearIssueReference.detect(branch: resolvedDisplayContext.branch, cwd: cwd)
+        let detectedReference = LinearIssueReference.detect(
+            branch: resolvedDisplayContext.branch,
+            cwd: cwd,
+            environment: ProcessInfo.processInfo.environment
+        )
         if let normalizedTitleURL = Self.normalizedTitleURL(titleURL) {
             // A restore passes the persisted provenance. Without one (a fresh spawn),
             // infer it: a URL that matches what the cwd/branch says is auto-detected,
@@ -814,7 +822,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     /// detect survives, since that is a deliberate choice about a directory that says
     /// nothing on its own.
     private func refreshAutoDetectedTitleURL() {
-        guard let detectedReference = LinearIssueReference.detect(branch: displayBranch, cwd: cwd) else {
+        guard let detectedReference = LinearIssueReference.detect(
+            branch: displayBranch,
+            cwd: cwd,
+            environment: ProcessInfo.processInfo.environment
+        ) else {
             if titleURLWasAutoDetected {
                 titleURL = nil
                 titleURLWasAutoDetected = false

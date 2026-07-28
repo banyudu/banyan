@@ -6,6 +6,7 @@ import Testing
         sessionID: "session-1",
         cwd: "/tmp/project",
         homeDirectory: "/home/test",
+        environment: [:],
         title: "ENG-123 fix",
         titleURL: nil,
         displayTitle: "ENG-123 fix"
@@ -23,6 +24,7 @@ import Testing
         sessionID: "session-1",
         cwd: "/tmp/project",
         homeDirectory: "/home/test",
+        environment: [:],
         title: "one",
         titleURL: nil,
         displayTitle: "one"
@@ -31,6 +33,7 @@ import Testing
         sessionID: "session-1",
         cwd: "/tmp/project",
         homeDirectory: "/home/test",
+        environment: [:],
         title: "two",
         titleURL: nil,
         displayTitle: "two"

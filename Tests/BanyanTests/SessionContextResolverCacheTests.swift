@@ -14,6 +14,7 @@ private func input(
         sessionID: sessionID,
         cwd: cwd,
         homeDirectory: "/Users/example",
+        environment: [:],
         title: title,
         titleURL: titleURL,
         displayTitle: displayTitle

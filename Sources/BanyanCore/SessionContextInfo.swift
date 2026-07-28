@@ -4,6 +4,7 @@ public struct SessionContextLookupInput: Equatable, Sendable {
     public let sessionID: String
     public let cwd: String
     public let homeDirectory: String
+    public let environment: [String: String]
     public let title: String
     public let titleURL: String?
     public let displayTitle: String
@@ -12,6 +13,7 @@ public struct SessionContextLookupInput: Equatable, Sendable {
         sessionID: String,
         cwd: String,
         homeDirectory: String,
+        environment: [String: String],
         title: String,
         titleURL: String?,
         displayTitle: String
@@ -19,6 +21,7 @@ public struct SessionContextLookupInput: Equatable, Sendable {
         self.sessionID = sessionID
         self.cwd = cwd
         self.homeDirectory = homeDirectory
+        self.environment = environment
         self.title = title
         self.titleURL = titleURL
         self.displayTitle = displayTitle
@@ -29,6 +32,8 @@ public struct SessionContextLookupInput: Equatable, Sendable {
             sessionID,
             cwd,
             homeDirectory,
+            environment["BANYAN_LINEAR_BASE_URL"] ?? "",
+            environment["BANYAN_LINEAR_ORG"] ?? "",
             title,
             titleURL ?? "",
             displayTitle
@@ -86,9 +91,15 @@ public enum SessionContextResolver {
             : (LinearIssueReference.issueID(in: input.title)
             ?? LinearIssueReference.issueID(in: input.titleURL)
             ?? LinearIssueReference.issueID(in: input.displayTitle)
-            ?? LinearIssueReference.detect(branch: projectContext.branch, cwd: input.cwd)?.id)
+            ?? LinearIssueReference.detect(
+                branch: projectContext.branch,
+                cwd: input.cwd,
+                environment: input.environment
+            )?.id)
         let resolvedIssueID = detectedIssueID
-        let linearURL = resolvedIssueID.map(LinearIssueReference.issueURL(for:))
+        let linearURL = resolvedIssueID.map {
+            LinearIssueReference.issueURL(for: $0, environment: input.environment)
+        }
         let explicitPullRequestURL = pullRequestURL(in: input.titleURL)
             ?? pullRequestURL(in: input.title)
             ?? pullRequestURL(in: input.displayTitle)
@@ -167,7 +178,9 @@ public enum SessionContextResolver {
             signature: input.signature,
             linearIssueID: issueID,
             linearIssueTitle: nil,
-            linearIssueURL: issueID.map(LinearIssueReference.issueURL(for:)),
+            linearIssueURL: issueID.map {
+                LinearIssueReference.issueURL(for: $0, environment: input.environment)
+            },
             githubIssueNumber: githubIssue?.number,
             githubIssueTitle: nil,
             githubIssueURL: githubIssue?.url,

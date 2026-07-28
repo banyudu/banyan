@@ -134,7 +134,10 @@ struct ContentView: View {
                     items: commandPaletteItems,
                     onDismiss: dismissCommandPalette,
                     onOpenLinearIssue: { issueID in
-                        if let url = URL(string: LinearIssueReference.issueURL(for: issueID)) {
+                        if let url = URL(string: LinearIssueReference.issueURL(
+                            for: issueID,
+                            environment: ProcessInfo.processInfo.environment
+                        )) {
                             NSWorkspace.shared.open(url)
                         }
                     },

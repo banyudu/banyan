@@ -9,11 +9,15 @@ public struct LinearIssueReference: Equatable {
         self.url = url
     }
 
-    public static func detect(branch: String?, cwd: String) -> LinearIssueReference? {
+    public static func detect(
+        branch: String?,
+        cwd: String,
+        environment: [String: String]
+    ) -> LinearIssueReference? {
         guard let id = issueID(in: branch) ?? issueID(in: cwd) else {
             return nil
         }
-        return LinearIssueReference(id: id, url: issueURL(for: id))
+        return LinearIssueReference(id: id, url: issueURL(for: id, environment: environment))
     }
 
     public static func issueID(in value: String?) -> String? {
@@ -28,8 +32,7 @@ public struct LinearIssueReference: Equatable {
         return String(value[range]).uppercased()
     }
 
-    public static func issueURL(for id: String) -> String {
-        let environment = ProcessInfo.processInfo.environment
+    public static func issueURL(for id: String, environment: [String: String]) -> String {
         let baseURL: String
         if let configuredBaseURL = environment["BANYAN_LINEAR_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !configuredBaseURL.isEmpty {
