@@ -33,28 +33,28 @@ private struct BanyanTUI {
             render()
 
             guard let byte = readByte() else { break }
-            switch byte {
-            case 113: // q
+            switch TUIAction(byte: byte) {
+            case .quit:
                 return
-            case 104: // h
+            case .toggleHistory:
                 showingHistory.toggle()
                 selectedIndex = 0
                 continue
-            case 106: // j
+            case .next:
                 selectedIndex = min(selectedIndex + 1, max(0, visibleRowCount - 1))
-            case 107: // k
+            case .previous:
                 selectedIndex = max(0, selectedIndex - 1)
-            case 114: // r
+            case .refresh:
                 continue
-            case 82: // R
+            case .recover:
                 if !showingHistory { recoverSelected() }
-            case 110: // n
+            case .newSession:
                 if !showingHistory { createShellSession() }
-            case 99: // c
+            case .close:
                 if !showingHistory { closeSelected() }
-            case 120: // x
+            case .remove:
                 if !showingHistory { removeSelected() }
-            case 10, 13: // return
+            case .activate:
                 terminal.restore()
                 if showingHistory {
                     resumeHistorySelected()
@@ -62,9 +62,9 @@ private struct BanyanTUI {
                     attachSelected()
                 }
                 terminal.enterRaw()
-            case 84: // T
+            case .trimResume:
                 if showingHistory { resumeHistorySelected(trimmed: true) }
-            default:
+            case .unknown:
                 continue
             }
         }
