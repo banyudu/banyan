@@ -186,7 +186,7 @@ public struct PerformanceEventStore {
     }
 
     public static func defaultDatabaseURL() -> URL {
-        applicationSupportURL().appendingPathComponent("Banyan/state.sqlite")
+        BanyanDataDirectory.url(for: "Banyan/state.sqlite")
     }
 
     public static func thresholdMS(for name: String) -> Double {
@@ -340,11 +340,6 @@ public struct PerformanceEventStore {
 
     private static func decodeDate(_ value: String?) -> Date? {
         value.flatMap { dateFormatter.date(from: $0) }
-    }
-
-    private static func applicationSupportURL() -> URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
     }
 
     private static let dateFormatter: ISO8601DateFormatter = {

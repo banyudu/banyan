@@ -79,9 +79,7 @@ public struct ControlToken {
     }
 
     public static func tokenFileURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("Banyan/control-token")
+        BanyanDataDirectory.url(for: "Banyan/control-token")
     }
 }
 

@@ -59,8 +59,6 @@ public struct DetectorRule: Codable, Sendable {
     ]
 
     public static func rulesFileURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("Banyan/detectors.json")
+        BanyanDataDirectory.url(for: "Banyan/detectors.json")
     }
 }

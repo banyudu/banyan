@@ -315,16 +315,11 @@ public struct SessionDatabase: Sendable {
     }
 
     public static func defaultDatabaseURL() -> URL {
-        applicationSupportURL().appendingPathComponent("Banyan/state.sqlite")
+        BanyanDataDirectory.url(for: "Banyan/state.sqlite")
     }
 
     public static func defaultLegacyJSONURL() -> URL {
-        applicationSupportURL().appendingPathComponent("Banyan/sessions.json")
-    }
-
-    private static func applicationSupportURL() -> URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        BanyanDataDirectory.url(for: "Banyan/sessions.json")
     }
 
     private static let dateFormatter: ISO8601DateFormatter = {
