@@ -10,8 +10,8 @@ public struct SessionDatabase: Sendable {
     private let legacyJSONURL: URL
 
     public init(
-        databaseURL: URL = Self.defaultDatabaseURL(),
-        legacyJSONURL: URL = Self.defaultLegacyJSONURL()
+        databaseURL: URL,
+        legacyJSONURL: URL
     ) {
         self.databaseURL = databaseURL
         self.legacyJSONURL = legacyJSONURL

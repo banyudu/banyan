@@ -3,7 +3,10 @@ import Foundation
 
 private func makeDefaultApp() -> BanyanTUI {
     let backend = TmuxBackend.shared
-    let database = SessionDatabase()
+    let database = SessionDatabase(
+        databaseURL: SessionDatabase.defaultDatabaseURL(),
+        legacyJSONURL: SessionDatabase.defaultLegacyJSONURL()
+    )
     let output = StandardTUIOutput()
     return BanyanTUI(
         backend: backend,
