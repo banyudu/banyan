@@ -4,8 +4,14 @@ import Foundation
 private func makeDefaultApp() -> BanyanTUI {
     let backend = TmuxBackend.shared
     let database = SessionDatabase(
-        databaseURL: SessionDatabase.defaultDatabaseURL(),
-        legacyJSONURL: SessionDatabase.defaultLegacyJSONURL()
+        databaseURL: SessionDatabase.defaultDatabaseURL(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        ),
+        legacyJSONURL: SessionDatabase.defaultLegacyJSONURL(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
     )
     let output = StandardTUIOutput()
     return BanyanTUI(

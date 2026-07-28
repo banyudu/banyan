@@ -31,8 +31,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
     private let sessionDatabase: SessionDatabase
 
     init(
-        databaseURL: URL = SessionDatabase.defaultDatabaseURL(),
-        legacyJSONURL: URL = SessionDatabase.defaultLegacyJSONURL()
+        databaseURL: URL,
+        legacyJSONURL: URL
     ) {
         self.sessionDatabase = SessionDatabase(databaseURL: databaseURL, legacyJSONURL: legacyJSONURL)
     }

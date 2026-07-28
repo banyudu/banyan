@@ -314,19 +314,25 @@ public struct SessionDatabase: Sendable {
         value.flatMap { Self.dateFormatter.date(from: $0) }
     }
 
-    public static func defaultDatabaseURL() -> URL {
+    public static func defaultDatabaseURL(
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> URL {
         BanyanDataDirectory.url(
             for: "Banyan/state.sqlite",
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: environment,
+            homeDirectory: homeDirectory
         )
     }
 
-    public static func defaultLegacyJSONURL() -> URL {
+    public static func defaultLegacyJSONURL(
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> URL {
         BanyanDataDirectory.url(
             for: "Banyan/sessions.json",
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: environment,
+            homeDirectory: homeDirectory
         )
     }
 

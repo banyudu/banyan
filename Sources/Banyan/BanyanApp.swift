@@ -5,7 +5,16 @@ import SwiftUI
 struct BanyanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = SessionStore(
-        persistence: SessionPersistence(),
+        persistence: SessionPersistence(
+            databaseURL: SessionDatabase.defaultDatabaseURL(
+                environment: ProcessInfo.processInfo.environment,
+                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            ),
+            legacyJSONURL: SessionDatabase.defaultLegacyJSONURL(
+                environment: ProcessInfo.processInfo.environment,
+                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            )
+        ),
         tmuxBackend: TmuxBackend.shared,
         sessionBackend: TmuxBackend.shared,
         processTable: LiveProcessTableProvider(),
