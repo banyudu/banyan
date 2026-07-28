@@ -1,4 +1,5 @@
 import Foundation
+import BanyanCore
 import Testing
 @testable import Banyan
 
@@ -544,14 +545,14 @@ import Testing
 @Test func promptTitleAssignmentsDoNotReuseOneHistoryTitleForMultipleSessions() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
     let sessions = [
-        LivePromptTitleMatchInput(
+        AgentSessionMatchInput(
             id: "session-a",
             cwd: "/tmp/banyan",
             createdAt: base,
             resetAt: nil,
             provider: .codex
         ),
-        LivePromptTitleMatchInput(
+        AgentSessionMatchInput(
             id: "session-b",
             cwd: "/tmp/banyan",
             createdAt: base.addingTimeInterval(10),
@@ -584,14 +585,14 @@ import Testing
 @Test func promptTitleAssignmentsPreferNearestOneToOneMatches() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
     let sessions = [
-        LivePromptTitleMatchInput(
+        AgentSessionMatchInput(
             id: "session-a",
             cwd: "/tmp/banyan",
             createdAt: base,
             resetAt: nil,
             provider: .codex
         ),
-        LivePromptTitleMatchInput(
+        AgentSessionMatchInput(
             id: "session-b",
             cwd: "/tmp/banyan",
             createdAt: base.addingTimeInterval(70),
@@ -634,7 +635,7 @@ import Testing
 @Test func promptTitleAssignmentsAfterResetPreferNewestUpdatedHistory() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
     let sessions = [
-        LivePromptTitleMatchInput(
+        AgentSessionMatchInput(
             id: "session-a",
             cwd: "/tmp/banyan",
             createdAt: base,

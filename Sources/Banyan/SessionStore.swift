@@ -66,8 +66,6 @@ private enum HandoffDispatchError: Error {
     case failed(Int32)
 }
 
-typealias LivePromptTitleMatchInput = AgentSessionMatchInput
-
 @MainActor
 final class SessionStore: ObservableObject {
     private static let scratchWindowIdentifier = NSUserInterfaceItemIdentifier("banyan.scratch-terminal")
@@ -2479,7 +2477,7 @@ final class SessionStore: ObservableObject {
             )
         }
         let inputs = liveSessions.map {
-            LivePromptTitleMatchInput(
+            AgentSessionMatchInput(
                 id: $0.id,
                 cwd: $0.cwd,
                 createdAt: $0.createdAt,
@@ -2555,7 +2553,7 @@ final class SessionStore: ObservableObject {
     }
 
     nonisolated static func bestPromptTitleAssignments(
-        for sessions: [LivePromptTitleMatchInput],
+        for sessions: [AgentSessionMatchInput],
         in candidates: [ImportedAgentSession]
     ) -> [String: ImportedAgentSession] {
         AgentSessionMatcher.bestPromptTitleAssignments(for: sessions, in: candidates)
