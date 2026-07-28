@@ -7,6 +7,7 @@ struct BanyanApp: App {
     @StateObject private var store = SessionStore(
         persistence: SessionPersistence(),
         tmuxBackend: TmuxBackend.shared,
+        sessionBackend: TmuxBackend.shared,
         processTable: LiveProcessTableProvider(),
         historyBackend: DefaultSessionHistoryBackend()
     )

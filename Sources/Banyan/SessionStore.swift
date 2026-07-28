@@ -175,6 +175,7 @@ final class SessionStore: ObservableObject {
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
     private let detector = AgentStateDetector(rules: DetectorRule.loadConfiguredRules())
     private let tmuxBackend: any TmuxSessionStoreBackend
+    private let sessionBackend: any TmuxClientBackend
     private let processTable: any ProcessTableProvider
     private let historyBackend: any SessionHistoryBackend
     private var didLoadPersistedSessions = false
@@ -231,11 +232,13 @@ final class SessionStore: ObservableObject {
     init(
         persistence: any SessionStorePersistenceBackend,
         tmuxBackend: any TmuxSessionStoreBackend,
+        sessionBackend: any TmuxClientBackend,
         processTable: any ProcessTableProvider,
         historyBackend: any SessionHistoryBackend
     ) {
         self.persistence = persistence
         self.tmuxBackend = tmuxBackend
+        self.sessionBackend = sessionBackend
         self.processTable = processTable
         self.historyBackend = historyBackend
         let defaults = UserDefaults.standard
@@ -530,7 +533,8 @@ final class SessionStore: ObservableObject {
                 displayContext: displayContext,
                 theme: terminalTheme,
                 fontFamily: terminalFontFamily,
-                fontSize: terminalFontSize
+                fontSize: terminalFontSize,
+                tmuxBackend: sessionBackend
             )
             session.reportedTitle = snapshot.reportedTitle
             attach(session)
@@ -1051,7 +1055,8 @@ final class SessionStore: ObservableObject {
             tone: .neutral,
             theme: terminalTheme,
             fontFamily: terminalFontFamily,
-            fontSize: terminalFontSize
+            fontSize: terminalFontSize,
+            tmuxBackend: sessionBackend
         )
         attachScratch(session)
         scratchSession = session
@@ -1143,7 +1148,8 @@ final class SessionStore: ObservableObject {
             parentSessionID: parentSessionID,
             theme: terminalTheme,
             fontFamily: terminalFontFamily,
-            fontSize: terminalFontSize
+            fontSize: terminalFontSize,
+            tmuxBackend: sessionBackend
         )
         attach(session)
         sessions.append(session)
