@@ -2,9 +2,7 @@ import Foundation
 
 /// System executable directories searched by Banyan's host integrations.
 public enum HostExecutablePaths {
-    public static func userPaths(
-        homeDirectory: String = NSHomeDirectory()
-    ) -> [String] {
+    public static func userPaths(homeDirectory: String) -> [String] {
         [
             "\(homeDirectory)/bin",
             "\(homeDirectory)/.bun/bin",

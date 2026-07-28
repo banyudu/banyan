@@ -278,7 +278,7 @@ public enum SessionContextResolver {
     }
 
     private static func processEnvironment() -> [String: String] {
-        let additions = HostExecutablePaths.userPaths()
+        let additions = HostExecutablePaths.userPaths(homeDirectory: NSHomeDirectory())
             + [
             "/nix/var/nix/profiles/default/bin",
             ]
