@@ -176,7 +176,7 @@ final class SessionStore: ObservableObject {
     /// no-op saves (e.g. every supervisor tick) that re-serialized unchanged state.
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
     private let detector = AgentStateDetector()
-    private let tmuxBackend = TmuxBackend.shared
+    private let tmuxBackend: any TmuxSessionDiscoveryBackend
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
     /// Effective cadence the live `supervisorTimer` was installed with, so we can
@@ -228,7 +228,8 @@ final class SessionStore: ObservableObject {
     private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
     private var isClosingScratchTerminal = false
 
-    init() {
+    init(tmuxBackend: any TmuxSessionDiscoveryBackend = TmuxBackend.shared) {
+        self.tmuxBackend = tmuxBackend
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
@@ -2578,13 +2579,13 @@ final class SessionStore: ObservableObject {
         guard !inputs.isEmpty else { return }
 
         isSupervisorTickRunning = true
+        let backend = tmuxBackend
 
         Task.detached(priority: .utility) { [weak self] in
             // Time the whole tick: `ps` snapshot + per-session tmux inspection. This
             // is the app's steady-state energy cost, previously untracked and so
             // invisible in `banyanctl perf report`.
             let tickStartedAt = DispatchTime.now()
-            let backend = TmuxBackend.shared
             let synchronizer = SessionStatusSynchronizer(
                 backend: backend,
                 processTable: ProcessTable.snapshot()

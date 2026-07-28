@@ -59,6 +59,11 @@ public protocol TmuxClientBackend: TmuxTerminalBackend {
     func refreshClients(attachedTo name: String)
 }
 
+/// Backend surface needed by the macOS session store for discovery and lifecycle.
+public protocol TmuxSessionDiscoveryBackend: TmuxSessionLifecycleBackend {
+    func listBanyanSessions() -> [String]
+}
+
 public struct SessionLaunchRequest: Sendable {
     public let sessionName: String
     public let cwd: String
