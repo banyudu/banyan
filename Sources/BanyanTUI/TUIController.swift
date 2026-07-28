@@ -7,6 +7,7 @@ struct BanyanTUI {
     private let actions: any SessionListActions
     private let input: any TUIInput
     private let output: any TUIOutput
+    private let currentDirectory: String
     private var model: SessionListModel
 
     init(
@@ -14,7 +15,8 @@ struct BanyanTUI {
         dataSource: any SessionListDataSource,
         actions: any SessionListActions,
         input: any TUIInput,
-        output: any TUIOutput
+        output: any TUIOutput,
+        currentDirectory: String
     ) {
         self.tmux = backend
         self.attachment = TUIAttachment(tmux: backend, output: output)
@@ -22,6 +24,7 @@ struct BanyanTUI {
         self.actions = actions
         self.input = input
         self.output = output
+        self.currentDirectory = currentDirectory
     }
 
     init(backend: any TmuxTerminalBackend = TmuxBackend.shared) {
@@ -41,7 +44,8 @@ struct BanyanTUI {
                 )
             ),
             input: TerminalMode(),
-            output: StandardTUIOutput()
+            output: StandardTUIOutput(),
+            currentDirectory: FileManager.default.currentDirectoryPath
         )
     }
 
@@ -125,7 +129,7 @@ struct BanyanTUI {
 
     private mutating func createShellSession() {
         do {
-            let id = try actions.createShellSession(cwd: FileManager.default.currentDirectoryPath)
+            let id = try actions.createShellSession(cwd: currentDirectory)
             model.showNotice("Created \(id)")
         } catch {
             model.showNotice("Unable to create session: \(error.localizedDescription)")
