@@ -78,6 +78,8 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var delegate: TerminalSessionDelegate?
     private let tmuxBackend: any TmuxClientBackend
     private let sessionRuntime: any SessionRuntimeBackend
+    private let homeDirectory: String
+    private let environment: [String: String]
 
     private var launchRequest: SessionLaunchRequest {
         SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command)
@@ -111,7 +113,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             reportedTitle: reportedTitle,
             generatedTitle: generatedTitle,
             cwd: cwd,
-            homeDirectory: NSHomeDirectory(),
+            homeDirectory: homeDirectory,
             detectedProvider: detectedAgentProvider,
             command: command
         )
@@ -126,7 +128,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             ?? LinearIssueReference.detect(
                 branch: displayBranch,
                 cwd: cwd,
-                environment: ProcessInfo.processInfo.environment
+                environment: environment
             )?.id
     }
 
@@ -196,14 +198,18 @@ final class BanyanSession: ObservableObject, Identifiable {
         theme: TerminalTheme,
         fontFamily: String? = nil,
         fontSize: Double = 13,
-        tmuxBackend: any TmuxClientBackend
+        tmuxBackend: any TmuxClientBackend,
+        homeDirectory: String = NSHomeDirectory(),
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.tmuxBackend = tmuxBackend
         self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)
+        self.homeDirectory = homeDirectory
+        self.environment = environment
         let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(
             cwd: cwd,
-            homeDirectory: NSHomeDirectory(),
-            environment: ProcessInfo.processInfo.environment
+            homeDirectory: homeDirectory,
+            environment: environment
         )
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id)
@@ -212,7 +218,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         let detectedReference = LinearIssueReference.detect(
             branch: resolvedDisplayContext.branch,
             cwd: cwd,
-            environment: ProcessInfo.processInfo.environment
+            environment: environment
         )
         if let normalizedTitleURL = Self.normalizedTitleURL(titleURL) {
             // A restore passes the persisted provenance. Without one (a fresh spawn),
@@ -586,7 +592,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         terminalView.startProcess(
             executable: "/usr/bin/env",
             args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path] + tmuxBackend.attachArguments(for: tmuxSessionName),
-            environment: Self.terminalEnvironment(),
+            environment: terminalEnvironment(),
             currentDirectory: cwd
         )
         touch()
@@ -699,8 +705,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard let directory = Self.normalizedDirectory(directory) else { return }
         let displayContext = SessionDisplayLabel.context(
             cwd: directory,
-            homeDirectory: NSHomeDirectory(),
-            environment: ProcessInfo.processInfo.environment
+            homeDirectory: homeDirectory,
+            environment: environment
         )
         guard directory != cwd else {
             applyProjectContext(displayContext)
@@ -709,11 +715,16 @@ final class BanyanSession: ObservableObject, Identifiable {
             }
             return
         }
-        let shouldUpdateTitle = Self.titleTracksCurrentDirectory(title, isTitlePinned: isTitlePinned, cwd: cwd)
+        let shouldUpdateTitle = SessionInputPolicy.titleTracksCurrentDirectory(
+            title,
+            isTitlePinned: isTitlePinned,
+            cwd: cwd,
+            homeDirectory: homeDirectory
+        )
         cwd = directory
         updateDisplayContext(displayContext)
         if shouldUpdateTitle {
-            title = Self.titleForCurrentDirectory(directory)
+            title = titleForCurrentDirectory(directory)
         }
         refreshAutoDetectedTitleURL()
         refreshGeneratedTitle()
@@ -767,7 +778,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             title: title,
             isTitlePinned: isTitlePinned,
             cwd: cwd,
-            homeDirectory: NSHomeDirectory()
+            homeDirectory: homeDirectory
         )
     }
 
@@ -827,7 +838,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard let detectedReference = LinearIssueReference.detect(
             branch: displayBranch,
             cwd: cwd,
-            environment: ProcessInfo.processInfo.environment
+            environment: environment
         ) else {
             if titleURLWasAutoDetected {
                 titleURL = nil
@@ -841,8 +852,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         titleURL = detectedReference.url
     }
 
-    nonisolated private static func titleForCurrentDirectory(_ cwd: String) -> String {
-        PathDisplayName.make(path: cwd, homeDirectory: NSHomeDirectory())
+    private func titleForCurrentDirectory(_ cwd: String) -> String {
+        PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
     }
 
     nonisolated private static func normalizedTitleURL(_ titleURL: String?) -> String? {
@@ -862,7 +873,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     private func requestExternalGeneratedTitleIfNeeded(context: SessionTitleContext) {
-        let environment = ProcessInfo.processInfo.environment
+        let environment = self.environment
         guard ExternalSessionTitleGenerator.isConfigured(environment: environment) else { return }
         let signature = [
             context.id,
@@ -955,9 +966,9 @@ final class BanyanSession: ObservableObject, Identifiable {
         touch()
     }
 
-    private static func terminalEnvironment() -> [String] {
+    private func terminalEnvironment() -> [String] {
         var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
-        let inherited = ProcessInfo.processInfo.environment
+        let inherited = self.environment
         for key in ["PATH", "SHELL", "TMPDIR", "SSH_AUTH_SOCK"] {
             if let value = inherited[key] {
                 environment.append("\(key)=\(value)")
