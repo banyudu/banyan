@@ -2,13 +2,13 @@ import Foundation
 
 /// Session rows, history rows, and selection behavior shared by list frontends.
 public struct SessionListModel: Sendable {
-    private let dataSource: SessionDataSource
+    private let dataSource: any SessionListDataSource
     private var viewState = SessionListViewState()
 
     public private(set) var sessions: [SessionSnapshot] = []
     public private(set) var history: [ImportedAgentSession] = []
 
-    public init(dataSource: SessionDataSource) {
+    public init(dataSource: any SessionListDataSource) {
         self.dataSource = dataSource
     }
 
@@ -29,7 +29,7 @@ public struct SessionListModel: Sendable {
     public mutating func reload() {
         if showingHistory {
             if viewState.historyNeedsReload {
-                history = dataSource.loadHistory()
+                history = dataSource.loadHistory(limit: 30)
                 viewState.markHistoryLoaded()
             }
             viewState.clampSelection(rowCount: history.count)

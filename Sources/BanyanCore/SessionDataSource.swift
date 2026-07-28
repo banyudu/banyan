@@ -1,8 +1,13 @@
 import Foundation
 
+public protocol SessionListDataSource: Sendable {
+    func loadActiveSessions() -> [SessionSnapshot]
+    func loadHistory(limit: Int) -> [ImportedAgentSession]
+}
+
 /// Loads persisted sessions and reconciles them with live tmux/process state.
 /// Frontends decide how the resulting rows are rendered or selected.
-public struct SessionDataSource: Sendable {
+public struct SessionDataSource: Sendable, SessionListDataSource {
     private let persistence: any SessionPersistenceBackend
     private let backend: any AgentSupervisorBackend
     private let processTable: @Sendable () -> ProcessTable
