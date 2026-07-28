@@ -1,19 +1,18 @@
-import BanyanCore
 import Foundation
 
-struct AgentStateDetector {
-    struct Result {
-        let status: SessionStatus
-        let tone: SessionTone
+public struct AgentStateDetector: Sendable {
+    public struct Result: Sendable {
+        public let status: SessionStatus
+        public let tone: SessionTone
     }
 
     private let rules: [DetectorRule]
 
-    init(rules: [DetectorRule] = DetectorRule.loadConfiguredRules()) {
+    public init(rules: [DetectorRule] = DetectorRule.loadConfiguredRules()) {
         self.rules = rules
     }
 
-    func detect(in text: String) -> Result? {
+    public func detect(in text: String) -> Result? {
         let lowercased = text.lowercased()
         for rule in rules where rule.matches(lowercased) {
             return Result(status: rule.status, tone: rule.tone)
@@ -22,16 +21,22 @@ struct AgentStateDetector {
     }
 }
 
-struct DetectorRule: Codable {
-    let status: SessionStatus
-    let tone: SessionTone
-    let patterns: [String]
+public struct DetectorRule: Codable, Sendable {
+    public let status: SessionStatus
+    public let tone: SessionTone
+    public let patterns: [String]
 
-    func matches(_ text: String) -> Bool {
+    public init(status: SessionStatus, tone: SessionTone, patterns: [String]) {
+        self.status = status
+        self.tone = tone
+        self.patterns = patterns
+    }
+
+    public func matches(_ text: String) -> Bool {
         patterns.contains { text.contains($0) }
     }
 
-    static func loadConfiguredRules() -> [DetectorRule] {
+    public static func loadConfiguredRules() -> [DetectorRule] {
         let url = rulesFileURL()
         if let data = try? Data(contentsOf: url) {
             let decoder = JSONDecoder()
@@ -42,7 +47,7 @@ struct DetectorRule: Codable {
         return defaultRules
     }
 
-    static let defaultRules: [DetectorRule] = [
+    public static let defaultRules: [DetectorRule] = [
         DetectorRule(status: .asking, tone: .yellow, patterns: [
             "do you want", "would you like", "should i", "can i",
             "approve", "permission required", "approval required"
@@ -53,7 +58,7 @@ struct DetectorRule: Codable {
         ])
     ]
 
-    static func rulesFileURL() -> URL {
+    public static func rulesFileURL() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("Banyan/detectors.json")
