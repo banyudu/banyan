@@ -19,12 +19,27 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
     public static let socketName = "banyan"
 
     public let executableURL: URL
+    private let workingDirectory: String
+    private let environment: [String: String]
+
+    public init(
+        executableURL: URL,
+        workingDirectory: String,
+        environment: [String: String]
+    ) {
+        self.executableURL = executableURL
+        self.workingDirectory = workingDirectory
+        self.environment = environment
+    }
 
     private init() {
-        guard let url = Self.resolveExecutableURL() else {
+        let environment = ProcessInfo.processInfo.environment
+        guard let url = Self.resolveExecutableURL(environment: environment) else {
             fatalError("tmux is required to run Banyan. Install it with: brew install tmux")
         }
         self.executableURL = url
+        self.workingDirectory = NSHomeDirectory()
+        self.environment = environment
     }
 
     public static func sessionName(for id: String) -> String {
@@ -231,8 +246,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
     private func run(_ arguments: [String]) throws -> String {
         let output = try SubprocessRunner.run(
             arguments: [executableURL.path] + baseArguments + arguments,
-            cwd: NSHomeDirectory(),
-            environment: Self.processEnvironment(),
+            cwd: workingDirectory,
+            environment: processEnvironment(),
             timeout: Self.commandTimeout
         )
         let stdout = String(decoding: output.standardOutput, as: UTF8.self)
@@ -244,7 +259,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         return stdout
     }
 
-    private static func resolveExecutableURL() -> URL? {
+    private static func resolveExecutableURL(environment: [String: String]) -> URL? {
         let candidates = HostExecutablePaths.systemPaths()
             .map { "\($0)/tmux" }
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
@@ -254,7 +269,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["which", "tmux"]
-        process.environment = processEnvironment()
+        process.environment = environment
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
@@ -271,8 +286,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         return URL(fileURLWithPath: path)
     }
 
-    private static func processEnvironment() -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
+    private func processEnvironment() -> [String: String] {
+        var environment = self.environment
         let additions = HostExecutablePaths.systemPaths()
         let currentPath = environment["PATH"] ?? ""
         let merged = (additions + currentPath.split(separator: ":").map(String.init))
