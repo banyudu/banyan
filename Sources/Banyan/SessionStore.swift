@@ -66,41 +66,6 @@ private enum HandoffDispatchError: Error {
     case failed(Int32)
 }
 
-private struct SupervisorSessionInput {
-    let id: String
-    let tmuxSessionName: String
-    let command: String
-    let status: SessionStatus
-    let isAwaitingAttach: Bool
-}
-
-private struct SupervisorSessionResult {
-    let id: String
-    let status: SessionStatus
-    let tone: SessionTone
-    let provider: CodingAgentProvider?
-    let currentPath: String?
-}
-
-/// Lock-guarded sink so `concurrentPerform` workers can collect supervisor results
-/// from multiple threads. Order is irrelevant — results are matched back by id.
-private final class SupervisorResultCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var results: [SupervisorSessionResult] = []
-
-    func append(_ result: SupervisorSessionResult) {
-        lock.lock()
-        results.append(result)
-        lock.unlock()
-    }
-
-    func drain() -> [SupervisorSessionResult] {
-        lock.lock()
-        defer { lock.unlock() }
-        return results
-    }
-}
-
 struct LivePromptTitleMatchInput: Equatable {
     let id: String
     let cwd: String
@@ -2769,7 +2734,7 @@ final class SessionStore: ObservableObject {
 
     private func runSupervisorTick(sessionID: String? = nil) {
         guard !isSupervisorTickRunning else { return }
-        let inputs = sessions.compactMap { session -> SupervisorSessionInput? in
+        let inputs = sessions.compactMap { session -> SessionStatusObservationInput? in
             guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
                 return nil
             }
@@ -2779,7 +2744,7 @@ final class SessionStore: ObservableObject {
             ) else {
                 return nil
             }
-            return SupervisorSessionInput(
+            return SessionStatusObservationInput(
                 id: session.id,
                 tmuxSessionName: session.tmuxSessionName,
                 command: session.command,
@@ -2798,44 +2763,13 @@ final class SessionStore: ObservableObject {
             let tickStartedAt = DispatchTime.now()
             let backend = TmuxBackend.shared
             let processTable = ProcessTable.snapshot()
-            let supervisor = AgentSupervisor(backend: backend) { rootPID in
-                processTable.descendants(of: rootPID)
-            }
-
-            // Inspect sessions concurrently: each inspect() blocks on independent,
-            // timeout-bounded tmux subprocesses, so a sequential pass cost ~sum of all
-            // sessions. concurrentPerform fans them across the pool (bounded, so many
-            // sessions can't explode threads), cutting the tick to ~the slowest session.
-            let collector = SupervisorResultCollector()
-            DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
-                let input = inputs[index]
-                guard let result = supervisor.inspect(
-                    tmuxSessionName: input.tmuxSessionName,
-                    launchCommand: input.command,
-                    currentStatus: input.status
-                ) else {
-                    return
+            let synchronizer = SessionStatusSynchronizer(
+                backend: backend,
+                processDescendants: { rootPID in
+                    processTable.descendants(of: rootPID)
                 }
-                if result.status == .closed && backend.hasSession(named: input.tmuxSessionName) {
-                    return
-                }
-                // A restored session whose tmux session is gone is not dead — clicking
-                // it recreates the backing session. Only a session we have actually
-                // attached to may be closed out from under us.
-                if result.status == .closed && input.isAwaitingAttach {
-                    return
-                }
-                collector.append(
-                    SupervisorSessionResult(
-                        id: input.id,
-                        status: result.status,
-                        tone: result.tone,
-                        provider: result.provider,
-                        currentPath: result.currentPath
-                    )
-                )
-            }
-            let results = collector.drain()
+            )
+            let results = synchronizer.observe(inputs)
 
             PerformanceTelemetry.shared.recordDuration(
                 "supervisor.tick",
@@ -3107,7 +3041,7 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
-    private func applySupervisorResults(_ results: [SupervisorSessionResult]) -> Bool {
+    private func applySupervisorResults(_ results: [SessionStatusObservation]) -> Bool {
         var didUpdateProvider = false
         var didChangePersistentState = false
         for result in results {

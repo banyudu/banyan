@@ -30,16 +30,36 @@ import Testing
     #expect(backend.requestedNames == [TmuxBackend.sessionName(for: "session-1")])
 }
 
+@Test func statusSynchronizerKeepsUnattachedRestoredSessionsAlive() {
+    let backend = SynchronizerBackend()
+    backend.hasBackingSession = false
+    let input = SessionStatusObservationInput(
+        id: "restored",
+        tmuxSessionName: "banyan-restored",
+        command: "codex",
+        status: .running,
+        isAwaitingAttach: true
+    )
+    let synchronizer = SessionStatusSynchronizer(
+        backend: backend,
+        processDescendants: { _ in [] }
+    )
+
+    #expect(synchronizer.observe([input]).isEmpty)
+}
+
 private final class SynchronizerBackend: AgentSupervisorBackend, @unchecked Sendable {
     var requestedNames: [String] = []
+    var hasBackingSession = true
 
     func hasSession(named name: String) -> Bool {
         requestedNames.append(name)
-        return true
+        return hasBackingSession
     }
 
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? {
-        TmuxPaneSnapshot(
+        guard hasBackingSession else { return nil }
+        return TmuxPaneSnapshot(
             paneID: "%0",
             rootPID: 100,
             currentCommand: "bash",
