@@ -31,6 +31,7 @@ private func makeDefaultApp() -> BanyanTUI {
         input: TerminalMode(),
         output: output,
         processRunner: InteractiveProcessRunner(),
+        renderer: StandardTUIRenderer(),
         currentDirectory: FileManager.default.currentDirectoryPath
     )
 }

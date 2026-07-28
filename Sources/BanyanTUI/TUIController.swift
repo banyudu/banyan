@@ -7,6 +7,7 @@ struct BanyanTUI {
     private let actions: any SessionListActions
     private let input: any TUIInput
     private let output: any TUIOutput
+    private let renderer: any TUIRenderer
     private let currentDirectory: String
     private var model: SessionListModel
 
@@ -17,6 +18,7 @@ struct BanyanTUI {
         input: any TUIInput,
         output: any TUIOutput,
         processRunner: any TUIProcessRunner,
+        renderer: any TUIRenderer,
         currentDirectory: String
     ) {
         self.tmux = backend
@@ -29,6 +31,7 @@ struct BanyanTUI {
         self.actions = actions
         self.input = input
         self.output = output
+        self.renderer = renderer
         self.currentDirectory = currentDirectory
     }
 
@@ -83,7 +86,7 @@ struct BanyanTUI {
     }
 
     private func render() {
-        let output = TerminalRenderer.render(
+        let output = renderer.render(
             sessions: model.sessions,
             history: model.history,
             showingHistory: model.showingHistory,

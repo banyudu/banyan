@@ -1,5 +1,36 @@
 import BanyanCore
 
+protocol TUIRenderer {
+    func render(
+        sessions: [SessionSnapshot],
+        history: [ImportedAgentSession],
+        showingHistory: Bool,
+        selectedIndex: Int,
+        notice: String?,
+        tmux: any TmuxDisplayBackend
+    ) -> String
+}
+
+struct StandardTUIRenderer: TUIRenderer {
+    func render(
+        sessions: [SessionSnapshot],
+        history: [ImportedAgentSession],
+        showingHistory: Bool,
+        selectedIndex: Int,
+        notice: String?,
+        tmux: any TmuxDisplayBackend
+    ) -> String {
+        TerminalRenderer.render(
+            sessions: sessions,
+            history: history,
+            showingHistory: showingHistory,
+            selectedIndex: selectedIndex,
+            notice: notice,
+            tmux: tmux
+        )
+    }
+}
+
 struct TerminalRenderer {
     static func render(
         sessions: [SessionSnapshot],
