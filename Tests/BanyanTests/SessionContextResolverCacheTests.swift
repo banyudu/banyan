@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Banyan
 
@@ -51,6 +52,24 @@ private func input(
     #expect(info.pullRequestNumber == 7)
 }
 
+@Test func resolveFastExtractsGitHubIssueWithoutLinearContext() {
+    let url = "https://github.com/banyudu/banyan/issues/17"
+    let info = SessionContextResolver.resolveFast(input: input(title: "see " + url))
+    #expect(info.githubIssueURL == url)
+    #expect(info.githubIssueNumber == 17)
+    #expect(info.linearIssueID == nil)
+}
+
+@Test func githubIssueClientDecodesIssueContentAndMetadata() throws {
+    let data = Data(#"{"url":"https://github.com/banyudu/banyan/issues/17","number":17,"title":"Display issues","body":"Details","state":"OPEN","author":{"login":"yudu"},"labels":[{"name":"bug"}],"assignees":[{"login":"yudu"}],"milestone":{"title":"v1"},"comments":[{"id":1,"body":"Looks good","author":{"login":"reviewer"},"createdAt":"2026-07-28T00:00:00Z"}],"createdAt":"2026-07-27T00:00:00Z","updatedAt":"2026-07-28T00:00:00Z"}"#.utf8)
+    let issue = try GitHubIssueClient.decodeDetails(data)
+    #expect(issue.number == 17)
+    #expect(issue.title == "Display issues")
+    #expect(issue.body == "Details")
+    #expect(issue.labels == ["bug"])
+    #expect(issue.comments.first?.body == "Looks good")
+}
+
 @Test func reidentifiedPreservesNetworkFields() {
     let original = SessionContextInfo(
         sessionID: "old",
@@ -58,6 +77,9 @@ private func input(
         linearIssueID: "ENG-1",
         linearIssueTitle: "Title",
         linearIssueURL: "https://linear.app/x",
+        githubIssueNumber: nil,
+        githubIssueTitle: nil,
+        githubIssueURL: nil,
         pullRequestNumber: 7,
         pullRequestTitle: "PR",
         pullRequestURL: "https://github.com/x/y/pull/7"

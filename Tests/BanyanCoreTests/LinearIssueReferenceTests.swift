@@ -24,3 +24,47 @@ import Testing
     #expect(LinearIssueReference.issueID(in: "release-2026-07-06") == nil)
     #expect(LinearIssueReference.issueID(in: "engineering-notes") == nil)
 }
+
+@Test func githubIssueReferenceDetectsIssueURL() {
+    let reference = GitHubIssueReference.detect(in: "Fix https://github.com/banyudu/banyan/issues/17")
+    #expect(reference?.url == "https://github.com/banyudu/banyan/issues/17")
+    #expect(reference?.number == 17)
+}
+
+@Test func githubIssueReferenceDoesNotTreatPullRequestAsIssue() {
+    #expect(GitHubIssueReference.detect(in: "https://github.com/banyudu/banyan/pull/17") == nil)
+}
+
+@Test func githubIssueReferenceDetectsFromBranchAndRemote() {
+    let ref = GitHubIssueReference.detect(
+        branch: "yudu/17-add-support-for-feature",
+        remoteAddress: "github.com/banyudu/banyan"
+    )
+    #expect(ref?.url == "https://github.com/banyudu/banyan/issues/17")
+    #expect(ref?.number == 17)
+}
+
+@Test func githubIssueReferenceIgnoresNonGitHubRemote() {
+    #expect(GitHubIssueReference.detect(
+        branch: "yudu/17-feature",
+        remoteAddress: "gitlab.com/banyudu/banyan"
+    ) == nil)
+}
+
+@Test func githubIssueReferenceIgnoresBranchWithoutIssueNumber() {
+    #expect(GitHubIssueReference.detect(
+        branch: "main",
+        remoteAddress: "github.com/banyudu/banyan"
+    ) == nil)
+    #expect(GitHubIssueReference.detect(
+        branch: "feature/redesign",
+        remoteAddress: "github.com/banyudu/banyan"
+    ) == nil)
+}
+
+@Test func githubIssueReferenceIgnoresVersionBranches() {
+    #expect(GitHubIssueReference.detect(
+        branch: "release/2-0-0",
+        remoteAddress: "github.com/banyudu/banyan"
+    ) == nil)
+}
