@@ -17,7 +17,7 @@ struct LinearIssueListCacheSnapshot: Codable {
     let updatedAt: Date
 }
 
-struct SessionPersistence {
+struct SessionPersistence: SessionPersistenceBackend {
     private static let linearIssueListCacheKey = "linearIssueListCache"
 
     private let databaseURL: URL
