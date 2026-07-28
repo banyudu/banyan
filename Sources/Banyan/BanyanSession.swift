@@ -76,8 +76,8 @@ final class BanyanSession: ObservableObject, Identifiable {
     private(set) var lastConversationResetAt: Date?
 
     private var delegate: TerminalSessionDelegate?
-    private let tmuxBackend = TmuxBackend.shared
-    private let sessionRuntime = SessionRuntimeCoordinator()
+    private let tmuxBackend: any TmuxClientBackend
+    private let sessionRuntime: SessionRuntimeCoordinator
 
     private var launchRequest: SessionLaunchRequest {
         SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command)
@@ -190,8 +190,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         displayContext: SessionProjectContext? = nil,
         theme: TerminalTheme,
         fontFamily: String? = nil,
-        fontSize: Double = 13
+        fontSize: Double = 13,
+        tmuxBackend: any TmuxClientBackend = TmuxBackend.shared
     ) {
+        self.tmuxBackend = tmuxBackend
+        self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)
         let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(cwd: cwd)
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id)

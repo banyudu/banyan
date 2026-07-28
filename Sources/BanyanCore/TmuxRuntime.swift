@@ -53,6 +53,12 @@ public protocol TmuxAttachmentBackend: Sendable {
 /// Complete backend surface required by the terminal frontend.
 public protocol TmuxTerminalBackend: AgentSupervisorBackend, TmuxSessionLifecycleBackend, TmuxDisplayBackend, TmuxAttachmentBackend {}
 
+/// Additional controls used by an embedded terminal client.
+public protocol TmuxClientBackend: TmuxTerminalBackend {
+    func configureTerminalTheme(style: String, for sessionName: String?)
+    func refreshClients(attachedTo name: String)
+}
+
 public struct SessionLaunchRequest: Sendable {
     public let sessionName: String
     public let cwd: String
