@@ -5,20 +5,23 @@ import Foundation
 public struct SessionDataSource: Sendable {
     private let persistence: any SessionPersistenceBackend
     private let backend: any AgentSupervisorBackend
+    private let processTable: @Sendable () -> ProcessTable
 
     public init(
         persistence: any SessionPersistenceBackend,
-        backend: any AgentSupervisorBackend
+        backend: any AgentSupervisorBackend,
+        processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() }
     ) {
         self.persistence = persistence
         self.backend = backend
+        self.processTable = processTable
     }
 
     public func loadActiveSessions() -> [SessionSnapshot] {
         let stored = persistence.load()
         let synchronizer = SessionStatusSynchronizer(
             backend: backend,
-            processTable: ProcessTable.snapshot()
+            processTable: processTable()
         )
         let updated = synchronizer.synchronize(stored)
         if updated != stored {

@@ -31,7 +31,11 @@ import Testing
         )
     ])
     let backend = DataSourceTestBackend()
-    let dataSource = SessionDataSource(persistence: persistence, backend: backend)
+    let dataSource = SessionDataSource(
+        persistence: persistence,
+        backend: backend,
+        processTable: { ProcessTable(rows: []) }
+    )
 
     let active = dataSource.loadActiveSessions()
 
