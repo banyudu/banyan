@@ -4,6 +4,7 @@ import Foundation
 /// live session. Frontends can provide a platform-specific history store while
 /// keeping session creation and tmux lifecycle behavior shared.
 public protocol SessionHistoryBackend: Sendable {
+    func load(maxPerProvider limit: Int) -> [ImportedAgentSession]
     func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String?
     func resumeCommand(
         provider: CodingAgentProvider,
@@ -21,6 +22,10 @@ public protocol SessionHistoryBackend: Sendable {
 
 public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
     public init() {}
+
+    public func load(maxPerProvider limit: Int) -> [ImportedAgentSession] {
+        AgentSessionHistoryImporter.load(maxPerProvider: limit)
+    }
 
     public func sourceID(
         fromImportedSessionID id: String,

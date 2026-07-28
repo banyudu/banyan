@@ -81,6 +81,8 @@ private final class SessionActionsTestBackend: TmuxSessionLifecycleBackend, @unc
 }
 
 private struct StubHistoryBackend: SessionHistoryBackend {
+    func load(maxPerProvider limit: Int) -> [ImportedAgentSession] { [] }
+
     func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? {
         "original"
     }

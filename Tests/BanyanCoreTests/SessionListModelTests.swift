@@ -19,7 +19,7 @@ import Testing
         persistence: persistence,
         backend: ModelTestBackend(),
         processTable: { ProcessTable(rows: []) },
-        historyLoader: { _ in [history] }
+        historyBackend: ModelHistoryBackend(history: history)
     )
     var model = SessionListModel(dataSource: dataSource)
 
@@ -39,4 +39,23 @@ private struct ModelTestBackend: AgentSupervisorBackend {
     func hasSession(named name: String) -> Bool { false }
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
     func captureVisibleText(paneID: String, lineLimit: Int) -> String { "" }
+}
+
+private struct ModelHistoryBackend: SessionHistoryBackend {
+    let history: ImportedAgentSession
+
+    func load(maxPerProvider limit: Int) -> [ImportedAgentSession] { [history] }
+    func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? { nil }
+    func resumeCommand(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        prompt: String?
+    ) -> String? { nil }
+    func prepareTrimmedTranscript(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        transcriptURL: URL?
+    ) -> String? { nil }
 }

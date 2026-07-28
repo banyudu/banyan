@@ -43,17 +43,35 @@ import Testing
     #expect(persistence.snapshots.first?.status == .running)
 }
 
-@Test func sessionDataSourceUsesInjectedHistoryLoader() {
+@Test func sessionDataSourceUsesInjectedHistoryBackend() {
     let dataSource = SessionDataSource(
         persistence: InMemorySessionPersistence(snapshots: []),
         backend: DataSourceTestBackend(),
-        historyLoader: { limit in
-            #expect(limit == 2)
-            return []
-        }
+        historyBackend: DataSourceHistoryBackend()
     )
 
     #expect(dataSource.loadHistory(limit: 2).isEmpty)
+}
+
+private struct DataSourceHistoryBackend: SessionHistoryBackend {
+    func load(maxPerProvider limit: Int) -> [ImportedAgentSession] {
+        #expect(limit == 2)
+        return []
+    }
+
+    func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? { nil }
+    func resumeCommand(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        prompt: String?
+    ) -> String? { nil }
+    func prepareTrimmedTranscript(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        transcriptURL: URL?
+    ) -> String? { nil }
 }
 
 private final class InMemorySessionPersistence: SessionPersistenceBackend, @unchecked Sendable {

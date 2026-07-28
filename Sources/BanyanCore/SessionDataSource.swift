@@ -11,20 +11,18 @@ public struct SessionDataSource: Sendable, SessionListDataSource {
     private let persistence: any SessionPersistenceBackend
     private let backend: any AgentSupervisorBackend
     private let processTable: @Sendable () -> ProcessTable
-    private let historyLoader: @Sendable (Int) -> [ImportedAgentSession]
+    private let historyBackend: any SessionHistoryBackend
 
     public init(
         persistence: any SessionPersistenceBackend,
         backend: any AgentSupervisorBackend,
         processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() },
-        historyLoader: @escaping @Sendable (Int) -> [ImportedAgentSession] = { limit in
-            AgentSessionHistoryImporter.load(maxPerProvider: limit)
-        }
+        historyBackend: any SessionHistoryBackend = DefaultSessionHistoryBackend()
     ) {
         self.persistence = persistence
         self.backend = backend
         self.processTable = processTable
-        self.historyLoader = historyLoader
+        self.historyBackend = historyBackend
     }
 
     public func loadActiveSessions() -> [SessionSnapshot] {
@@ -41,6 +39,6 @@ public struct SessionDataSource: Sendable, SessionListDataSource {
     }
 
     public func loadHistory(limit: Int = 30) -> [ImportedAgentSession] {
-        historyLoader(limit)
+        historyBackend.load(maxPerProvider: limit)
     }
 }
