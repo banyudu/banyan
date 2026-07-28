@@ -149,7 +149,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         }
 
         var arguments = ["new-session", "-d", "-s", name, "-c", cwd]
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let shell = HostShell.executablePath()
         let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedCommand.isEmpty {
             arguments.append(contentsOf: [shell, "-l"])

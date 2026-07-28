@@ -94,7 +94,7 @@ public enum AppProcessEnvironment {
     }
 
     private static func loadShellEnvironment() -> [String: String] {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let shell = HostShell.executablePath()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = [
@@ -150,4 +150,3 @@ public enum AppProcessEnvironment {
         return Set(value.components(separatedBy: separators).filter { !$0.isEmpty })
     }
 }
-
