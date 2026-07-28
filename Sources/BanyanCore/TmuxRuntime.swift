@@ -41,6 +41,10 @@ public protocol TmuxSessionLifecycleBackend: TmuxSessionBackend {
     func killSession(named name: String)
 }
 
+public protocol TmuxDisplayBackend: TmuxSessionBackend {
+    func captureCurrentVisibleText(paneID: String) -> String
+}
+
 public struct SessionLaunchRequest: Sendable {
     public let sessionName: String
     public let cwd: String

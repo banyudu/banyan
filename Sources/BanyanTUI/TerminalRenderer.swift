@@ -7,7 +7,7 @@ struct TerminalRenderer {
         showingHistory: Bool,
         selectedIndex: Int,
         notice: String?,
-        tmux: TmuxBackend
+        tmux: any TmuxDisplayBackend
     ) -> String {
         let selected = sessions.indices.contains(selectedIndex) ? sessions[selectedIndex] : nil
         var output = "\u{1b}[2J\u{1b}[H"
@@ -49,7 +49,7 @@ struct TerminalRenderer {
         return output
     }
 
-    private static func terminalText(for session: SessionSnapshot, tmux: TmuxBackend) -> String {
+    private static func terminalText(for session: SessionSnapshot, tmux: any TmuxDisplayBackend) -> String {
         let name = session.tmuxSessionName ?? TmuxBackend.sessionName(for: session.id)
         guard tmux.hasSession(named: name),
               let pane = tmux.primaryPaneSnapshot(named: name) else {
