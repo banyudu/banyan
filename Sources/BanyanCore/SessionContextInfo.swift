@@ -114,11 +114,16 @@ public enum SessionContextResolver {
         // `DispatchGroup.wait()` here blocked the Swift-concurrency pool and was half
         // of the app-freeze deadlock.
         let cwd = input.cwd
+        let commandEnvironment = processEnvironment(
+            base: input.environment,
+            homeDirectory: input.homeDirectory
+        )
         async let linearTitle: String? = {
             guard let issueID = detectedIssueID, !isCancelled() else { return nil }
             return await commandOutput(
                 ["linear", "issue", "title", issueID],
                 cwd: cwd,
+                environment: commandEnvironment,
                 timeout: networkTimeout,
                 isCancelled: isCancelled
             )
@@ -126,7 +131,13 @@ public enum SessionContextResolver {
 
         async let githubTitle: String? = {
             guard let githubIssue, !isCancelled() else { return nil }
-            return await commandOutput(["gh", "issue", "view", githubIssue.url, "--json", "title"], cwd: cwd, timeout: networkTimeout, isCancelled: isCancelled)
+            return await commandOutput(
+                ["gh", "issue", "view", githubIssue.url, "--json", "title"],
+                cwd: cwd,
+                environment: commandEnvironment,
+                timeout: networkTimeout,
+                isCancelled: isCancelled
+            )
                 .flatMap { try? JSONDecoder().decode(GitHubIssueTitlePayload.self, from: Data($0.utf8)).title }
         }()
 
@@ -139,7 +150,11 @@ public enum SessionContextResolver {
                 )
             }
             guard !isCancelled() else { return nil }
-            return await pullRequest(cwd: cwd, isCancelled: isCancelled)
+            return await pullRequest(
+                cwd: cwd,
+                environment: commandEnvironment,
+                isCancelled: isCancelled
+            )
         }()
 
         let title = await linearTitle
@@ -248,11 +263,13 @@ public enum SessionContextResolver {
 
     private static func pullRequest(
         cwd: String,
+        environment: [String: String],
         isCancelled: @escaping @Sendable () -> Bool = { false }
     ) async -> PullRequestPayload? {
         guard let output = await commandOutput(
             ["gh", "pr", "view", "--json", "url,title,number"],
             cwd: cwd,
+            environment: environment,
             timeout: networkTimeout,
             isCancelled: isCancelled
         ) else {
@@ -264,13 +281,14 @@ public enum SessionContextResolver {
     private static func commandOutput(
         _ arguments: [String],
         cwd: String,
+        environment: [String: String],
         timeout: TimeInterval = 4,
         isCancelled: @escaping @Sendable () -> Bool = { false }
     ) async -> String? {
         guard let output = try? await SubprocessRunner.runAsync(
             arguments: arguments,
             cwd: cwd,
-            environment: processEnvironment(),
+            environment: environment,
             timeout: timeout,
             isCancelled: isCancelled
         ), output.terminationStatus == 0 else {
@@ -290,15 +308,14 @@ public enum SessionContextResolver {
         return regex.stringByReplacingMatches(in: value, range: range, withTemplate: "")
     }
 
-    private static func processEnvironment() -> [String: String] {
-        let additions = HostExecutablePaths.userPaths(homeDirectory: NSHomeDirectory())
-            + [
-            "/nix/var/nix/profiles/default/bin",
-            ]
+    private static func processEnvironment(
+        base: [String: String],
+        homeDirectory: String
+    ) -> [String: String] {
+        let additions = HostExecutablePaths.userPaths(homeDirectory: homeDirectory)
+            + ["/nix/var/nix/profiles/default/bin"]
             + HostExecutablePaths.systemPaths()
-        return AppProcessEnvironment.make(
-            base: ProcessInfo.processInfo.environment,
-            pathAdditions: additions
-        )
+        return AppProcessEnvironment.make(base: base, pathAdditions: additions)
     }
+
 }
