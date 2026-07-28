@@ -1,6 +1,6 @@
 import Foundation
 
-public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Identifiable {
+public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Identifiable, Sendable {
     case claude
     case codex
     case deepseek

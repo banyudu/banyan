@@ -1,23 +1,20 @@
-import BanyanCore
 import Foundation
 
-protocol AgentSupervisorBackend: TmuxSessionBackend {}
+public protocol AgentSupervisorBackend: TmuxSessionBackend {}
 
-extension TmuxBackend: AgentSupervisorBackend {}
-
-struct AgentSupervisor: Sendable {
-    struct Result {
-        let status: SessionStatus
-        let tone: SessionTone
-        let provider: CodingAgentProvider?
-        let currentPath: String?
+public struct AgentSupervisor: Sendable {
+    public struct Result: Sendable {
+        public let status: SessionStatus
+        public let tone: SessionTone
+        public let provider: CodingAgentProvider?
+        public let currentPath: String?
     }
 
     private let backend: any AgentSupervisorBackend
     private let processDescendants: @Sendable (Int) -> [ProcessInfoRow]
 
-    init(
-        backend: any AgentSupervisorBackend = TmuxBackend.shared,
+    public init(
+        backend: any AgentSupervisorBackend,
         processDescendants: @escaping @Sendable (Int) -> [ProcessInfoRow] = { rootPID in
             ProcessTable.snapshot().descendants(of: rootPID)
         }
@@ -26,7 +23,7 @@ struct AgentSupervisor: Sendable {
         self.processDescendants = processDescendants
     }
 
-    func inspect(tmuxSessionName: String, launchCommand: String, currentStatus: SessionStatus) -> Result? {
+    public func inspect(tmuxSessionName: String, launchCommand: String, currentStatus: SessionStatus) -> Result? {
         guard currentStatus != .closed else { return nil }
         guard let pane = backend.primaryPaneSnapshot(named: tmuxSessionName) else {
             return backend.hasSession(named: tmuxSessionName) ? nil : Result(status: .closed, tone: .neutral, provider: nil, currentPath: nil)
@@ -91,7 +88,7 @@ struct AgentSupervisor: Sendable {
         return Result(status: .needInput, tone: .yellow, provider: provider, currentPath: pane.currentPath)
     }
 
-    static func isSupportedAgentCommand(_ command: String) -> Bool {
+    public static func isSupportedAgentCommand(_ command: String) -> Bool {
         CodingAgentProvider.isSupportedCommand(command)
     }
 
@@ -237,20 +234,20 @@ struct AgentSupervisor: Sendable {
     }
 }
 
-struct ProcessTable: Sendable {
+public struct ProcessTable: Sendable {
     private let childrenByParent: [Int: [ProcessInfoRow]]
     private let rowByPID: [Int: ProcessInfoRow]
 
-    init(rows: [ProcessInfoRow]) {
+    public init(rows: [ProcessInfoRow]) {
         self.childrenByParent = Dictionary(grouping: rows, by: \.parentPID)
         self.rowByPID = Dictionary(uniqueKeysWithValues: rows.map { ($0.pid, $0) })
     }
 
-    static func snapshot() -> ProcessTable {
+    public static func snapshot() -> ProcessTable {
         ProcessTable(rows: ProcessInfoRow.load())
     }
 
-    func descendants(of rootPID: Int) -> [ProcessInfoRow] {
+    public func descendants(of rootPID: Int) -> [ProcessInfoRow] {
         var descendants: [ProcessInfoRow] = rowByPID[rootPID].map { [$0] } ?? []
         var queue = childrenByParent[rootPID] ?? []
         var visited = Set(descendants.map(\.pid))
@@ -266,13 +263,29 @@ struct ProcessTable: Sendable {
     }
 }
 
-struct ProcessInfoRow: Sendable {
-    let pid: Int
-    let parentPID: Int
-    let state: String
-    let elapsed: TimeInterval
-    let commandName: String
-    let arguments: String
+public struct ProcessInfoRow: Sendable {
+    public let pid: Int
+    public let parentPID: Int
+    public let state: String
+    public let elapsed: TimeInterval
+    public let commandName: String
+    public let arguments: String
+
+    public init(
+        pid: Int,
+        parentPID: Int,
+        state: String,
+        elapsed: TimeInterval,
+        commandName: String,
+        arguments: String
+    ) {
+        self.pid = pid
+        self.parentPID = parentPID
+        self.state = state
+        self.elapsed = elapsed
+        self.commandName = commandName
+        self.arguments = arguments
+    }
 
     var isSupportedAgent: Bool {
         // A Banyan launch wrapper carries the real agent name in its argument
@@ -344,7 +357,7 @@ struct ProcessInfoRow: Sendable {
             || haystack.hasPrefix("mcp")
     }
 
-    static func load() -> [ProcessInfoRow] {
+    public static func load() -> [ProcessInfoRow] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
         process.arguments = ["-axo", "pid=,ppid=,stat=,etime=,comm=,command="]

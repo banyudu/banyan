@@ -299,3 +299,5 @@ struct TmuxBackend: Sendable {
         return environment
     }
 }
+
+extension TmuxBackend: AgentSupervisorBackend {}
