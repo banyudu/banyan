@@ -82,7 +82,12 @@ public struct SessionLaunchRequest: Sendable {
 
 /// Coordinates the tmux-backed part of a session lifecycle without knowing
 /// anything about SwiftUI, SwiftTerm, or a particular frontend.
-public struct SessionRuntimeCoordinator: Sendable {
+public protocol SessionRuntimeBackend: Sendable {
+    func ensureBackingSession(_ request: SessionLaunchRequest) throws
+    func removeBackingSession(named name: String)
+}
+
+public struct SessionRuntimeCoordinator: Sendable, SessionRuntimeBackend {
     private let backend: any TmuxSessionLifecycleBackend
 
     public init(backend: any TmuxSessionLifecycleBackend = TmuxBackend.shared) {

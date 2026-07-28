@@ -11,11 +11,11 @@ public protocol SessionCatalogBackend: Sendable {
 
 public struct SessionCatalog: Sendable, SessionCatalogBackend {
     private let persistence: any SessionPersistenceBackend
-    private let runtime: SessionRuntimeCoordinator
+    private let runtime: any SessionRuntimeBackend
 
     public init(
         persistence: any SessionPersistenceBackend,
-        runtime: SessionRuntimeCoordinator
+        runtime: any SessionRuntimeBackend
     ) {
         self.persistence = persistence
         self.runtime = runtime
