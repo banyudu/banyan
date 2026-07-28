@@ -32,14 +32,22 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         self.environment = environment
     }
 
-    private init() {
-        let environment = ProcessInfo.processInfo.environment
-        guard let url = Self.resolveExecutableURL(environment: environment) else {
-            fatalError("tmux is required to run Banyan. Install it with: brew install tmux")
+    public init(environment: [String: String], workingDirectory: String) {
+        guard let executableURL = Self.resolveExecutableURL(environment: environment) else {
+            fatalError("tmux is required to run Banyan. Install it and make it available in PATH")
         }
-        self.executableURL = url
-        self.workingDirectory = NSHomeDirectory()
-        self.environment = environment
+        self.init(
+            executableURL: executableURL,
+            workingDirectory: workingDirectory,
+            environment: environment
+        )
+    }
+
+    private init() {
+        self.init(
+            environment: ProcessInfo.processInfo.environment,
+            workingDirectory: NSHomeDirectory()
+        )
     }
 
     public static func sessionName(for id: String) -> String {

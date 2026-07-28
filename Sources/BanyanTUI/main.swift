@@ -2,7 +2,10 @@ import BanyanCore
 import Foundation
 
 private func makeDefaultApp() -> BanyanTUI {
-    let backend = TmuxBackend.shared
+    let backend = TmuxBackend(
+        environment: ProcessInfo.processInfo.environment,
+        workingDirectory: NSHomeDirectory()
+    )
     let database = SessionDatabase(
         databaseURL: SessionDatabase.defaultDatabaseURL(
             environment: ProcessInfo.processInfo.environment,

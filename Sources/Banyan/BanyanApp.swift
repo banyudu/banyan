@@ -4,6 +4,10 @@ import SwiftUI
 @main
 struct BanyanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    private static let tmuxBackend = TmuxBackend(
+        environment: ProcessInfo.processInfo.environment,
+        workingDirectory: NSHomeDirectory()
+    )
     @StateObject private var store = SessionStore(
         persistence: SessionPersistence(
             databaseURL: SessionDatabase.defaultDatabaseURL(
@@ -15,8 +19,8 @@ struct BanyanApp: App {
                 homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
             )
         ),
-        tmuxBackend: TmuxBackend.shared,
-        sessionBackend: TmuxBackend.shared,
+        tmuxBackend: Self.tmuxBackend,
+        sessionBackend: Self.tmuxBackend,
         processTable: LiveProcessTableProvider(),
         historyBackend: DefaultSessionHistoryBackend(
             homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
