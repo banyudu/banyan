@@ -30,8 +30,11 @@ public struct TmuxPaneSnapshot: Sendable {
 /// Minimum tmux surface required by a session supervisor or a future TUI.
 /// The macOS implementation can continue to use its concrete backend while
 /// Linux code and tests can provide an implementation without AppKit.
-public protocol TmuxSessionBackend: Sendable {
+public protocol TmuxSessionLookupBackend: Sendable {
     func hasSession(named name: String) -> Bool
+}
+
+public protocol TmuxSessionBackend: TmuxSessionLookupBackend {
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot?
     func captureVisibleText(paneID: String, lineLimit: Int) -> String
 }
