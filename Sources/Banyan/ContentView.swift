@@ -964,6 +964,18 @@ struct ContentView: View {
                         onClose: store.closePullRequestPreview
                     )
                 } else if let context = store.selectedContextInfo,
+                          context.githubIssueURL?.isEmpty == false,
+                          session.status != .closed {
+                    Divider()
+                    GitHubIssuePanel(
+                        context: context,
+                        issue: store.selectedGitHubIssueDetails,
+                        loadState: store.selectedGitHubIssueLoadState,
+                        onRefresh: { store.refreshSelectedGitHubIssue(force: true) },
+                        onOpen: store.openSelectedGitHubIssue
+                    )
+                    .onAppear { store.refreshSelectedGitHubIssue(force: true) }
+                } else if let context = store.selectedContextInfo,
                           context.linearIssueID?.isEmpty == false,
                           session.status != .closed {
                     Divider()

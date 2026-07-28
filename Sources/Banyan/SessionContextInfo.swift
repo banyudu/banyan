@@ -25,6 +25,9 @@ struct SessionContextInfo: Equatable, Sendable {
     let linearIssueID: String?
     let linearIssueTitle: String?
     let linearIssueURL: String?
+    let githubIssueNumber: Int?
+    let githubIssueTitle: String?
+    let githubIssueURL: String?
     let pullRequestNumber: Int?
     let pullRequestTitle: String?
     let pullRequestURL: String?
@@ -39,6 +42,9 @@ struct SessionContextInfo: Equatable, Sendable {
             linearIssueID: linearIssueID,
             linearIssueTitle: linearIssueTitle,
             linearIssueURL: linearIssueURL,
+            githubIssueNumber: githubIssueNumber,
+            githubIssueTitle: githubIssueTitle,
+            githubIssueURL: githubIssueURL,
             pullRequestNumber: pullRequestNumber,
             pullRequestTitle: pullRequestTitle,
             pullRequestURL: pullRequestURL
@@ -52,10 +58,15 @@ enum SessionContextResolver {
         isCancelled: @escaping @Sendable () -> Bool = { false }
     ) async -> SessionContextInfo {
         let projectContext = SessionDisplayLabel.context(cwd: input.cwd)
-        let detectedIssueID = LinearIssueReference.issueID(in: input.title)
+        let remoteAddress = projectContext.groupID.hasPrefix("git:") ? String(projectContext.groupID.dropFirst(4)) : nil
+        let tracker = GitHubIssueReference.issueTracker(cwd: input.cwd)
+        let githubIssue = tracker == "linear" ? nil : (githubIssueReference(in: input)
+            ?? GitHubIssueReference.detect(branch: projectContext.branch, remoteAddress: remoteAddress, issueTracker: tracker))
+        let detectedIssueID: String? = (githubIssue != nil || tracker == "github") ? nil
+            : (LinearIssueReference.issueID(in: input.title)
             ?? LinearIssueReference.issueID(in: input.titleURL)
             ?? LinearIssueReference.issueID(in: input.displayTitle)
-            ?? LinearIssueReference.detect(branch: projectContext.branch, cwd: input.cwd)?.id
+            ?? LinearIssueReference.detect(branch: projectContext.branch, cwd: input.cwd)?.id)
         let resolvedIssueID = detectedIssueID
         let linearURL = resolvedIssueID.map(LinearIssueReference.issueURL(for:))
         let explicitPullRequestURL = pullRequestURL(in: input.titleURL)
@@ -82,6 +93,12 @@ enum SessionContextResolver {
             )
         }()
 
+        async let githubTitle: String? = {
+            guard let githubIssue, !isCancelled() else { return nil }
+            return await commandOutput(["gh", "issue", "view", githubIssue.url, "--json", "title"], cwd: cwd, timeout: networkTimeout, isCancelled: isCancelled)
+                .flatMap { try? JSONDecoder().decode(GitHubIssueTitlePayload.self, from: Data($0.utf8)).title }
+        }()
+
         async let resolvedPullRequest: PullRequestPayload? = {
             if let explicitPullRequestURL {
                 return PullRequestPayload(
@@ -95,6 +112,7 @@ enum SessionContextResolver {
         }()
 
         let title = await linearTitle
+        let githubTitleValue = await githubTitle
         let pr = await resolvedPullRequest
 
         return SessionContextInfo(
@@ -103,6 +121,9 @@ enum SessionContextResolver {
             linearIssueID: resolvedIssueID,
             linearIssueTitle: title,
             linearIssueURL: linearURL,
+            githubIssueNumber: githubIssue?.number,
+            githubIssueTitle: githubTitleValue,
+            githubIssueURL: githubIssue?.url,
             pullRequestNumber: pr?.number,
             pullRequestTitle: pr?.title,
             pullRequestURL: pr?.url
@@ -117,7 +138,9 @@ enum SessionContextResolver {
     /// parsed directly from the session title strings. Used to populate the
     /// titlebar instantly while the network/git enrichment runs (or on cache miss).
     static func resolveFast(input: SessionContextLookupInput) -> SessionContextInfo {
-        let issueID = titleIssueID(input)
+        let tracker = GitHubIssueReference.issueTracker(cwd: input.cwd)
+        let issueID = tracker == "github" ? nil : titleIssueID(input)
+        let githubIssue = tracker == "linear" ? nil : githubIssueReference(in: input)
         let explicitPR = titlePullRequestURL(input)
         return SessionContextInfo(
             sessionID: input.sessionID,
@@ -125,6 +148,9 @@ enum SessionContextResolver {
             linearIssueID: issueID,
             linearIssueTitle: nil,
             linearIssueURL: issueID.map(LinearIssueReference.issueURL(for:)),
+            githubIssueNumber: githubIssue?.number,
+            githubIssueTitle: nil,
+            githubIssueURL: githubIssue?.url,
             pullRequestNumber: explicitPR.flatMap(pullRequestNumber(in:)),
             pullRequestTitle: nil,
             pullRequestURL: explicitPR
@@ -135,14 +161,25 @@ enum SessionContextResolver {
     /// network/git result — the working directory and any issue/PR tokens embedded
     /// in the title — so free-text title churn no longer forces a re-resolve.
     static func cacheKey(for input: SessionContextLookupInput) -> String {
-        [input.cwd, titleIssueID(input) ?? "", titlePullRequestURL(input) ?? ""]
+        [input.cwd, titleIssueID(input) ?? "", titleGitHubIssueURL(input) ?? "", titlePullRequestURL(input) ?? ""]
             .joined(separator: "\u{1f}")
     }
 
     private static func titleIssueID(_ input: SessionContextLookupInput) -> String? {
-        LinearIssueReference.issueID(in: input.title)
+        guard githubIssueReference(in: input) == nil else { return nil }
+        return LinearIssueReference.issueID(in: input.title)
             ?? LinearIssueReference.issueID(in: input.titleURL)
             ?? LinearIssueReference.issueID(in: input.displayTitle)
+    }
+
+    private static func titleGitHubIssueURL(_ input: SessionContextLookupInput) -> String? {
+        githubIssueReference(in: input)?.url
+    }
+
+    private static func githubIssueReference(in input: SessionContextLookupInput) -> GitHubIssueReference? {
+        GitHubIssueReference.detect(in: input.titleURL)
+            ?? GitHubIssueReference.detect(in: input.title)
+            ?? GitHubIssueReference.detect(in: input.displayTitle)
     }
 
     private static func titlePullRequestURL(_ input: SessionContextLookupInput) -> String? {
@@ -156,6 +193,8 @@ enum SessionContextResolver {
         let title: String?
         let number: Int?
     }
+
+    private struct GitHubIssueTitlePayload: Decodable { let title: String? }
 
     private static func pullRequestURL(in value: String?) -> String? {
         guard let value else { return nil }

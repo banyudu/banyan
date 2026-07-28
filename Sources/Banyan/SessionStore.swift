@@ -114,10 +114,13 @@ final class SessionStore: ObservableObject {
     @Published private(set) var selectedContextInfo: SessionContextInfo? {
         didSet {
             refreshSelectedLinearIssue()
+            refreshSelectedGitHubIssue()
         }
     }
     @Published private(set) var selectedLinearIssueDetails: LinearIssueDetails?
     @Published private(set) var selectedLinearIssueLoadState: LinearIssueLoadState = .idle
+    @Published private(set) var selectedGitHubIssueDetails: GitHubIssueDetails?
+    @Published private(set) var selectedGitHubIssueLoadState: GitHubIssueLoadState = .idle
     @Published var isPullRequestPreviewPresented = false
     @Published private(set) var selectedPullRequestDetails: GitHubPullRequestDetails?
     @Published private(set) var selectedPullRequestLoadState: GitHubPullRequestLoadState = .idle
@@ -235,6 +238,8 @@ final class SessionStore: ObservableObject {
     // session; 600s cuts that ~3x while keeping the titlebar acceptably fresh.
     private let selectedContextCacheTTL: TimeInterval = 600
     private var selectedLinearIssueTask: Task<Void, Never>?
+    private var selectedGitHubIssueTask: Task<Void, Never>?
+    private var selectedGitHubIssueURL: URL?
     private var selectedLinearIssueStatusTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTimer: Timer?
     private var selectedLinearIssueIdentifier: String?
@@ -1467,6 +1472,51 @@ final class SessionStore: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func openSelectedGitHubIssue() {
+        if let value = selectedContextInfo?.githubIssueURL, let url = URL(string: value) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func refreshSelectedGitHubIssue(force: Bool = false) {
+        guard let session = selectedSession, session.status != .closed,
+              let value = selectedContextInfo?.githubIssueURL, let url = URL(string: value) else {
+            selectedGitHubIssueTask?.cancel()
+            selectedGitHubIssueTask = nil
+            selectedGitHubIssueURL = nil
+            selectedGitHubIssueDetails = nil
+            selectedGitHubIssueLoadState = .idle
+            return
+        }
+        guard force || selectedGitHubIssueURL != url || selectedGitHubIssueDetails == nil else { return }
+        selectedGitHubIssueTask?.cancel()
+        selectedGitHubIssueURL = url
+        selectedGitHubIssueDetails = nil
+        selectedGitHubIssueLoadState = .loading
+        let sessionID = session.id
+        let cwd = session.cwd
+        selectedGitHubIssueTask = Task.detached(priority: .utility) {
+            do {
+                let details = try await GitHubIssueClient.fetchIssue(url: url, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedSessionID == sessionID,
+                          self.selectedContextInfo?.githubIssueURL == url.absoluteString,
+                          self.selectedGitHubIssueURL == url else { return }
+                    self.selectedGitHubIssueTask = nil
+                    self.selectedGitHubIssueDetails = details
+                    self.selectedGitHubIssueLoadState = .loaded
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedSessionID == sessionID,
+                          self.selectedGitHubIssueURL == url else { return }
+                    self.selectedGitHubIssueTask = nil
+                    self.selectedGitHubIssueLoadState = .failed(GitHubIssueClient.message(for: error))
+                }
+            }
+        }
+    }
+
     func refreshSelectedLinearIssue(force: Bool = false) {
         guard let session = selectedSession,
               session.status != .closed,
@@ -2076,6 +2126,9 @@ final class SessionStore: ObservableObject {
             linearIssueID: issueID,
             linearIssueTitle: title,
             linearIssueURL: url,
+            githubIssueNumber: nil,
+            githubIssueTitle: nil,
+            githubIssueURL: nil,
             pullRequestNumber: nil,
             pullRequestTitle: nil,
             pullRequestURL: nil
@@ -2104,6 +2157,9 @@ final class SessionStore: ObservableObject {
             linearIssueID: nil,
             linearIssueTitle: nil,
             linearIssueURL: nil,
+            githubIssueNumber: nil,
+            githubIssueTitle: nil,
+            githubIssueURL: nil,
             pullRequestNumber: nil,
             pullRequestTitle: nil,
             pullRequestURL: nil
