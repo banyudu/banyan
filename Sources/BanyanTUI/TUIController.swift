@@ -23,7 +23,7 @@ struct BanyanTUI {
         )
         self.model = SessionListModel(dataSource: dataSource)
         self.actions = SessionActions(
-            database: database,
+            persistence: database,
             tmux: backend,
             catalog: SessionCatalog(
                 persistence: database,

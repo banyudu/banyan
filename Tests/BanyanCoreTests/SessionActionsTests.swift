@@ -16,7 +16,7 @@ import Testing
         persistence: database,
         runtime: SessionRuntimeCoordinator(backend: backend)
     )
-    let actions = SessionActions(database: database, tmux: backend, catalog: catalog)
+    let actions = SessionActions(persistence: database, tmux: backend, catalog: catalog)
 
     let id = try actions.createShellSession(cwd: "/tmp/project")
 

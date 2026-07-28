@@ -2,16 +2,16 @@ import Foundation
 
 /// Shared session lifecycle actions used by terminal frontends.
 public struct SessionActions: Sendable {
-    private let database: SessionDatabase
+    private let persistence: any SessionPersistenceBackend
     private let tmux: any TmuxSessionBackend
     private let catalog: SessionCatalog
 
     public init(
-        database: SessionDatabase,
+        persistence: any SessionPersistenceBackend,
         tmux: any TmuxSessionBackend,
         catalog: SessionCatalog
     ) {
-        self.database = database
+        self.persistence = persistence
         self.tmux = tmux
         self.catalog = catalog
     }
@@ -96,7 +96,7 @@ public struct SessionActions: Sendable {
     }
 
     private func uniqueSessionID(prefix: String = "tui-shell") -> String {
-        let existingIDs = Set(database.load().map(\.id))
+        let existingIDs = Set(persistence.load().map(\.id))
         var candidate = prefix
         var suffix = 2
         while existingIDs.contains(candidate) || tmux.hasSession(named: SessionIdentityPolicy.sessionName(for: candidate)) {
