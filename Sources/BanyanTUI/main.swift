@@ -10,6 +10,7 @@ import Darwin
 private struct BanyanTUI {
     private let database: SessionDatabase
     private let tmux = TmuxBackend.shared
+    private let dataSource: TUISessionDataSource
     private let catalog: SessionCatalog
     private var sessions: [SessionSnapshot] = []
     private var history: [ImportedAgentSession] = []
@@ -21,6 +22,7 @@ private struct BanyanTUI {
     init() {
         let database = SessionDatabase()
         self.database = database
+        self.dataSource = TUISessionDataSource(database: database, tmux: TmuxBackend.shared)
         self.catalog = SessionCatalog(
             persistence: database,
             runtime: SessionRuntimeCoordinator()
@@ -76,21 +78,13 @@ private struct BanyanTUI {
     private mutating func reload() {
         if showingHistory {
             if historyNeedsReload {
-                history = AgentSessionHistoryImporter.load(maxPerProvider: 30)
+                history = dataSource.loadHistory()
                 historyNeedsReload = false
             }
             selectedIndex = min(selectedIndex, max(0, history.count - 1))
             return
         }
-        let stored = database.load()
-        let processTable = ProcessTable.snapshot()
-        let synchronizer = SessionStatusSynchronizer(
-            backend: tmux,
-            processDescendants: { rootPID in processTable.descendants(of: rootPID) }
-        )
-        let updated = synchronizer.synchronize(stored)
-        if updated != stored { database.save(updated) }
-        sessions = updated.filter { $0.status != .closed }
+        sessions = dataSource.loadActiveSessions()
         selectedIndex = min(selectedIndex, max(0, sessions.count - 1))
     }
 
