@@ -57,6 +57,7 @@ public protocol TmuxTerminalBackend: AgentSupervisorBackend, TmuxSessionLifecycl
 public protocol TmuxClientBackend: TmuxTerminalBackend {
     func configureTerminalTheme(style: String, for sessionName: String?)
     func refreshClients(attachedTo name: String)
+    func scrollHistory(paneID: String, lines: Int, up: Bool)
 }
 
 /// Backend surface needed by the macOS session store for discovery and lifecycle.

@@ -507,7 +507,7 @@ final class TerminalContainerView: NSView {
         guard let paneID = (terminalView as? DetectingLocalProcessTerminalView)?.tmuxSessionName else {
             return false
         }
-        TmuxBackend.shared.scrollHistory(paneID: paneID, lines: lines, up: up)
+        session.scrollHistory(paneID: paneID, lines: lines, up: up)
         return true
     }
 
