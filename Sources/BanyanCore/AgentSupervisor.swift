@@ -15,7 +15,7 @@ public struct AgentSupervisor: Sendable {
 
     public init(
         backend: any AgentSupervisorBackend,
-        processTable: ProcessTable = ProcessTable.snapshot()
+        processTable: ProcessTable
     ) {
         self.backend = backend
         self.processTable = processTable
