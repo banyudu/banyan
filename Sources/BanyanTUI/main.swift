@@ -13,10 +13,7 @@ private struct BanyanTUI {
     private let actions: TUISessionActions
     private var sessions: [SessionSnapshot] = []
     private var history: [ImportedAgentSession] = []
-    private var showingHistory = false
-    private var historyNeedsReload = true
-    private var selectedIndex = 0
-    private var notice: String?
+    private var viewState = TUIViewState()
 
     init() {
         let database = SessionDatabase()
@@ -42,35 +39,33 @@ private struct BanyanTUI {
             case .quit:
                 return
             case .toggleHistory:
-                showingHistory.toggle()
-                if showingHistory { historyNeedsReload = true }
-                selectedIndex = 0
+                viewState.toggleHistory()
                 continue
             case .next:
-                selectedIndex = min(selectedIndex + 1, max(0, visibleRowCount - 1))
+                viewState.moveNext(rowCount: visibleRowCount)
             case .previous:
-                selectedIndex = max(0, selectedIndex - 1)
+                viewState.movePrevious()
             case .refresh:
-                if showingHistory { historyNeedsReload = true }
+                viewState.refresh()
                 continue
             case .recover:
-                if !showingHistory { recoverSelected() }
+                if !viewState.showingHistory { recoverSelected() }
             case .newSession:
-                if !showingHistory { createShellSession() }
+                if !viewState.showingHistory { createShellSession() }
             case .close:
-                if !showingHistory { closeSelected() }
+                if !viewState.showingHistory { closeSelected() }
             case .remove:
-                if !showingHistory { removeSelected() }
+                if !viewState.showingHistory { removeSelected() }
             case .activate:
                 terminal.restore()
-                if showingHistory {
+                if viewState.showingHistory {
                     resumeHistorySelected()
                 } else {
                     attachSelected()
                 }
                 terminal.enterRaw()
             case .trimResume:
-                if showingHistory { resumeHistorySelected(trimmed: true) }
+                if viewState.showingHistory { resumeHistorySelected(trimmed: true) }
             case .unknown:
                 continue
             }
@@ -78,29 +73,29 @@ private struct BanyanTUI {
     }
 
     private mutating func reload() {
-        if showingHistory {
-            if historyNeedsReload {
+        if viewState.showingHistory {
+            if viewState.historyNeedsReload {
                 history = dataSource.loadHistory()
-                historyNeedsReload = false
+                viewState.markHistoryLoaded()
             }
-            selectedIndex = min(selectedIndex, max(0, history.count - 1))
+            viewState.clampSelection(rowCount: history.count)
             return
         }
         sessions = dataSource.loadActiveSessions()
-        selectedIndex = min(selectedIndex, max(0, sessions.count - 1))
+        viewState.clampSelection(rowCount: sessions.count)
     }
 
     private var visibleRowCount: Int {
-        showingHistory ? history.count : sessions.count
+        viewState.showingHistory ? history.count : sessions.count
     }
 
     private func render() {
         let output = TerminalRenderer.render(
             sessions: sessions,
             history: history,
-            showingHistory: showingHistory,
-            selectedIndex: selectedIndex,
-            notice: notice,
+            showingHistory: viewState.showingHistory,
+            selectedIndex: viewState.selectedIndex,
+            notice: viewState.notice,
             tmux: tmux
         )
         print(output, terminator: "")
@@ -108,8 +103,8 @@ private struct BanyanTUI {
     }
 
     private func attachSelected() {
-        guard sessions.indices.contains(selectedIndex) else { return }
-        let session = sessions[selectedIndex]
+        guard sessions.indices.contains(viewState.selectedIndex) else { return }
+        let session = sessions[viewState.selectedIndex]
         let name = session.tmuxSessionName ?? TmuxBackend.sessionName(for: session.id)
         print("\u{1b}[2J\u{1b}[H", terminator: "")
         fflush(stdout)
@@ -129,50 +124,49 @@ private struct BanyanTUI {
     }
 
     private mutating func resumeHistorySelected(trimmed: Bool = false) {
-        guard history.indices.contains(selectedIndex) else { return }
+        guard history.indices.contains(viewState.selectedIndex) else { return }
         do {
-            let wasTrimmed = try actions.resumeHistory(history[selectedIndex], trimmed: trimmed)
-            let item = history[selectedIndex]
-            showingHistory = false
-            selectedIndex = 0
-            notice = wasTrimmed ? "Resumed \(item.title) (trimmed)" : "Resumed \(item.title)"
+            let wasTrimmed = try actions.resumeHistory(history[viewState.selectedIndex], trimmed: trimmed)
+            let item = history[viewState.selectedIndex]
+            viewState.toggleHistory()
+            viewState.showNotice(wasTrimmed ? "Resumed \(item.title) (trimmed)" : "Resumed \(item.title)")
         } catch {
-            notice = error.localizedDescription
+            viewState.showNotice(error.localizedDescription)
         }
     }
 
     private mutating func createShellSession() {
         do {
             let id = try actions.createShellSession()
-            notice = "Created \(id)"
+            viewState.showNotice("Created \(id)")
         } catch {
-            notice = "Unable to create session: \(error.localizedDescription)"
+            viewState.showNotice("Unable to create session: \(error.localizedDescription)")
         }
     }
 
     private mutating func recoverSelected() {
-        guard sessions.indices.contains(selectedIndex) else { return }
-        let session = sessions[selectedIndex]
+        guard sessions.indices.contains(viewState.selectedIndex) else { return }
+        let session = sessions[viewState.selectedIndex]
         do {
             try actions.recover(session)
-            notice = "Recovered \(session.id)"
+            viewState.showNotice("Recovered \(session.id)")
         } catch {
-            notice = "Unable to recover \(session.id): \(error.localizedDescription)"
+            viewState.showNotice("Unable to recover \(session.id): \(error.localizedDescription)")
         }
     }
 
     private mutating func closeSelected() {
-        guard sessions.indices.contains(selectedIndex) else { return }
-        let session = sessions[selectedIndex]
+        guard sessions.indices.contains(viewState.selectedIndex) else { return }
+        let session = sessions[viewState.selectedIndex]
         actions.close(session)
-        notice = "Closed \(session.id)"
+        viewState.showNotice("Closed \(session.id)")
     }
 
     private mutating func removeSelected() {
-        guard sessions.indices.contains(selectedIndex) else { return }
-        let session = sessions[selectedIndex]
+        guard sessions.indices.contains(viewState.selectedIndex) else { return }
+        let session = sessions[viewState.selectedIndex]
         actions.remove(session)
-        notice = "Removed \(session.id)"
+        viewState.showNotice("Removed \(session.id)")
     }
 
     private func tmuxName(for session: SessionSnapshot) -> String {
