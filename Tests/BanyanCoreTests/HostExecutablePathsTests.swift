@@ -9,6 +9,19 @@ import Testing
     #expect(Set(paths).count == paths.count)
 }
 
+@Test func hostExecutablePathsBuildUserDirectoriesFromHome() {
+    #expect(
+        HostExecutablePaths.userPaths(homeDirectory: "/tmp/banyan-home") == [
+            "/tmp/banyan-home/bin",
+            "/tmp/banyan-home/.bun/bin",
+            "/tmp/banyan-home/.local/bin",
+            "/tmp/banyan-home/.cargo/bin",
+            "/tmp/banyan-home/go/bin",
+            "/tmp/banyan-home/.nix-profile/bin"
+        ]
+    )
+}
+
 @Test func hostExecutablePathsUsePlatformOrdering() {
     #if os(macOS)
     #expect(HostExecutablePaths.systemPaths().first == "/opt/homebrew/bin")
