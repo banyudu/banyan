@@ -90,7 +90,7 @@ public protocol SessionRuntimeBackend: Sendable {
 public struct SessionRuntimeCoordinator: Sendable, SessionRuntimeBackend {
     private let backend: any TmuxSessionLifecycleBackend
 
-    public init(backend: any TmuxSessionLifecycleBackend = TmuxBackend.shared) {
+    public init(backend: any TmuxSessionLifecycleBackend) {
         self.backend = backend
     }
 
