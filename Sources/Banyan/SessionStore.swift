@@ -1987,37 +1987,12 @@ final class SessionStore: ObservableObject {
         sourceOffsets: IndexSet,
         destinationOffset: Int
     ) -> [String]? {
-        guard !sourceOffsets.isEmpty,
-              !groupSessionIDs.isEmpty,
-              destinationOffset >= 0,
-              destinationOffset <= groupSessionIDs.count,
-              sourceOffsets.allSatisfy({ $0 >= 0 && $0 < groupSessionIDs.count })
-        else {
-            return nil
-        }
-
-        let sourceSet = Set(sourceOffsets)
-        let movingIDs = sourceOffsets.sorted().map { groupSessionIDs[$0] }
-        var remainingIDs = groupSessionIDs.enumerated().compactMap { index, id in
-            sourceSet.contains(index) ? nil : id
-        }
-        let removedBeforeDestination = sourceOffsets.filter { $0 < destinationOffset }.count
-        let insertionIndex = max(0, min(destinationOffset - removedBeforeDestination, remainingIDs.count))
-        remainingIDs.insert(contentsOf: movingIDs, at: insertionIndex)
-
-        let groupIDSet = Set(groupSessionIDs)
-        guard groupIDSet.count == groupSessionIDs.count,
-              groupIDSet.isSubset(of: Set(activeSidebarIDs)) else {
-            return nil
-        }
-
-        var reorderedGroupIterator = remainingIDs.makeIterator()
-        return activeSidebarIDs.map { id in
-            if groupIDSet.contains(id) {
-                return reorderedGroupIterator.next() ?? id
-            }
-            return id
-        }
+        SessionSidebarOrdering.reorderedIDs(
+            activeIDs: activeSidebarIDs,
+            groupIDs: groupSessionIDs,
+            sourceOffsets: sourceOffsets,
+            destinationOffset: destinationOffset
+        )
     }
 
     nonisolated static func reorderedSidebarSessionIDs(
@@ -2026,18 +2001,11 @@ final class SessionStore: ObservableObject {
         sourceID: String,
         targetID: String
     ) -> [String]? {
-        guard let sourceIndex = groupSessionIDs.firstIndex(of: sourceID),
-              let targetIndex = groupSessionIDs.firstIndex(of: targetID),
-              sourceIndex != targetIndex else {
-            return nil
-        }
-
-        let destinationOffset = sourceIndex < targetIndex ? targetIndex + 1 : targetIndex
-        return reorderedSidebarSessionIDs(
+        SessionSidebarOrdering.reorderedIDs(
             activeSidebarIDs: activeSidebarIDs,
-            groupSessionIDs: groupSessionIDs,
-            sourceOffsets: IndexSet(integer: sourceIndex),
-            destinationOffset: destinationOffset
+            groupIDs: groupSessionIDs,
+            sourceID: sourceID,
+            targetID: targetID
         )
     }
 
