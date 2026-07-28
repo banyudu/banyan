@@ -1,51 +1,6 @@
 import BanyanCore
 import Foundation
 
-struct ImportedAgentSession: Identifiable, Equatable {
-    let id: String
-    let provider: CodingAgentProvider
-    let sourceID: String
-    let title: String
-    /// Title of the conversation's current segment (after the latest /clear or
-    /// /new), or nil when the segment has no prompt yet. `title` keeps the
-    /// pre-reset first prompt as a display fallback; this does not, so live
-    /// sessions don't resurrect a stale title onto a freshly cleared session.
-    let segmentPromptTitle: String?
-    /// True when the transcript's latest segment was reset (/clear or /new)
-    /// with no prompt since. Lets a live session drop its stale title even
-    /// when the keystroke path missed the reset (autocomplete, paste,
-    /// unfocused terminal, or a /clear issued while Banyan was closed).
-    let segmentWasCleared: Bool
-    let cwd: String
-    let transcriptURL: URL
-    let createdAt: Date
-    let updatedAt: Date
-
-    init(
-        id: String,
-        provider: CodingAgentProvider,
-        sourceID: String,
-        title: String,
-        segmentPromptTitle: String? = nil,
-        segmentWasCleared: Bool = false,
-        cwd: String,
-        transcriptURL: URL,
-        createdAt: Date,
-        updatedAt: Date
-    ) {
-        self.id = id
-        self.provider = provider
-        self.sourceID = sourceID
-        self.title = title
-        self.segmentPromptTitle = segmentPromptTitle
-        self.segmentWasCleared = segmentWasCleared
-        self.cwd = cwd
-        self.transcriptURL = transcriptURL
-        self.createdAt = createdAt
-        self.updatedAt = updatedAt
-    }
-}
-
 enum AgentSessionHistoryImporter {
     static func load(
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
