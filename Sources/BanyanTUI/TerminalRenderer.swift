@@ -12,7 +12,7 @@ struct TerminalRenderer {
         let selected = sessions.indices.contains(selectedIndex) ? sessions[selectedIndex] : nil
         var output = "\u{1b}[2J\u{1b}[H"
         let mode = showingHistory ? "active" : "history"
-        let enterAction = showingHistory ? "resume" : "attach"
+        let enterAction = showingHistory ? "resume/T trim" : "attach"
         output += "Banyan TUI  h \(mode)  j/k navigate  enter \(enterAction)  R recover  n new  c close  x remove  r refresh  q quit\n"
         if let notice { output += "\(notice)\n" }
         output += "\n"

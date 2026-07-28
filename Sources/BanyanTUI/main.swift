@@ -62,6 +62,8 @@ private struct BanyanTUI {
                     attachSelected()
                 }
                 terminal.enterRaw()
+            case 84: // T
+                if showingHistory { resumeHistorySelected(trimmed: true) }
             default:
                 continue
             }
@@ -124,22 +126,40 @@ private struct BanyanTUI {
         }
     }
 
-    private mutating func resumeHistorySelected() {
+    private mutating func resumeHistorySelected(trimmed: Bool = false) {
         guard history.indices.contains(selectedIndex) else { return }
         let item = history[selectedIndex]
         guard let sourceID = AgentSessionHistory.sourceID(
             fromImportedSessionID: item.id,
             provider: item.provider
-        ), let command = AgentSessionHistory.resumeCommand(
+        ) else {
+            notice = "Unable to resume \(item.title)"
+            return
+        }
+
+        let resumeSourceID: String
+        if trimmed,
+           let prepared = TranscriptResumePreparer.prepare(
+               provider: item.provider,
+               sourceID: sourceID,
+               cwd: item.cwd,
+               transcriptURL: item.transcriptURL
+           ) {
+            resumeSourceID = prepared.newSourceID
+        } else {
+            resumeSourceID = sourceID
+        }
+
+        guard let command = AgentSessionHistory.resumeCommand(
             provider: item.provider,
-            sourceID: sourceID,
+            sourceID: resumeSourceID,
             cwd: item.cwd
         ) else {
             notice = "Unable to resume \(item.title)"
             return
         }
 
-        let id = uniqueSessionID(prefix: "\(item.provider.rawValue)-\(sourceID.prefix(8))")
+        let id = uniqueSessionID(prefix: "\(item.provider.rawValue)-\(resumeSourceID.prefix(8))")
         let now = Date()
         let request = SessionLaunchRequest(
             sessionName: TmuxBackend.sessionName(for: id),
@@ -162,7 +182,7 @@ private struct BanyanTUI {
             try catalog.create(snapshot: snapshot, launchRequest: request)
             showingHistory = false
             selectedIndex = 0
-            notice = "Resumed \(item.title)"
+            notice = trimmed ? "Resumed \(item.title) (trimmed)" : "Resumed \(item.title)"
         } catch {
             notice = "Unable to resume \(item.title): \(error.localizedDescription)"
         }
