@@ -1,3 +1,4 @@
+import BanyanCore
 import Foundation
 
 struct GitHubPullRequestDetails: Equatable, Identifiable {
