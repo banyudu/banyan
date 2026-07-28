@@ -51,6 +51,6 @@ public struct SessionCatalog: Sendable, SessionCatalogBackend {
     }
 
     private func sessionName(for snapshot: SessionSnapshot) -> String {
-        snapshot.tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: snapshot.id)
+        snapshot.launchRequest.sessionName
     }
 }

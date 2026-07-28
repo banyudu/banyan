@@ -23,7 +23,7 @@ public enum SessionRestorationPolicy {
         for snapshot: SessionSnapshot,
         liveTmuxSessionNames: Set<String>
     ) -> SessionRestorationPlan {
-        let tmuxSessionName = snapshot.tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: snapshot.id)
+        let tmuxSessionName = snapshot.launchRequest.sessionName
         return SessionRestorationPlan(
             tmuxSessionName: tmuxSessionName,
             status: SessionLifecyclePolicy.restoredStatus(snapshotStatus: snapshot.status),
