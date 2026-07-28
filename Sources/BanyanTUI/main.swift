@@ -10,8 +10,10 @@ import Darwin
 private struct BanyanTUI {
     private let database = SessionDatabase()
     private let tmux = TmuxBackend.shared
+    private let runtime = SessionRuntimeCoordinator()
     private var sessions: [SessionSnapshot] = []
     private var selectedIndex = 0
+    private var notice: String?
 
     mutating func run() {
         let terminal = TerminalMode()
@@ -29,6 +31,12 @@ private struct BanyanTUI {
                 selectedIndex = max(0, selectedIndex - 1)
             case 114: // r
                 continue
+            case 110: // n
+                createShellSession()
+            case 99: // c
+                closeSelected()
+            case 120: // x
+                removeSelected()
             case 10, 13: // return
                 terminal.restore()
                 attachSelected()
@@ -47,7 +55,9 @@ private struct BanyanTUI {
     private func render() {
         let selected = sessions.indices.contains(selectedIndex) ? sessions[selectedIndex] : nil
         var output = "\u{1b}[2J\u{1b}[H"
-        output += "Banyan TUI  j/k navigate  enter attach  r refresh  q quit\n\n"
+        output += "Banyan TUI  j/k navigate  enter attach  n new  c close  x remove  r refresh  q quit\n"
+        if let notice { output += "\(notice)\n" }
+        output += "\n"
 
         let sidebarWidth = 34
         output += "Sessions".padding(toLength: sidebarWidth, withPad: " ", startingAt: 0)
@@ -109,6 +119,92 @@ private struct BanyanTUI {
         } catch {
             print("Unable to attach to \(name): \(error.localizedDescription)")
         }
+    }
+
+    private mutating func createShellSession() {
+        let id = uniqueSessionID()
+        let cwd = FileManager.default.currentDirectoryPath
+        let request = SessionLaunchRequest(
+            sessionName: TmuxBackend.sessionName(for: id),
+            cwd: cwd,
+            command: ""
+        )
+        do {
+            try runtime.ensureBackingSession(request)
+            let now = Date()
+            let snapshot = SessionSnapshot(
+                id: id,
+                tmuxSessionName: request.sessionName,
+                title: "Shell",
+                reportedTitle: nil,
+                cwd: cwd,
+                command: "",
+                status: .running,
+                tone: .blue,
+                createdAt: now,
+                updatedAt: now
+            )
+            database.save(database.load() + [snapshot])
+            notice = "Created \(id)"
+        } catch {
+            notice = "Unable to create session: \(error.localizedDescription)"
+        }
+    }
+
+    private mutating func closeSelected() {
+        guard sessions.indices.contains(selectedIndex) else { return }
+        let id = sessions[selectedIndex].id
+        runtime.removeBackingSession(named: tmuxName(for: sessions[selectedIndex]))
+        updateStoredSession(id: id, status: .closed)
+        notice = "Closed \(id)"
+    }
+
+    private mutating func removeSelected() {
+        guard sessions.indices.contains(selectedIndex) else { return }
+        let session = sessions[selectedIndex]
+        runtime.removeBackingSession(named: tmuxName(for: session))
+        database.save(database.load().filter { $0.id != session.id })
+        notice = "Removed \(session.id)"
+    }
+
+    private func uniqueSessionID() -> String {
+        let existingIDs = Set(database.load().map(\.id))
+        var candidate = "tui-shell"
+        var suffix = 2
+        while existingIDs.contains(candidate) || tmux.hasSession(named: TmuxBackend.sessionName(for: candidate)) {
+            candidate = "tui-shell-\(suffix)"
+            suffix += 1
+        }
+        return candidate
+    }
+
+    private func tmuxName(for session: SessionSnapshot) -> String {
+        session.tmuxSessionName ?? TmuxBackend.sessionName(for: session.id)
+    }
+
+    private func updateStoredSession(id: String, status: SessionStatus) {
+        let snapshots = database.load().map { session in
+            guard session.id == id else { return session }
+            return SessionSnapshot(
+                id: session.id,
+                tmuxSessionName: session.tmuxSessionName,
+                title: session.title,
+                titleURL: session.titleURL,
+                titleURLWasAutoDetected: session.titleURLWasAutoDetected,
+                reportedTitle: session.reportedTitle,
+                generatedTitle: session.generatedTitle,
+                isTitlePinned: session.isTitlePinned,
+                cwd: session.cwd,
+                command: session.command,
+                status: status,
+                tone: session.tone,
+                parentSessionID: session.parentSessionID,
+                agentSessionID: session.agentSessionID,
+                createdAt: session.createdAt,
+                updatedAt: Date()
+            )
+        }
+        database.save(snapshots)
     }
 }
 
