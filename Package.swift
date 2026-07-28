@@ -2,20 +2,12 @@
 
 import PackageDescription
 
-let package = Package(
-    name: "Banyan",
-    platforms: [
-        .macOS(.v14)
-    ],
-    products: [
-        .executable(name: "Banyan", targets: ["Banyan"]),
+var packageProducts: [Product] = [
         .executable(name: "banyanctl", targets: ["BanyanCtl"]),
         .executable(name: "BanyanTUI", targets: ["BanyanTUI"])
-    ],
-    dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0")
-    ],
-    targets: [
+]
+
+var packageTargets: [Target] = [
         .systemLibrary(
             name: "CSQLite",
             path: "Sources/CSQLite"
@@ -23,16 +15,6 @@ let package = Package(
         .target(
             name: "BanyanCore",
             dependencies: ["CSQLite"]
-        ),
-        .executableTarget(
-            name: "Banyan",
-            dependencies: [
-                "BanyanCore",
-                .product(name: "SwiftTerm", package: "SwiftTerm")
-            ],
-            resources: [
-                .process("Resources")
-            ]
         ),
         .executableTarget(
             name: "BanyanCtl",
@@ -45,11 +27,35 @@ let package = Package(
         .testTarget(
             name: "BanyanCoreTests",
             dependencies: ["BanyanCore"]
-        ),
-        .testTarget(
-            name: "BanyanTests",
-            dependencies: ["Banyan"]
         )
+]
+
+#if os(macOS)
+packageProducts.append(.executable(name: "Banyan", targets: ["Banyan"]))
+packageTargets.append(contentsOf: [
+    .executableTarget(
+        name: "Banyan",
+        dependencies: [
+            "BanyanCore",
+            .product(name: "SwiftTerm", package: "SwiftTerm")
+        ],
+        resources: [
+            .process("Resources")
+        ]
+    ),
+    .testTarget(
+        name: "BanyanTests",
+        dependencies: ["Banyan"]
+    )
+])
+#endif
+
+let package = Package(
+    name: "Banyan",
+    products: packageProducts,
+    dependencies: [
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0")
     ],
+    targets: packageTargets,
     swiftLanguageModes: [.v5]
 )
