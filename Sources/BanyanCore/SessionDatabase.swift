@@ -5,7 +5,7 @@ import SQLite3
 ///
 /// Workspace preferences and Linear cache data intentionally stay outside this
 /// type for now because their current models are macOS-frontend concerns.
-public struct SessionDatabase {
+public struct SessionDatabase: Sendable {
     private let databaseURL: URL
     private let legacyJSONURL: URL
 
