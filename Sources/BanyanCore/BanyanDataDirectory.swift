@@ -4,8 +4,8 @@ import Foundation
 public enum BanyanDataDirectory {
     public static func applicationSupportURL(
         fileManager: FileManager = .default,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory())
+        environment: [String: String],
+        homeDirectory: URL
     ) -> URL {
         #if os(macOS)
         return fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -19,6 +19,9 @@ public enum BanyanDataDirectory {
     }
 
     public static func url(for relativePath: String) -> URL {
-        applicationSupportURL().appendingPathComponent(relativePath)
+        applicationSupportURL(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        ).appendingPathComponent(relativePath)
     }
 }
