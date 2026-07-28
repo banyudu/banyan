@@ -9,7 +9,8 @@ let package = Package(
     ],
     products: [
         .executable(name: "Banyan", targets: ["Banyan"]),
-        .executable(name: "banyanctl", targets: ["BanyanCtl"])
+        .executable(name: "banyanctl", targets: ["BanyanCtl"]),
+        .executable(name: "BanyanTUI", targets: ["BanyanTUI"])
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0")
@@ -35,6 +36,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "BanyanCtl",
+            dependencies: ["BanyanCore"]
+        ),
+        .executableTarget(
+            name: "BanyanTUI",
             dependencies: ["BanyanCore"]
         ),
         .testTarget(
