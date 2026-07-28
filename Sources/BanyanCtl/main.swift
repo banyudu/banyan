@@ -1,5 +1,8 @@
 import BanyanCore
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 let client = BanyanCtl(arguments: Array(CommandLine.arguments.dropFirst()))
 client.run()

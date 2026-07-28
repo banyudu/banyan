@@ -1,3 +1,4 @@
+import BanyanCore
 import SwiftUI
 
 struct AddSessionDraft: Identifiable {

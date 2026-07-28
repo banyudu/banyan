@@ -15,8 +15,13 @@ let package = Package(
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0")
     ],
     targets: [
+        .systemLibrary(
+            name: "CSQLite",
+            path: "Sources/CSQLite"
+        ),
         .target(
-            name: "BanyanCore"
+            name: "BanyanCore",
+            dependencies: ["CSQLite"]
         ),
         .executableTarget(
             name: "Banyan",
