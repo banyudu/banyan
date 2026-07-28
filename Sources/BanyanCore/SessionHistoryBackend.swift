@@ -21,10 +21,17 @@ public protocol SessionHistoryBackend: Sendable {
 }
 
 public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
-    public init() {}
+    private let homeDirectory: URL
+
+    public init(homeDirectory: URL) {
+        self.homeDirectory = homeDirectory
+    }
 
     public func load(maxPerProvider limit: Int) -> [ImportedAgentSession] {
-        AgentSessionHistoryImporter.load(maxPerProvider: limit)
+        AgentSessionHistoryImporter.load(
+            homeDirectory: homeDirectory,
+            maxPerProvider: limit
+        )
     }
 
     public func sourceID(
@@ -58,7 +65,8 @@ public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
             provider: provider,
             sourceID: sourceID,
             cwd: cwd,
-            transcriptURL: transcriptURL
+            transcriptURL: transcriptURL,
+            home: homeDirectory
         )?.newSourceID
     }
 }

@@ -35,7 +35,9 @@ import Testing
         persistence: persistence,
         backend: backend,
         processTable: EmptyProcessTableProvider(),
-        historyBackend: DefaultSessionHistoryBackend()
+        historyBackend: DefaultSessionHistoryBackend(
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
     )
 
     let active = dataSource.loadActiveSessions()

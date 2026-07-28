@@ -11,7 +11,9 @@ private func makeDefaultApp() -> BanyanTUI {
             persistence: database,
             backend: backend,
             processTable: LiveProcessTableProvider(),
-            historyBackend: DefaultSessionHistoryBackend()
+            historyBackend: DefaultSessionHistoryBackend(
+                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            )
         ),
         actions: SessionActions(
             idAllocator: UniqueSessionIDAllocator(
@@ -22,7 +24,9 @@ private func makeDefaultApp() -> BanyanTUI {
                 persistence: database,
                 runtime: SessionRuntimeCoordinator(backend: backend)
             ),
-            history: DefaultSessionHistoryBackend()
+            history: DefaultSessionHistoryBackend(
+                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            )
         ),
         input: TerminalMode(),
         output: output,

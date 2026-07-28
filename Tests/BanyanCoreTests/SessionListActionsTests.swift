@@ -12,7 +12,9 @@ import Testing
             persistence: EmptyPersistence(),
             runtime: SessionRuntimeCoordinator(backend: LifecycleBackend())
         ),
-        history: DefaultSessionHistoryBackend()
+        history: DefaultSessionHistoryBackend(
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
     )
 
     #expect(actions is SessionActions)

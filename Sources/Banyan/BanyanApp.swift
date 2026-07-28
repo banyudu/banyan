@@ -9,7 +9,9 @@ struct BanyanApp: App {
         tmuxBackend: TmuxBackend.shared,
         sessionBackend: TmuxBackend.shared,
         processTable: LiveProcessTableProvider(),
-        historyBackend: DefaultSessionHistoryBackend()
+        historyBackend: DefaultSessionHistoryBackend(
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
     )
 
     var body: some Scene {

@@ -19,7 +19,9 @@ import Testing
     let actions = SessionActions(
         idAllocator: UniqueSessionIDAllocator(persistence: database, tmux: backend),
         catalog: catalog,
-        history: DefaultSessionHistoryBackend()
+        history: DefaultSessionHistoryBackend(
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
     )
 
     let id = try actions.createShellSession(cwd: "/tmp/project")
