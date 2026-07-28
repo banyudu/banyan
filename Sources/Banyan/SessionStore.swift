@@ -614,8 +614,8 @@ final class SessionStore: ObservableObject {
         linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]")
         linearIssueListTask = Task.detached(priority: .utility) {
             do {
-                async let issuesRequest = LinearIssueClient.fetchIssueList(cwd: cwd, deadline: deadline)
-                async let workflowStatesRequest = LinearIssueClient.fetchWorkflowStates(cwd: cwd, deadline: deadline)
+                async let issuesRequest = LinearIssueClient.fetchIssueList(cwd: cwd, deadline: deadline, environment: environment, homeDirectory: homeDirectory)
+                async let workflowStatesRequest = LinearIssueClient.fetchWorkflowStates(cwd: cwd, deadline: deadline, environment: environment, homeDirectory: homeDirectory)
                 let issues = try await issuesRequest
                 let workflowStates: [LinearWorkflowState]?
                 do {
@@ -781,7 +781,7 @@ final class SessionStore: ObservableObject {
         let cwd = selectedSession?.cwd ?? homeDirectory
         selectedLinearListIssueTask = Task.detached(priority: .utility) {
             do {
-                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd)
+                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
@@ -835,8 +835,8 @@ final class SessionStore: ObservableObject {
         let cwd = selectedSession?.cwd ?? homeDirectory
         selectedLinearListIssueTask = Task.detached(priority: .userInitiated) {
             do {
-                try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd)
-                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd)
+                try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
+                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
@@ -1572,7 +1572,7 @@ final class SessionStore: ObservableObject {
         let sessionID = session.id
         selectedLinearIssueTask = Task.detached(priority: .utility) {
             do {
-                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd)
+                let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.selectedSessionID == sessionID,
@@ -1622,8 +1622,8 @@ final class SessionStore: ObservableObject {
         let sessionID = session.id
         selectedLinearIssueTask = Task.detached(priority: .userInitiated) {
             do {
-                try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd)
-                let status = try await LinearIssueClient.fetchIssueStatus(identifier: issueID, cwd: cwd)
+                try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
+                let status = try await LinearIssueClient.fetchIssueStatus(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.selectedSessionID == sessionID,
@@ -1674,7 +1674,7 @@ final class SessionStore: ObservableObject {
         selectedLinearIssueTask?.cancel()
         selectedLinearIssueTask = Task.detached(priority: .userInitiated) {
             do {
-                try await LinearIssueClient.updateIssueDescription(identifier: issueID, description: description, cwd: cwd)
+                try await LinearIssueClient.updateIssueDescription(identifier: issueID, description: description, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedSessionID == sessionID, self.selectedContextInfo?.linearIssueID == issueID else { return }
                     self.pendingSelectedLinearDescriptionUpdate = nil
@@ -1718,7 +1718,7 @@ final class SessionStore: ObservableObject {
         selectedLinearListIssueTask?.cancel()
         selectedLinearListIssueTask = Task.detached(priority: .userInitiated) {
             do {
-                try await LinearIssueClient.updateIssueDescription(identifier: issueID, description: description, cwd: cwd)
+                try await LinearIssueClient.updateIssueDescription(identifier: issueID, description: description, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.pendingSelectedLinearListDescriptionUpdate = nil
@@ -1775,7 +1775,7 @@ final class SessionStore: ObservableObject {
         let sessionID = session.id
         selectedLinearIssueStatusTask = Task.detached(priority: .utility) {
             do {
-                let status = try await LinearIssueClient.fetchIssueStatus(identifier: issueID, cwd: cwd)
+                let status = try await LinearIssueClient.fetchIssueStatus(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.selectedLinearIssueStatusTask = nil

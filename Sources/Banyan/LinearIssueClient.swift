@@ -179,7 +179,9 @@ enum LinearIssueClient {
     static func fetchIssueList(
         cwd: String,
         limit: Int = 0,
-        deadline: Date? = nil
+        deadline: Date? = nil,
+        environment: [String: String],
+        homeDirectory: String
     ) async throws -> [LinearIssueSummary] {
         var issues: [LinearIssueSummary] = []
         var after: String?
@@ -199,7 +201,9 @@ enum LinearIssueClient {
                     variables
                 ],
                 cwd: cwd,
-                timeout: try requestTimeout(maximum: 15, deadline: deadline)
+                timeout: try requestTimeout(maximum: 15, deadline: deadline),
+                environment: environment,
+                homeDirectory: homeDirectory
             )
             let pageResult = try decodeIssueListPageResponse(output)
             issues.append(contentsOf: pageResult.issues)
@@ -219,7 +223,12 @@ enum LinearIssueClient {
         return issues
     }
 
-    static func fetchWorkflowStates(cwd: String, deadline: Date? = nil) async throws -> [LinearWorkflowState] {
+    static func fetchWorkflowStates(
+        cwd: String,
+        deadline: Date? = nil,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> [LinearWorkflowState] {
         let output = try await runCommand(
             [
                 "linear",
@@ -227,57 +236,94 @@ enum LinearIssueClient {
                 workflowStatesQuery
             ],
             cwd: cwd,
-            timeout: try requestTimeout(maximum: 12, deadline: deadline)
+            timeout: try requestTimeout(maximum: 12, deadline: deadline),
+            environment: environment,
+            homeDirectory: homeDirectory
         )
         return try decodeWorkflowStatesResponse(output)
     }
 
-    static func fetchIssue(identifier: String, cwd: String) async throws -> LinearIssueDetails {
+    static func fetchIssue(
+        identifier: String,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> LinearIssueDetails {
         do {
-            return try await fetchIssueWithLinearCLI(identifier: identifier, cwd: cwd)
+            return try await fetchIssueWithLinearCLI(identifier: identifier, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
         } catch {
             do {
-                return try await fetchIssueWithAPIKey(identifier: identifier)
+                return try await fetchIssueWithAPIKey(identifier: identifier, environment: environment)
             } catch {
                 throw LinearIssueClientError.authenticationUnavailable
             }
         }
     }
 
-    static func fetchIssueStatus(identifier: String, cwd: String) async throws -> LinearIssueStatusSnapshot {
+    static func fetchIssueStatus(
+        identifier: String,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> LinearIssueStatusSnapshot {
         do {
-            return try await fetchIssueStatusWithLinearCLI(identifier: identifier, cwd: cwd)
+            return try await fetchIssueStatusWithLinearCLI(identifier: identifier, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
         } catch {
             do {
-                return try await fetchIssueStatusWithAPIKey(identifier: identifier)
+                return try await fetchIssueStatusWithAPIKey(identifier: identifier, environment: environment)
             } catch {
                 throw LinearIssueClientError.authenticationUnavailable
             }
         }
     }
 
-    static func updateIssueState(identifier: String, state: LinearWorkflowState, cwd: String) async throws {
+    static func updateIssueState(
+        identifier: String,
+        state: LinearWorkflowState,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws {
         do {
             _ = try await runCommand(
                 ["linear", "issue", "update", identifier, "--state", state.name],
                 cwd: cwd,
-                timeout: 12
+                timeout: 12,
+                environment: environment,
+                homeDirectory: homeDirectory
             )
         } catch {
-            try await updateIssueStateWithAPIKey(identifier: identifier, stateID: state.id)
+            try await updateIssueStateWithAPIKey(identifier: identifier, stateID: state.id, environment: environment)
         }
     }
 
-    static func updateIssueDescription(identifier: String, description: String, cwd: String) async throws {
+    static func updateIssueDescription(
+        identifier: String,
+        description: String,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws {
         let variables = String(decoding: try JSONEncoder().encode(["id": identifier, "description": description]), as: UTF8.self)
         do {
-            _ = try await runCommand(["linear", "api", updateDescriptionMutation, "--variables-json", variables], cwd: cwd, timeout: 12)
+            _ = try await runCommand(
+                ["linear", "api", updateDescriptionMutation, "--variables-json", variables],
+                cwd: cwd,
+                timeout: 12,
+                environment: environment,
+                homeDirectory: homeDirectory
+            )
         } catch {
-            try await updateIssueDescriptionWithAPIKey(identifier: identifier, description: description)
+            try await updateIssueDescriptionWithAPIKey(identifier: identifier, description: description, environment: environment)
         }
     }
 
-    private static func fetchIssueWithLinearCLI(identifier: String, cwd: String) async throws -> LinearIssueDetails {
+    private static func fetchIssueWithLinearCLI(
+        identifier: String,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> LinearIssueDetails {
         let output = try await runCommand(
             [
                 "linear",
@@ -287,12 +333,19 @@ enum LinearIssueClient {
                 "{\"id\":\"\(identifier)\"}"
             ],
             cwd: cwd,
-            timeout: 12
+            timeout: 12,
+            environment: environment,
+            homeDirectory: homeDirectory
         )
         return try decodeIssueResponse(output)
     }
 
-    private static func fetchIssueStatusWithLinearCLI(identifier: String, cwd: String) async throws -> LinearIssueStatusSnapshot {
+    private static func fetchIssueStatusWithLinearCLI(
+        identifier: String,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> LinearIssueStatusSnapshot {
         let output = try await runCommand(
             [
                 "linear",
@@ -302,13 +355,18 @@ enum LinearIssueClient {
                 "{\"id\":\"\(identifier)\"}"
             ],
             cwd: cwd,
-            timeout: 8
+            timeout: 8,
+            environment: environment,
+            homeDirectory: homeDirectory
         )
         return try decodeIssueStatusResponse(output)
     }
 
-    private static func fetchIssueWithAPIKey(identifier: String) async throws -> LinearIssueDetails {
-        guard let apiKey = ProcessInfo.processInfo.environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+    private static func fetchIssueWithAPIKey(
+        identifier: String,
+        environment: [String: String]
+    ) async throws -> LinearIssueDetails {
+        guard let apiKey = environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
               !apiKey.isEmpty else {
             throw LinearIssueClientError.authenticationUnavailable
         }
@@ -327,8 +385,11 @@ enum LinearIssueClient {
         return try decodeIssueResponse(String(decoding: data, as: UTF8.self))
     }
 
-    private static func fetchIssueStatusWithAPIKey(identifier: String) async throws -> LinearIssueStatusSnapshot {
-        guard let apiKey = ProcessInfo.processInfo.environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+    private static func fetchIssueStatusWithAPIKey(
+        identifier: String,
+        environment: [String: String]
+    ) async throws -> LinearIssueStatusSnapshot {
+        guard let apiKey = environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
               !apiKey.isEmpty else {
             throw LinearIssueClientError.authenticationUnavailable
         }
@@ -347,8 +408,12 @@ enum LinearIssueClient {
         return try decodeIssueStatusResponse(String(decoding: data, as: UTF8.self))
     }
 
-    private static func updateIssueStateWithAPIKey(identifier: String, stateID: String) async throws {
-        guard let apiKey = ProcessInfo.processInfo.environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+    private static func updateIssueStateWithAPIKey(
+        identifier: String,
+        stateID: String,
+        environment: [String: String]
+    ) async throws {
+        guard let apiKey = environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
               !apiKey.isEmpty else {
             throw LinearIssueClientError.authenticationUnavailable
         }
@@ -378,8 +443,12 @@ enum LinearIssueClient {
         }
     }
 
-    private static func updateIssueDescriptionWithAPIKey(identifier: String, description: String) async throws {
-        guard let apiKey = ProcessInfo.processInfo.environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
+    private static func updateIssueDescriptionWithAPIKey(
+        identifier: String,
+        description: String,
+        environment: [String: String]
+    ) async throws {
+        guard let apiKey = environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
             throw LinearIssueClientError.authenticationUnavailable
         }
         var request = URLRequest(url: URL(string: "https://api.linear.app/graphql")!)
@@ -446,7 +515,9 @@ enum LinearIssueClient {
     private static func runCommand(
         _ arguments: [String],
         cwd: String,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        environment: [String: String],
+        homeDirectory: String
     ) async throws -> String {
         // Routed through SubprocessRunner, which completes via `terminationHandler`
         // and drains pipes with `readabilityHandler` — no thread is parked in
@@ -462,9 +533,9 @@ enum LinearIssueClient {
                 arguments: arguments,
                 cwd: cwd,
                 environment: processEnvironment(
-                    base: ProcessInfo.processInfo.environment,
-                    homeDirectory: NSHomeDirectory(),
-                    shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: ProcessInfo.processInfo.environment)
+                    base: environment,
+                    homeDirectory: homeDirectory,
+                    shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment)
                 ),
                 timeout: timeout
             )
