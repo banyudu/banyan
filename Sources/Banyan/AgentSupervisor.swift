@@ -1,11 +1,7 @@
 import BanyanCore
 import Foundation
 
-protocol AgentSupervisorBackend: Sendable {
-    func hasSession(named name: String) -> Bool
-    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot?
-    func captureVisibleText(paneID: String, lineLimit: Int) -> String
-}
+protocol AgentSupervisorBackend: TmuxSessionBackend {}
 
 extension TmuxBackend: AgentSupervisorBackend {}
 

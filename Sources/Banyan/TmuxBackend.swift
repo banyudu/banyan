@@ -1,15 +1,6 @@
 import BanyanCore
 import Foundation
 
-struct TmuxPaneSnapshot {
-    let paneID: String
-    let rootPID: Int
-    let currentCommand: String
-    let currentPath: String
-    let isDead: Bool
-    let isInMode: Bool
-}
-
 struct TmuxBackend: Sendable {
     enum BackendError: LocalizedError {
         case tmuxNotFound
