@@ -16,15 +16,20 @@ public enum AppProcessEnvironment {
 
     private static let cachedShellEnvironment: [String: String] = loadShellEnvironment()
 
+    public static func shellEnvironment() -> [String: String] {
+        cachedShellEnvironment
+    }
+
     public static func make(
         base: [String: String],
+        shellEnvironment: [String: String],
         pathAdditions: [String] = [],
         removeKeys: Set<String> = [],
         overrides: [String: String] = [:]
     ) -> [String: String] {
         var environment = base
-        mergeAllowedShellEnvironment(cachedShellEnvironment, into: &environment)
-        mergePath(into: &environment, pathAdditions: pathAdditions, shellPath: cachedShellEnvironment["PATH"])
+        mergeAllowedShellEnvironment(shellEnvironment, into: &environment)
+        mergePath(into: &environment, pathAdditions: pathAdditions, shellPath: shellEnvironment["PATH"])
 
         for key in removeKeys {
             environment.removeValue(forKey: key)

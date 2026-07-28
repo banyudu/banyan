@@ -56,7 +56,7 @@ enum GitHubIssueClient {
     }
 
     private static func environment() -> [String: String] {
-        AppProcessEnvironment.make(base: ProcessInfo.processInfo.environment, pathAdditions: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"], overrides: [
+        AppProcessEnvironment.make(base: ProcessInfo.processInfo.environment, shellEnvironment: AppProcessEnvironment.shellEnvironment(), pathAdditions: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"], overrides: [
             "CLICOLOR": "0", "CLICOLOR_FORCE": "0", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1"
         ])
     }

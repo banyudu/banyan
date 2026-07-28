@@ -316,7 +316,11 @@ public enum SessionContextResolver {
         let additions = HostExecutablePaths.userPaths(homeDirectory: homeDirectory)
             + ["/nix/var/nix/profiles/default/bin"]
             + HostExecutablePaths.systemPaths()
-        return AppProcessEnvironment.make(base: base, pathAdditions: additions)
+        return AppProcessEnvironment.make(
+            base: base,
+            shellEnvironment: AppProcessEnvironment.shellEnvironment(),
+            pathAdditions: additions
+        )
     }
 
 }
