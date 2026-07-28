@@ -211,24 +211,7 @@ private struct BanyanTUI {
     private func updateStoredSession(id: String, status: SessionStatus) {
         let snapshots = database.load().map { session in
             guard session.id == id else { return session }
-            return SessionSnapshot(
-                id: session.id,
-                tmuxSessionName: session.tmuxSessionName,
-                title: session.title,
-                titleURL: session.titleURL,
-                titleURLWasAutoDetected: session.titleURLWasAutoDetected,
-                reportedTitle: session.reportedTitle,
-                generatedTitle: session.generatedTitle,
-                isTitlePinned: session.isTitlePinned,
-                cwd: session.cwd,
-                command: session.command,
-                status: status,
-                tone: session.tone,
-                parentSessionID: session.parentSessionID,
-                agentSessionID: session.agentSessionID,
-                createdAt: session.createdAt,
-                updatedAt: Date()
-            )
+            return session.updating(status: status)
         }
         database.save(snapshots)
     }
