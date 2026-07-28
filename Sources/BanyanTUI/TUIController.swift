@@ -39,11 +39,11 @@ struct BanyanTUI {
             render()
 
             guard let byte = readByte() else { break }
-            guard handle(TUIAction(byte: byte), terminal: terminal) else { return }
+            guard handle(SessionListAction(byte: byte), terminal: terminal) else { return }
         }
     }
 
-    private mutating func handle(_ action: TUIAction, terminal: TerminalMode) -> Bool {
+    private mutating func handle(_ action: SessionListAction, terminal: TerminalMode) -> Bool {
         switch action {
             case .quit:
                 return false

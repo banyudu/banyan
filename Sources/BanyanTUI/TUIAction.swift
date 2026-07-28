@@ -1,7 +1,5 @@
 import BanyanCore
 
-typealias TUIAction = SessionListAction
-
 extension SessionListAction {
     init(byte: UInt8) {
         switch byte {

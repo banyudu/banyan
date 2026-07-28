@@ -1,7 +1,7 @@
 import Foundation
 
 /// Frontend-neutral commands supported by a session list.
-public enum SessionListAction: Sendable {
+public enum SessionListAction: Sendable, Equatable {
     case quit
     case toggleHistory
     case next
