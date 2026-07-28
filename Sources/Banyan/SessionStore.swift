@@ -229,10 +229,10 @@ final class SessionStore: ObservableObject {
     private var isClosingScratchTerminal = false
 
     init(
-        persistence: any SessionStorePersistenceBackend = SessionPersistence(),
-        tmuxBackend: any TmuxSessionStoreBackend = TmuxBackend.shared,
-        processTable: any ProcessTableProvider = LiveProcessTableProvider(),
-        historyBackend: any SessionHistoryBackend = DefaultSessionHistoryBackend()
+        persistence: any SessionStorePersistenceBackend,
+        tmuxBackend: any TmuxSessionStoreBackend,
+        processTable: any ProcessTableProvider,
+        historyBackend: any SessionHistoryBackend
     ) {
         self.persistence = persistence
         self.tmuxBackend = tmuxBackend

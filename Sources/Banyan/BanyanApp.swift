@@ -4,7 +4,12 @@ import SwiftUI
 @main
 struct BanyanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store = SessionStore()
+    @StateObject private var store = SessionStore(
+        persistence: SessionPersistence(),
+        tmuxBackend: TmuxBackend.shared,
+        processTable: LiveProcessTableProvider(),
+        historyBackend: DefaultSessionHistoryBackend()
+    )
 
     var body: some Scene {
         WindowGroup {
