@@ -89,6 +89,12 @@ struct BanyanApp: App {
                 .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(0xF705)!)))
                 .disabled(store.sidebarMode != .sessions || store.selectedSession == nil)
             }
+            CommandMenu("View") {
+                Button("Show Command Palette") {
+                    store.requestCommandPalette()
+                }
+                .keyboardShortcut("p")
+            }
             CommandMenu("Terminal") {
                 Button("Close Current Terminal") {
                     store.handleCloseCommand(in: NSApp.keyWindow)
@@ -158,7 +164,6 @@ struct BanyanApp: App {
                 Button("Next Workable Terminal") {
                     store.selectNextWorkableSession()
                 }
-                .keyboardShortcut("p")
                 .disabled(!store.hasWorkableSession)
 
                 Divider()

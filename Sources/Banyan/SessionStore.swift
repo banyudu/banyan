@@ -115,6 +115,7 @@ final class SessionStore: ObservableObject {
 
     @Published private(set) var sessions: [BanyanSession] = []
     @Published private(set) var terminalFocusRequestID = UUID()
+    @Published private(set) var commandPaletteRequestID = UUID()
     @Published private(set) var scratchTerminalFocusRequestID = UUID()
     @Published private(set) var scratchSession: BanyanSession?
     @Published private(set) var selectedContextInfo: SessionContextInfo? {
@@ -829,6 +830,10 @@ final class SessionStore: ObservableObject {
 
     func requestLinearFilterFocus() {
         linearFilterFocusRequestID = UUID()
+    }
+
+    func requestCommandPalette() {
+        commandPaletteRequestID = UUID()
     }
 
     func updateLinearIssueNavigationIDs(_ ids: [String]) {
