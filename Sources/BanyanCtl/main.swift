@@ -392,7 +392,10 @@ struct BanyanCtl {
     }
 
     private func authorize(_ request: inout URLRequest) throws {
-        let token = try ControlToken.loadOrCreate()
+        let token = try ControlToken.loadOrCreate(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
         request.setValue(token, forHTTPHeaderField: ControlToken.headerName)
     }
 

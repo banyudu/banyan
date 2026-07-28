@@ -16,7 +16,10 @@ final class ControlServer {
 
     init(store: SessionStore) {
         self.store = store
-        self.token = (try? ControlToken.loadOrCreate()) ?? ""
+        self.token = (try? ControlToken.loadOrCreate(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )) ?? ""
     }
 
     func start() {

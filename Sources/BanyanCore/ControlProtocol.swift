@@ -66,8 +66,11 @@ public struct HTTPControlRequest {
 public struct ControlToken {
     public static let headerName = "X-Banyan-Token"
 
-    public static func loadOrCreate() throws -> String {
-        let url = tokenFileURL()
+    public static func loadOrCreate(
+        environment: [String: String],
+        homeDirectory: URL
+    ) throws -> String {
+        let url = tokenFileURL(environment: environment, homeDirectory: homeDirectory)
         if let token = try? String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            !token.isEmpty {
             return token
@@ -78,11 +81,14 @@ public struct ControlToken {
         return token
     }
 
-    public static func tokenFileURL() -> URL {
+    public static func tokenFileURL(
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> URL {
         BanyanDataDirectory.url(
             for: "Banyan/control-token",
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: environment,
+            homeDirectory: homeDirectory
         )
     }
 }
