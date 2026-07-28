@@ -170,6 +170,19 @@ final class TerminalContainerView: NSView {
         layer?.backgroundColor = theme.backgroundColor.cgColor
     }
 
+    /// AppKit can retain a stale terminal backing layer while the window is
+    /// occluded. Re-layout and invalidate SwiftTerm after the window becomes
+    /// visible again so image placeholders and terminal geometry are repainted.
+    func refreshAfterWindowLifecycle() {
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        syncTerminalFrameIfNeeded(markNeedsDisplay: true)
+        terminalView.terminal.updateFullScreen()
+        terminalView.needsDisplay = true
+        terminalView.setNeedsDisplay(terminalView.bounds)
+        layer?.setNeedsDisplay()
+    }
+
     func measureNextSwitchPaint(
         startedAt: DispatchTime,
         sessionID: String,

@@ -66,9 +66,17 @@ final class TerminalSwitcherContainer: NSView {
     private var activeSessionID: String?
     private var lastFocusRequestID: UUID?
     private var pendingAfterPaint: (sessionID: String, action: () -> Void)?
+    private var windowLifecycleObservers: [NSObjectProtocol] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        installWindowLifecycleObservers()
+    }
+
+    deinit {
+        for observer in windowLifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     /// Called directly from `SessionSelection.didSet` to swap cached views
@@ -276,6 +284,36 @@ final class TerminalSwitcherContainer: NSView {
     private func hideActiveContainer() {
         guard let activeSessionID, let activeContainer = containers[activeSessionID] else { return }
         activeContainer.isHidden = true
+    }
+
+    private func installWindowLifecycleObservers() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            NSApplication.didBecomeActiveNotification,
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didChangeOcclusionStateNotification
+        ]
+        windowLifecycleObservers = names.map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                guard let self,
+                      notification.object as? NSWindow == nil || notification.object as? NSWindow === self.window else {
+                    return
+                }
+                self.refreshVisibleTerminalSurface()
+            }
+        }
+    }
+
+    private func refreshVisibleTerminalSurface() {
+        guard window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.needsLayout = true
+            self.layoutSubtreeIfNeeded()
+            for container in self.containers.values where !container.isHidden {
+                container.refreshAfterWindowLifecycle()
+            }
+        }
     }
 
     private func attach(_ container: TerminalContainerView) {
