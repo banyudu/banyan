@@ -16,10 +16,15 @@ struct BanyanTUI {
         actions: any SessionListActions,
         input: any TUIInput,
         output: any TUIOutput,
+        processRunner: any TUIProcessRunner,
         currentDirectory: String
     ) {
         self.tmux = backend
-        self.attachment = TUIAttachment(tmux: backend, output: output)
+        self.attachment = TUIAttachment(
+            tmux: backend,
+            processRunner: processRunner,
+            output: output
+        )
         self.model = SessionListModel(dataSource: dataSource)
         self.actions = actions
         self.input = input

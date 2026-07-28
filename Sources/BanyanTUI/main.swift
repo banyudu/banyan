@@ -4,6 +4,7 @@ import Foundation
 private func makeDefaultApp() -> BanyanTUI {
     let backend = TmuxBackend.shared
     let database = SessionDatabase()
+    let output = StandardTUIOutput()
     return BanyanTUI(
         backend: backend,
         dataSource: SessionDataSource(
@@ -24,7 +25,8 @@ private func makeDefaultApp() -> BanyanTUI {
             history: DefaultSessionHistoryBackend()
         ),
         input: TerminalMode(),
-        output: StandardTUIOutput(),
+        output: output,
+        processRunner: InteractiveProcessRunner(),
         currentDirectory: FileManager.default.currentDirectoryPath
     )
 }
