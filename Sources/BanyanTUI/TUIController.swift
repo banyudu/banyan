@@ -10,7 +10,7 @@ import Darwin
 struct BanyanTUI {
     private let tmux: any TmuxTerminalBackend
     private let attachment: TUIAttachment
-    private let actions: SessionActions
+    private let actions: any SessionListActions
     private var model: SessionListModel
 
     init(backend: any TmuxTerminalBackend = TmuxBackend.shared) {
@@ -115,7 +115,7 @@ struct BanyanTUI {
 
     private mutating func createShellSession() {
         do {
-            let id = try actions.createShellSession()
+            let id = try actions.createShellSession(cwd: FileManager.default.currentDirectoryPath)
             model.showNotice("Created \(id)")
         } catch {
             model.showNotice("Unable to create session: \(error.localizedDescription)")

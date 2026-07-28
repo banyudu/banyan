@@ -1,7 +1,15 @@
 import Foundation
 
+public protocol SessionListActions: Sendable {
+    func createShellSession(cwd: String) throws -> String
+    func resumeHistory(_ item: ImportedAgentSession, trimmed: Bool) throws -> Bool
+    func recover(_ session: SessionSnapshot) throws
+    func close(_ session: SessionSnapshot)
+    func remove(_ session: SessionSnapshot)
+}
+
 /// Shared session lifecycle actions used by terminal frontends.
-public struct SessionActions: Sendable {
+public struct SessionActions: Sendable, SessionListActions {
     private let persistence: any SessionPersistenceBackend
     private let tmux: any TmuxSessionLookupBackend
     private let catalog: SessionCatalog
