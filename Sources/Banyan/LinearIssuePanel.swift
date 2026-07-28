@@ -40,6 +40,8 @@ struct LinearIssuePanel: View {
     let onRefresh: () -> Void
     let onOpen: () -> Void
     let onChangeState: (LinearWorkflowState) -> Void
+    let onToggleTask: (Int) -> Void
+    let onRetryDescription: () -> Void
     let onStart: (() -> Void)?
     let isStarting: Bool
     let presentation: LinearIssuePanelPresentation
@@ -52,6 +54,8 @@ struct LinearIssuePanel: View {
         onRefresh: @escaping () -> Void,
         onOpen: @escaping () -> Void,
         onChangeState: @escaping (LinearWorkflowState) -> Void,
+        onToggleTask: @escaping (Int) -> Void = { _ in },
+        onRetryDescription: @escaping () -> Void = {},
         onStart: (() -> Void)? = nil,
         isStarting: Bool = false,
         presentation: LinearIssuePanelPresentation = .sidebar
@@ -62,6 +66,8 @@ struct LinearIssuePanel: View {
         self.onRefresh = onRefresh
         self.onOpen = onOpen
         self.onChangeState = onChangeState
+        self.onToggleTask = onToggleTask
+        self.onRetryDescription = onRetryDescription
         self.onStart = onStart
         self.isStarting = isStarting
         self.presentation = presentation
@@ -160,13 +166,21 @@ struct LinearIssuePanel: View {
             loadingView("Loading issue...")
         case let .updating(stateName):
             loadingView("Moving to \(stateName)...")
+        case .updatingDescription:
+            if let issue { issueContent(issue, statusMessage: "Saving description…") }
+            else { loadingView("Saving description…") }
         case let .failed(message):
-            VStack(alignment: .leading, spacing: 12) {
-                placeholder(message)
-                Button("Retry", action: onRefresh)
-                    .buttonStyle(.banyanBordered)
+            if let issue {
+                VStack(alignment: .leading, spacing: 10) {
+                    errorBanner(message)
+                    issueContent(issue)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    placeholder(message)
+                    Button("Retry", action: onRefresh).buttonStyle(.banyanBordered)
+                }.padding(14)
             }
-            .padding(14)
         case .loaded:
             if let issue {
                 issueContent(issue)
@@ -176,7 +190,7 @@ struct LinearIssuePanel: View {
         }
     }
 
-    private func issueContent(_ issue: LinearIssueDetails) -> some View {
+    private func issueContent(_ issue: LinearIssueDetails, statusMessage: String? = nil) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -215,7 +229,9 @@ struct LinearIssuePanel: View {
                    !description.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         sectionTitle("Description")
-                        MarkdownText(description)
+                        MarkdownText(description, onToggleTask: onToggleTask)
+                            .disabled(loadState.isBusy)
+                        if let statusMessage { savingLabel(statusMessage) }
                     }
                 }
 
@@ -287,6 +303,21 @@ struct LinearIssuePanel: View {
         .onChange(of: issue.state.id) { _, newValue in
             selectedStateID = newValue
         }
+    }
+
+    private func savingLabel(_ message: String) -> some View {
+        HStack(spacing: 6) { ProgressView().controlSize(.small); Text(message) }
+            .font(.caption).foregroundStyle(.secondary)
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(message)
+            Spacer(minLength: 4)
+            Button("Retry", action: onRetryDescription).buttonStyle(.banyanBordered).controlSize(.small)
+        }
+        .font(.caption).foregroundStyle(.red).padding(.horizontal, 14).padding(.top, 10)
     }
 
     private func statusSelectionBinding(_ issue: LinearIssueDetails) -> Binding<String> {
@@ -365,6 +396,8 @@ struct LinearIssuePanel: View {
             return "Loading"
         case let .updating(stateName):
             return "Moving to \(stateName)"
+        case .updatingDescription:
+            return "Saving"
         case .loaded:
             return issue?.state.name ?? "Loaded"
         case .failed:
