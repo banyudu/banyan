@@ -175,7 +175,7 @@ final class SessionStore: ObservableObject {
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
     private let detector = AgentStateDetector()
     private let tmuxBackend: any TmuxSessionStoreBackend
-    private let processTable: @Sendable () -> ProcessTable
+    private let processTable: any ProcessTableProvider
     private let historyBackend: any SessionHistoryBackend
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
@@ -231,7 +231,7 @@ final class SessionStore: ObservableObject {
     init(
         persistence: any SessionStorePersistenceBackend = SessionPersistence(),
         tmuxBackend: any TmuxSessionStoreBackend = TmuxBackend.shared,
-        processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() },
+        processTable: any ProcessTableProvider = LiveProcessTableProvider(),
         historyBackend: any SessionHistoryBackend = DefaultSessionHistoryBackend()
     ) {
         self.persistence = persistence
@@ -2599,7 +2599,7 @@ final class SessionStore: ObservableObject {
 
         isSupervisorTickRunning = true
         let backend = tmuxBackend
-        let processTable = processTable()
+        let processTable = processTable.snapshot()
 
         Task.detached(priority: .utility) { [weak self] in
             // Time the whole tick: `ps` snapshot + per-session tmux inspection. This

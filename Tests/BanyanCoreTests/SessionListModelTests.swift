@@ -18,7 +18,7 @@ import Testing
     let dataSource = SessionDataSource(
         persistence: persistence,
         backend: ModelTestBackend(),
-        processTable: { ProcessTable(rows: []) },
+        processTable: EmptyModelProcessTableProvider(),
         historyBackend: ModelHistoryBackend(history: history)
     )
     var model = SessionListModel(dataSource: dataSource)
@@ -39,6 +39,10 @@ private struct ModelTestBackend: AgentSupervisorBackend {
     func hasSession(named name: String) -> Bool { false }
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
     func captureVisibleText(paneID: String, lineLimit: Int) -> String { "" }
+}
+
+private struct EmptyModelProcessTableProvider: ProcessTableProvider {
+    func snapshot() -> ProcessTable { ProcessTable(rows: []) }
 }
 
 private struct ModelHistoryBackend: SessionHistoryBackend {

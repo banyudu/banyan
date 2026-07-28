@@ -234,6 +234,18 @@ public struct AgentSupervisor: Sendable {
     }
 }
 
+public protocol ProcessTableProvider: Sendable {
+    func snapshot() -> ProcessTable
+}
+
+public struct LiveProcessTableProvider: Sendable, ProcessTableProvider {
+    public init() {}
+
+    public func snapshot() -> ProcessTable {
+        ProcessTable.snapshot()
+    }
+}
+
 public struct ProcessTable: Sendable {
     private let childrenByParent: [Int: [ProcessInfoRow]]
     private let rowByPID: [Int: ProcessInfoRow]

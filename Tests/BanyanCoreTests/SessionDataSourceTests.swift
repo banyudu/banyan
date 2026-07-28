@@ -34,7 +34,7 @@ import Testing
     let dataSource = SessionDataSource(
         persistence: persistence,
         backend: backend,
-        processTable: { ProcessTable(rows: []) }
+        processTable: EmptyProcessTableProvider()
     )
 
     let active = dataSource.loadActiveSessions()
@@ -72,6 +72,10 @@ private struct DataSourceHistoryBackend: SessionHistoryBackend {
         cwd: String,
         transcriptURL: URL?
     ) -> String? { nil }
+}
+
+private struct EmptyProcessTableProvider: ProcessTableProvider {
+    func snapshot() -> ProcessTable { ProcessTable(rows: []) }
 }
 
 private final class InMemorySessionPersistence: SessionPersistenceBackend, @unchecked Sendable {

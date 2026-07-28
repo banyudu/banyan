@@ -10,13 +10,13 @@ public protocol SessionListDataSource: Sendable {
 public struct SessionDataSource: Sendable, SessionListDataSource {
     private let persistence: any SessionPersistenceBackend
     private let backend: any AgentSupervisorBackend
-    private let processTable: @Sendable () -> ProcessTable
+    private let processTable: any ProcessTableProvider
     private let historyBackend: any SessionHistoryBackend
 
     public init(
         persistence: any SessionPersistenceBackend,
         backend: any AgentSupervisorBackend,
-        processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() },
+        processTable: any ProcessTableProvider = LiveProcessTableProvider(),
         historyBackend: any SessionHistoryBackend = DefaultSessionHistoryBackend()
     ) {
         self.persistence = persistence
@@ -29,7 +29,7 @@ public struct SessionDataSource: Sendable, SessionListDataSource {
         let stored = persistence.load()
         let synchronizer = SessionStatusSynchronizer(
             backend: backend,
-            processTable: processTable()
+            processTable: processTable.snapshot()
         )
         let updated = synchronizer.synchronize(stored)
         if updated != stored {
