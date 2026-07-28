@@ -147,6 +147,24 @@ enum LinearIssueLoadState: Equatable {
 }
 
 enum LinearIssueClient {
+    static func message(for error: Error, action: String = "load") -> String {
+        if let error = error as? LinearIssueClientError {
+            switch error {
+            case .authenticationUnavailable:
+                return "Linear authentication is unavailable. Sign in with the Linear CLI or set LINEAR_API_KEY, then retry."
+            case .issueNotFound:
+                return "Linear issue not found. Refresh the issue list and try again."
+            case .requestTimedOut:
+                return "Linear \(action) timed out. Check your connection and retry."
+            case .commandUnavailable:
+                return "The Linear CLI is unavailable. Install or sign in to the Linear CLI, then retry."
+            case .requestFailed:
+                break
+            }
+        }
+        return "Unable to \(action) Linear issue. Check your connection and retry."
+    }
+
     static func fetchIssueList(
         cwd: String,
         limit: Int = 0,
