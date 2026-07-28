@@ -57,7 +57,7 @@ public struct PerformanceEventStore {
     private let databaseURL: URL
 
     public init(
-        databaseURL: URL = PerformanceEventStore.defaultDatabaseURL(),
+        databaseURL: URL,
         retentionDays: Int = 14,
         maxEvents: Int = 10_000
     ) {
@@ -360,7 +360,9 @@ public struct PerformanceEventStore {
 }
 
 public final class PerformanceTelemetry: @unchecked Sendable {
-    public static let shared = PerformanceTelemetry()
+    public static let shared = PerformanceTelemetry(
+        store: PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL())
+    )
 
     private struct ActiveSpan {
         let name: String
@@ -384,7 +386,7 @@ public final class PerformanceTelemetry: @unchecked Sendable {
     private var activeSpans: [String: ActiveSpan] = [:]
     private var activeSwitches: [String: ActiveSessionSwitch] = [:]
 
-    public init(store: PerformanceEventStore = PerformanceEventStore()) {
+    public init(store: PerformanceEventStore) {
         self.store = store
     }
 
