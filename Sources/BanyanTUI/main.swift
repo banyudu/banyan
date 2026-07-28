@@ -36,19 +36,22 @@ private struct BanyanTUI {
             render()
 
             guard let byte = readByte() else { break }
-            switch TUIAction(byte: byte) {
+            guard handle(TUIAction(byte: byte), terminal: terminal) else { return }
+        }
+    }
+
+    private mutating func handle(_ action: TUIAction, terminal: TerminalMode) -> Bool {
+        switch action {
             case .quit:
-                return
+                return false
             case .toggleHistory:
                 viewState.toggleHistory()
-                continue
             case .next:
                 viewState.moveNext(rowCount: visibleRowCount)
             case .previous:
                 viewState.movePrevious()
             case .refresh:
                 viewState.refresh()
-                continue
             case .recover:
                 if !viewState.showingHistory { recoverSelected() }
             case .newSession:
@@ -68,9 +71,9 @@ private struct BanyanTUI {
             case .trimResume:
                 if viewState.showingHistory { resumeHistorySelected(trimmed: true) }
             case .unknown:
-                continue
-            }
+                break
         }
+        return true
     }
 
     private mutating func reload() {
@@ -154,10 +157,6 @@ private struct BanyanTUI {
         let session = sessions[viewState.selectedIndex]
         actions.remove(session)
         viewState.showNotice("Removed \(session.id)")
-    }
-
-    private func tmuxName(for session: SessionSnapshot) -> String {
-        actions.sessionName(for: session)
     }
 
 }
