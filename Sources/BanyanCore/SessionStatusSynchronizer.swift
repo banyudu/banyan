@@ -71,7 +71,7 @@ public struct SessionStatusSynchronizer: Sendable {
 
         let supervisor = AgentSupervisor(
             backend: backend,
-            processDescendants: { rootPID in processTable.descendants(of: rootPID) }
+            processTable: processTable
         )
         let collector = ObservationCollector()
         DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
@@ -103,7 +103,7 @@ public struct SessionStatusSynchronizer: Sendable {
     public func synchronize(_ snapshots: [SessionSnapshot]) -> [SessionSnapshot] {
         let supervisor = AgentSupervisor(
             backend: backend,
-            processDescendants: { rootPID in processTable.descendants(of: rootPID) }
+            processTable: processTable
         )
 
         return snapshots.map { session in

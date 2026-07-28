@@ -11,16 +11,14 @@ public struct AgentSupervisor: Sendable {
     }
 
     private let backend: any AgentSupervisorBackend
-    private let processDescendants: @Sendable (Int) -> [ProcessInfoRow]
+    private let processTable: ProcessTable
 
     public init(
         backend: any AgentSupervisorBackend,
-        processDescendants: @escaping @Sendable (Int) -> [ProcessInfoRow] = { rootPID in
-            ProcessTable.snapshot().descendants(of: rootPID)
-        }
+        processTable: ProcessTable = ProcessTable.snapshot()
     ) {
         self.backend = backend
-        self.processDescendants = processDescendants
+        self.processTable = processTable
     }
 
     public func inspect(tmuxSessionName: String, launchCommand: String, currentStatus: SessionStatus) -> Result? {
@@ -32,7 +30,7 @@ public struct AgentSupervisor: Sendable {
             return Result(status: .closed, tone: .neutral, provider: nil, currentPath: pane.currentPath)
         }
 
-        let descendants = processDescendants(pane.rootPID)
+        let descendants = processTable.descendants(of: pane.rootPID)
         // Only treat this as an agent session when an agent process is actually
         // alive in the pane. A launch command like `banyan-worktree --claude …`
         // names the agent forever, so keying provider detection off it pinned a

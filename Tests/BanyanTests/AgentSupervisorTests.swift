@@ -569,7 +569,7 @@ private func makeSupervisor(
 ) -> AgentSupervisor {
     AgentSupervisor(
         backend: FakeSupervisorBackend(pane: pane, sessionExists: sessionExists, visibleText: visibleText),
-        processDescendants: { _ in processes }
+        processTable: ProcessTable(rows: processes)
     )
 }
 
