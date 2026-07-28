@@ -19,7 +19,7 @@ import Testing
     )
     let synchronizer = SessionStatusSynchronizer(
         backend: backend,
-        processDescendants: { _ in [] }
+        processTable: ProcessTable(rows: [])
     )
 
     let result = synchronizer.synchronize([snapshot]).first!
@@ -42,7 +42,7 @@ import Testing
     )
     let synchronizer = SessionStatusSynchronizer(
         backend: backend,
-        processDescendants: { _ in [] }
+        processTable: ProcessTable(rows: [])
     )
 
     #expect(synchronizer.observe([input]).isEmpty)

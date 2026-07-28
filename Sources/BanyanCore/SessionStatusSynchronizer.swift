@@ -48,24 +48,9 @@ public struct SessionStatusObservation: Sendable {
 /// Frontends can use the result as their display model and persist it when needed.
 public struct SessionStatusSynchronizer: Sendable {
     private let backend: any AgentSupervisorBackend
-    private let processDescendants: @Sendable (Int) -> [ProcessInfoRow]
+    private let processTable: ProcessTable
     private let sessionName: @Sendable (SessionSnapshot) -> String
 
-    public init(
-        backend: any AgentSupervisorBackend,
-        processDescendants: @escaping @Sendable (Int) -> [ProcessInfoRow],
-        sessionName: @escaping @Sendable (SessionSnapshot) -> String = { snapshot in
-            snapshot.launchRequest.sessionName
-        }
-    ) {
-        self.backend = backend
-        self.processDescendants = processDescendants
-        self.sessionName = sessionName
-    }
-
-    /// Builds a synchronizer from one process-table snapshot. Keeping the
-    /// snapshot outside the descendant lookup avoids rescanning the process
-    /// table once per session during a refresh.
     public init(
         backend: any AgentSupervisorBackend,
         processTable: ProcessTable,
@@ -73,11 +58,9 @@ public struct SessionStatusSynchronizer: Sendable {
             snapshot.launchRequest.sessionName
         }
     ) {
-        self.init(
-            backend: backend,
-            processDescendants: { rootPID in processTable.descendants(of: rootPID) },
-            sessionName: sessionName
-        )
+        self.backend = backend
+        self.processTable = processTable
+        self.sessionName = sessionName
     }
 
     /// Inspects sessions concurrently because each observation may invoke several
@@ -88,7 +71,7 @@ public struct SessionStatusSynchronizer: Sendable {
 
         let supervisor = AgentSupervisor(
             backend: backend,
-            processDescendants: processDescendants
+            processDescendants: { rootPID in processTable.descendants(of: rootPID) }
         )
         let collector = ObservationCollector()
         DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
@@ -120,7 +103,7 @@ public struct SessionStatusSynchronizer: Sendable {
     public func synchronize(_ snapshots: [SessionSnapshot]) -> [SessionSnapshot] {
         let supervisor = AgentSupervisor(
             backend: backend,
-            processDescendants: processDescendants
+            processDescendants: { rootPID in processTable.descendants(of: rootPID) }
         )
 
         return snapshots.map { session in
