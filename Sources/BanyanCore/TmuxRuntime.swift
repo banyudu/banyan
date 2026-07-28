@@ -45,6 +45,11 @@ public protocol TmuxDisplayBackend: TmuxSessionBackend {
     func captureCurrentVisibleText(paneID: String) -> String
 }
 
+public protocol TmuxAttachmentBackend: Sendable {
+    var executableURL: URL { get }
+    func attachArguments(for name: String) -> [String]
+}
+
 public struct SessionLaunchRequest: Sendable {
     public let sessionName: String
     public let cwd: String

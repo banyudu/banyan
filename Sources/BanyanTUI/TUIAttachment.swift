@@ -2,7 +2,7 @@ import BanyanCore
 import Foundation
 
 struct TUIAttachment {
-    let tmux: TmuxBackend
+    let tmux: any TmuxAttachmentBackend
 
     func attach(to sessionName: String) {
         print("\u{1b}[2J\u{1b}[H", terminator: "")
