@@ -880,17 +880,17 @@ final class SessionStore: ObservableObject {
         isProcessStarted: Bool,
         isRestored: Bool
     ) -> Bool {
-        isProcessStarted || isRestored
+        SessionLifecyclePolicy.participatesInSupervisorTick(
+            isProcessStarted: isProcessStarted,
+            isRestored: isRestored
+        )
     }
 
     /// Deliberately does not probe tmux for a backing session: the supervisor
     /// reconciles live state on its first tick, and probing here cost one blocking
     /// `tmux has-session` per persisted session on the main thread at launch.
     nonisolated static func restoredStatus(snapshotStatus: SessionStatus) -> SessionStatus {
-        if snapshotStatus == .closed {
-            return .closed
-        }
-        return snapshotStatus
+        SessionLifecyclePolicy.restoredStatus(snapshotStatus: snapshotStatus)
     }
 
     func startSupervisor() {
@@ -1226,8 +1226,11 @@ final class SessionStore: ObservableObject {
         tmuxSessionName: String,
         liveTmuxSessionNames: Set<String>
     ) -> Bool {
-        ![.closed, .completed, .failed].contains(status)
-            && !liveTmuxSessionNames.contains(tmuxSessionName)
+        SessionLifecyclePolicy.shouldMarkForRecovery(
+            status: status,
+            tmuxSessionName: tmuxSessionName,
+            liveTmuxSessionNames: liveTmuxSessionNames
+        )
     }
 
     @discardableResult
@@ -2265,8 +2268,10 @@ final class SessionStore: ObservableObject {
         status: SessionStatus,
         provider: CodingAgentProvider?
     ) -> Bool {
-        guard provider == .codex || provider == .claude else { return false }
-        return ![.completed, .failed, .closed].contains(status)
+        SessionLifecyclePolicy.isOngoingCodingAgentSession(
+            status: status,
+            provider: provider
+        )
     }
 
     func resolvedParentSessionIDForSpawn(_ parentSessionID: String?) throws -> String? {
