@@ -7,3 +7,5 @@ public protocol SessionPersistenceBackend: Sendable {
     func load() -> [SessionSnapshot]
     func save(_ snapshots: [SessionSnapshot])
 }
+
+extension SessionDatabase: SessionPersistenceBackend {}

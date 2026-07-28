@@ -8,12 +8,21 @@ import Darwin
 #endif
 
 private struct BanyanTUI {
-    private let database = SessionDatabase()
+    private let database: SessionDatabase
     private let tmux = TmuxBackend.shared
-    private let runtime = SessionRuntimeCoordinator()
+    private let catalog: SessionCatalog
     private var sessions: [SessionSnapshot] = []
     private var selectedIndex = 0
     private var notice: String?
+
+    init() {
+        let database = SessionDatabase()
+        self.database = database
+        self.catalog = SessionCatalog(
+            persistence: database,
+            runtime: SessionRuntimeCoordinator()
+        )
+    }
 
     mutating func run() {
         let terminal = TerminalMode()
@@ -140,7 +149,6 @@ private struct BanyanTUI {
             command: ""
         )
         do {
-            try runtime.ensureBackingSession(request)
             let now = Date()
             let snapshot = SessionSnapshot(
                 id: id,
@@ -154,7 +162,7 @@ private struct BanyanTUI {
                 createdAt: now,
                 updatedAt: now
             )
-            database.save(database.load() + [snapshot])
+            try catalog.create(snapshot: snapshot, launchRequest: request)
             notice = "Created \(id)"
         } catch {
             notice = "Unable to create session: \(error.localizedDescription)"
@@ -170,7 +178,7 @@ private struct BanyanTUI {
             command: session.command
         )
         do {
-            try runtime.ensureBackingSession(request)
+            try catalog.recover(snapshot: session, launchRequest: request)
             notice = "Recovered \(session.id)"
         } catch {
             notice = "Unable to recover \(session.id): \(error.localizedDescription)"
@@ -179,17 +187,15 @@ private struct BanyanTUI {
 
     private mutating func closeSelected() {
         guard sessions.indices.contains(selectedIndex) else { return }
-        let id = sessions[selectedIndex].id
-        runtime.removeBackingSession(named: tmuxName(for: sessions[selectedIndex]))
-        updateStoredSession(id: id, status: .closed)
-        notice = "Closed \(id)"
+        let session = sessions[selectedIndex]
+        catalog.close(snapshot: session)
+        notice = "Closed \(session.id)"
     }
 
     private mutating func removeSelected() {
         guard sessions.indices.contains(selectedIndex) else { return }
         let session = sessions[selectedIndex]
-        runtime.removeBackingSession(named: tmuxName(for: session))
-        database.save(database.load().filter { $0.id != session.id })
+        catalog.remove(snapshot: session)
         notice = "Removed \(session.id)"
     }
 
@@ -208,13 +214,6 @@ private struct BanyanTUI {
         session.tmuxSessionName ?? TmuxBackend.sessionName(for: session.id)
     }
 
-    private func updateStoredSession(id: String, status: SessionStatus) {
-        let snapshots = database.load().map { session in
-            guard session.id == id else { return session }
-            return session.updating(status: status)
-        }
-        database.save(snapshots)
-    }
 }
 
 private func readByte() -> UInt8? {
