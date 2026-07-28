@@ -35,3 +35,51 @@ public protocol TmuxSessionBackend: Sendable {
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot?
     func captureVisibleText(paneID: String, lineLimit: Int) -> String
 }
+
+public protocol TmuxSessionLifecycleBackend: TmuxSessionBackend {
+    func ensureSession(named name: String, cwd: String, command: String) throws
+    func killSession(named name: String)
+}
+
+public struct SessionLaunchRequest: Sendable {
+    public let sessionName: String
+    public let cwd: String
+    public let command: String
+
+    public init(sessionName: String, cwd: String, command: String) {
+        self.sessionName = sessionName
+        self.cwd = cwd
+        self.command = command
+    }
+}
+
+/// Coordinates the tmux-backed part of a session lifecycle without knowing
+/// anything about SwiftUI, SwiftTerm, or a particular frontend.
+public struct SessionRuntimeCoordinator: Sendable {
+    private let backend: any TmuxSessionLifecycleBackend
+
+    public init(backend: any TmuxSessionLifecycleBackend = TmuxBackend.shared) {
+        self.backend = backend
+    }
+
+    public func ensureBackingSession(_ request: SessionLaunchRequest) throws {
+        try backend.ensureSession(
+            named: request.sessionName,
+            cwd: request.cwd,
+            command: request.command
+        )
+    }
+
+    public func removeBackingSession(named name: String) {
+        backend.killSession(named: name)
+    }
+
+    public func restartBackingSession(_ request: SessionLaunchRequest) throws {
+        backend.killSession(named: request.sessionName)
+        try backend.ensureSession(
+            named: request.sessionName,
+            cwd: request.cwd,
+            command: request.command
+        )
+    }
+}
