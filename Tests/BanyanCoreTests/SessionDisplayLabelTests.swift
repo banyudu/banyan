@@ -84,7 +84,7 @@ import Foundation
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
 
-    let context = SessionDisplayLabel.context(cwd: directory.path)
+    let context = SessionDisplayLabel.context(cwd: directory.path, homeDirectory: "/home/test")
 
     #expect(context.project == directory.lastPathComponent)
     #expect(context.branch == nil)
@@ -105,8 +105,8 @@ import Foundation
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
 
-    let directContext = SessionDisplayLabel.context(cwd: directory.path)
-    let aliasContext = SessionDisplayLabel.context(cwd: alias.path)
+    let directContext = SessionDisplayLabel.context(cwd: directory.path, homeDirectory: "/home/test")
+    let aliasContext = SessionDisplayLabel.context(cwd: alias.path, homeDirectory: "/home/test")
 
     #expect(aliasContext.groupID == directContext.groupID)
     #expect(aliasContext.groupTitle == directContext.groupTitle)
@@ -125,8 +125,8 @@ import Foundation
     try runGit(["remote", "add", "origin", "git@github.com:yudu/banyan.git"], cwd: first)
     try runGit(["remote", "add", "origin", "https://github.com/yudu/banyan.git"], cwd: second)
 
-    let firstContext = SessionDisplayLabel.context(cwd: first.path)
-    let secondContext = SessionDisplayLabel.context(cwd: second.path)
+    let firstContext = SessionDisplayLabel.context(cwd: first.path, homeDirectory: "/home/test")
+    let secondContext = SessionDisplayLabel.context(cwd: second.path, homeDirectory: "/home/test")
 
     #expect(firstContext.groupID == "git:github.com/yudu/banyan")
     #expect(secondContext.groupID == firstContext.groupID)
@@ -147,8 +147,8 @@ import Foundation
     try runGit(["commit", "-m", "Initial commit"], cwd: main)
     try runGit(["worktree", "add", "-b", "feature", worktree.path], cwd: main)
 
-    let mainContext = SessionDisplayLabel.context(cwd: main.path)
-    let worktreeContext = SessionDisplayLabel.context(cwd: worktree.path)
+    let mainContext = SessionDisplayLabel.context(cwd: main.path, homeDirectory: "/home/test")
+    let worktreeContext = SessionDisplayLabel.context(cwd: worktree.path, homeDirectory: "/home/test")
 
     #expect(mainContext.groupID == "path:\(main.standardizedFileURL.path)")
     #expect(worktreeContext.groupID == mainContext.groupID)

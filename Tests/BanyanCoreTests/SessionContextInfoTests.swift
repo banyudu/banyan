@@ -5,6 +5,7 @@ import Testing
     let input = SessionContextLookupInput(
         sessionID: "session-1",
         cwd: "/tmp/project",
+        homeDirectory: "/home/test",
         title: "ENG-123 fix",
         titleURL: nil,
         displayTitle: "ENG-123 fix"
@@ -21,6 +22,7 @@ import Testing
     let first = SessionContextLookupInput(
         sessionID: "session-1",
         cwd: "/tmp/project",
+        homeDirectory: "/home/test",
         title: "one",
         titleURL: nil,
         displayTitle: "one"
@@ -28,6 +30,7 @@ import Testing
     let second = SessionContextLookupInput(
         sessionID: "session-1",
         cwd: "/tmp/project",
+        homeDirectory: "/home/test",
         title: "two",
         titleURL: nil,
         displayTitle: "two"

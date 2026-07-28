@@ -16,14 +16,14 @@ public struct SessionProjectContext: Equatable {
 }
 
 public enum SessionDisplayLabel {
-    public static func context(cwd: String) -> SessionProjectContext {
+    public static func context(cwd: String, homeDirectory: String) -> SessionProjectContext {
         let resolvedCWD = standardizedPath(cwd)
         let topLevel = gitLookup(["rev-parse", "--show-toplevel"], cwd: resolvedCWD)
         guard let gitTopLevel = topLevel.value else {
             // No top level either means "not a git repo" (a trustworthy answer)
             // or the lookup failed to run — propagate `degraded` so a transient
             // failure isn't cached as "not a worktree".
-            let project = projectName(resolvedCWD)
+            let project = projectName(resolvedCWD, homeDirectory: homeDirectory)
             return SessionProjectContext(
                 project: project,
                 branch: nil,
@@ -36,7 +36,7 @@ public enum SessionDisplayLabel {
         }
 
         var degraded = false
-        let project = projectName(gitTopLevel)
+        let project = projectName(gitTopLevel, homeDirectory: homeDirectory)
 
         let symbolic = gitLookup(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: resolvedCWD)
         let symbolicBranch = symbolic.value
@@ -77,7 +77,7 @@ public enum SessionDisplayLabel {
             project: project,
             branch: branch,
             groupID: "path:\(mainDirectory.value)",
-            groupTitle: projectName(mainDirectory.value),
+            groupTitle: projectName(mainDirectory.value, homeDirectory: homeDirectory),
             isGitWorktree: isGitWorktree,
             isDefaultBranch: defaultBranch.value,
             gitLookupDegraded: degraded
@@ -170,11 +170,11 @@ public enum SessionDisplayLabel {
         return "\(value[..<end])..."
     }
 
-    private static func projectName(_ path: String) -> String {
+    private static func projectName(_ path: String, homeDirectory: String) -> String {
         let canonicalPath = standardizedPath(path)
-        let homePath = PathDisplayName.canonicalPath(NSHomeDirectory())
+        let homePath = PathDisplayName.canonicalPath(homeDirectory)
         if canonicalPath == homePath || canonicalPath.hasPrefix(homePath + "/") {
-            return PathDisplayName.make(path: canonicalPath, homeDirectory: NSHomeDirectory())
+            return PathDisplayName.make(path: canonicalPath, homeDirectory: homeDirectory)
         }
 
         let url = URL(fileURLWithPath: canonicalPath).standardizedFileURL

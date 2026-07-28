@@ -13,6 +13,7 @@ private func input(
     SessionContextLookupInput(
         sessionID: sessionID,
         cwd: cwd,
+        homeDirectory: "/Users/example",
         title: title,
         titleURL: titleURL,
         displayTitle: displayTitle

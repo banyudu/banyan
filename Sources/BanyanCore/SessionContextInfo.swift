@@ -3,6 +3,7 @@ import Foundation
 public struct SessionContextLookupInput: Equatable, Sendable {
     public let sessionID: String
     public let cwd: String
+    public let homeDirectory: String
     public let title: String
     public let titleURL: String?
     public let displayTitle: String
@@ -10,12 +11,14 @@ public struct SessionContextLookupInput: Equatable, Sendable {
     public init(
         sessionID: String,
         cwd: String,
+        homeDirectory: String,
         title: String,
         titleURL: String?,
         displayTitle: String
     ) {
         self.sessionID = sessionID
         self.cwd = cwd
+        self.homeDirectory = homeDirectory
         self.title = title
         self.titleURL = titleURL
         self.displayTitle = displayTitle
@@ -25,6 +28,7 @@ public struct SessionContextLookupInput: Equatable, Sendable {
         [
             sessionID,
             cwd,
+            homeDirectory,
             title,
             titleURL ?? "",
             displayTitle
@@ -70,7 +74,10 @@ public enum SessionContextResolver {
         input: SessionContextLookupInput,
         isCancelled: @escaping @Sendable () -> Bool = { false }
     ) async -> SessionContextInfo {
-        let projectContext = SessionDisplayLabel.context(cwd: input.cwd)
+        let projectContext = SessionDisplayLabel.context(
+            cwd: input.cwd,
+            homeDirectory: input.homeDirectory
+        )
         let remoteAddress = projectContext.groupID.hasPrefix("git:") ? String(projectContext.groupID.dropFirst(4)) : nil
         let tracker = GitHubIssueReference.issueTracker(cwd: input.cwd)
         let githubIssue = tracker == "linear" ? nil : (githubIssueReference(in: input)

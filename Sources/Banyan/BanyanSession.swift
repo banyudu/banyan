@@ -196,7 +196,10 @@ final class BanyanSession: ObservableObject, Identifiable {
     ) {
         self.tmuxBackend = tmuxBackend
         self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)
-        let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(cwd: cwd)
+        let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(
+            cwd: cwd,
+            homeDirectory: NSHomeDirectory()
+        )
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id)
         self.historyTranscriptURL = historyTranscriptURL
@@ -685,7 +688,10 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     func updateCurrentDirectory(_ directory: String?) {
         guard let directory = Self.normalizedDirectory(directory) else { return }
-        let displayContext = SessionDisplayLabel.context(cwd: directory)
+        let displayContext = SessionDisplayLabel.context(
+            cwd: directory,
+            homeDirectory: NSHomeDirectory()
+        )
         guard directory != cwd else {
             applyProjectContext(displayContext)
             if !displayContext.gitLookupDegraded {

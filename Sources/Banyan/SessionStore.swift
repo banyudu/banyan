@@ -508,7 +508,10 @@ final class SessionStore: ObservableObject {
             if let cached = displayContextsByCWD[snapshot.cwd] {
                 displayContext = cached
             } else {
-                let resolved = SessionDisplayLabel.context(cwd: snapshot.cwd)
+                let resolved = SessionDisplayLabel.context(
+                    cwd: snapshot.cwd,
+                    homeDirectory: NSHomeDirectory()
+                )
                 displayContextsByCWD[snapshot.cwd] = resolved
                 displayContext = resolved
             }
@@ -2876,6 +2879,7 @@ final class SessionStore: ObservableObject {
         return SessionContextLookupInput(
             sessionID: session.id,
             cwd: session.cwd,
+            homeDirectory: NSHomeDirectory(),
             title: session.title,
             titleURL: session.titleURL,
             displayTitle: session.displayTitle
