@@ -12,6 +12,7 @@ struct TerminalHostView: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalContainerView {
         let container = TerminalContainerView(
             terminalView: session.terminalView,
+            sessionID: session.id,
             onUserSubmittedInput: { session.noteUserSubmittedInput($0) }
         )
         container.apply(theme: theme)
@@ -93,6 +94,7 @@ struct TerminalHostView: NSViewRepresentable {
 
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
+    private let sessionID: String?
     private let paintProbe = TerminalPaintProbeView()
     var onLayout: (() -> Void)?
     var onUserSubmittedInput: ((String?) -> Void)?
@@ -110,8 +112,13 @@ final class TerminalContainerView: NSView {
     private var pendingReadyCallback: (() -> Void)?
     private weak var pendingReadyTerminalView: LocalProcessTerminalView?
 
-    init(terminalView: LocalProcessTerminalView, onUserSubmittedInput: ((String?) -> Void)? = nil) {
+    init(
+        terminalView: LocalProcessTerminalView,
+        sessionID: String? = nil,
+        onUserSubmittedInput: ((String?) -> Void)? = nil
+    ) {
         self.terminalView = terminalView
+        self.sessionID = sessionID
         self.onUserSubmittedInput = onUserSubmittedInput
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier(AccessibilityID.terminal)
@@ -216,6 +223,12 @@ final class TerminalContainerView: NSView {
         terminalView.frame = terminalFrame
         terminalView.setFrameSize(terminalFrame.size)
         if oldSize != terminalFrame.size {
+            PerformanceTelemetry.shared.recordDuration(
+                "terminal.geometry_change",
+                durationMS: 0,
+                sessionID: sessionID,
+                detail: "old=\(Int(oldSize.width))x\(Int(oldSize.height)) new=\(Int(terminalFrame.width))x\(Int(terminalFrame.height))"
+            )
             terminalView.resizeSubviews(withOldSize: oldSize)
         }
         (terminalView as? DetectingLocalProcessTerminalView)?.refreshLinkTracking()

@@ -51,6 +51,14 @@ private func input(
     #expect(info.pullRequestNumber == 7)
 }
 
+@Test func resolveFastExtractsExplicitGitHubIssueURL() {
+    let url = "https://github.com/banyudu/banyan/issues/19"
+    let info = SessionContextResolver.resolveFast(input: input(title: url))
+    #expect(info.githubIssueURL == url)
+    #expect(info.githubIssueNumber == 19)
+    #expect(info.linearIssueID == nil)
+}
+
 @Test func reidentifiedPreservesNetworkFields() {
     let original = SessionContextInfo(
         sessionID: "old",
@@ -58,6 +66,9 @@ private func input(
         linearIssueID: "ENG-1",
         linearIssueTitle: "Title",
         linearIssueURL: "https://linear.app/x",
+        githubIssueNumber: nil,
+        githubIssueTitle: nil,
+        githubIssueURL: nil,
         pullRequestNumber: 7,
         pullRequestTitle: "PR",
         pullRequestURL: "https://github.com/x/y/pull/7"

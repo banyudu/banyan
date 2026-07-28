@@ -21,6 +21,25 @@ struct GitHubPullRequestDetails: Equatable, Identifiable {
     let reviews: [GitHubPullRequestReview]
 }
 
+struct GitHubIssueDetails: Equatable, Identifiable {
+    var id: String { url }
+    let url: String
+    let number: Int?
+    let title: String
+    let state: String?
+    let authorLogin: String?
+    let body: String?
+    let labels: [String]
+    let comments: [GitHubIssueComment]
+}
+
+struct GitHubIssueComment: Equatable, Identifiable {
+    let id: String
+    let body: String
+    let createdAt: String?
+    let authorLogin: String?
+}
+
 struct GitHubPullRequestComment: Equatable, Identifiable {
     let id: String
     let body: String
@@ -44,6 +63,16 @@ enum GitHubPullRequestLoadState: Equatable {
 }
 
 enum GitHubPullRequestClient {
+    static func fetchIssue(url: URL, cwd: String) async throws -> GitHubIssueDetails {
+        let fields = "author,body,comments,labels,number,state,title,url"
+        let output = try await runCommandAsync(
+            ["gh", "issue", "view", url.absoluteString, "--json", fields],
+            cwd: cwd,
+            timeout: 12
+        )
+        return try JSONDecoder().decode(GitHubIssuePayload.self, from: Data(output.utf8)).details
+    }
+
     static func pullRequestURL(number: Int, cwd: String) async throws -> URL {
         let output = try await Task.detached(priority: .utility) {
             try runCommand(
@@ -107,6 +136,23 @@ enum GitHubPullRequestClient {
         case let .requestFailed(message):
             return message?.isEmpty == false ? message! : "gh pr view failed"
         }
+    }
+
+    static func issueMessage(for error: Error) -> String {
+        guard let error = error as? GitHubPullRequestClientError else {
+            return "Unable to load GitHub issue"
+        }
+        switch error {
+        case .commandUnavailable: return "Unable to find gh CLI"
+        case .timedOut: return "gh issue view timed out"
+        case let .requestFailed(message): return message?.isEmpty == false ? message! : "gh issue view failed"
+        }
+    }
+
+    private static func runCommandAsync(_ arguments: [String], cwd: String, timeout: TimeInterval) async throws -> String {
+        try await Task.detached(priority: .utility) {
+            try runCommand(arguments, cwd: cwd, timeout: timeout)
+        }.value
     }
 
     private static func pullRequestOutput(url: URL?, fields: String, cwd: String) async throws -> String {
@@ -285,6 +331,39 @@ private enum GitHubPullRequestClientError: Error {
 private struct GitHubPullRequestReferencePayload: Decodable {
     let url: String?
 }
+
+private struct GitHubIssuePayload: Decodable {
+    let url: String
+    let number: Int?
+    let title: String
+    let state: String?
+    let author: GitHubUserPayload?
+    let body: String?
+    let labels: [GitHubLabelPayload]?
+    let comments: [GitHubPullRequestCommentPayload]?
+
+    var details: GitHubIssueDetails {
+        GitHubIssueDetails(
+            url: url,
+            number: number,
+            title: title,
+            state: state,
+            authorLogin: author?.login,
+            body: body,
+            labels: (labels ?? []).map(\.name),
+            comments: (comments ?? []).map {
+                GitHubIssueComment(
+                    id: $0.id ?? UUID().uuidString,
+                    body: $0.body ?? "",
+                    createdAt: $0.createdAt,
+                    authorLogin: $0.author?.login
+                )
+            }
+        )
+    }
+}
+
+private struct GitHubLabelPayload: Decodable { let name: String }
 
 private struct GitHubPullRequestPayload: Decodable {
     let url: String

@@ -121,10 +121,13 @@ final class SessionStore: ObservableObject {
     @Published private(set) var selectedContextInfo: SessionContextInfo? {
         didSet {
             refreshSelectedLinearIssue()
+            refreshSelectedGitHubIssue()
         }
     }
     @Published private(set) var selectedLinearIssueDetails: LinearIssueDetails?
     @Published private(set) var selectedLinearIssueLoadState: LinearIssueLoadState = .idle
+    @Published private(set) var selectedGitHubIssueDetails: GitHubIssueDetails?
+    @Published private(set) var selectedGitHubIssueLoadState: GitHubPullRequestLoadState = .idle
     @Published var isPullRequestPreviewPresented = false
     @Published private(set) var selectedPullRequestDetails: GitHubPullRequestDetails?
     @Published private(set) var selectedPullRequestLoadState: GitHubPullRequestLoadState = .idle
@@ -247,6 +250,7 @@ final class SessionStore: ObservableObject {
     private var selectedLinearIssueIdentifier: String?
     private var pendingSelectedLinearDescriptionUpdate: PendingLinearDescriptionUpdate?
     private var selectedPullRequestTask: Task<Void, Never>?
+    private var selectedGitHubIssueTask: Task<Void, Never>?
     private var selectedPullRequestPreviewURL: URL?
     private var didLoadCachedLinearIssues = false
     private var linearIssueListTask: Task<Void, Never>?
@@ -2195,6 +2199,9 @@ final class SessionStore: ObservableObject {
             linearIssueID: issueID,
             linearIssueTitle: title,
             linearIssueURL: url,
+            githubIssueNumber: nil,
+            githubIssueTitle: nil,
+            githubIssueURL: nil,
             pullRequestNumber: nil,
             pullRequestTitle: nil,
             pullRequestURL: nil
@@ -2223,6 +2230,9 @@ final class SessionStore: ObservableObject {
             linearIssueID: nil,
             linearIssueTitle: nil,
             linearIssueURL: nil,
+            githubIssueNumber: nil,
+            githubIssueTitle: nil,
+            githubIssueURL: nil,
             pullRequestNumber: nil,
             pullRequestTitle: nil,
             pullRequestURL: nil
@@ -2889,6 +2899,45 @@ final class SessionStore: ObservableObject {
                 }
                 self.selectedContextInfo = info
                 self.selectedContextResolvedAt = Date()
+            }
+        }
+    }
+
+    func refreshSelectedGitHubIssue(force: Bool = false) {
+        guard let session = selectedSession,
+              session.status != .closed,
+              let rawURL = selectedContextInfo?.githubIssueURL,
+              let url = URL(string: rawURL) else {
+            selectedGitHubIssueTask?.cancel()
+            selectedGitHubIssueTask = nil
+            selectedGitHubIssueDetails = nil
+            selectedGitHubIssueLoadState = .idle
+            return
+        }
+        guard force || selectedGitHubIssueDetails?.url != rawURL else { return }
+        selectedGitHubIssueTask?.cancel()
+        selectedGitHubIssueDetails = nil
+        selectedGitHubIssueLoadState = .loading
+        let sessionID = session.id
+        selectedGitHubIssueTask = Task.detached(priority: .utility) {
+            do {
+                let issue = try await GitHubPullRequestClient.fetchIssue(url: url, cwd: session.cwd)
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.selectedSessionID == sessionID,
+                          self.selectedContextInfo?.githubIssueURL == rawURL else { return }
+                    self.selectedGitHubIssueTask = nil
+                    self.selectedGitHubIssueDetails = issue
+                    self.selectedGitHubIssueLoadState = .loaded
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self,
+                          self.selectedSessionID == sessionID,
+                          self.selectedContextInfo?.githubIssueURL == rawURL else { return }
+                    self.selectedGitHubIssueTask = nil
+                    self.selectedGitHubIssueLoadState = .failed(GitHubPullRequestClient.issueMessage(for: error))
+                }
             }
         }
     }

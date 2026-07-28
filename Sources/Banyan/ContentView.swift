@@ -1099,7 +1099,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sessionDetail: some View {
-        HStack(spacing: 0) {
+        ZStack(alignment: .trailing) {
             ZStack {
                 SelectionAwareTerminalSwitcher(
                     selection: selection,
@@ -1139,38 +1139,85 @@ struct ContentView: View {
                 if store.isPullRequestPreviewPresented,
                    let context = store.selectedPullRequestPreviewContext,
                    session.status != .closed {
-                    Divider()
-                    PullRequestPreviewPanel(
-                        context: context,
-                        details: store.selectedPullRequestDetails,
-                        loadState: store.selectedPullRequestLoadState,
-                        onRefresh: {
-                            store.refreshSelectedPullRequestPreview(force: true)
-                        },
-                        onOpen: store.openSelectedPullRequest,
-                        onClose: store.closePullRequestPreview
-                    )
+                    issuePreviewOverlay {
+                        PullRequestPreviewPanel(
+                            context: context,
+                            details: store.selectedPullRequestDetails,
+                            loadState: store.selectedPullRequestLoadState,
+                            onRefresh: {
+                                store.refreshSelectedPullRequestPreview(force: true)
+                            },
+                            onOpen: store.openSelectedPullRequest,
+                            onClose: store.closePullRequestPreview
+                        )
+                    }
+                    .onAppear {
+                        PerformanceTelemetry.shared.recordDuration(
+                            "issue_preview.appear",
+                            durationMS: 0,
+                            sessionID: session.id,
+                            detail: "kind=github width=380"
+                        )
+                    }
                 } else if let context = store.selectedContextInfo,
                           context.linearIssueID?.isEmpty == false,
                           session.status != .closed {
-                    Divider()
-                    LinearIssuePanel(
-                        context: context,
-                        issue: store.selectedLinearIssueDetails,
-                        loadState: store.selectedLinearIssueLoadState,
-                        onRefresh: {
+                    issuePreviewOverlay {
+                        LinearIssuePanel(
+                            context: context,
+                            issue: store.selectedLinearIssueDetails,
+                            loadState: store.selectedLinearIssueLoadState,
+                            onRefresh: {
+                                store.refreshSelectedLinearIssue(force: true)
+                            },
+                            onOpen: store.openSelectedLinearIssue,
+                            onChangeState: store.updateSelectedLinearIssueState
+                        )
+                        .onAppear {
+                            PerformanceTelemetry.shared.recordDuration(
+                                "issue_preview.appear",
+                                durationMS: 0,
+                                sessionID: session.id,
+                                detail: "kind=linear width=360 issue=\(context.linearIssueID ?? "unknown")"
+                            )
                             store.refreshSelectedLinearIssue(force: true)
-                        },
-                        onOpen: store.openSelectedLinearIssue,
-                        onChangeState: store.updateSelectedLinearIssueState
-                    )
-                    .onAppear {
-                        store.refreshSelectedLinearIssue(force: true)
+                        }
+                    }
+                } else if let context = store.selectedContextInfo,
+                          context.githubIssueURL?.isEmpty == false,
+                          session.status != .closed {
+                    issuePreviewOverlay {
+                        GitHubIssuePanel(
+                            context: context,
+                            issue: store.selectedGitHubIssueDetails,
+                            loadState: store.selectedGitHubIssueLoadState,
+                            onRefresh: { store.refreshSelectedGitHubIssue(force: true) },
+                            onOpen: {
+                                if let rawURL = context.githubIssueURL, let url = URL(string: rawURL) {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                        )
+                        .onAppear {
+                            store.refreshSelectedGitHubIssue(force: true)
+                        }
                     }
                 }
             }
         }
         .accessibilityIdentifier(AccessibilityID.detail)
+    }
+
+    @ViewBuilder
+    private func issuePreviewOverlay<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 0) {
+            Divider()
+            content()
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(.background)
     }
 
     @ViewBuilder

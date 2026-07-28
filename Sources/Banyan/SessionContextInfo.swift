@@ -25,6 +25,9 @@ struct SessionContextInfo: Equatable, Sendable {
     let linearIssueID: String?
     let linearIssueTitle: String?
     let linearIssueURL: String?
+    let githubIssueNumber: Int?
+    let githubIssueTitle: String?
+    let githubIssueURL: String?
     let pullRequestNumber: Int?
     let pullRequestTitle: String?
     let pullRequestURL: String?
@@ -39,6 +42,9 @@ struct SessionContextInfo: Equatable, Sendable {
             linearIssueID: linearIssueID,
             linearIssueTitle: linearIssueTitle,
             linearIssueURL: linearIssueURL,
+            githubIssueNumber: githubIssueNumber,
+            githubIssueTitle: githubIssueTitle,
+            githubIssueURL: githubIssueURL,
             pullRequestNumber: pullRequestNumber,
             pullRequestTitle: pullRequestTitle,
             pullRequestURL: pullRequestURL
@@ -52,10 +58,24 @@ enum SessionContextResolver {
         isCancelled: @escaping @Sendable () -> Bool = { false }
     ) async -> SessionContextInfo {
         let projectContext = SessionDisplayLabel.context(cwd: input.cwd)
-        let detectedIssueID = LinearIssueReference.issueID(in: input.title)
-            ?? LinearIssueReference.issueID(in: input.titleURL)
-            ?? LinearIssueReference.issueID(in: input.displayTitle)
-            ?? LinearIssueReference.detect(branch: projectContext.branch, cwd: input.cwd)?.id
+        let remoteAddress = projectContext.groupID.hasPrefix("git:")
+            ? String(projectContext.groupID.dropFirst(4))
+            : nil
+        let tracker = GitHubIssueReference.issueTracker(cwd: input.cwd)
+        let githubIssue = tracker == "linear" ? nil : (
+            githubIssueReference(in: input)
+                ?? GitHubIssueReference.detect(
+                    branch: projectContext.branch,
+                    remoteAddress: remoteAddress,
+                    issueTracker: tracker
+                )
+        )
+        let detectedIssueID: String? = (githubIssue != nil || tracker == "github")
+            ? nil
+            : (linearIssueID(in: input.title)
+                ?? linearIssueID(in: input.titleURL)
+                ?? linearIssueID(in: input.displayTitle)
+                ?? LinearIssueReference.detect(branch: projectContext.branch, cwd: input.cwd)?.id)
         let resolvedIssueID = detectedIssueID
         let linearURL = resolvedIssueID.map(LinearIssueReference.issueURL(for:))
         let explicitPullRequestURL = pullRequestURL(in: input.titleURL)
@@ -103,6 +123,9 @@ enum SessionContextResolver {
             linearIssueID: resolvedIssueID,
             linearIssueTitle: title,
             linearIssueURL: linearURL,
+            githubIssueNumber: githubIssue?.number,
+            githubIssueTitle: nil,
+            githubIssueURL: githubIssue?.url,
             pullRequestNumber: pr?.number,
             pullRequestTitle: pr?.title,
             pullRequestURL: pr?.url
@@ -119,12 +142,20 @@ enum SessionContextResolver {
     static func resolveFast(input: SessionContextLookupInput) -> SessionContextInfo {
         let issueID = titleIssueID(input)
         let explicitPR = titlePullRequestURL(input)
+        let tracker = GitHubIssueReference.issueTracker(cwd: input.cwd)
+        let githubIssue = tracker == "linear" ? nil : (
+            githubIssueReference(in: input)
+        )
+        let resolvedIssueID = (githubIssue != nil || tracker == "github") ? nil : issueID
         return SessionContextInfo(
             sessionID: input.sessionID,
             signature: input.signature,
-            linearIssueID: issueID,
+            linearIssueID: resolvedIssueID,
             linearIssueTitle: nil,
-            linearIssueURL: issueID.map(LinearIssueReference.issueURL(for:)),
+            linearIssueURL: resolvedIssueID.map(LinearIssueReference.issueURL(for:)),
+            githubIssueNumber: githubIssue?.number,
+            githubIssueTitle: nil,
+            githubIssueURL: githubIssue?.url,
             pullRequestNumber: explicitPR.flatMap(pullRequestNumber(in:)),
             pullRequestTitle: nil,
             pullRequestURL: explicitPR
@@ -135,20 +166,35 @@ enum SessionContextResolver {
     /// network/git result — the working directory and any issue/PR tokens embedded
     /// in the title — so free-text title churn no longer forces a re-resolve.
     static func cacheKey(for input: SessionContextLookupInput) -> String {
-        [input.cwd, titleIssueID(input) ?? "", titlePullRequestURL(input) ?? ""]
+        [input.cwd, titleIssueID(input) ?? "", titlePullRequestURL(input) ?? "", titleGitHubIssueURL(input) ?? ""]
             .joined(separator: "\u{1f}")
     }
 
     private static func titleIssueID(_ input: SessionContextLookupInput) -> String? {
-        LinearIssueReference.issueID(in: input.title)
-            ?? LinearIssueReference.issueID(in: input.titleURL)
-            ?? LinearIssueReference.issueID(in: input.displayTitle)
+        linearIssueID(in: input.title)
+            ?? linearIssueID(in: input.titleURL)
+            ?? linearIssueID(in: input.displayTitle)
+    }
+
+    private static func linearIssueID(in value: String?) -> String? {
+        guard GitHubIssueReference.detect(in: value) == nil else { return nil }
+        return LinearIssueReference.issueID(in: value)
     }
 
     private static func titlePullRequestURL(_ input: SessionContextLookupInput) -> String? {
         pullRequestURL(in: input.titleURL)
             ?? pullRequestURL(in: input.title)
             ?? pullRequestURL(in: input.displayTitle)
+    }
+
+    private static func titleGitHubIssueURL(_ input: SessionContextLookupInput) -> String? {
+        githubIssueReference(in: input)?.url
+    }
+
+    private static func githubIssueReference(in input: SessionContextLookupInput) -> GitHubIssueReference? {
+        GitHubIssueReference.detect(in: input.titleURL)
+            ?? GitHubIssueReference.detect(in: input.title)
+            ?? GitHubIssueReference.detect(in: input.displayTitle)
     }
 
     private struct PullRequestPayload: Decodable {
@@ -168,6 +214,7 @@ enum SessionContextResolver {
         }
         return String(value[matchRange])
     }
+
 
     private static func pullRequestNumber(in url: String) -> Int? {
         guard let value = url.split(separator: "/").last else { return nil }

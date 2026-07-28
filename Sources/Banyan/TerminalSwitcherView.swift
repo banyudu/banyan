@@ -192,6 +192,7 @@ final class TerminalSwitcherContainer: NSView {
         if let selectedSession, containers[selectedSession.id] == nil {
             let container = TerminalContainerView(
                 terminalView: selectedSession.terminalView,
+                sessionID: selectedSession.id,
                 onUserSubmittedInput: { onUserSubmittedInput(selectedSession, $0) }
             )
             container.apply(theme: theme)
