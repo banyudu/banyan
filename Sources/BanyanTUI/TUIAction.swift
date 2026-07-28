@@ -1,17 +1,8 @@
-enum TUIAction {
-    case quit
-    case toggleHistory
-    case next
-    case previous
-    case refresh
-    case recover
-    case newSession
-    case close
-    case remove
-    case activate
-    case trimResume
-    case unknown
+import BanyanCore
 
+typealias TUIAction = SessionListAction
+
+extension SessionListAction {
     init(byte: UInt8) {
         switch byte {
         case 113: self = .quit       // q
