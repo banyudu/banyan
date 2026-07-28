@@ -43,6 +43,19 @@ import Testing
     #expect(persistence.snapshots.first?.status == .running)
 }
 
+@Test func sessionDataSourceUsesInjectedHistoryLoader() {
+    let dataSource = SessionDataSource(
+        persistence: InMemorySessionPersistence(snapshots: []),
+        backend: DataSourceTestBackend(),
+        historyLoader: { limit in
+            #expect(limit == 2)
+            return []
+        }
+    )
+
+    #expect(dataSource.loadHistory(limit: 2).isEmpty)
+}
+
 private final class InMemorySessionPersistence: SessionPersistenceBackend, @unchecked Sendable {
     var snapshots: [SessionSnapshot]
 
