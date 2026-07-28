@@ -178,6 +178,7 @@ final class SessionStore: ObservableObject {
     private let detector = AgentStateDetector()
     private let tmuxBackend: any TmuxSessionDiscoveryBackend
     private let processTable: @Sendable () -> ProcessTable
+    private let historyLoader: @Sendable (Int) -> [ImportedAgentSession]
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
     /// Effective cadence the live `supervisorTimer` was installed with, so we can
@@ -231,10 +232,14 @@ final class SessionStore: ObservableObject {
 
     init(
         tmuxBackend: any TmuxSessionDiscoveryBackend = TmuxBackend.shared,
-        processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() }
+        processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() },
+        historyLoader: @escaping @Sendable (Int) -> [ImportedAgentSession] = { limit in
+            AgentSessionHistoryImporter.load(maxPerProvider: limit)
+        }
     ) {
         self.tmuxBackend = tmuxBackend
         self.processTable = processTable
+        self.historyLoader = historyLoader
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
@@ -1315,9 +1320,10 @@ final class SessionStore: ObservableObject {
         let updatedAt = session.updatedAt
         let resetAt = session.lastConversationResetAt
         let provider = session.agentProvider
+        let historyLoader = historyLoader
 
         Task.detached(priority: .userInitiated) { [weak self] in
-            let imported = AgentSessionHistoryImporter.load(maxPerProvider: .max)
+            let imported = historyLoader(.max)
             let match = Self.bestHistoryResumeMatch(
                 sessionCWD: cwd,
                 sessionCreatedAt: createdAt,
@@ -2407,8 +2413,9 @@ final class SessionStore: ObservableObject {
             return
         }
         isHistoryImportRunning = true
+        let historyLoader = historyLoader
         Task.detached(priority: .utility) {
-            let imported = AgentSessionHistoryImporter.load(maxPerProvider: Self.historyRecoveryImportLimit)
+            let imported = historyLoader(Self.historyRecoveryImportLimit)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.applyImportedHistory(imported)
