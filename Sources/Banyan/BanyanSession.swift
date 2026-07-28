@@ -202,7 +202,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)
         let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(
             cwd: cwd,
-            homeDirectory: NSHomeDirectory()
+            homeDirectory: NSHomeDirectory(),
+            environment: ProcessInfo.processInfo.environment
         )
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id)
@@ -698,7 +699,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard let directory = Self.normalizedDirectory(directory) else { return }
         let displayContext = SessionDisplayLabel.context(
             cwd: directory,
-            homeDirectory: NSHomeDirectory()
+            homeDirectory: NSHomeDirectory(),
+            environment: ProcessInfo.processInfo.environment
         )
         guard directory != cwd else {
             applyProjectContext(displayContext)

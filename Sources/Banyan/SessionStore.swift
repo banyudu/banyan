@@ -510,7 +510,8 @@ final class SessionStore: ObservableObject {
             } else {
                 let resolved = SessionDisplayLabel.context(
                     cwd: snapshot.cwd,
-                    homeDirectory: NSHomeDirectory()
+                    homeDirectory: NSHomeDirectory(),
+                    environment: ProcessInfo.processInfo.environment
                 )
                 displayContextsByCWD[snapshot.cwd] = resolved
                 displayContext = resolved

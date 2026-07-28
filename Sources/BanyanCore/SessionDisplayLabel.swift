@@ -16,9 +16,17 @@ public struct SessionProjectContext: Equatable {
 }
 
 public enum SessionDisplayLabel {
-    public static func context(cwd: String, homeDirectory: String) -> SessionProjectContext {
+    public static func context(
+        cwd: String,
+        homeDirectory: String,
+        environment: [String: String]
+    ) -> SessionProjectContext {
         let resolvedCWD = standardizedPath(cwd)
-        let topLevel = gitLookup(["rev-parse", "--show-toplevel"], cwd: resolvedCWD)
+        let topLevel = gitLookup(
+            ["rev-parse", "--show-toplevel"],
+            cwd: resolvedCWD,
+            environment: environment
+        )
         guard let gitTopLevel = topLevel.value else {
             // No top level either means "not a git repo" (a trustworthy answer)
             // or the lookup failed to run — propagate `degraded` so a transient
@@ -38,7 +46,11 @@ public enum SessionDisplayLabel {
         var degraded = false
         let project = projectName(gitTopLevel, homeDirectory: homeDirectory)
 
-        let symbolic = gitLookup(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: resolvedCWD)
+        let symbolic = gitLookup(
+            ["symbolic-ref", "--quiet", "--short", "HEAD"],
+            cwd: resolvedCWD,
+            environment: environment
+        )
         let symbolicBranch = symbolic.value
         degraded = degraded || symbolic.degraded
 
@@ -46,19 +58,29 @@ public enum SessionDisplayLabel {
         if let symbolicBranch {
             branch = symbolicBranch
         } else {
-            let shortSHA = gitLookup(["rev-parse", "--short", "HEAD"], cwd: resolvedCWD)
+            let shortSHA = gitLookup(
+                ["rev-parse", "--short", "HEAD"],
+                cwd: resolvedCWD,
+                environment: environment
+            )
             branch = shortSHA.value
             degraded = degraded || shortSHA.degraded
         }
 
-        let mainDirectory = gitMainDirectory(cwd: resolvedCWD, fallbackTopLevel: gitTopLevel)
+        let mainDirectory = gitMainDirectory(
+            cwd: resolvedCWD,
+            fallbackTopLevel: gitTopLevel,
+            environment: environment
+        )
         degraded = degraded || mainDirectory.degraded
         let isGitWorktree = standardizedPath(mainDirectory.value) != standardizedPath(gitTopLevel)
 
-        let defaultBranch = symbolicBranch.map { Self.isDefaultBranch($0, cwd: resolvedCWD) } ?? (value: false, degraded: false)
+        let defaultBranch = symbolicBranch.map {
+            Self.isDefaultBranch($0, cwd: resolvedCWD, environment: environment)
+        } ?? (value: false, degraded: false)
         degraded = degraded || defaultBranch.degraded
 
-        let remote = gitRemoteURL(cwd: resolvedCWD)
+        let remote = gitRemoteURL(cwd: resolvedCWD, environment: environment)
         degraded = degraded || remote.degraded
         if let remoteURL = remote.value {
             let normalizedAddress = normalizedGitAddress(remoteURL)
@@ -186,14 +208,21 @@ public enum SessionDisplayLabel {
         PathDisplayName.canonicalPath(path)
     }
 
-    private static func gitRemoteURL(cwd: String) -> (value: String?, degraded: Bool) {
-        let origin = gitLookup(["remote", "get-url", "origin"], cwd: cwd)
+    private static func gitRemoteURL(
+        cwd: String,
+        environment: [String: String]
+    ) -> (value: String?, degraded: Bool) {
+        let origin = gitLookup(
+            ["remote", "get-url", "origin"],
+            cwd: cwd,
+            environment: environment
+        )
         if let originURL = origin.value {
             return (originURL, false)
         }
         guard !origin.degraded else { return (nil, true) }
 
-        let availableRemotes = gitLookup(["remote"], cwd: cwd)
+        let availableRemotes = gitLookup(["remote"], cwd: cwd, environment: environment)
         guard let remotes = availableRemotes.value else {
             return (nil, availableRemotes.degraded)
         }
@@ -203,12 +232,24 @@ public enum SessionDisplayLabel {
             .first else {
             return (nil, false)
         }
-        let fallback = gitLookup(["remote", "get-url", firstRemote], cwd: cwd)
+        let fallback = gitLookup(
+            ["remote", "get-url", firstRemote],
+            cwd: cwd,
+            environment: environment
+        )
         return (fallback.value, fallback.degraded)
     }
 
-    private static func gitMainDirectory(cwd: String, fallbackTopLevel: String) -> (value: String, degraded: Bool) {
-        let common = gitLookup(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd: cwd)
+    private static func gitMainDirectory(
+        cwd: String,
+        fallbackTopLevel: String,
+        environment: [String: String]
+    ) -> (value: String, degraded: Bool) {
+        let common = gitLookup(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd: cwd,
+            environment: environment
+        )
         guard let commonGitDirectory = common.value else {
             // On failure we fall back to the worktree's own top level, which makes
             // `isGitWorktree` read `false`. Flag `degraded` so that false-negative
@@ -223,13 +264,18 @@ public enum SessionDisplayLabel {
         return (url.path, false)
     }
 
-    private static func isDefaultBranch(_ branch: String, cwd: String) -> (value: Bool, degraded: Bool) {
+    private static func isDefaultBranch(
+        _ branch: String,
+        cwd: String,
+        environment: [String: String]
+    ) -> (value: Bool, degraded: Bool) {
         if branch == "main" || branch == "master" {
             return (true, false)
         }
         let remoteHead = gitLookup(
             ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
-            cwd: cwd
+            cwd: cwd,
+            environment: environment
         )
         guard let value = remoteHead.value else {
             return (false, remoteHead.degraded)
@@ -294,13 +340,17 @@ public enum SessionDisplayLabel {
     /// *degraded* one (the subprocess timed out or failed to launch, so we don't
     /// actually know the answer). `value` is `nil` in both cases; `degraded`
     /// distinguishes them so callers can avoid caching a false-negative.
-    private static func gitLookup(_ arguments: [String], cwd: String) -> (value: String?, degraded: Bool) {
+    private static func gitLookup(
+        _ arguments: [String],
+        cwd: String,
+        environment: [String: String]
+    ) -> (value: String?, degraded: Bool) {
         let output: SubprocessRunner.Output
         do {
             output = try SubprocessRunner.run(
                 arguments: ["git", "-C", cwd] + arguments,
                 cwd: cwd,
-                environment: ProcessInfo.processInfo.environment,
+                environment: environment,
                 timeout: gitCommandTimeout
             )
         } catch {

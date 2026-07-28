@@ -81,7 +81,8 @@ public enum SessionContextResolver {
     ) async -> SessionContextInfo {
         let projectContext = SessionDisplayLabel.context(
             cwd: input.cwd,
-            homeDirectory: input.homeDirectory
+            homeDirectory: input.homeDirectory,
+            environment: input.environment
         )
         let remoteAddress = projectContext.groupID.hasPrefix("git:") ? String(projectContext.groupID.dropFirst(4)) : nil
         let tracker = GitHubIssueReference.issueTracker(cwd: input.cwd)
