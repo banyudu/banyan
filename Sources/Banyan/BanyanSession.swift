@@ -105,19 +105,15 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var terminalRefreshTask: Task<Void, Never>?
 
     var displayTitle: String {
-        if hasUsefulPinnedTitle {
-            return title
-        }
-
-        if agentProvider != nil, let agentTitle = usefulAgentTitle {
-            return agentTitle
-        }
-
-        if let generatedTitle = generatedTitle.flatMap(SessionTitleGenerator.sanitizeTitle) {
-            return generatedTitle
-        }
-
-        return title
+        SessionDisplayPolicy.displayTitle(
+            title: title,
+            isTitlePinned: isTitlePinned,
+            reportedTitle: reportedTitle,
+            generatedTitle: generatedTitle,
+            cwd: cwd,
+            detectedProvider: detectedAgentProvider,
+            command: command
+        )
     }
 
     /// `titleURL` comes first because the sidebar renders this as the label of a link
@@ -130,7 +126,10 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     var agentProvider: CodingAgentProvider? {
-        CodingAgentProvider.detect(in: command) ?? detectedAgentProvider
+        SessionDisplayPolicy.agentProvider(
+            command: command,
+            detectedProvider: detectedAgentProvider
+        )
     }
 
     /// Provider to show in the live sidebar row. Normally the launched identity,
@@ -142,10 +141,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     /// `.running` (the supervisor only emits it when no agent process is alive), so
     /// this never hides the icon for a genuinely running agent.
     var displayAgentProvider: CodingAgentProvider? {
-        if status == .running, CodingAgentProvider.detect(in: command) != nil {
-            return nil
-        }
-        return agentProvider
+        SessionDisplayPolicy.displayAgentProvider(
+            status: status,
+            command: command,
+            detectedProvider: detectedAgentProvider
+        )
     }
 
     var needsManualAttach: Bool {
@@ -734,21 +734,15 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     private var usefulAgentTitle: String? {
-        guard let value = reportedTitle.flatMap(SessionTitleGenerator.sanitizeTitle), !value.isEmpty else {
-            return nil
-        }
-        guard SessionTitleGenerator.isUsefulTitle(value) else {
-            return nil
-        }
-        return value
+        SessionDisplayPolicy.usefulAgentTitle(reportedTitle)
     }
 
     private var hasUsefulPinnedTitle: Bool {
-        guard isTitlePinned else { return false }
-        let cleanedTitle = SessionTitleGenerator.sanitizeTitle(title) ?? ""
-        guard SessionTitleGenerator.isUsefulTitle(cleanedTitle) else { return false }
-        let defaultTitle = PathDisplayName.make(path: cwd)
-        return cleanedTitle != defaultTitle
+        SessionDisplayPolicy.hasUsefulPinnedTitle(
+            title: title,
+            isTitlePinned: isTitlePinned,
+            cwd: cwd
+        )
     }
 
     private func refreshGeneratedTitle() {
