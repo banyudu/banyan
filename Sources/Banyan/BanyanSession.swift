@@ -77,7 +77,7 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     private var delegate: TerminalSessionDelegate?
     private let tmuxBackend: any TmuxClientBackend
-    private let sessionRuntime: SessionRuntimeCoordinator
+    private let sessionRuntime: any SessionRuntimeBackend
 
     private var launchRequest: SessionLaunchRequest {
         SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command)
