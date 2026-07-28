@@ -11,17 +11,20 @@ struct BanyanTUI {
     private let tmux: any TmuxTerminalBackend
     private let attachment: TUIAttachment
     private let actions: any SessionListActions
+    private let input: any TUIInput
     private var model: SessionListModel
 
     init(
         backend: any TmuxTerminalBackend,
         dataSource: any SessionListDataSource,
-        actions: any SessionListActions
+        actions: any SessionListActions,
+        input: any TUIInput
     ) {
         self.tmux = backend
         self.attachment = TUIAttachment(tmux: backend)
         self.model = SessionListModel(dataSource: dataSource)
         self.actions = actions
+        self.input = input
     }
 
     init(backend: any TmuxTerminalBackend = TmuxBackend.shared) {
@@ -39,22 +42,22 @@ struct BanyanTUI {
                     persistence: database,
                     runtime: SessionRuntimeCoordinator(backend: backend)
                 )
-            )
+            ),
+            input: TerminalMode()
         )
     }
 
     mutating func run() {
-        let terminal = TerminalMode()
         while true {
             reload()
             render()
 
-            guard let byte = readByte() else { break }
-            guard handle(SessionListAction(byte: byte), terminal: terminal) else { return }
+            guard let byte = input.readByte() else { break }
+            guard handle(SessionListAction(byte: byte)) else { return }
         }
     }
 
-    private mutating func handle(_ action: SessionListAction, terminal: TerminalMode) -> Bool {
+    private mutating func handle(_ action: SessionListAction) -> Bool {
         switch action {
             case .quit:
                 return false
@@ -75,13 +78,13 @@ struct BanyanTUI {
             case .remove:
                 if !model.showingHistory { removeSelected() }
             case .activate:
-                terminal.restore()
+                input.restore()
                 if model.showingHistory {
                     resumeHistorySelected()
                 } else {
                     attachSelected()
                 }
-                terminal.enterRaw()
+                input.enterRaw()
             case .trimResume:
                 if model.showingHistory { resumeHistorySelected(trimmed: true) }
             case .unknown:

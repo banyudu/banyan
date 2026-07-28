@@ -6,13 +6,13 @@ import Glibc
 import Darwin
 #endif
 
-func readByte() -> UInt8? {
-    var byte: UInt8 = 0
-    guard read(STDIN_FILENO, &byte, 1) == 1 else { return nil }
-    return byte
+protocol TUIInput {
+    func readByte() -> UInt8?
+    func enterRaw()
+    func restore()
 }
 
-final class TerminalMode {
+final class TerminalMode: TUIInput {
     private var original: termios?
 
     init() {
@@ -20,6 +20,12 @@ final class TerminalMode {
         guard tcgetattr(STDIN_FILENO, &attributes) == 0 else { return }
         original = attributes
         enterRaw()
+    }
+
+    func readByte() -> UInt8? {
+        var byte: UInt8 = 0
+        guard read(STDIN_FILENO, &byte, 1) == 1 else { return nil }
+        return byte
     }
 
     func enterRaw() {
