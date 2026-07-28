@@ -49,6 +49,20 @@ This keeps Banyan sessions out of the default `tmux ls`, while still allowing ma
 swift build
 ```
 
+On Linux, the package also builds a terminal frontend that runs without
+SwiftUI or AppKit:
+
+```sh
+swift build --product BanyanTUI
+swift run BanyanTUI
+```
+
+`BanyanTUI` uses the same SQLite session state, dedicated tmux backend, agent
+status detection, and local history importer as the macOS app. In the TUI,
+`j`/`k` navigate, Enter attaches or resumes, `n` creates a shell, `c` closes,
+`x` removes, `R` recovers a missing backing session, `h` toggles history, and
+`T` resumes history with transcript trimming. Press `q` to quit.
+
 ## Run
 
 ```sh
