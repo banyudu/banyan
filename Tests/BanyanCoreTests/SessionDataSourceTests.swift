@@ -34,7 +34,8 @@ import Testing
     let dataSource = SessionDataSource(
         persistence: persistence,
         backend: backend,
-        processTable: EmptyProcessTableProvider()
+        processTable: EmptyProcessTableProvider(),
+        historyBackend: DefaultSessionHistoryBackend()
     )
 
     let active = dataSource.loadActiveSessions()
@@ -47,6 +48,7 @@ import Testing
     let dataSource = SessionDataSource(
         persistence: InMemorySessionPersistence(snapshots: []),
         backend: DataSourceTestBackend(),
+        processTable: EmptyProcessTableProvider(),
         historyBackend: DataSourceHistoryBackend()
     )
 

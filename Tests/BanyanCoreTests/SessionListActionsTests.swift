@@ -11,7 +11,8 @@ import Testing
         catalog: SessionCatalog(
             persistence: EmptyPersistence(),
             runtime: SessionRuntimeCoordinator(backend: LifecycleBackend())
-        )
+        ),
+        history: DefaultSessionHistoryBackend()
     )
 
     #expect(actions is SessionActions)

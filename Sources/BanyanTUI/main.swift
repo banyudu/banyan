@@ -8,7 +8,9 @@ private func makeDefaultApp() -> BanyanTUI {
         backend: backend,
         dataSource: SessionDataSource(
             persistence: database,
-            backend: backend
+            backend: backend,
+            processTable: LiveProcessTableProvider(),
+            historyBackend: DefaultSessionHistoryBackend()
         ),
         actions: SessionActions(
             idAllocator: UniqueSessionIDAllocator(
@@ -18,7 +20,8 @@ private func makeDefaultApp() -> BanyanTUI {
             catalog: SessionCatalog(
                 persistence: database,
                 runtime: SessionRuntimeCoordinator(backend: backend)
-            )
+            ),
+            history: DefaultSessionHistoryBackend()
         ),
         input: TerminalMode(),
         output: StandardTUIOutput(),

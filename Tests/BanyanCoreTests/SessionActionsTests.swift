@@ -18,7 +18,8 @@ import Testing
     )
     let actions = SessionActions(
         idAllocator: UniqueSessionIDAllocator(persistence: database, tmux: backend),
-        catalog: catalog
+        catalog: catalog,
+        history: DefaultSessionHistoryBackend()
     )
 
     let id = try actions.createShellSession(cwd: "/tmp/project")

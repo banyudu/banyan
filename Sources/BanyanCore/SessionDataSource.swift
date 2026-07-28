@@ -16,8 +16,8 @@ public struct SessionDataSource: Sendable, SessionListDataSource {
     public init(
         persistence: any SessionPersistenceBackend,
         backend: any AgentSupervisorBackend,
-        processTable: any ProcessTableProvider = LiveProcessTableProvider(),
-        historyBackend: any SessionHistoryBackend = DefaultSessionHistoryBackend()
+        processTable: any ProcessTableProvider,
+        historyBackend: any SessionHistoryBackend
     ) {
         self.persistence = persistence
         self.backend = backend

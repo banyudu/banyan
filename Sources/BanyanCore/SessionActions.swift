@@ -17,7 +17,7 @@ public struct SessionActions: Sendable, SessionListActions {
     public init(
         idAllocator: any SessionIDAllocator,
         catalog: any SessionCatalogBackend,
-        history: any SessionHistoryBackend = DefaultSessionHistoryBackend()
+        history: any SessionHistoryBackend
     ) {
         self.idAllocator = idAllocator
         self.catalog = catalog
