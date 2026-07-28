@@ -77,6 +77,11 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     private var delegate: TerminalSessionDelegate?
     private let tmuxBackend = TmuxBackend.shared
+    private let sessionRuntime = SessionRuntimeCoordinator()
+
+    private var launchRequest: SessionLaunchRequest {
+        SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command)
+    }
     var onDidChange: (() -> Void)?
     var onOutput: ((String) -> Void)?
     var onStatusSignal: ((SessionStatus) -> Void)?
@@ -366,13 +371,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         isRestored = false
         status = .running
         touch()
-        let backend = tmuxBackend
-        let name = tmuxSessionName
-        let workingDirectory = cwd
-        let launchCommand = command
+        let runtime = sessionRuntime
+        let request = launchRequest
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try backend.ensureSession(named: name, cwd: workingDirectory, command: launchCommand)
+                try runtime.ensureBackingSession(request)
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.isProcessStarted = true
@@ -509,13 +512,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         status = .running
         touch()
 
-        let backend = tmuxBackend
-        let name = tmuxSessionName
-        let workingDirectory = cwd
-        let launchCommand = command
+        let runtime = sessionRuntime
+        let request = launchRequest
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try backend.ensureSession(named: name, cwd: workingDirectory, command: launchCommand)
+                try runtime.ensureBackingSession(request)
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.isProcessStarted = true
@@ -539,7 +540,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             terminalView.terminate()
         }
         isDetachingTerminalClient = false
-        tmuxBackend.killSession(named: tmuxSessionName)
+        sessionRuntime.removeBackingSession(named: tmuxSessionName)
         isProcessStarted = false
         isRestored = false
         startTerminalClient()
@@ -550,7 +551,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         // 10/11 during startup, before SwiftTerm has necessarily attached.
         tmuxBackend.configureTerminalTheme(pendingTheme)
         do {
-            try tmuxBackend.ensureSession(named: tmuxSessionName, cwd: cwd, command: command)
+            try sessionRuntime.ensureBackingSession(launchRequest)
         } catch {
             failToStart(error.localizedDescription)
             return
@@ -897,7 +898,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         isDetachingTerminalClient = false
         status = .closed
         loadedTerminalView?.terminate()
-        tmuxBackend.killSession(named: tmuxSessionName)
+        sessionRuntime.removeBackingSession(named: tmuxSessionName)
         isProcessStarted = false
         isRestored = false
         touch()
