@@ -13,21 +13,32 @@ struct BanyanTUI {
     private let actions: any SessionListActions
     private var model: SessionListModel
 
-    init(backend: any TmuxTerminalBackend = TmuxBackend.shared) {
+    init(
+        backend: any TmuxTerminalBackend,
+        dataSource: any SessionListDataSource,
+        actions: any SessionListActions
+    ) {
         self.tmux = backend
         self.attachment = TUIAttachment(tmux: backend)
-        let database = SessionDatabase()
-        let dataSource = SessionDataSource(
-            persistence: database,
-            backend: backend
-        )
         self.model = SessionListModel(dataSource: dataSource)
-        self.actions = SessionActions(
-            persistence: database,
-            tmux: backend,
-            catalog: SessionCatalog(
+        self.actions = actions
+    }
+
+    init(backend: any TmuxTerminalBackend = TmuxBackend.shared) {
+        let database = SessionDatabase()
+        self.init(
+            backend: backend,
+            dataSource: SessionDataSource(
                 persistence: database,
-                runtime: SessionRuntimeCoordinator(backend: backend)
+                backend: backend
+            ),
+            actions: SessionActions(
+                persistence: database,
+                tmux: backend,
+                catalog: SessionCatalog(
+                    persistence: database,
+                    runtime: SessionRuntimeCoordinator(backend: backend)
+                )
             )
         )
     }
