@@ -8,10 +8,9 @@ import Darwin
 #endif
 
 private struct BanyanTUI {
-    private let database: SessionDatabase
     private let tmux = TmuxBackend.shared
     private let dataSource: TUISessionDataSource
-    private let catalog: SessionCatalog
+    private let actions: TUISessionActions
     private var sessions: [SessionSnapshot] = []
     private var history: [ImportedAgentSession] = []
     private var showingHistory = false
@@ -21,11 +20,14 @@ private struct BanyanTUI {
 
     init() {
         let database = SessionDatabase()
-        self.database = database
         self.dataSource = TUISessionDataSource(database: database, tmux: TmuxBackend.shared)
-        self.catalog = SessionCatalog(
-            persistence: database,
-            runtime: SessionRuntimeCoordinator()
+        self.actions = TUISessionActions(
+            database: database,
+            tmux: TmuxBackend.shared,
+            catalog: SessionCatalog(
+                persistence: database,
+                runtime: SessionRuntimeCoordinator()
+            )
         )
     }
 
@@ -128,89 +130,20 @@ private struct BanyanTUI {
 
     private mutating func resumeHistorySelected(trimmed: Bool = false) {
         guard history.indices.contains(selectedIndex) else { return }
-        let item = history[selectedIndex]
-        guard let sourceID = AgentSessionHistory.sourceID(
-            fromImportedSessionID: item.id,
-            provider: item.provider
-        ) else {
-            notice = "Unable to resume \(item.title)"
-            return
-        }
-
-        let resumeSourceID: String
-        if trimmed,
-           let prepared = TranscriptResumePreparer.prepare(
-               provider: item.provider,
-               sourceID: sourceID,
-               cwd: item.cwd,
-               transcriptURL: item.transcriptURL
-           ) {
-            resumeSourceID = prepared.newSourceID
-        } else {
-            resumeSourceID = sourceID
-        }
-
-        guard let command = AgentSessionHistory.resumeCommand(
-            provider: item.provider,
-            sourceID: resumeSourceID,
-            cwd: item.cwd
-        ) else {
-            notice = "Unable to resume \(item.title)"
-            return
-        }
-
-        let id = uniqueSessionID(prefix: "\(item.provider.rawValue)-\(resumeSourceID.prefix(8))")
-        let now = Date()
-        let request = SessionLaunchRequest(
-            sessionName: TmuxBackend.sessionName(for: id),
-            cwd: item.cwd,
-            command: command
-        )
-        let snapshot = SessionSnapshot(
-            id: id,
-            tmuxSessionName: request.sessionName,
-            title: item.title,
-            reportedTitle: item.title,
-            cwd: item.cwd,
-            command: command,
-            status: .running,
-            tone: .blue,
-            createdAt: now,
-            updatedAt: now
-        )
         do {
-            try catalog.create(snapshot: snapshot, launchRequest: request)
+            let wasTrimmed = try actions.resumeHistory(history[selectedIndex], trimmed: trimmed)
+            let item = history[selectedIndex]
             showingHistory = false
             selectedIndex = 0
-            notice = trimmed ? "Resumed \(item.title) (trimmed)" : "Resumed \(item.title)"
+            notice = wasTrimmed ? "Resumed \(item.title) (trimmed)" : "Resumed \(item.title)"
         } catch {
-            notice = "Unable to resume \(item.title): \(error.localizedDescription)"
+            notice = error.localizedDescription
         }
     }
 
     private mutating func createShellSession() {
-        let id = uniqueSessionID()
-        let cwd = FileManager.default.currentDirectoryPath
-        let request = SessionLaunchRequest(
-            sessionName: TmuxBackend.sessionName(for: id),
-            cwd: cwd,
-            command: ""
-        )
         do {
-            let now = Date()
-            let snapshot = SessionSnapshot(
-                id: id,
-                tmuxSessionName: request.sessionName,
-                title: "Shell",
-                reportedTitle: nil,
-                cwd: cwd,
-                command: "",
-                status: .running,
-                tone: .blue,
-                createdAt: now,
-                updatedAt: now
-            )
-            try catalog.create(snapshot: snapshot, launchRequest: request)
+            let id = try actions.createShellSession()
             notice = "Created \(id)"
         } catch {
             notice = "Unable to create session: \(error.localizedDescription)"
@@ -220,13 +153,8 @@ private struct BanyanTUI {
     private mutating func recoverSelected() {
         guard sessions.indices.contains(selectedIndex) else { return }
         let session = sessions[selectedIndex]
-        let request = SessionLaunchRequest(
-            sessionName: tmuxName(for: session),
-            cwd: session.cwd,
-            command: session.command
-        )
         do {
-            try catalog.recover(snapshot: session, launchRequest: request)
+            try actions.recover(session)
             notice = "Recovered \(session.id)"
         } catch {
             notice = "Unable to recover \(session.id): \(error.localizedDescription)"
@@ -236,30 +164,19 @@ private struct BanyanTUI {
     private mutating func closeSelected() {
         guard sessions.indices.contains(selectedIndex) else { return }
         let session = sessions[selectedIndex]
-        catalog.close(snapshot: session)
+        actions.close(session)
         notice = "Closed \(session.id)"
     }
 
     private mutating func removeSelected() {
         guard sessions.indices.contains(selectedIndex) else { return }
         let session = sessions[selectedIndex]
-        catalog.remove(snapshot: session)
+        actions.remove(session)
         notice = "Removed \(session.id)"
     }
 
-    private func uniqueSessionID(prefix: String = "tui-shell") -> String {
-        let existingIDs = Set(database.load().map(\.id))
-        var candidate = prefix
-        var suffix = 2
-        while existingIDs.contains(candidate) || tmux.hasSession(named: TmuxBackend.sessionName(for: candidate)) {
-            candidate = "\(prefix)-\(suffix)"
-            suffix += 1
-        }
-        return candidate
-    }
-
     private func tmuxName(for session: SessionSnapshot) -> String {
-        session.tmuxSessionName ?? TmuxBackend.sessionName(for: session.id)
+        actions.sessionName(for: session)
     }
 
 }
