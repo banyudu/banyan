@@ -112,8 +112,7 @@ struct BanyanTUI {
 
     private func attachSelected() {
         guard let session = model.selectedSession else { return }
-        let name = session.tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: session.id)
-        attachment.attach(to: name)
+        attachment.attach(to: session.launchRequest.sessionName)
     }
 
     private mutating func resumeHistorySelected(trimmed: Bool = false) {
