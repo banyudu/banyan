@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TmuxBackend: Sendable, AgentSupervisorBackend, TmuxSessionLifecycleBackend, TmuxDisplayBackend, TmuxAttachmentBackend {
+public struct TmuxBackend: Sendable, TmuxTerminalBackend {
     public enum BackendError: LocalizedError {
         case tmuxNotFound
         case commandFailed([String], String)

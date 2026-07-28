@@ -50,6 +50,9 @@ public protocol TmuxAttachmentBackend: Sendable {
     func attachArguments(for name: String) -> [String]
 }
 
+/// Complete backend surface required by the terminal frontend.
+public protocol TmuxTerminalBackend: AgentSupervisorBackend, TmuxSessionLifecycleBackend, TmuxDisplayBackend, TmuxAttachmentBackend {}
+
 public struct SessionLaunchRequest: Sendable {
     public let sessionName: String
     public let cwd: String

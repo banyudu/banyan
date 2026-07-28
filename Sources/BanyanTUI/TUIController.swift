@@ -8,24 +8,26 @@ import Darwin
 #endif
 
 struct BanyanTUI {
-    private let tmux = TmuxBackend.shared
-    private let attachment = TUIAttachment(tmux: TmuxBackend.shared)
+    private let tmux: any TmuxTerminalBackend
+    private let attachment: TUIAttachment
     private let actions: TUISessionActions
     private var model: SessionListModel
 
-    init() {
+    init(backend: any TmuxTerminalBackend = TmuxBackend.shared) {
+        self.tmux = backend
+        self.attachment = TUIAttachment(tmux: backend)
         let database = SessionDatabase()
         let dataSource = TUISessionDataSource(
             persistence: database,
-            backend: TmuxBackend.shared
+            backend: backend
         )
         self.model = SessionListModel(dataSource: dataSource)
         self.actions = TUISessionActions(
             database: database,
-            tmux: TmuxBackend.shared,
+            tmux: backend,
             catalog: SessionCatalog(
                 persistence: database,
-                runtime: SessionRuntimeCoordinator()
+                runtime: SessionRuntimeCoordinator(backend: backend)
             )
         )
     }
