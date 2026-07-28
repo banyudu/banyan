@@ -44,6 +44,21 @@ enum GitHubPullRequestLoadState: Equatable {
 }
 
 enum GitHubPullRequestClient {
+    static func pullRequestURL(number: Int, cwd: String) async throws -> URL {
+        let output = try await Task.detached(priority: .utility) {
+            try runCommand(
+                ["gh", "pr", "view", String(number), "--json", "url"],
+                cwd: cwd,
+                timeout: 12
+            )
+        }.value
+        let payload = try JSONDecoder().decode(GitHubPullRequestReferencePayload.self, from: Data(output.utf8))
+        guard let rawURL = payload.url, let url = URL(string: rawURL) else {
+            throw GitHubPullRequestClientError.requestFailed("No URL found for pull request #\(number)")
+        }
+        return url
+    }
+
     static func fetchPullRequest(url: URL?, cwd: String) async throws -> GitHubPullRequestDetails {
         let fields = [
             "additions",

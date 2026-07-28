@@ -283,6 +283,7 @@ final class TerminalSwitcherContainer: NSView {
 
     private func hideActiveContainer() {
         guard let activeSessionID, let activeContainer = containers[activeSessionID] else { return }
+        (activeContainer.terminalView as? DetectingLocalProcessTerminalView)?.preserveScrollPosition()
         activeContainer.isHidden = true
     }
 

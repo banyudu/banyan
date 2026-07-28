@@ -280,6 +280,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     private func makeTerminalView() -> DetectingLocalProcessTerminalView {
         let view = DetectingLocalProcessTerminalView(frame: .zero)
         view.tmuxSessionName = tmuxSessionName
+        // SwiftTerm's `.hover` mode gates clicks on a second hover-range
+        // comparison during mouse-up. That is fragile in the embedded tmux
+        // terminal, so explicit OSC 8 links stay visibly marked and are always
+        // clickable.
+        view.linkHighlightMode = .always
         pendingTheme.apply(to: view, fontFamily: pendingFontFamily, fontSize: pendingFontSize)
         appliedTheme = pendingTheme
         appliedFontFamily = pendingFontFamily
@@ -288,11 +293,26 @@ final class BanyanSession: ObservableObject, Identifiable {
         view.onOutput = { [weak self] text in
             self?.onOutput?(text)
         }
+        delegate?.onOpenLink = { [weak self] link in
+            self?.openTerminalLink(link)
+        }
         if let pendingTerminalMessage {
             view.feed(text: pendingTerminalMessage)
             self.pendingTerminalMessage = nil
         }
         return view
+    }
+
+    private func openTerminalLink(_ link: String) {
+        guard let number = TerminalFooterLinkifier.pullRequestNumber(in: link) else { return }
+        Task.detached(priority: .utility) { [cwd] in
+            guard let url = try? await GitHubPullRequestClient.pullRequestURL(number: number, cwd: cwd) else {
+                return
+            }
+            await MainActor.run {
+                _ = NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     /// Writes to the terminal if one exists, otherwise holds the text until one is
@@ -445,6 +465,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard !isImportedHistory else { return }
         let startedAt = DispatchTime.now()
         terminalRefreshTask?.cancel()
+        terminalView.preserveScrollPosition()
         if terminalView.process.running {
             isDetachingTerminalClient = true
             terminalView.terminate()
@@ -452,7 +473,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         isDetachingTerminalClient = false
         isProcessStarted = false
         isRestored = false
-        terminalView.resetForNewProcess()
+        terminalView.resetForNewProcess(preserveScrollPosition: true)
         startTerminalClient(resetBlankRecoveryAttempt: resetBlankRecoveryAttempt)
         PerformanceTelemetry.shared.recordDuration(
             "terminal.reattach_client",
@@ -977,7 +998,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         if let text = String(bytes: slice, encoding: .utf8) {
             onOutput?(text)
         }
-        super.dataReceived(slice: slice)
+        super.dataReceived(slice: TerminalFooterLinkifier.annotate(slice))
         if let preservedTopRow {
             restoreScrollbackPosition(preservedTopRow)
         }
@@ -991,11 +1012,24 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         preservedScrollbackTopRow = terminal.buffer.yDisp
     }
 
-    func resetForNewProcess() {
-        preservedScrollbackTopRow = nil
+    func preserveScrollPosition() {
+        guard canScroll, scrollPosition < 1 else { return }
+        preservedScrollbackTopRow = terminal.buffer.yDisp
+    }
+
+    func resetForNewProcess(preserveScrollPosition: Bool = false) {
+        let preservedTopRow = preserveScrollPosition ? preservedScrollbackTopRow : nil
+        preservedScrollbackTopRow = preservedTopRow
         terminal.resetToInitialState()
         needsDisplay = true
         setNeedsDisplay(bounds)
+    }
+
+    func refreshLinkTracking() {
+        // SwiftTerm creates its tracking area when linkHighlightMode changes.
+        // At terminal construction time the view has a zero-sized frame; repeat
+        // the assignment after layout so hover links track the real terminal.
+        linkHighlightMode = .always
     }
 
     private func restoreScrollbackPosition(_ row: Int) {
@@ -1027,11 +1061,73 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     }
 }
 
+enum TerminalFooterLinkifier {
+    private static let linkPrefix = "banyan-pr://"
+    private static let pattern = try! NSRegularExpression(pattern: #"PR #(\d+)"#)
+
+    static func annotate(_ slice: ArraySlice<UInt8>) -> ArraySlice<UInt8> {
+        let bytes = Array(slice)
+        let marker = Array("PR #".utf8)
+        let prefix = Array("\u{001B}]8;;banyan-pr://".utf8)
+        let suffix = Array("\u{001B}]8;;\u{0007}".utf8)
+        var output: [UInt8] = []
+        output.reserveCapacity(bytes.count + 32)
+        var index = 0
+        while index < bytes.count {
+            guard index + marker.count <= bytes.count,
+                  Array(bytes[index..<(index + marker.count)]) == marker else {
+                output.append(bytes[index])
+                index += 1
+                continue
+            }
+            var end = index + marker.count
+            while end < bytes.count, bytes[end] >= 48, bytes[end] <= 57 { end += 1 }
+            guard end > index + marker.count else {
+                output.append(bytes[index])
+                index += 1
+                continue
+            }
+            output.append(contentsOf: prefix)
+            output.append(contentsOf: bytes[(index + marker.count)..<end])
+            output.append(7)
+            output.append(contentsOf: bytes[index..<end])
+            output.append(contentsOf: suffix)
+            index = end
+        }
+        return output[...]
+    }
+
+    static func annotate(_ text: String) -> String {
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        var output = ""
+        var cursor = text.startIndex
+        for match in pattern.matches(in: text, range: range) {
+            guard let matchRange = Range(match.range, in: text),
+                  let numberRange = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+            output += text[cursor..<matchRange.lowerBound]
+            output += "\u{001B}]8;;\(linkPrefix)\(text[numberRange])\u{0007}"
+            output += text[matchRange]
+            output += "\u{001B}]8;;\u{0007}"
+            cursor = matchRange.upperBound
+        }
+        output += text[cursor...]
+        return output
+    }
+
+    static func pullRequestNumber(in link: String) -> Int? {
+        guard link.hasPrefix(linkPrefix) else { return nil }
+        return Int(link.dropFirst(linkPrefix.count))
+    }
+}
+
 private final class TerminalSessionDelegate: NSObject, LocalProcessTerminalViewDelegate {
     let sessionID: String
     var onTitle: ((String) -> Void)?
     var onDirectoryChange: ((String?) -> Void)?
     var onTerminate: ((Int32?) -> Void)?
+    var onOpenLink: ((String) -> Void)?
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -1055,5 +1151,9 @@ private final class TerminalSessionDelegate: NSObject, LocalProcessTerminalViewD
         DispatchQueue.main.async { [weak self] in
             self?.onTerminate?(exitCode)
         }
+    }
+
+    func requestOpenLink(source: TerminalView, link: String, params: [String : String]) {
+        onOpenLink?(link)
     }
 }

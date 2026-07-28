@@ -218,6 +218,7 @@ final class TerminalContainerView: NSView {
         if oldSize != terminalFrame.size {
             terminalView.resizeSubviews(withOldSize: oldSize)
         }
+        (terminalView as? DetectingLocalProcessTerminalView)?.refreshLinkTracking()
         if markNeedsDisplay {
             terminalView.needsDisplay = true
         }

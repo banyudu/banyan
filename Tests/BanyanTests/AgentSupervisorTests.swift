@@ -432,6 +432,36 @@ import Testing
     #expect(result?.tone == .yellow)
 }
 
+@Test func supervisorDoesNotCountShellLauncherAsSubagent() {
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "zsh"),
+        visibleText: "❯",
+        processes: [
+            process(
+                pid: 100,
+                parentPID: 1,
+                commandName: "/bin/zsh",
+                arguments: "/bin/zsh -lc claude",
+                elapsed: 5
+            ),
+            process(
+                pid: 101,
+                parentPID: 100,
+                commandName: "claude",
+                arguments: "claude",
+                elapsed: 5
+            )
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
 @Test func supervisorStillClassifiesNestedAgentWithNodeWrappedCodexAsSubagents() {
     let result = makeSupervisor(
         pane: pane(rootPID: 100, currentCommand: "node"),

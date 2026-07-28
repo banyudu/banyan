@@ -21,6 +21,16 @@ struct LinearIssueDetails: Equatable, Identifiable {
     let comments: [LinearIssueComment]
     let attachments: [LinearIssueAttachment]
 
+    func applying(description: String?) -> LinearIssueDetails {
+        LinearIssueDetails(
+            id: id, identifier: identifier, title: title, description: description,
+            url: url, priority: priority, estimate: estimate, updatedAt: updatedAt,
+            state: state, workflowStates: workflowStates, assigneeName: assigneeName,
+            creatorName: creatorName, teamName: teamName, projectName: projectName,
+            cycleName: cycleName, labels: labels, comments: comments, attachments: attachments
+        )
+    }
+
     func applying(status snapshot: LinearIssueStatusSnapshot) -> LinearIssueDetails {
         LinearIssueDetails(
             id: id,
@@ -144,6 +154,7 @@ enum LinearIssueLoadState: Equatable {
     case loaded
     case failed(String)
     case updating(String)
+    case updatingDescription
 }
 
 enum LinearIssueClient {
@@ -239,6 +250,22 @@ enum LinearIssueClient {
         }
     }
 
+    static func updateIssueDescription(identifier: String, description: String, cwd: String) async throws {
+        let variables = String(decoding: try JSONEncoder().encode([
+            "id": identifier,
+            "description": description
+        ]), as: UTF8.self)
+        do {
+            _ = try await runCommand(
+                ["linear", "api", updateDescriptionMutation, "--variables-json", variables],
+                cwd: cwd,
+                timeout: 12
+            )
+        } catch {
+            try await updateIssueDescriptionWithAPIKey(identifier: identifier, description: description)
+        }
+    }
+
     private static func fetchIssueWithLinearCLI(identifier: String, cwd: String) async throws -> LinearIssueDetails {
         let output = try await runCommand(
             [
@@ -327,6 +354,34 @@ enum LinearIssueClient {
                     "stateId": stateID
                 ]
             )
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200..<300).contains(httpResponse.statusCode) else {
+            throw LinearIssueClientError.requestFailed
+        }
+        let payload = try JSONDecoder().decode(GraphQLMutationResponse.self, from: data)
+        if payload.errors?.isEmpty == false || payload.data?.issueUpdate?.success != true {
+            throw LinearIssueClientError.requestFailed
+        }
+    }
+
+    private static func updateIssueDescriptionWithAPIKey(identifier: String, description: String) async throws {
+        guard let apiKey = ProcessInfo.processInfo.environment["LINEAR_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !apiKey.isEmpty else {
+            throw LinearIssueClientError.authenticationUnavailable
+        }
+
+        var request = URLRequest(url: URL(string: "https://api.linear.app/graphql")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(
+            GraphQLRequest(query: updateDescriptionMutation, variables: [
+                "id": identifier,
+                "description": description
+            ])
         )
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -529,6 +584,14 @@ enum LinearIssueClient {
     private static let updateStateMutation = """
     mutation BanyanUpdateIssueState($id: String!, $stateId: String!) {
       issueUpdate(id: $id, input: { stateId: $stateId }) {
+        success
+      }
+    }
+    """
+
+    private static let updateDescriptionMutation = """
+    mutation BanyanUpdateIssueDescription($id: String!, $description: String!) {
+      issueUpdate(id: $id, input: { description: $description }) {
         success
       }
     }

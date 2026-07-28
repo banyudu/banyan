@@ -1,12 +1,19 @@
+import Foundation
 import SwiftUI
 
 struct MarkdownText: View {
     private let blocks: [MarkdownBlock]
     let style: MarkdownTextStyle
+    private let onToggleTask: ((Int) -> Void)?
 
-    init(_ value: String, style: MarkdownTextStyle = .body) {
+    init(
+        _ value: String,
+        style: MarkdownTextStyle = .body,
+        onToggleTask: ((Int) -> Void)? = nil
+    ) {
         self.blocks = MarkdownBlockParser.parse(value)
         self.style = style
+        self.onToggleTask = onToggleTask
     }
 
     var body: some View {
@@ -124,11 +131,18 @@ struct MarkdownText: View {
     @ViewBuilder
     private func markerView(_ item: MarkdownListItem) -> some View {
         if let isChecked = item.isChecked {
-            Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-                .font(style.checkboxFont)
-                .foregroundStyle(isChecked ? Color.accentColor : Color.secondary)
-                .frame(width: 18, alignment: .leading)
-                .padding(.top, 1)
+            Button {
+                onToggleTask?(item.id)
+            } label: {
+                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                    .font(style.checkboxFont)
+                    .foregroundStyle(isChecked ? Color.accentColor : Color.secondary)
+                    .frame(width: 18, alignment: .leading)
+                    .padding(.top, 1)
+            }
+            .buttonStyle(.plain)
+            .disabled(onToggleTask == nil)
+            .help(isChecked ? "Mark task incomplete" : "Mark task complete")
         } else {
             Text(item.markerText)
                 .font(style.markerFont)
@@ -154,6 +168,41 @@ struct MarkdownText: View {
         default:
             return 2
         }
+    }
+}
+
+enum MarkdownTaskListEditor {
+    private static let taskPattern = try! NSRegularExpression(
+        pattern: #"^(\s*(?:[-*+]|\d+[.)])\s+\[)( |x|X)(\].*)$"#
+    )
+
+    static func toggledDescription(_ value: String, taskIndex: Int) -> String? {
+        guard taskIndex >= 0 else { return nil }
+        var lines = value.components(separatedBy: "\n")
+        var inFence = false
+        var taskNumber = 0
+
+        for index in lines.indices {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+                inFence.toggle()
+                continue
+            }
+            guard !inFence else { continue }
+
+            let line = lines[index]
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            guard let match = taskPattern.firstMatch(in: line, range: range) else { continue }
+            if taskNumber == taskIndex {
+                guard let stateRange = Range(match.range(at: 2), in: line) else { return nil }
+                let state = line[stateRange]
+                let replacement = state == " " ? "x" : " "
+                lines[index].replaceSubrange(stateRange, with: replacement)
+                return lines.joined(separator: "\n")
+            }
+            taskNumber += 1
+        }
+        return nil
     }
 }
 
@@ -726,7 +775,7 @@ struct FlowLayout: Layout {
 extension LinearIssueLoadState {
     var isBusy: Bool {
         switch self {
-        case .loading, .updating:
+        case .loading, .updating, .updatingDescription:
             return true
         case .idle, .loaded, .failed:
             return false

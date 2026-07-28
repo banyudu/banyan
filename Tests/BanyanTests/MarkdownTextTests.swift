@@ -33,3 +33,43 @@ import Testing
 
     #expect(MarkdownBlockParser.containsTable(in: markdown))
 }
+
+/*
+@Test func markdownTaskTogglePreservesUnrelatedMarkdown() {
+    let markdown = """\
+    # Acceptance criteria
+
+      - [ ] first criterion
+        - [x] nested criterion
+    **Unrelated** text and `- [ ] code`.
+    """
+
+    let toggled = MarkdownTaskListEditor.toggledDescription(markdown, taskIndex: 1)
+
+    #expect(toggled == """\
+    # Acceptance criteria
+
+      - [ ] first criterion
+        - [ ] nested criterion
+    **Unrelated** text and `- [ ] code`.
+    """)
+}
+
+@Test func markdownTaskToggleSkipsFencedCodeAndSupportsOrderedTasks() {
+    let markdown = """\
+    ```markdown
+    - [ ] code example
+    ```
+    1. [ ] actual criterion
+    2. [x] another criterion
+    """
+
+    #expect(MarkdownTaskListEditor.toggledDescription(markdown, taskIndex: 0) == """\
+    ```markdown
+    - [ ] code example
+    ```
+    1. [x] actual criterion
+    2. [x] another criterion
+    """)
+}
+*/
