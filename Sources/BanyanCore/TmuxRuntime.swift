@@ -39,7 +39,7 @@ public protocol TmuxSessionBackend: TmuxSessionLookupBackend {
     func captureVisibleText(paneID: String, lineLimit: Int) -> String
 }
 
-public protocol TmuxSessionLifecycleBackend: TmuxSessionBackend {
+public protocol TmuxSessionLifecycleBackend: TmuxSessionLookupBackend {
     func ensureSession(named name: String, cwd: String, command: String) throws
     func killSession(named name: String)
 }
