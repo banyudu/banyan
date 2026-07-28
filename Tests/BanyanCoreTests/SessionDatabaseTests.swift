@@ -30,6 +30,14 @@ import Testing
     )
 
     database.save([snapshot])
+    database.saveState([
+        "selectedSessionID": snapshot.id,
+        "terminalFontSize": "13"
+    ])
 
     #expect(database.load() == [snapshot])
+    #expect(database.loadState() == [
+        "selectedSessionID": snapshot.id,
+        "terminalFontSize": "13"
+    ])
 }

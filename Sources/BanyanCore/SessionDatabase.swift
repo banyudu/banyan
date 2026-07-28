@@ -95,6 +95,51 @@ public struct SessionDatabase {
         }
     }
 
+    public func loadState() -> [String: String] {
+        do {
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, "SELECT key, value FROM workspace_state", -1, &statement, nil) == SQLITE_OK else {
+                throw databaseError(database)
+            }
+            defer { sqlite3_finalize(statement) }
+
+            var result: [String: String] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let key = columnText(statement, 0), let value = columnText(statement, 1) else { continue }
+                result[key] = value
+            }
+            return result
+        } catch {
+            NSLog("Banyan failed to load workspace state from SQLite: \(error.localizedDescription)")
+            return [:]
+        }
+    }
+
+    /// Updates only the supplied keys. A nil value removes a key.
+    public func saveState(_ values: [String: String?]) {
+        do {
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+            try execute(database, "BEGIN IMMEDIATE TRANSACTION")
+            do {
+                for (key, value) in values {
+                    try setState(key, value, database)
+                }
+                try execute(database, "COMMIT")
+            } catch {
+                try? execute(database, "ROLLBACK")
+                throw error
+            }
+        } catch {
+            NSLog("Banyan failed to persist workspace state to SQLite: \(error.localizedDescription)")
+        }
+    }
+
     private func migrateLegacyJSONIfNeeded() {
         guard FileManager.default.fileExists(atPath: legacyJSONURL.path), load().isEmpty,
               let data = try? Data(contentsOf: legacyJSONURL) else { return }
@@ -218,6 +263,33 @@ public struct SessionDatabase {
             let message = error.map { String(cString: $0) } ?? "unknown SQLite error"
             sqlite3_free(error)
             throw NSError(domain: "BanyanSQLite", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+    }
+
+    private func setState(_ key: String, _ value: String?, _ database: OpaquePointer) throws {
+        if let value {
+            let sql = """
+            INSERT INTO workspace_state (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw databaseError(database)
+            }
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, 1, key)
+            bindText(statement, 2, value)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
+        } else {
+            let sql = "DELETE FROM workspace_state WHERE key = ?"
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw databaseError(database)
+            }
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, 1, key)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
         }
     }
 
