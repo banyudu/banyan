@@ -396,26 +396,27 @@ struct BanyanCtl {
 
     private func send(_ request: URLRequest) throws {
         let semaphore = DispatchSemaphore(value: 0)
-        var responseData: Data?
-        var responseError: Error?
-        var statusCode = 0
+        let responseBox = HTTPResponseBox()
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            responseData = data
-            responseError = error
-            statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        URLSession.shared.dataTask(with: request) { data, httpResponse, error in
+            responseBox.store(
+                data: data,
+                error: error,
+                statusCode: (httpResponse as? HTTPURLResponse)?.statusCode ?? 0
+            )
             semaphore.signal()
         }.resume()
         semaphore.wait()
 
-        if responseError != nil {
+        let result = responseBox.value
+        if result.error != nil {
             throw CLIError.serverUnavailable
         }
-        if let responseData, let text = String(data: responseData, encoding: .utf8) {
+        if let data = result.data, let text = String(data: data, encoding: .utf8) {
             print(text)
         }
-        if statusCode >= 400 {
-            throw CLIError.http(statusCode)
+        if result.statusCode >= 400 {
+            throw CLIError.http(result.statusCode)
         }
     }
 
@@ -445,6 +446,29 @@ struct BanyanCtl {
           banyanctl window-state
           banyanctl list
         """)
+    }
+}
+
+private final class HTTPResponseBox: @unchecked Sendable {
+    struct Value {
+        let data: Data?
+        let error: Error?
+        let statusCode: Int
+    }
+
+    private let lock = NSLock()
+    private var storedValue = Value(data: nil, error: nil, statusCode: 0)
+
+    var value: Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+
+    func store(data: Data?, error: Error?, statusCode: Int) {
+        lock.lock()
+        storedValue = Value(data: data, error: error, statusCode: statusCode)
+        lock.unlock()
     }
 }
 
