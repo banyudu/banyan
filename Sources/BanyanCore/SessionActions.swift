@@ -12,12 +12,12 @@ public protocol SessionListActions: Sendable {
 public struct SessionActions: Sendable, SessionListActions {
     private let persistence: any SessionPersistenceBackend
     private let tmux: any TmuxSessionLookupBackend
-    private let catalog: SessionCatalog
+    private let catalog: any SessionCatalogBackend
 
     public init(
         persistence: any SessionPersistenceBackend,
         tmux: any TmuxSessionLookupBackend,
-        catalog: SessionCatalog
+        catalog: any SessionCatalogBackend
     ) {
         self.persistence = persistence
         self.tmux = tmux

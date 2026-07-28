@@ -2,7 +2,14 @@ import Foundation
 
 /// Coordinates persisted session snapshots with their tmux-backed lifecycle.
 /// Frontends remain responsible for presentation and selection state.
-public struct SessionCatalog: Sendable {
+public protocol SessionCatalogBackend: Sendable {
+    func create(snapshot: SessionSnapshot) throws
+    func recover(snapshot: SessionSnapshot) throws
+    func close(snapshot: SessionSnapshot)
+    func remove(snapshot: SessionSnapshot)
+}
+
+public struct SessionCatalog: Sendable, SessionCatalogBackend {
     private let persistence: any SessionPersistenceBackend
     private let runtime: SessionRuntimeCoordinator
 
