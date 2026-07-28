@@ -20,16 +20,64 @@ private struct ScoredCommandItem {
 struct CommandPaletteView: View {
     let items: [CommandPaletteItem]
     let onDismiss: () -> Void
-    let onQueryChange: (String) -> Void
+    let onOpenLinearIssue: (String) -> Void
+    let onStartLinearIssue: (String) -> Void
+    let onOpenPullRequest: (URL) -> Void
+    let fallbackPullRequestURL: URL?
 
     @State private var query = ""
     @State private var selectedIndex = 0
     @FocusState private var isSearchFocused: Bool
 
+    private var resolvedItems: [CommandPaletteItem] {
+        var items = items
+        if let linearID = CommandPaletteTargetResolver.linearIssueID(in: query) {
+            items.insert(
+                CommandPaletteItem(
+                    id: "linear.quick-open.\(linearID)",
+                    category: "Linear · Quick Open",
+                    title: "Open Linear Issue \(linearID)",
+                    detail: "Open in Linear",
+                    shortcut: "↩",
+                    action: { onOpenLinearIssue(linearID) }
+                ),
+                at: 0
+            )
+            items.insert(
+                CommandPaletteItem(
+                    id: "linear.quick-start.\(linearID)",
+                    category: "Linear · Quick Open",
+                    title: "Start Session for \(linearID)",
+                    detail: "Create the issue worktree",
+                    shortcut: nil,
+                    action: { onStartLinearIssue(linearID) }
+                ),
+                at: 1
+            )
+        }
+        if let pullRequestURL = CommandPaletteTargetResolver.pullRequestURL(
+            in: query,
+            fallback: fallbackPullRequestURL
+        ) {
+            items.insert(
+                CommandPaletteItem(
+                    id: "github.quick-open.\(pullRequestURL.absoluteString)",
+                    category: "GitHub · Quick Open",
+                    title: "Open Pull Request",
+                    detail: pullRequestURL.absoluteString,
+                    shortcut: "↩",
+                    action: { onOpenPullRequest(pullRequestURL) }
+                ),
+                at: 0
+            )
+        }
+        return items
+    }
+
     private var filteredItems: [CommandPaletteItem] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return items }
-        let scoredItems: [ScoredCommandItem] = items
+        guard !query.isEmpty else { return resolvedItems }
+        let scoredItems: [ScoredCommandItem] = resolvedItems
             .enumerated()
             .compactMap { entry in
                 let offset = entry.offset
@@ -119,7 +167,6 @@ struct CommandPaletteView: View {
         }
         .onChange(of: query) { _, _ in
             selectedIndex = 0
-            onQueryChange(query)
         }
         .onMoveCommand { direction in
             guard !filteredItems.isEmpty else { return }
