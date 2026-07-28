@@ -102,6 +102,7 @@ private func makeSwitcherSession(id: String) -> BanyanSession {
         cwd: NSTemporaryDirectory(),
         command: "",
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 }

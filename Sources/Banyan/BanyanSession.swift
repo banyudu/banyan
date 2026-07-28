@@ -191,7 +191,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         theme: TerminalTheme,
         fontFamily: String? = nil,
         fontSize: Double = 13,
-        tmuxBackend: any TmuxClientBackend = TmuxBackend.shared
+        tmuxBackend: any TmuxClientBackend
     ) {
         self.tmuxBackend = tmuxBackend
         self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)

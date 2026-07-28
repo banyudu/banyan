@@ -302,7 +302,8 @@ import Testing
         createdAt: base,
         updatedAt: base,
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 
     #expect(SessionStore.isLocalHistorySession(session))
@@ -321,7 +322,8 @@ import Testing
         createdAt: base,
         updatedAt: base,
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 
     #expect(SessionStore.isLocalHistorySession(session))
@@ -341,7 +343,8 @@ import Testing
         createdAt: base,
         updatedAt: base,
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 
     #expect(!SessionStore.isLocalHistorySession(session))
@@ -360,7 +363,8 @@ import Testing
         createdAt: base,
         updatedAt: base,
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 
     #expect(!SessionStore.isLocalHistorySession(session))
@@ -379,7 +383,8 @@ import Testing
         createdAt: base,
         updatedAt: base,
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 
     #expect(!SessionStore.isLocalHistorySession(session))
@@ -398,7 +403,8 @@ import Testing
         createdAt: base,
         updatedAt: base,
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 
     #expect(!SessionStore.isLocalHistorySession(session))

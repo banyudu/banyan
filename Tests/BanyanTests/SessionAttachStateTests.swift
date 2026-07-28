@@ -300,7 +300,8 @@ import Testing
         cwd: "/tmp",
         command: "",
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 
     #expect(tmux.hasSession(named: tmuxSessionName))
@@ -324,7 +325,8 @@ private func makeAttachStateSession(
         command: command,
         status: status,
         isRestored: isRestored,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 }
 
@@ -341,7 +343,8 @@ private func makeIssueBindingSession(
         titleURLWasAutoDetected: titleURLWasAutoDetected,
         cwd: cwd,
         command: "",
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 }
 
@@ -359,7 +362,8 @@ private func makeHandoffSession(
         command: command,
         status: status,
         isRestored: true,
-        theme: .system
+        theme: .system,
+        tmuxBackend: TmuxBackend.shared
     )
 }
 
