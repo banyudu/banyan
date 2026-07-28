@@ -819,7 +819,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     nonisolated private static func titleForCurrentDirectory(_ cwd: String) -> String {
-        PathDisplayName.make(path: cwd)
+        PathDisplayName.make(path: cwd, homeDirectory: NSHomeDirectory())
     }
 
     nonisolated private static func normalizedTitleURL(_ titleURL: String?) -> String? {

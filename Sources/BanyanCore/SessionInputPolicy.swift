@@ -48,7 +48,9 @@ public enum SessionInputPolicy {
     ) -> Bool {
         guard !isTitlePinned else { return false }
         let currentTitle = SessionTitleGenerator.sanitizeTitle(title)
-        let directoryTitle = SessionTitleGenerator.sanitizeTitle(PathDisplayName.make(path: cwd))
+        let directoryTitle = SessionTitleGenerator.sanitizeTitle(
+            PathDisplayName.make(path: cwd, homeDirectory: NSHomeDirectory())
+        )
         return currentTitle == directoryTitle
     }
 }

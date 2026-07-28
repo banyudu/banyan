@@ -1,7 +1,7 @@
 import Foundation
 
 public enum PathDisplayName {
-    public static func make(path: String, homeDirectory: String = NSHomeDirectory()) -> String {
+    public static func make(path: String, homeDirectory: String) -> String {
         let url = URL(fileURLWithPath: canonicalPath(path)).standardizedFileURL
         let homeURL = URL(fileURLWithPath: canonicalPath(homeDirectory)).standardizedFileURL
         if url.path == homeURL.path {

@@ -174,7 +174,7 @@ public enum SessionDisplayLabel {
         let canonicalPath = standardizedPath(path)
         let homePath = PathDisplayName.canonicalPath(NSHomeDirectory())
         if canonicalPath == homePath || canonicalPath.hasPrefix(homePath + "/") {
-            return PathDisplayName.make(path: canonicalPath)
+            return PathDisplayName.make(path: canonicalPath, homeDirectory: NSHomeDirectory())
         }
 
         let url = URL(fileURLWithPath: canonicalPath).standardizedFileURL

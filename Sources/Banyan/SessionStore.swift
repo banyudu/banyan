@@ -2920,7 +2920,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func scratchWindowTitle(for session: BanyanSession) -> String {
-        "Scratch - \(PathDisplayName.make(path: session.cwd))"
+        "Scratch - \(PathDisplayName.make(path: session.cwd, homeDirectory: NSHomeDirectory()))"
     }
 
     /// Chooses the nearest visible session before the closing session is removed.
@@ -3065,7 +3065,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func defaultTitle(for cwd: String) -> String {
-        PathDisplayName.make(path: cwd)
+        PathDisplayName.make(path: cwd, homeDirectory: NSHomeDirectory())
     }
 
     private func restoredTitle(from snapshot: SessionSnapshot) -> String {

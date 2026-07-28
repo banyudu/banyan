@@ -52,7 +52,7 @@ public enum SessionDisplayPolicy {
         guard isTitlePinned else { return false }
         let cleanedTitle = SessionTitleGenerator.sanitizeTitle(title) ?? ""
         guard SessionTitleGenerator.isUsefulTitle(cleanedTitle) else { return false }
-        return cleanedTitle != PathDisplayName.make(path: cwd)
+        return cleanedTitle != PathDisplayName.make(path: cwd, homeDirectory: NSHomeDirectory())
     }
 
     public static func usefulAgentTitle(_ title: String?) -> String? {
