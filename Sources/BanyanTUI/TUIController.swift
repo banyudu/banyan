@@ -27,28 +27,6 @@ struct BanyanTUI {
         self.currentDirectory = currentDirectory
     }
 
-    init(backend: any TmuxTerminalBackend = TmuxBackend.shared) {
-        let database = SessionDatabase()
-        self.init(
-            backend: backend,
-            dataSource: SessionDataSource(
-                persistence: database,
-                backend: backend
-            ),
-            actions: SessionActions(
-                persistence: database,
-                tmux: backend,
-                catalog: SessionCatalog(
-                    persistence: database,
-                    runtime: SessionRuntimeCoordinator(backend: backend)
-                )
-            ),
-            input: TerminalMode(),
-            output: StandardTUIOutput(),
-            currentDirectory: FileManager.default.currentDirectoryPath
-        )
-    }
-
     mutating func run() {
         while true {
             reload()
