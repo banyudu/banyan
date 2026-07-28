@@ -1168,7 +1168,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sessionDetail: some View {
-        HStack(spacing: 0) {
+        ZStack(alignment: .trailing) {
             ZStack {
                 SelectionAwareTerminalSwitcher(
                     selection: selection,
@@ -1208,52 +1208,67 @@ struct ContentView: View {
                 if store.isPullRequestPreviewPresented,
                    let context = store.selectedPullRequestPreviewContext,
                    session.status != .closed {
-                    Divider()
-                    PullRequestPreviewPanel(
-                        context: context,
-                        details: store.selectedPullRequestDetails,
-                        loadState: store.selectedPullRequestLoadState,
-                        onRefresh: {
-                            store.refreshSelectedPullRequestPreview(force: true)
-                        },
-                        onOpen: store.openSelectedPullRequest,
-                        onClose: store.closePullRequestPreview
-                    )
+                    issuePreviewOverlay {
+                        PullRequestPreviewPanel(
+                            context: context,
+                            details: store.selectedPullRequestDetails,
+                            loadState: store.selectedPullRequestLoadState,
+                            onRefresh: {
+                                store.refreshSelectedPullRequestPreview(force: true)
+                            },
+                            onOpen: store.openSelectedPullRequest,
+                            onClose: store.closePullRequestPreview
+                        )
+                    }
                 } else if let context = store.selectedContextInfo,
                           context.githubIssueURL?.isEmpty == false,
                           session.status != .closed {
-                    Divider()
-                    GitHubIssuePanel(
-                        context: context,
-                        issue: store.selectedGitHubIssueDetails,
-                        loadState: store.selectedGitHubIssueLoadState,
-                        onRefresh: { store.refreshSelectedGitHubIssue(force: true) },
-                        onOpen: store.openSelectedGitHubIssue
-                    )
-                    .onAppear { store.refreshSelectedGitHubIssue(force: true) }
+                    issuePreviewOverlay {
+                        GitHubIssuePanel(
+                            context: context,
+                            issue: store.selectedGitHubIssueDetails,
+                            loadState: store.selectedGitHubIssueLoadState,
+                            onRefresh: { store.refreshSelectedGitHubIssue(force: true) },
+                            onOpen: store.openSelectedGitHubIssue
+                        )
+                        .onAppear { store.refreshSelectedGitHubIssue(force: true) }
+                    }
                 } else if let context = store.selectedContextInfo,
                           context.linearIssueID?.isEmpty == false,
                           session.status != .closed {
-                    Divider()
-                    LinearIssuePanel(
-                        context: context,
-                        issue: store.selectedLinearIssueDetails,
-                        loadState: store.selectedLinearIssueLoadState,
-                        onRefresh: {
+                    issuePreviewOverlay {
+                        LinearIssuePanel(
+                            context: context,
+                            issue: store.selectedLinearIssueDetails,
+                            loadState: store.selectedLinearIssueLoadState,
+                            onRefresh: {
+                                store.refreshSelectedLinearIssue(force: true)
+                            },
+                            onOpen: store.openSelectedLinearIssue,
+                            onChangeState: store.updateSelectedLinearIssueState,
+                            onToggleTask: store.updateSelectedLinearIssueDescription,
+                            onRetryDescription: store.retrySelectedLinearIssueDescription
+                        )
+                        .onAppear {
                             store.refreshSelectedLinearIssue(force: true)
-                        },
-                        onOpen: store.openSelectedLinearIssue,
-                        onChangeState: store.updateSelectedLinearIssueState,
-                        onToggleTask: store.updateSelectedLinearIssueDescription,
-                        onRetryDescription: store.retrySelectedLinearIssueDescription
-                    )
-                    .onAppear {
-                        store.refreshSelectedLinearIssue(force: true)
+                        }
                     }
                 }
             }
         }
         .accessibilityIdentifier(AccessibilityID.detail)
+    }
+
+    @ViewBuilder
+    private func issuePreviewOverlay<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 0) {
+            Divider()
+            content()
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(.background)
     }
 
     @ViewBuilder
