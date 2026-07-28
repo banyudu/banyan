@@ -4,8 +4,10 @@ import Testing
 
 @Test func sessionActionsSatisfiesTheListCommandProtocol() {
     let actions: any SessionListActions = SessionActions(
-        persistence: EmptyPersistence(),
-        tmux: LookupBackend(),
+        idAllocator: UniqueSessionIDAllocator(
+            persistence: EmptyPersistence(),
+            tmux: LookupBackend()
+        ),
         catalog: SessionCatalog(
             persistence: EmptyPersistence(),
             runtime: SessionRuntimeCoordinator(backend: LifecycleBackend())

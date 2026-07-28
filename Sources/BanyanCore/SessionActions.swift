@@ -10,25 +10,22 @@ public protocol SessionListActions: Sendable {
 
 /// Shared session lifecycle actions used by terminal frontends.
 public struct SessionActions: Sendable, SessionListActions {
-    private let persistence: any SessionPersistenceBackend
-    private let tmux: any TmuxSessionLookupBackend
+    private let idAllocator: any SessionIDAllocator
     private let catalog: any SessionCatalogBackend
     private let history: any SessionHistoryBackend
 
     public init(
-        persistence: any SessionPersistenceBackend,
-        tmux: any TmuxSessionLookupBackend,
+        idAllocator: any SessionIDAllocator,
         catalog: any SessionCatalogBackend,
         history: any SessionHistoryBackend = DefaultSessionHistoryBackend()
     ) {
-        self.persistence = persistence
-        self.tmux = tmux
+        self.idAllocator = idAllocator
         self.catalog = catalog
         self.history = history
     }
 
     public func createShellSession(cwd: String) throws -> String {
-        let id = uniqueSessionID()
+        let id = idAllocator.allocate(prefix: "tui-shell")
         let now = Date()
         let snapshot = SessionSnapshot(
             id: id,
@@ -71,7 +68,7 @@ public struct SessionActions: Sendable, SessionListActions {
             throw SessionActionError.unresumable(item.title)
         }
 
-        let id = uniqueSessionID(prefix: "\(item.provider.rawValue)-\(resumeSourceID.prefix(8))")
+        let id = idAllocator.allocate(prefix: "\(item.provider.rawValue)-\(resumeSourceID.prefix(8))")
         let now = Date()
         let snapshot = SessionSnapshot(
             id: id,
@@ -105,16 +102,6 @@ public struct SessionActions: Sendable, SessionListActions {
         session.launchRequest.sessionName
     }
 
-    private func uniqueSessionID(prefix: String = "tui-shell") -> String {
-        let existingIDs = Set(persistence.load().map(\.id))
-        var candidate = prefix
-        var suffix = 2
-        while existingIDs.contains(candidate) || tmux.hasSession(named: SessionIdentityPolicy.sessionName(for: candidate)) {
-            candidate = "\(prefix)-\(suffix)"
-            suffix += 1
-        }
-        return candidate
-    }
 }
 
 public enum SessionActionError: LocalizedError {

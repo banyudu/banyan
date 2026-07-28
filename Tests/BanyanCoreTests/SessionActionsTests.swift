@@ -16,7 +16,10 @@ import Testing
         persistence: database,
         runtime: SessionRuntimeCoordinator(backend: backend)
     )
-    let actions = SessionActions(persistence: database, tmux: backend, catalog: catalog)
+    let actions = SessionActions(
+        idAllocator: UniqueSessionIDAllocator(persistence: database, tmux: backend),
+        catalog: catalog
+    )
 
     let id = try actions.createShellSession(cwd: "/tmp/project")
 
@@ -36,8 +39,7 @@ import Testing
     )
     let backend = SessionActionsTestBackend()
     let actions = SessionActions(
-        persistence: database,
-        tmux: backend,
+        idAllocator: UniqueSessionIDAllocator(persistence: database, tmux: backend),
         catalog: SessionCatalog(
             persistence: database,
             runtime: SessionRuntimeCoordinator(backend: backend)

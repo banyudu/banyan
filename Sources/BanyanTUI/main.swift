@@ -11,8 +11,10 @@ private func makeDefaultApp() -> BanyanTUI {
             backend: backend
         ),
         actions: SessionActions(
-            persistence: database,
-            tmux: backend,
+            idAllocator: UniqueSessionIDAllocator(
+                persistence: database,
+                tmux: backend
+            ),
             catalog: SessionCatalog(
                 persistence: database,
                 runtime: SessionRuntimeCoordinator(backend: backend)
