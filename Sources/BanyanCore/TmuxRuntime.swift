@@ -63,8 +63,8 @@ public protocol TmuxClientBackend: TmuxTerminalBackend {
     func scrollHistory(paneID: String, lines: Int, up: Bool)
 }
 
-/// Backend surface needed by the macOS session store for discovery and lifecycle.
-public protocol TmuxSessionDiscoveryBackend: TmuxSessionLifecycleBackend {
+/// Backend surface needed by the macOS session store for discovery and supervision.
+public protocol TmuxSessionStoreBackend: AgentSupervisorBackend, TmuxSessionLifecycleBackend {
     func listBanyanSessions() -> [String]
 }
 

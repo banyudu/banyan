@@ -176,7 +176,7 @@ final class SessionStore: ObservableObject {
     /// no-op saves (e.g. every supervisor tick) that re-serialized unchanged state.
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
     private let detector = AgentStateDetector()
-    private let tmuxBackend: any TmuxSessionDiscoveryBackend
+    private let tmuxBackend: any TmuxSessionStoreBackend
     private let processTable: @Sendable () -> ProcessTable
     private let historyLoader: @Sendable (Int) -> [ImportedAgentSession]
     private var didLoadPersistedSessions = false
@@ -231,7 +231,7 @@ final class SessionStore: ObservableObject {
     private var isClosingScratchTerminal = false
 
     init(
-        tmuxBackend: any TmuxSessionDiscoveryBackend = TmuxBackend.shared,
+        tmuxBackend: any TmuxSessionStoreBackend = TmuxBackend.shared,
         processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() },
         historyLoader: @escaping @Sendable (Int) -> [ImportedAgentSession] = { limit in
             AgentSessionHistoryImporter.load(maxPerProvider: limit)
