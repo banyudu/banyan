@@ -14,6 +14,7 @@ private struct BanyanTUI {
     private var sessions: [SessionSnapshot] = []
     private var history: [ImportedAgentSession] = []
     private var showingHistory = false
+    private var historyNeedsReload = true
     private var selectedIndex = 0
     private var notice: String?
 
@@ -38,6 +39,7 @@ private struct BanyanTUI {
                 return
             case .toggleHistory:
                 showingHistory.toggle()
+                if showingHistory { historyNeedsReload = true }
                 selectedIndex = 0
                 continue
             case .next:
@@ -45,6 +47,7 @@ private struct BanyanTUI {
             case .previous:
                 selectedIndex = max(0, selectedIndex - 1)
             case .refresh:
+                if showingHistory { historyNeedsReload = true }
                 continue
             case .recover:
                 if !showingHistory { recoverSelected() }
@@ -72,7 +75,10 @@ private struct BanyanTUI {
 
     private mutating func reload() {
         if showingHistory {
-            history = AgentSessionHistoryImporter.load(maxPerProvider: 30)
+            if historyNeedsReload {
+                history = AgentSessionHistoryImporter.load(maxPerProvider: 30)
+                historyNeedsReload = false
+            }
             selectedIndex = min(selectedIndex, max(0, history.count - 1))
             return
         }
