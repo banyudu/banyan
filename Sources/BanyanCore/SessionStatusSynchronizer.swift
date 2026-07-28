@@ -49,18 +49,13 @@ public struct SessionStatusObservation: Sendable {
 public struct SessionStatusSynchronizer: Sendable {
     private let backend: any AgentSupervisorBackend
     private let processTable: ProcessTable
-    private let sessionName: @Sendable (SessionSnapshot) -> String
 
     public init(
         backend: any AgentSupervisorBackend,
-        processTable: ProcessTable,
-        sessionName: @escaping @Sendable (SessionSnapshot) -> String = { snapshot in
-            snapshot.launchRequest.sessionName
-        }
+        processTable: ProcessTable
     ) {
         self.backend = backend
         self.processTable = processTable
-        self.sessionName = sessionName
     }
 
     /// Inspects sessions concurrently because each observation may invoke several
@@ -107,7 +102,7 @@ public struct SessionStatusSynchronizer: Sendable {
         )
 
         return snapshots.map { session in
-            let tmuxSessionName = sessionName(session)
+            let tmuxSessionName = session.launchRequest.sessionName
             guard session.status != .closed,
                   backend.hasSession(named: tmuxSessionName),
                   let result = supervisor.inspect(
