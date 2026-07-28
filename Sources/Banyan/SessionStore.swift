@@ -2762,12 +2762,9 @@ final class SessionStore: ObservableObject {
             // invisible in `banyanctl perf report`.
             let tickStartedAt = DispatchTime.now()
             let backend = TmuxBackend.shared
-            let processTable = ProcessTable.snapshot()
             let synchronizer = SessionStatusSynchronizer(
                 backend: backend,
-                processDescendants: { rootPID in
-                    processTable.descendants(of: rootPID)
-                }
+                processTable: ProcessTable.snapshot()
             )
             let results = synchronizer.observe(inputs)
 

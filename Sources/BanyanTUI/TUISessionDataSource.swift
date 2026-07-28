@@ -6,10 +6,9 @@ struct TUISessionDataSource {
 
     func loadActiveSessions() -> [SessionSnapshot] {
         let stored = database.load()
-        let processTable = ProcessTable.snapshot()
         let synchronizer = SessionStatusSynchronizer(
             backend: tmux,
-            processDescendants: { rootPID in processTable.descendants(of: rootPID) }
+            processTable: ProcessTable.snapshot()
         )
         let updated = synchronizer.synchronize(stored)
         if updated != stored { database.save(updated) }

@@ -63,6 +63,23 @@ public struct SessionStatusSynchronizer: Sendable {
         self.sessionName = sessionName
     }
 
+    /// Builds a synchronizer from one process-table snapshot. Keeping the
+    /// snapshot outside the descendant lookup avoids rescanning the process
+    /// table once per session during a refresh.
+    public init(
+        backend: any AgentSupervisorBackend,
+        processTable: ProcessTable,
+        sessionName: @escaping @Sendable (SessionSnapshot) -> String = { snapshot in
+            snapshot.tmuxSessionName ?? TmuxBackend.sessionName(for: snapshot.id)
+        }
+    ) {
+        self.init(
+            backend: backend,
+            processDescendants: { rootPID in processTable.descendants(of: rootPID) },
+            sessionName: sessionName
+        )
+    }
+
     /// Inspects sessions concurrently because each observation may invoke several
     /// timeout-bounded tmux subprocesses. Missing backing sessions are retained for
     /// restored rows that have not been attached yet.
