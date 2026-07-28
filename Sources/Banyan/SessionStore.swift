@@ -1361,8 +1361,7 @@ final class SessionStore: ObservableObject {
     }
 
     nonisolated static func missingHistoryResumeMessage(provider: CodingAgentProvider?) -> String {
-        let providerName = provider?.displayName ?? "coding-agent"
-        return "No resumable \(providerName) session was found for this working directory. The original command was not restarted."
+        SessionRecoveryPolicy.missingResumeMessage(provider: provider)
     }
 
     private func respawnAfterHistoryRecovery(id: String) throws {
@@ -1387,9 +1386,11 @@ final class SessionStore: ObservableObject {
         provider: CodingAgentProvider?,
         agentSessionID: String?
     ) -> Bool {
-        status == .closed
-            && provider.map { [.codex, .claude].contains($0) } == true
-            && (agentSessionID?.isEmpty != false)
+        SessionRecoveryPolicy.requiresDeepHistoryRecovery(
+            status: status,
+            provider: provider,
+            agentSessionID: agentSessionID
+        )
     }
 
     /// Builds the resume command to use when reopening a closed coding-agent
@@ -1402,15 +1403,10 @@ final class SessionStore: ObservableObject {
         agentSessionID: String?,
         cwd: String
     ) -> String? {
-        guard status == .closed,
-              let provider,
-              [.codex, .claude].contains(provider),
-              let agentSessionID, !agentSessionID.isEmpty else {
-            return nil
-        }
-        return AgentSessionHistoryImporter.resumeCommand(
+        SessionRecoveryPolicy.resumeCommand(
+            status: status,
             provider: provider,
-            sourceID: agentSessionID,
+            agentSessionID: agentSessionID,
             cwd: cwd
         )
     }
