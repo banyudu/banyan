@@ -29,7 +29,7 @@ public enum TranscriptResumePreparer {
         transcriptURL: URL? = nil,
         newSourceID: String = UUID().uuidString.lowercased(),
         config: TranscriptTrimmer.Config = .default,
-        home: URL = URL(fileURLWithPath: NSHomeDirectory()),
+        home: URL,
         fileManager: FileManager = .default
     ) -> Prepared? {
         guard [.codex, .claude].contains(provider), !sourceID.isEmpty else { return nil }
@@ -125,4 +125,3 @@ public enum TranscriptResumePreparer {
         return nil
     }
 }
-

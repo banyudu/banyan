@@ -2,7 +2,7 @@ import Foundation
 
 public enum AgentSessionHistoryImporter {
     public static func load(
-        homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory()),
+        homeDirectory: URL,
         maxPerProvider: Int = 10,
         fileManager: FileManager = .default
     ) -> [ImportedAgentSession] {
@@ -557,4 +557,3 @@ private extension String {
         isEmpty ? nil : self
     }
 }
-
