@@ -22,13 +22,7 @@ import Testing
         createdAt: now,
         updatedAt: now
     )
-    let request = SessionLaunchRequest(
-        sessionName: "banyan-catalog",
-        cwd: "/tmp",
-        command: ""
-    )
-
-    try catalog.create(snapshot: snapshot, launchRequest: request)
+    try catalog.create(snapshot: snapshot)
     #expect(persistence.snapshots == [snapshot])
     #expect(backend.events == ["ensure:banyan-catalog"])
 

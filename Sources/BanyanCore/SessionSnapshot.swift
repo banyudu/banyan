@@ -55,6 +55,14 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.updatedAt = updatedAt
     }
 
+    public var launchRequest: SessionLaunchRequest {
+        SessionLaunchRequest(
+            sessionName: tmuxSessionName ?? TmuxBackend.sessionName(for: id),
+            cwd: cwd,
+            command: command
+        )
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, tmuxSessionName, title, titleURL, titleURLWasAutoDetected
         case reportedTitle, generatedTitle, isTitlePinned, cwd, command

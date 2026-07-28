@@ -9,15 +9,10 @@ struct TUISessionActions {
     func createShellSession() throws -> String {
         let id = uniqueSessionID()
         let cwd = FileManager.default.currentDirectoryPath
-        let request = SessionLaunchRequest(
-            sessionName: TmuxBackend.sessionName(for: id),
-            cwd: cwd,
-            command: ""
-        )
         let now = Date()
         let snapshot = SessionSnapshot(
             id: id,
-            tmuxSessionName: request.sessionName,
+            tmuxSessionName: TmuxBackend.sessionName(for: id),
             title: "Shell",
             reportedTitle: nil,
             cwd: cwd,
@@ -27,7 +22,7 @@ struct TUISessionActions {
             createdAt: now,
             updatedAt: now
         )
-        try catalog.create(snapshot: snapshot, launchRequest: request)
+        try catalog.create(snapshot: snapshot)
         return id
     }
 
@@ -57,14 +52,9 @@ struct TUISessionActions {
 
         let id = uniqueSessionID(prefix: "\(item.provider.rawValue)-\(resumeSourceID.prefix(8))")
         let now = Date()
-        let request = SessionLaunchRequest(
-            sessionName: TmuxBackend.sessionName(for: id),
-            cwd: item.cwd,
-            command: command
-        )
         let snapshot = SessionSnapshot(
             id: id,
-            tmuxSessionName: request.sessionName,
+            tmuxSessionName: TmuxBackend.sessionName(for: id),
             title: item.title,
             reportedTitle: item.title,
             cwd: item.cwd,
@@ -74,17 +64,12 @@ struct TUISessionActions {
             createdAt: now,
             updatedAt: now
         )
-        try catalog.create(snapshot: snapshot, launchRequest: request)
+        try catalog.create(snapshot: snapshot)
         return prepared != nil
     }
 
     func recover(_ session: SessionSnapshot) throws {
-        let request = SessionLaunchRequest(
-            sessionName: sessionName(for: session),
-            cwd: session.cwd,
-            command: session.command
-        )
-        try catalog.recover(snapshot: session, launchRequest: request)
+        try catalog.recover(snapshot: session)
     }
 
     func close(_ session: SessionSnapshot) {

@@ -14,19 +14,13 @@ public struct SessionCatalog: Sendable {
         self.runtime = runtime
     }
 
-    public func create(
-        snapshot: SessionSnapshot,
-        launchRequest: SessionLaunchRequest
-    ) throws {
-        try runtime.ensureBackingSession(launchRequest)
+    public func create(snapshot: SessionSnapshot) throws {
+        try runtime.ensureBackingSession(snapshot.launchRequest)
         persistence.save(persistence.load() + [snapshot])
     }
 
-    public func recover(
-        snapshot: SessionSnapshot,
-        launchRequest: SessionLaunchRequest
-    ) throws {
-        try runtime.ensureBackingSession(launchRequest)
+    public func recover(snapshot: SessionSnapshot) throws {
+        try runtime.ensureBackingSession(snapshot.launchRequest)
     }
 
     public func close(snapshot: SessionSnapshot) {
