@@ -44,12 +44,13 @@ public enum SessionInputPolicy {
     public static func titleTracksCurrentDirectory(
         _ title: String,
         isTitlePinned: Bool,
-        cwd: String
+        cwd: String,
+        homeDirectory: String
     ) -> Bool {
         guard !isTitlePinned else { return false }
         let currentTitle = SessionTitleGenerator.sanitizeTitle(title)
         let directoryTitle = SessionTitleGenerator.sanitizeTitle(
-            PathDisplayName.make(path: cwd, homeDirectory: NSHomeDirectory())
+            PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
         )
         return currentTitle == directoryTitle
     }

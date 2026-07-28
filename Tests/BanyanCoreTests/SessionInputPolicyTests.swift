@@ -19,3 +19,18 @@ import Testing
     #expect(SessionInputPolicy.normalizedTitleURL("   ") == nil)
     #expect(SessionInputPolicy.normalizedDirectory(" /tmp/project/.. ") == "/tmp")
 }
+
+@Test func inputPolicyUsesExplicitHomeDirectoryForCurrentDirectoryTitles() {
+    #expect(SessionInputPolicy.titleTracksCurrentDirectory(
+        "~/project",
+        isTitlePinned: false,
+        cwd: "/home/test/project",
+        homeDirectory: "/home/test"
+    ))
+    #expect(!SessionInputPolicy.titleTracksCurrentDirectory(
+        "custom title",
+        isTitlePinned: false,
+        cwd: "/home/test/project",
+        homeDirectory: "/home/test"
+    ))
+}

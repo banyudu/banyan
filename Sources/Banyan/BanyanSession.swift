@@ -737,7 +737,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         SessionInputPolicy.titleTracksCurrentDirectory(
             title,
             isTitlePinned: isTitlePinned,
-            cwd: cwd
+            cwd: cwd,
+            homeDirectory: NSHomeDirectory()
         )
     }
 
