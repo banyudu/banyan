@@ -31,12 +31,17 @@ enum GitHubIssueClient {
         try JSONDecoder().decode(Payload.self, from: data).details
     }
 
-    static func fetchIssue(url: URL, cwd: String) async throws -> GitHubIssueDetails {
+    static func fetchIssue(
+        url: URL,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> GitHubIssueDetails {
         let fields = "author,body,comments,createdAt,labels,assignees,milestone,number,state,title,updatedAt,url"
         let output = try await SubprocessRunner.runAsync(
             arguments: ["gh", "issue", "view", url.absoluteString, "--json", fields],
             cwd: cwd,
-            environment: environment(),
+            environment: processEnvironment(base: environment, homeDirectory: homeDirectory),
             timeout: 12
         )
         guard output.terminationStatus == 0 else {
@@ -55,8 +60,16 @@ enum GitHubIssueClient {
         return "Unable to load GitHub issue"
     }
 
-    private static func environment() -> [String: String] {
-        AppProcessEnvironment.make(base: ProcessInfo.processInfo.environment, shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: ProcessInfo.processInfo.environment), pathAdditions: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"], overrides: [
+    private static func processEnvironment(
+        base: [String: String],
+        homeDirectory: String
+    ) -> [String: String] {
+        AppProcessEnvironment.make(base: base, shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: base), pathAdditions: [
+            "\(homeDirectory)/bin",
+            "\(homeDirectory)/.bun/bin",
+            "\(homeDirectory)/.local/bin",
+            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"
+        ], overrides: [
             "CLICOLOR": "0", "CLICOLOR_FORCE": "0", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1"
         ])
     }

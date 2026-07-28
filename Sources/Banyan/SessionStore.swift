@@ -1510,7 +1510,12 @@ final class SessionStore: ObservableObject {
         let cwd = session.cwd
         selectedGitHubIssueTask = Task.detached(priority: .utility) {
             do {
-                let details = try await GitHubIssueClient.fetchIssue(url: url, cwd: cwd)
+                let details = try await GitHubIssueClient.fetchIssue(
+                    url: url,
+                    cwd: cwd,
+                    environment: environment,
+                    homeDirectory: homeDirectory
+                )
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedSessionID == sessionID,
                           self.selectedContextInfo?.githubIssueURL == url.absoluteString,
