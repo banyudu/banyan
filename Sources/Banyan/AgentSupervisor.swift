@@ -155,7 +155,13 @@ struct AgentSupervisor: Sendable {
     }
 
     static func logicalAgentProcessCount(in descendants: [ProcessInfoRow]) -> Int {
-        let agentProcesses = descendants.filter(\.isSupportedAgent)
+        // A login shell can contain the launched agent in its arguments (for
+        // example `/bin/zsh -lc claude`) while the real Claude process is its
+        // child. Keep shell arguments available for liveness/provider
+        // detection, but never count the shell itself as a second agent.
+        let agentProcesses = descendants.filter { process in
+            process.isSupportedAgent && !process.isShellOrWrapper
+        }
         let agentProcessesByParent = Dictionary(grouping: agentProcesses, by: \.parentPID)
 
         return agentProcesses.filter { process in
