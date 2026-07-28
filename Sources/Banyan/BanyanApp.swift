@@ -163,11 +163,13 @@ struct BanyanApp: App {
 
                 Divider()
 
-                ForEach(Array(store.sidebarSessions.prefix(9).enumerated()), id: \.element.id) { index, item in
-                    Button("Switch to Terminal \(index + 1): \(item.session.displayTitle)") {
-                        store.selectSession(shortcutIndex: index + 1)
+                ForEach(Array(store.sidebarSessions.prefix(10).enumerated()), id: \.element.id) { index, item in
+                    let shortcutIndex = index + 1
+                    let shortcutCharacter = index == 9 ? "0" : String(shortcutIndex)
+                    Button("Switch to Terminal \(shortcutIndex): \(item.session.displayTitle)") {
+                        store.selectSession(shortcutIndex: shortcutIndex)
                     }
-                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                    .keyboardShortcut(KeyEquivalent(Character(shortcutCharacter)), modifiers: .command)
                 }
             }
         }

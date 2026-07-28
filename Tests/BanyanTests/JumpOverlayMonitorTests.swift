@@ -5,19 +5,19 @@ import Testing
 @Test func jumpIndexMapsDigitsToOneBasedPositions() {
     #expect(JumpOverlayMonitor.jumpIndex(for: "1") == 1)
     #expect(JumpOverlayMonitor.jumpIndex(for: "9") == 9)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "0") == nil)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "0") == 10)
 }
 
 @Test func jumpIndexMapsAllLetters() {
-    #expect(JumpOverlayMonitor.jumpIndex(for: "a") == 10)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "b") == 11)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "j") == 19)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "k") == 20)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "a") == 11)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "b") == 12)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "j") == 20)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "k") == 21)
     #expect(JumpOverlayMonitor.jumpIndex(for: "l") == nil)
     #expect(JumpOverlayMonitor.jumpIndex(for: "n") == nil)
     #expect(JumpOverlayMonitor.jumpIndex(for: "s") == nil)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "m") == 21)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "z") == 32)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "m") == 22)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "z") == 33)
 }
 
 @Test func jumpIndexRejectsInvalidCharacters() {
@@ -29,11 +29,12 @@ import Testing
 @Test func jumpLabelMapsPositionsToDisplayKeys() {
     #expect(JumpOverlayMonitor.jumpLabel(for: 1) == "1")
     #expect(JumpOverlayMonitor.jumpLabel(for: 9) == "9")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 10) == "A")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 19) == "J")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 20) == "K")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 21) == "M")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 32) == "Z")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 10) == "0")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 11) == "A")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 20) == "J")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 21) == "K")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 22) == "M")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 33) == "Z")
 }
 
 @Test func jumpLabelReturnsNilForOutOfRange() {
@@ -42,7 +43,7 @@ import Testing
 }
 
 @Test func jumpIndexAndLabelAreInverses() {
-    for index in 1...32 {
+    for index in 1...33 {
         guard let label = JumpOverlayMonitor.jumpLabel(for: index) else {
             Issue.record("No label for index \(index)")
             continue
@@ -54,7 +55,8 @@ import Testing
 
 @Test func visibleJumpShortcutsActivateWithoutOverlayState() {
     #expect(JumpOverlayMonitor.shortcutIndex(for: "3", modifiers: .command) == 3)
-    #expect(JumpOverlayMonitor.shortcutIndex(for: "A", modifiers: [.command, .shift]) == 10)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "0", modifiers: .command) == 10)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "A", modifiers: [.command, .shift]) == 11)
     #expect(JumpOverlayMonitor.shortcutIndex(for: "3", modifiers: []) == nil)
     #expect(JumpOverlayMonitor.shortcutIndex(for: "A", modifiers: .command) == nil)
 }
@@ -70,7 +72,7 @@ import Testing
         }
     )
 
-    #expect(requestedIndex == 12)
+    #expect(requestedIndex == 13)
     #expect(consumed)
     #expect(!JumpOverlayMonitor.dispatchJumpShortcut(
         for: "C",
