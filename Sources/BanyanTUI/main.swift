@@ -52,27 +52,12 @@ private struct BanyanTUI {
     private mutating func reload() {
         let stored = database.load()
         let processTable = ProcessTable.snapshot()
-        let supervisor = AgentSupervisor(
+        let synchronizer = SessionStatusSynchronizer(
             backend: tmux,
             processDescendants: { rootPID in processTable.descendants(of: rootPID) }
         )
-        var synchronized = false
-        let updated = stored.map { session in
-            guard session.status != .closed,
-                  tmux.hasSession(named: tmuxName(for: session)),
-                  let result = supervisor.inspect(
-                    tmuxSessionName: tmuxName(for: session),
-                    launchCommand: session.command,
-                    currentStatus: session.status
-                  ),
-                  result.status != .closed,
-                  result.status != session.status || result.tone != session.tone else {
-                return session
-            }
-            synchronized = true
-            return session.updating(status: result.status, tone: result.tone)
-        }
-        if synchronized { database.save(updated) }
+        let updated = synchronizer.synchronize(stored)
+        if updated != stored { database.save(updated) }
         sessions = updated.filter { $0.status != .closed }
         selectedIndex = min(selectedIndex, max(0, sessions.count - 1))
     }
