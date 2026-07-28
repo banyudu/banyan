@@ -114,7 +114,14 @@ struct ContentView: View {
                 CommandPaletteView(
                     items: commandPaletteItems,
                     onDismiss: dismissCommandPalette,
-                    onQueryChange: { paletteQuery = $0 }
+                    onOpenLinearIssue: { issueID in
+                        if let url = URL(string: LinearIssueReference.issueURL(for: issueID)) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    },
+                    onStartLinearIssue: store.startLinearIssueSession,
+                    onOpenPullRequest: { url in NSWorkspace.shared.open(url) },
+                    fallbackPullRequestURL: store.selectedPullRequestURL
                 )
             }
         }
@@ -123,7 +130,6 @@ struct ContentView: View {
 
     private func dismissCommandPalette() {
         showingCommandPalette = false
-        paletteQuery = ""
         store.focusSelectedTerminal()
     }
 
@@ -286,56 +292,8 @@ struct ContentView: View {
             ))
         }
 
-        if let linearID = CommandPaletteTargetResolver.linearIssueID(in: paletteQuery) {
-            items.insert(
-                CommandPaletteItem(
-                    id: "linear.quick-open.\(linearID)",
-                    category: "Linear · Quick Open",
-                    title: "Open Linear Issue \(linearID)",
-                    detail: "Open in Linear",
-                    shortcut: "↩",
-                    action: {
-                        if let url = URL(string: LinearIssueReference.issueURL(for: linearID)) {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                ),
-                at: 0
-            )
-            items.insert(
-                CommandPaletteItem(
-                    id: "linear.quick-start.\(linearID)",
-                    category: "Linear · Quick Open",
-                    title: "Start Session for \(linearID)",
-                    detail: "Create the issue worktree",
-                    shortcut: nil,
-                    action: { store.startLinearIssueSession(linearID) }
-                ),
-                at: 1
-            )
-        }
-
-        if let pullRequestURL = CommandPaletteTargetResolver.pullRequestURL(
-            in: paletteQuery,
-            fallback: store.selectedPullRequestURL
-        ) {
-            items.insert(
-                CommandPaletteItem(
-                    id: "github.quick-open.\(pullRequestURL.absoluteString)",
-                    category: "GitHub · Quick Open",
-                    title: "Open Pull Request",
-                    detail: pullRequestURL.absoluteString,
-                    shortcut: "↩",
-                    action: { NSWorkspace.shared.open(pullRequestURL) }
-                ),
-                at: 0
-            )
-        }
-
         return items
     }
-
-    @State private var paletteQuery = ""
 
     private var sidebar: some View {
         VStack(spacing: 0) {
