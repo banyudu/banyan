@@ -50,7 +50,7 @@ struct TerminalRenderer {
     }
 
     private static func terminalText(for session: SessionSnapshot, tmux: any TmuxDisplayBackend) -> String {
-        let name = session.tmuxSessionName ?? TmuxBackend.sessionName(for: session.id)
+        let name = session.tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: session.id)
         guard tmux.hasSession(named: name),
               let pane = tmux.primaryPaneSnapshot(named: name) else {
             return " tmux session unavailable"

@@ -194,7 +194,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     ) {
         let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(cwd: cwd)
         self.id = id
-        self.tmuxSessionName = tmuxSessionName ?? TmuxBackend.sessionName(for: id)
+        self.tmuxSessionName = tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id)
         self.historyTranscriptURL = historyTranscriptURL
         self.title = title
         let detectedReference = LinearIssueReference.detect(branch: resolvedDisplayContext.branch, cwd: cwd)

@@ -23,7 +23,7 @@ public struct SessionActions: Sendable {
         let now = Date()
         let snapshot = SessionSnapshot(
             id: id,
-            tmuxSessionName: TmuxBackend.sessionName(for: id),
+            tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
             title: "Shell",
             reportedTitle: nil,
             cwd: cwd,
@@ -65,7 +65,7 @@ public struct SessionActions: Sendable {
         let now = Date()
         let snapshot = SessionSnapshot(
             id: id,
-            tmuxSessionName: TmuxBackend.sessionName(for: id),
+            tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
             title: item.title,
             reportedTitle: item.title,
             cwd: item.cwd,
@@ -99,7 +99,7 @@ public struct SessionActions: Sendable {
         let existingIDs = Set(database.load().map(\.id))
         var candidate = prefix
         var suffix = 2
-        while existingIDs.contains(candidate) || tmux.hasSession(named: TmuxBackend.sessionName(for: candidate)) {
+        while existingIDs.contains(candidate) || tmux.hasSession(named: SessionIdentityPolicy.sessionName(for: candidate)) {
             candidate = "\(prefix)-\(suffix)"
             suffix += 1
         }

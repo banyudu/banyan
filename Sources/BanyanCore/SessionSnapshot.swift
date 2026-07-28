@@ -57,7 +57,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
 
     public var launchRequest: SessionLaunchRequest {
         SessionLaunchRequest(
-            sessionName: tmuxSessionName ?? TmuxBackend.sessionName(for: id),
+            sessionName: tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id),
             cwd: cwd,
             command: command
         )

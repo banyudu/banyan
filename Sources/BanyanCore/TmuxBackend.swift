@@ -28,7 +28,7 @@ public struct TmuxBackend: Sendable, AgentSupervisorBackend, TmuxSessionLifecycl
     }
 
     public static func sessionName(for id: String) -> String {
-        "banyan-\(id)"
+        SessionIdentityPolicy.sessionName(for: id)
     }
 
     public func hasSession(named name: String) -> Bool {

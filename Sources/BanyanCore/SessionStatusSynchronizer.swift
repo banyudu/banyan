@@ -55,7 +55,7 @@ public struct SessionStatusSynchronizer: Sendable {
         backend: any AgentSupervisorBackend,
         processDescendants: @escaping @Sendable (Int) -> [ProcessInfoRow],
         sessionName: @escaping @Sendable (SessionSnapshot) -> String = { snapshot in
-            snapshot.tmuxSessionName ?? TmuxBackend.sessionName(for: snapshot.id)
+            snapshot.tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: snapshot.id)
         }
     ) {
         self.backend = backend
@@ -70,7 +70,7 @@ public struct SessionStatusSynchronizer: Sendable {
         backend: any AgentSupervisorBackend,
         processTable: ProcessTable,
         sessionName: @escaping @Sendable (SessionSnapshot) -> String = { snapshot in
-            snapshot.tmuxSessionName ?? TmuxBackend.sessionName(for: snapshot.id)
+            snapshot.tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: snapshot.id)
         }
     ) {
         self.init(

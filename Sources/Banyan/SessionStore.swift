@@ -1034,7 +1034,7 @@ final class SessionStore: ObservableObject {
         let id = uniqueID("scratch", avoidingLiveTmuxSessions: true)
         let session = BanyanSession(
             id: id,
-            tmuxSessionName: TmuxBackend.sessionName(for: id),
+            tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
             title: "Scratch",
             isTitlePinned: true,
             cwd: resolvedWorkingDirectory(cwd),
@@ -1123,7 +1123,7 @@ final class SessionStore: ObservableObject {
         let parentSessionID = normalizedParentSessionID(proposedParentSessionID)
         let session = BanyanSession(
             id: id,
-            tmuxSessionName: TmuxBackend.sessionName(for: id),
+            tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
                 title: title,
                 titleURL: normalizedTitleURL(proposedTitleURL),
                 generatedTitle: nil,
@@ -3080,7 +3080,7 @@ final class SessionStore: ObservableObject {
         guard !sessions.contains(where: { $0.id == id }) else {
             return false
         }
-        if avoidingLiveTmuxSessions, tmuxBackend.hasSession(named: TmuxBackend.sessionName(for: id)) {
+        if avoidingLiveTmuxSessions, tmuxBackend.hasSession(named: SessionIdentityPolicy.sessionName(for: id)) {
             return false
         }
         return true

@@ -112,7 +112,7 @@ struct BanyanTUI {
     private func attachSelected() {
         guard sessions.indices.contains(viewState.selectedIndex) else { return }
         let session = sessions[viewState.selectedIndex]
-        let name = session.tmuxSessionName ?? TmuxBackend.sessionName(for: session.id)
+        let name = session.tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: session.id)
         attachment.attach(to: name)
     }
 
@@ -163,4 +163,3 @@ struct BanyanTUI {
     }
 
 }
-
