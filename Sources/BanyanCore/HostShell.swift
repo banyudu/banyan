@@ -3,7 +3,7 @@ import Foundation
 /// Resolves the interactive shell used when Banyan starts host commands.
 public enum HostShell {
     public static func executablePath(
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String]
     ) -> String {
         if let configured = environment["SHELL"] {
             let trimmed = configured.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -20,7 +20,7 @@ public enum HostShell {
     }
 
     public static func executableURL(
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String]
     ) -> URL {
         URL(fileURLWithPath: executablePath(environment: environment))
     }

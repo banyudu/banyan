@@ -11,7 +11,7 @@ public enum ExternalSessionTitleGenerator {
     public static func generateTitle(for context: SessionTitleContext) -> String? {
         guard let command = configuredCommand else { return nil }
         let process = Process()
-        process.executableURL = HostShell.executableURL()
+        process.executableURL = HostShell.executableURL(environment: ProcessInfo.processInfo.environment)
         process.arguments = ["-lc", command]
 
         let stdin = Pipe()

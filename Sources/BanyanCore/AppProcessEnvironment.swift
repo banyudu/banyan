@@ -94,7 +94,7 @@ public enum AppProcessEnvironment {
     }
 
     private static func loadShellEnvironment() -> [String: String] {
-        let shell = HostShell.executablePath()
+        let shell = HostShell.executablePath(environment: ProcessInfo.processInfo.environment)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = [
