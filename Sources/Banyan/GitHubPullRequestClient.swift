@@ -256,6 +256,7 @@ enum GitHubPullRequestClient {
             "/bin"
         ]
         return AppProcessEnvironment.make(
+            base: ProcessInfo.processInfo.environment,
             pathAdditions: additions,
             overrides: [
                 "CLICOLOR": "0",

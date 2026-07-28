@@ -283,6 +283,9 @@ public enum SessionContextResolver {
             "/nix/var/nix/profiles/default/bin",
             ]
             + HostExecutablePaths.systemPaths()
-        return AppProcessEnvironment.make(pathAdditions: additions)
+        return AppProcessEnvironment.make(
+            base: ProcessInfo.processInfo.environment,
+            pathAdditions: additions
+        )
     }
 }

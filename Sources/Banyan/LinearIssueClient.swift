@@ -521,7 +521,10 @@ enum LinearIssueClient {
             "/usr/bin",
             "/bin"
         ]
-        return AppProcessEnvironment.make(pathAdditions: additions)
+        return AppProcessEnvironment.make(
+            base: ProcessInfo.processInfo.environment,
+            pathAdditions: additions
+        )
     }
 
     private static let issueQuery = """

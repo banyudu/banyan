@@ -3008,7 +3008,9 @@ final class SessionStore: ObservableObject {
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = ["--banyan", issueID]
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.environment = AppProcessEnvironment.make(pathAdditions: [
+        process.environment = AppProcessEnvironment.make(
+            base: ProcessInfo.processInfo.environment,
+            pathAdditions: [
             "\(NSHomeDirectory())/bin",
             "\(NSHomeDirectory())/.bun/bin",
             "\(NSHomeDirectory())/.local/bin",
@@ -3123,7 +3125,9 @@ private func runHandoffDispatch(cwd: String) -> Result<Void, HandoffDispatchErro
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = ["\(NSHomeDirectory())/bin/handoff", "dispatch"]
     process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-    process.environment = AppProcessEnvironment.make()
+    process.environment = AppProcessEnvironment.make(
+        base: ProcessInfo.processInfo.environment
+    )
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
 

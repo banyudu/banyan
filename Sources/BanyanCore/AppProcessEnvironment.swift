@@ -17,7 +17,7 @@ public enum AppProcessEnvironment {
     private static let cachedShellEnvironment: [String: String] = loadShellEnvironment()
 
     public static func make(
-        base: [String: String] = ProcessInfo.processInfo.environment,
+        base: [String: String],
         pathAdditions: [String] = [],
         removeKeys: Set<String> = [],
         overrides: [String: String] = [:]
