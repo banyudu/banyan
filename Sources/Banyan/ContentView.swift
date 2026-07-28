@@ -16,6 +16,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     private let selection: SessionSelection
     @State private var showingPreferences = false
+    @State private var showingCommandPalette = false
     @State private var draggingSidebarSessionID: String?
 
     init(selection: SessionSelection) {
@@ -87,6 +88,9 @@ struct ContentView: View {
             store.startControlServer()
             store.startSupervisor()
         }
+        .onChange(of: store.commandPaletteRequestID) {
+            showingCommandPalette = true
+        }
         .alert(Text(closeConfirmationTitle), isPresented: closeConfirmationBinding) {
             Button("Cancel", role: .cancel) {}
             Button("Close and Kill", role: .destructive) {
@@ -105,8 +109,233 @@ struct ContentView: View {
         }
         .background(WindowTitleConfigurator(trigger: titlebarConfigurationTrigger))
         .preferredColorScheme(store.terminalTheme.colorScheme)
+        .overlay {
+            if showingCommandPalette {
+                CommandPaletteView(
+                    items: commandPaletteItems,
+                    onDismiss: dismissCommandPalette,
+                    onQueryChange: { paletteQuery = $0 }
+                )
+            }
+        }
         .accessibilityIdentifier(AccessibilityID.root)
     }
+
+    private func dismissCommandPalette() {
+        showingCommandPalette = false
+        paletteQuery = ""
+        store.focusSelectedTerminal()
+    }
+
+    private var commandPaletteItems: [CommandPaletteItem] {
+        var items = [
+            CommandPaletteItem(
+                id: "session.new",
+                category: "Session",
+                title: "New Session",
+                detail: "Create a sibling session",
+                shortcut: "⌘N",
+                action: { _ = store.spawnSiblingSession() }
+            ),
+            CommandPaletteItem(
+                id: "terminal.new",
+                category: "Terminal",
+                title: "New Terminal",
+                detail: "Create a terminal sibling",
+                shortcut: "⌘⇧N",
+                action: { _ = store.spawnTerminalSiblingSession() }
+            ),
+            CommandPaletteItem(
+                id: "terminal.scratch",
+                category: "Terminal",
+                title: "Open Scratch Terminal",
+                detail: "Open a temporary terminal window",
+                shortcut: "⌘D",
+                action: store.openScratchTerminal
+            ),
+            CommandPaletteItem(
+                id: "terminal.find",
+                category: "Terminal",
+                title: "Find",
+                detail: "Search the current terminal or Linear issues",
+                shortcut: "⌘F",
+                action: {
+                    if store.sidebarMode == .linear {
+                        store.requestLinearFilterFocus()
+                    } else {
+                        store.showFindInSelectedSession()
+                    }
+                }
+            ),
+            CommandPaletteItem(
+                id: "session.rename",
+                category: "Session",
+                title: "Rename Session",
+                detail: store.selectedSession?.displayTitle,
+                shortcut: "F2",
+                action: store.selection.requestRenameSelectedSession
+            ),
+            CommandPaletteItem(
+                id: "terminal.close",
+                category: "Terminal",
+                title: "Close Current Terminal",
+                detail: store.selectedSession?.displayTitle,
+                shortcut: "⌘W",
+                action: { store.handleCloseCommand(in: NSApp.keyWindow) }
+            ),
+            CommandPaletteItem(
+                id: "linear.show",
+                category: "Linear",
+                title: "Show Linear Issues",
+                detail: "Open the Linear sidebar",
+                shortcut: "⌘⇧L",
+                action: { store.sidebarMode = .linear }
+            ),
+            CommandPaletteItem(
+                id: "linear.refresh",
+                category: "Linear",
+                title: "Refresh Linear Issues",
+                detail: nil,
+                shortcut: nil,
+                action: store.refreshLinearIssueList
+            ),
+            CommandPaletteItem(
+                id: "linear.open-selected",
+                category: "Linear",
+                title: "Open Selected Linear Issue",
+                detail: store.selectedLinearIssueURL?.absoluteString,
+                shortcut: "⌘L",
+                action: store.openSelectedLinearIssue
+            ),
+            CommandPaletteItem(
+                id: "linear.start-selected",
+                category: "Linear",
+                title: "Start Selected Linear Issue",
+                detail: store.selectedLinearListIssueID,
+                shortcut: "⌘↩",
+                action: store.startSelectedLinearListIssueSession
+            ),
+            CommandPaletteItem(
+                id: "github.preview-selected",
+                category: "GitHub",
+                title: "Preview Selected Pull Request",
+                detail: store.selectedPullRequestURL?.absoluteString,
+                shortcut: "⌘G",
+                action: store.showSelectedPullRequestPreview
+            ),
+            CommandPaletteItem(
+                id: "github.open-selected",
+                category: "GitHub",
+                title: "Open Selected Pull Request",
+                detail: store.selectedPullRequestURL?.absoluteString,
+                shortcut: nil,
+                action: store.openSelectedPullRequest
+            ),
+            CommandPaletteItem(
+                id: "navigation.next-session",
+                category: "Navigation",
+                title: "Next Session",
+                detail: nil,
+                shortcut: "⌘J",
+                action: store.selectNextSession
+            ),
+            CommandPaletteItem(
+                id: "navigation.previous-session",
+                category: "Navigation",
+                title: "Previous Session",
+                detail: nil,
+                shortcut: "⌘K",
+                action: store.selectPreviousSession
+            ),
+            CommandPaletteItem(
+                id: "navigation.next-workable",
+                category: "Navigation",
+                title: "Next Workable Session",
+                detail: nil,
+                shortcut: nil,
+                action: store.selectNextWorkableSession
+            ),
+            CommandPaletteItem(
+                id: "view.sessions",
+                category: "View",
+                title: "Show Sessions",
+                detail: "Open the sessions sidebar",
+                shortcut: "⌘⇧S",
+                action: { store.sidebarMode = .sessions }
+            )
+        ]
+
+        for (index, item) in store.sidebarSessions.enumerated() {
+            let shortcut: String?
+            if index < 9 {
+                shortcut = "⌘\(index + 1)"
+            } else if index == 9 {
+                shortcut = "⌘0"
+            } else if let label = JumpOverlayMonitor.jumpLabel(for: index + 1) {
+                shortcut = "⌘⇧\(label)"
+            } else {
+                shortcut = nil
+            }
+            items.append(CommandPaletteItem(
+                id: "session.switch.\(item.id)",
+                category: "Session",
+                title: "Switch to \(item.session.displayTitle)",
+                detail: item.session.cwd,
+                shortcut: shortcut,
+                action: { store.select(id: item.id) }
+            ))
+        }
+
+        if let linearID = CommandPaletteTargetResolver.linearIssueID(in: paletteQuery) {
+            items.insert(
+                CommandPaletteItem(
+                    id: "linear.quick-open.\(linearID)",
+                    category: "Linear · Quick Open",
+                    title: "Open Linear Issue \(linearID)",
+                    detail: "Open in Linear",
+                    shortcut: "↩",
+                    action: {
+                        if let url = URL(string: LinearIssueReference.issueURL(for: linearID)) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                ),
+                at: 0
+            )
+            items.insert(
+                CommandPaletteItem(
+                    id: "linear.quick-start.\(linearID)",
+                    category: "Linear · Quick Open",
+                    title: "Start Session for \(linearID)",
+                    detail: "Create the issue worktree",
+                    shortcut: nil,
+                    action: { store.startLinearIssueSession(linearID) }
+                ),
+                at: 1
+            )
+        }
+
+        if let pullRequestURL = CommandPaletteTargetResolver.pullRequestURL(
+            in: paletteQuery,
+            fallback: store.selectedPullRequestURL
+        ) {
+            items.insert(
+                CommandPaletteItem(
+                    id: "github.quick-open.\(pullRequestURL.absoluteString)",
+                    category: "GitHub · Quick Open",
+                    title: "Open Pull Request",
+                    detail: pullRequestURL.absoluteString,
+                    shortcut: "↩",
+                    action: { NSWorkspace.shared.open(pullRequestURL) }
+                ),
+                at: 0
+            )
+        }
+
+        return items
+    }
+
+    @State private var paletteQuery = ""
 
     private var sidebar: some View {
         VStack(spacing: 0) {
