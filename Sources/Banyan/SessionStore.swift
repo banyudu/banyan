@@ -55,6 +55,12 @@ struct HandoffJob: Equatable, Identifiable {
     let startedAt: Date
 }
 
+private struct PendingLinearDescriptionUpdate {
+    let issueID: String
+    let oldDescription: String?
+    let newDescription: String
+}
+
 private enum HandoffDispatchError: Error {
     case commandUnavailable
     case failed(Int32)
@@ -243,6 +249,7 @@ final class SessionStore: ObservableObject {
     private var selectedLinearIssueStatusTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTimer: Timer?
     private var selectedLinearIssueIdentifier: String?
+    private var pendingSelectedLinearDescriptionUpdate: PendingLinearDescriptionUpdate?
     private var selectedPullRequestTask: Task<Void, Never>?
     private var selectedPullRequestPreviewURL: URL?
     private var didLoadCachedLinearIssues = false
@@ -251,6 +258,7 @@ final class SessionStore: ObservableObject {
     private static let linearIssueListRefreshInterval: TimeInterval = 30 * 60
     private static let linearIssueListLoadTimeout: TimeInterval = 45
     private var selectedLinearListIssueTask: Task<Void, Never>?
+    private var pendingSelectedLinearListDescriptionUpdate: PendingLinearDescriptionUpdate?
     /// Recently loaded issue details stay available while the user moves
     /// through the Linear list. Re-selecting an issue can render this stale
     /// snapshot immediately while the network refresh runs in the background.
@@ -1632,6 +1640,96 @@ final class SessionStore: ObservableObject {
                         return
                     }
                     self.selectedLinearIssueLoadState = .failed(LinearIssueClient.message(for: error, action: "update"))
+                }
+            }
+        }
+    }
+
+    func updateSelectedLinearIssueDescription(taskIndex: Int) {
+        guard let session = selectedSession, session.status != .closed,
+              let issueID = selectedContextInfo?.linearIssueID,
+              let issue = selectedLinearIssueDetails, let description = issue.description,
+              let newDescription = MarkdownTaskListEditor.toggledDescription(description, taskIndex: taskIndex) else { return }
+        pendingSelectedLinearDescriptionUpdate = .init(issueID: issueID, oldDescription: issue.description, newDescription: newDescription)
+        let optimistic = issue.applying(description: newDescription)
+        selectedLinearIssueDetails = optimistic
+        linearIssueDetailsCache[issueID] = optimistic
+        selectedLinearIssueLoadState = .updatingDescription
+        saveSelectedLinearIssueDescription(issueID: issueID, description: newDescription, cwd: session.cwd, sessionID: session.id)
+    }
+
+    func retrySelectedLinearIssueDescription() {
+        guard let pending = pendingSelectedLinearDescriptionUpdate, let session = selectedSession,
+              selectedContextInfo?.linearIssueID == pending.issueID else { return }
+        selectedLinearIssueLoadState = .updatingDescription
+        saveSelectedLinearIssueDescription(issueID: pending.issueID, description: pending.newDescription, cwd: session.cwd, sessionID: session.id)
+    }
+
+    private func saveSelectedLinearIssueDescription(issueID: String, description: String, cwd: String, sessionID: String) {
+        selectedLinearIssueTask?.cancel()
+        selectedLinearIssueTask = Task.detached(priority: .userInitiated) {
+            do {
+                try await LinearIssueClient.updateIssueDescription(identifier: issueID, description: description, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedSessionID == sessionID, self.selectedContextInfo?.linearIssueID == issueID else { return }
+                    self.pendingSelectedLinearDescriptionUpdate = nil
+                    self.selectedLinearIssueTask = nil
+                    self.selectedLinearIssueLoadState = .loaded
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedSessionID == sessionID, self.selectedContextInfo?.linearIssueID == issueID else { return }
+                    self.selectedLinearIssueTask = nil
+                    if let pending = self.pendingSelectedLinearDescriptionUpdate, let issue = self.selectedLinearIssueDetails {
+                        let reverted = issue.applying(description: pending.oldDescription)
+                        self.selectedLinearIssueDetails = reverted
+                        self.linearIssueDetailsCache[issueID] = reverted
+                    }
+                    self.selectedLinearIssueLoadState = .failed("Unable to save description")
+                }
+            }
+        }
+    }
+
+    func updateSelectedLinearListIssueDescription(taskIndex: Int) {
+        guard let issueID = selectedLinearListIssueID, let issue = selectedLinearListIssueDetails,
+              let description = issue.description,
+              let newDescription = MarkdownTaskListEditor.toggledDescription(description, taskIndex: taskIndex) else { return }
+        pendingSelectedLinearListDescriptionUpdate = .init(issueID: issueID, oldDescription: issue.description, newDescription: newDescription)
+        let optimistic = issue.applying(description: newDescription)
+        selectedLinearListIssueDetails = optimistic
+        linearIssueDetailsCache[issueID] = optimistic
+        selectedLinearListIssueLoadState = .updatingDescription
+        saveSelectedLinearListIssueDescription(issueID: issueID, description: newDescription, cwd: selectedSession?.cwd ?? NSHomeDirectory())
+    }
+
+    func retrySelectedLinearListIssueDescription() {
+        guard let pending = pendingSelectedLinearListDescriptionUpdate, selectedLinearListIssueID == pending.issueID else { return }
+        selectedLinearListIssueLoadState = .updatingDescription
+        saveSelectedLinearListIssueDescription(issueID: pending.issueID, description: pending.newDescription, cwd: selectedSession?.cwd ?? NSHomeDirectory())
+    }
+
+    private func saveSelectedLinearListIssueDescription(issueID: String, description: String, cwd: String) {
+        selectedLinearListIssueTask?.cancel()
+        selectedLinearListIssueTask = Task.detached(priority: .userInitiated) {
+            do {
+                try await LinearIssueClient.updateIssueDescription(identifier: issueID, description: description, cwd: cwd)
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedLinearListIssueID == issueID else { return }
+                    self.pendingSelectedLinearListDescriptionUpdate = nil
+                    self.selectedLinearListIssueTask = nil
+                    self.selectedLinearListIssueLoadState = .loaded
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    guard let self, self.selectedLinearListIssueID == issueID else { return }
+                    self.selectedLinearListIssueTask = nil
+                    if let pending = self.pendingSelectedLinearListDescriptionUpdate, let issue = self.selectedLinearListIssueDetails {
+                        let reverted = issue.applying(description: pending.oldDescription)
+                        self.selectedLinearListIssueDetails = reverted
+                        self.linearIssueDetailsCache[issueID] = reverted
+                    }
+                    self.selectedLinearListIssueLoadState = .failed("Unable to save description")
                 }
             }
         }

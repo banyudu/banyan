@@ -3,10 +3,12 @@ import SwiftUI
 struct MarkdownText: View {
     private let blocks: [MarkdownBlock]
     let style: MarkdownTextStyle
+    let onToggleTask: ((Int) -> Void)?
 
-    init(_ value: String, style: MarkdownTextStyle = .body) {
+    init(_ value: String, style: MarkdownTextStyle = .body, onToggleTask: ((Int) -> Void)? = nil) {
         self.blocks = MarkdownBlockParser.parse(value)
         self.style = style
+        self.onToggleTask = onToggleTask
     }
 
     var body: some View {
@@ -124,11 +126,25 @@ struct MarkdownText: View {
     @ViewBuilder
     private func markerView(_ item: MarkdownListItem) -> some View {
         if let isChecked = item.isChecked {
-            Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-                .font(style.checkboxFont)
-                .foregroundStyle(isChecked ? Color.accentColor : Color.secondary)
-                .frame(width: 18, alignment: .leading)
-                .padding(.top, 1)
+            if let taskIndex = item.taskIndex, let onToggleTask {
+                Button {
+                    onToggleTask(taskIndex)
+                } label: {
+                    Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                        .font(style.checkboxFont)
+                        .foregroundStyle(isChecked ? Color.accentColor : Color.secondary)
+                        .frame(width: 18, alignment: .leading)
+                        .padding(.top, 1)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isChecked ? "Completed" : "Not completed")
+            } else {
+                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                    .font(style.checkboxFont)
+                    .foregroundStyle(isChecked ? Color.accentColor : Color.secondary)
+                    .frame(width: 18, alignment: .leading)
+                    .padding(.top, 1)
+            }
         } else {
             Text(item.markerText)
                 .font(style.markerFont)
@@ -264,6 +280,7 @@ private struct MarkdownListItem: Identifiable {
     let marker: MarkdownListMarker
     var text: String
     let isChecked: Bool?
+    let taskIndex: Int?
 
     var markerText: String {
         switch marker {
@@ -307,6 +324,7 @@ enum MarkdownBlockParser {
         var blocks: [MarkdownBlock] = []
         var index = 0
         var nextID = 0
+        var nextTaskIndex = 0
 
         func append(_ content: MarkdownBlockContent) {
             blocks.append(MarkdownBlock(id: nextID, content: content))
@@ -340,7 +358,7 @@ enum MarkdownBlockParser {
             }
 
             if listItem(in: line, id: 0) != nil {
-                let parsed = parseList(lines: lines, startIndex: index)
+                let parsed = parseList(lines: lines, startIndex: index, nextTaskIndex: &nextTaskIndex)
                 append(.list(parsed.items))
                 index = parsed.nextIndex
                 continue
@@ -468,7 +486,8 @@ enum MarkdownBlockParser {
 
     private static func parseList(
         lines: [String],
-        startIndex: Int
+        startIndex: Int,
+        nextTaskIndex: inout Int
     ) -> (items: [MarkdownListItem], nextIndex: Int) {
         var items: [MarkdownListItem] = []
         var index = startIndex
@@ -482,9 +501,10 @@ enum MarkdownBlockParser {
                 break
             }
 
-            if let item = listItem(in: line, id: itemID) {
+            if let item = listItem(in: line, id: itemID, taskIndex: nextTaskIndex) {
                 items.append(item)
                 itemID += 1
+                if item.isChecked != nil { nextTaskIndex += 1 }
                 index += 1
                 continue
             }
@@ -559,21 +579,22 @@ enum MarkdownBlockParser {
         return text.isEmpty ? nil : (level, text)
     }
 
-    private static func listItem(in line: String, id: Int) -> MarkdownListItem? {
+    private static func listItem(in line: String, id: Int, taskIndex: Int? = nil) -> MarkdownListItem? {
         let leadingWidth = leadingWhitespaceWidth(in: line)
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
 
-        if let unordered = unorderedListItem(in: trimmed, id: id, leadingWidth: leadingWidth) {
+        if let unordered = unorderedListItem(in: trimmed, id: id, leadingWidth: leadingWidth, taskIndex: taskIndex) {
             return unordered
         }
-        return orderedListItem(in: trimmed, id: id, leadingWidth: leadingWidth)
+        return orderedListItem(in: trimmed, id: id, leadingWidth: leadingWidth, taskIndex: taskIndex)
     }
 
     private static func unorderedListItem(
         in trimmed: String,
         id: Int,
-        leadingWidth: Int
+        leadingWidth: Int,
+        taskIndex: Int?
     ) -> MarkdownListItem? {
         guard let marker = trimmed.first,
               ["-", "*", "+"].contains(marker) else {
@@ -590,14 +611,16 @@ enum MarkdownBlockParser {
             indentLevel: min(leadingWidth / 2, 4),
             marker: .unordered,
             text: task.text,
-            isChecked: task.state
+            isChecked: task.state,
+            taskIndex: task.state == nil ? nil : taskIndex
         )
     }
 
     private static func orderedListItem(
         in trimmed: String,
         id: Int,
-        leadingWidth: Int
+        leadingWidth: Int,
+        taskIndex: Int?
     ) -> MarkdownListItem? {
         var index = trimmed.startIndex
         var digits = ""
@@ -621,7 +644,8 @@ enum MarkdownBlockParser {
             indentLevel: min(leadingWidth / 2, 4),
             marker: .ordered(Int(digits) ?? 1),
             text: task.text,
-            isChecked: task.state
+            isChecked: task.state,
+            taskIndex: task.state == nil ? nil : taskIndex
         )
     }
 
@@ -652,6 +676,49 @@ enum MarkdownBlockParser {
             }
         }
         return width
+    }
+}
+
+/// Toggles one Markdown task-list marker without reserializing the description.
+/// All whitespace, line endings, indentation, ordering, and unrelated content
+/// remain exactly as supplied by Linear.
+enum MarkdownTaskListEditor {
+    static func toggledDescription(_ value: String, taskIndex: Int) -> String? {
+        var lines = value.components(separatedBy: "\n")
+        var completedTaskCount = 0
+        var fenceDelimiter: String?
+
+        for index in lines.indices {
+            let line = lines[index]
+            if let fence = fenceStart(in: line) {
+                if fenceDelimiter == nil { fenceDelimiter = fence }
+                else if fenceDelimiter == fence { fenceDelimiter = nil }
+                continue
+            }
+            guard fenceDelimiter == nil, let markerRange = taskMarkerRange(in: line) else { continue }
+            if completedTaskCount == taskIndex {
+                let state = line[markerRange].lowercased() == "x" ? " " : "x"
+                lines[index].replaceSubrange(markerRange, with: state)
+                return lines.joined(separator: "\n")
+            }
+            completedTaskCount += 1
+        }
+        return nil
+    }
+
+    private static func fenceStart(in line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("```") { return "```" }
+        if trimmed.hasPrefix("~~~") { return "~~~" }
+        return nil
+    }
+
+    private static func taskMarkerRange(in line: String) -> Range<String.Index>? {
+        let pattern = #"^\s*(?:[-*+]|\d+[.)])\s+\[([ xX])\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+              let range = Range(match.range(at: 1), in: line) else { return nil }
+        return range
     }
 }
 
@@ -726,7 +793,7 @@ struct FlowLayout: Layout {
 extension LinearIssueLoadState {
     var isBusy: Bool {
         switch self {
-        case .loading, .updating:
+        case .loading, .updating, .updatingDescription:
             return true
         case .idle, .loaded, .failed:
             return false

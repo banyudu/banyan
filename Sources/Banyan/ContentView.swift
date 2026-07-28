@@ -987,7 +987,9 @@ struct ContentView: View {
                             store.refreshSelectedLinearIssue(force: true)
                         },
                         onOpen: store.openSelectedLinearIssue,
-                        onChangeState: store.updateSelectedLinearIssueState
+                        onChangeState: store.updateSelectedLinearIssueState,
+                        onToggleTask: store.updateSelectedLinearIssueDescription,
+                        onRetryDescription: store.retrySelectedLinearIssueDescription
                     )
                     .onAppear {
                         store.refreshSelectedLinearIssue(force: true)
@@ -1011,6 +1013,8 @@ struct ContentView: View {
                     },
                     onOpen: store.openSelectedLinearListIssue,
                     onChangeState: store.updateSelectedLinearListIssueState,
+                    onToggleTask: store.updateSelectedLinearListIssueDescription,
+                    onRetryDescription: store.retrySelectedLinearListIssueDescription,
                     onStart: store.startSelectedLinearListIssueSession,
                     isStarting: store.linearIssueListLoadState.isStarting,
                     presentation: .main
