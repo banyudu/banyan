@@ -1,4 +1,0 @@
-import BanyanCore
-
-typealias TranscriptTrimmer = BanyanCore.TranscriptTrimmer
-typealias TranscriptResumePreparer = BanyanCore.TranscriptResumePreparer
