@@ -8,7 +8,7 @@ public struct AgentStateDetector: Sendable {
 
     private let rules: [DetectorRule]
 
-    public init(rules: [DetectorRule] = DetectorRule.loadConfiguredRules()) {
+    public init(rules: [DetectorRule]) {
         self.rules = rules
     }
 
