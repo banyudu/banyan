@@ -9,6 +9,7 @@ import Darwin
 
 private struct BanyanTUI {
     private let tmux = TmuxBackend.shared
+    private let attachment = TUIAttachment(tmux: TmuxBackend.shared)
     private let dataSource: TUISessionDataSource
     private let actions: TUISessionActions
     private var sessions: [SessionSnapshot] = []
@@ -106,21 +107,7 @@ private struct BanyanTUI {
         guard sessions.indices.contains(viewState.selectedIndex) else { return }
         let session = sessions[viewState.selectedIndex]
         let name = session.tmuxSessionName ?? TmuxBackend.sessionName(for: session.id)
-        print("\u{1b}[2J\u{1b}[H", terminator: "")
-        fflush(stdout)
-
-        let process = Process()
-        process.executableURL = tmux.executableURL
-        process.arguments = tmux.attachArguments(for: name)
-        process.standardInput = FileHandle.standardInput
-        process.standardOutput = FileHandle.standardOutput
-        process.standardError = FileHandle.standardError
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            print("Unable to attach to \(name): \(error.localizedDescription)")
-        }
+        attachment.attach(to: name)
     }
 
     private mutating func resumeHistorySelected(trimmed: Bool = false) {
