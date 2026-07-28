@@ -199,7 +199,12 @@ enum GitHubPullRequestClient {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = arguments
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.environment = processEnvironment()
+        let inheritedEnvironment = ProcessInfo.processInfo.environment
+        process.environment = processEnvironment(
+            base: inheritedEnvironment,
+            homeDirectory: NSHomeDirectory(),
+            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: inheritedEnvironment)
+        )
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -241,7 +246,11 @@ enum GitHubPullRequestClient {
         return output
     }
 
-    private static func processEnvironment() -> [String: String] {
+    private static func processEnvironment(
+        base: [String: String],
+        homeDirectory: String,
+        shellEnvironment: [String: String]
+    ) -> [String: String] {
         let additions = [
             "\(NSHomeDirectory())/bin",
             "\(NSHomeDirectory())/.bun/bin",
@@ -256,8 +265,8 @@ enum GitHubPullRequestClient {
             "/bin"
         ]
         return AppProcessEnvironment.make(
-            base: ProcessInfo.processInfo.environment,
-            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: ProcessInfo.processInfo.environment),
+            base: base,
+            shellEnvironment: shellEnvironment,
             pathAdditions: additions,
             overrides: [
                 "CLICOLOR": "0",

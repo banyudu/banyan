@@ -461,7 +461,11 @@ enum LinearIssueClient {
             output = try await SubprocessRunner.runAsync(
                 arguments: arguments,
                 cwd: cwd,
-                environment: processEnvironment(),
+                environment: processEnvironment(
+                    base: ProcessInfo.processInfo.environment,
+                    homeDirectory: NSHomeDirectory(),
+                    shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: ProcessInfo.processInfo.environment)
+                ),
                 timeout: timeout
             )
         } catch SubprocessRunner.RunError.launchFailed(_) {
@@ -507,7 +511,11 @@ enum LinearIssueClient {
         return regex.stringByReplacingMatches(in: value, range: range, withTemplate: "")
     }
 
-    private static func processEnvironment() -> [String: String] {
+    private static func processEnvironment(
+        base: [String: String],
+        homeDirectory: String,
+        shellEnvironment: [String: String]
+    ) -> [String: String] {
         let additions = [
             "\(NSHomeDirectory())/bin",
             "\(NSHomeDirectory())/.bun/bin",
@@ -522,8 +530,8 @@ enum LinearIssueClient {
             "/bin"
         ]
         return AppProcessEnvironment.make(
-            base: ProcessInfo.processInfo.environment,
-            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: ProcessInfo.processInfo.environment),
+            base: base,
+            shellEnvironment: shellEnvironment,
             pathAdditions: additions
         )
     }
