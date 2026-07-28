@@ -726,10 +726,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     nonisolated static func titleTracksCurrentDirectory(_ title: String, isTitlePinned: Bool, cwd: String) -> Bool {
-        guard !isTitlePinned else { return false }
-        let currentTitle = SessionTitleGenerator.sanitizeTitle(title)
-        let directoryTitle = SessionTitleGenerator.sanitizeTitle(titleForCurrentDirectory(cwd))
-        return currentTitle == directoryTitle
+        SessionInputPolicy.titleTracksCurrentDirectory(
+            title,
+            isTitlePinned: isTitlePinned,
+            cwd: cwd
+        )
     }
 
     private var usefulAgentTitle: String? {
@@ -821,41 +822,19 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     nonisolated private static func normalizedTitleURL(_ titleURL: String?) -> String? {
-        let trimmed = titleURL?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed?.isEmpty == false ? trimmed : nil
+        SessionInputPolicy.normalizedTitleURL(titleURL)
     }
 
     private static func normalizedDirectory(_ directory: String?) -> String? {
-        guard let rawDirectory = directory?.trimmingCharacters(in: .whitespacesAndNewlines), !rawDirectory.isEmpty else {
-            return nil
-        }
-        let path: String
-        if rawDirectory.hasPrefix("file://"), let url = URL(string: rawDirectory), url.isFileURL {
-            path = url.path
-        } else {
-            path = NSString(string: rawDirectory).expandingTildeInPath
-        }
-        return PathDisplayName.canonicalPath(path)
+        SessionInputPolicy.normalizedDirectory(directory)
     }
 
     private static func isConversationResetCommand(_ input: String?) -> Bool {
-        let normalized = input?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return normalized == "/clear" || normalized == "/new"
+        SessionInputPolicy.isConversationResetCommand(input)
     }
 
     private static func submittedPromptTitle(from input: String?) -> String? {
-        guard let rawInput = input?.trimmingCharacters(in: .whitespacesAndNewlines), !rawInput.isEmpty else {
-            return nil
-        }
-        guard !rawInput.hasPrefix("/") else { return nil }
-        guard let title = SessionTitleGenerator.titleFromPrompt(rawInput) else { return nil }
-        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let trivialResponses: Set<String> = ["c", "continue", "exit", "n", "no", "ok", "okay", "q", "quit", "y", "yes"]
-        guard !trivialResponses.contains(normalized) else { return nil }
-        guard title.contains(where: \.isLetter), title.count >= 4 else { return nil }
-        return title
+        SessionInputPolicy.submittedPromptTitle(from: input)
     }
 
     private func requestExternalGeneratedTitleIfNeeded(context: SessionTitleContext) {
