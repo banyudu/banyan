@@ -228,6 +228,9 @@ final class SessionStore: ObservableObject {
     private var scratchWindow: NSWindow?
     private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
     private var isClosingScratchTerminal = false
+    private let homeDirectory: String
+    private let environment: [String: String]
+    private let currentDirectory: String
 
     init(
         persistence: any SessionStorePersistenceBackend,
@@ -235,7 +238,10 @@ final class SessionStore: ObservableObject {
         sessionBackend: any TmuxClientBackend,
         processTable: any ProcessTableProvider,
         historyBackend: any SessionHistoryBackend,
-        detector: AgentStateDetector
+        detector: AgentStateDetector,
+        homeDirectory: String,
+        environment: [String: String],
+        currentDirectory: String
     ) {
         self.persistence = persistence
         self.tmuxBackend = tmuxBackend
@@ -243,6 +249,9 @@ final class SessionStore: ObservableObject {
         self.processTable = processTable
         self.historyBackend = historyBackend
         self.detector = detector
+        self.homeDirectory = homeDirectory
+        self.environment = environment
+        self.currentDirectory = currentDirectory
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
@@ -512,8 +521,8 @@ final class SessionStore: ObservableObject {
             } else {
                 let resolved = SessionDisplayLabel.context(
                     cwd: snapshot.cwd,
-                    homeDirectory: NSHomeDirectory(),
-                    environment: ProcessInfo.processInfo.environment
+                    homeDirectory: homeDirectory,
+                    environment: environment
                 )
                 displayContextsByCWD[snapshot.cwd] = resolved
                 displayContext = resolved
@@ -598,7 +607,7 @@ final class SessionStore: ObservableObject {
         let hasStaleIssues = !linearIssues.isEmpty
         linearIssueListLoadState = hasStaleIssues ? .loaded : .loading
         isLinearIssueListRefreshing = true
-        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let cwd = selectedSession?.cwd ?? homeDirectory
         let deadline = Date().addingTimeInterval(Self.linearIssueListLoadTimeout)
         linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]")
         linearIssueListTask = Task.detached(priority: .utility) {
@@ -767,7 +776,7 @@ final class SessionStore: ObservableObject {
             selectedLinearListIssueDetails = nil
         }
 
-        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let cwd = selectedSession?.cwd ?? homeDirectory
         selectedLinearListIssueTask = Task.detached(priority: .utility) {
             do {
                 let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd)
@@ -821,7 +830,7 @@ final class SessionStore: ObservableObject {
         selectedLinearListIssueTask?.cancel()
         selectedLinearListIssueLoadState = .updating(state.name)
 
-        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let cwd = selectedSession?.cwd ?? homeDirectory
         selectedLinearListIssueTask = Task.detached(priority: .userInitiated) {
             do {
                 try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd)
@@ -852,9 +861,14 @@ final class SessionStore: ObservableObject {
 
     func startLinearIssueSession(_ issueID: String) {
         linearIssueListLoadState = .starting(issueID)
-        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let cwd = selectedSession?.cwd ?? homeDirectory
         Task.detached(priority: .userInitiated) {
-            let errorMessage = Self.runBanyanWorktree(issueID: issueID, cwd: cwd)
+            let errorMessage = Self.runBanyanWorktree(
+                issueID: issueID,
+                cwd: cwd,
+                homeDirectory: homeDirectory,
+                environment: environment
+            )
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 if let errorMessage {
@@ -994,7 +1008,7 @@ final class SessionStore: ObservableObject {
 
     @discardableResult
     func spawnSiblingSession() -> BanyanSession {
-        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let cwd = selectedSession?.cwd ?? homeDirectory
         let command = Self.siblingRuntimeCommand(for: selectedSession?.agentProvider)
         return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
     }
@@ -1003,7 +1017,7 @@ final class SessionStore: ObservableObject {
     /// is one of the runtimes supported by the quick new-session shortcut.
     @discardableResult
     func spawnTerminalSiblingSession() -> BanyanSession {
-        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let cwd = selectedSession?.cwd ?? homeDirectory
         return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.parentSessionID)
     }
 
@@ -1049,7 +1063,7 @@ final class SessionStore: ObservableObject {
             return
         }
 
-        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let cwd = selectedSession?.cwd ?? homeDirectory
         let id = uniqueID("scratch", avoidingLiveTmuxSessions: true)
         let session = BanyanSession(
             id: id,
@@ -1114,7 +1128,7 @@ final class SessionStore: ObservableObject {
     }
 
     func showCustomSessionSheet() {
-        let cwd = selectedSession?.cwd ?? NSHomeDirectory()
+        let cwd = selectedSession?.cwd ?? homeDirectory
         addSessionDraft = .sibling(cwd: cwd)
     }
 
@@ -1685,13 +1699,13 @@ final class SessionStore: ObservableObject {
         selectedLinearListIssueDetails = optimistic
         linearIssueDetailsCache[issueID] = optimistic
         selectedLinearListIssueLoadState = .updatingDescription
-        saveSelectedLinearListIssueDescription(issueID: issueID, description: newDescription, cwd: selectedSession?.cwd ?? NSHomeDirectory())
+        saveSelectedLinearListIssueDescription(issueID: issueID, description: newDescription, cwd: selectedSession?.cwd ?? homeDirectory)
     }
 
     func retrySelectedLinearListIssueDescription() {
         guard let pending = pendingSelectedLinearListDescriptionUpdate, selectedLinearListIssueID == pending.issueID else { return }
         selectedLinearListIssueLoadState = .updatingDescription
-        saveSelectedLinearListIssueDescription(issueID: pending.issueID, description: pending.newDescription, cwd: selectedSession?.cwd ?? NSHomeDirectory())
+        saveSelectedLinearListIssueDescription(issueID: pending.issueID, description: pending.newDescription, cwd: selectedSession?.cwd ?? homeDirectory)
     }
 
     private func saveSelectedLinearListIssueDescription(issueID: String, description: String, cwd: String) {
@@ -2116,7 +2130,11 @@ final class SessionStore: ObservableObject {
 
         pendingHandoffJobs.append(job)
         Task.detached(priority: .utility) {
-            let result = runHandoffDispatch(cwd: job.cwd)
+            let result = runHandoffDispatch(
+                cwd: job.cwd,
+                homeDirectory: homeDirectory,
+                environment: environment
+            )
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.pendingHandoffJobs.removeAll { $0.id == job.id }
@@ -2166,7 +2184,7 @@ final class SessionStore: ObservableObject {
         guard let selectedLinearListIssueID else { return nil }
         return URL(string: LinearIssueReference.issueURL(
             for: selectedLinearListIssueID,
-            environment: ProcessInfo.processInfo.environment
+            environment: environment
         ))
     }
 
@@ -2445,7 +2463,7 @@ final class SessionStore: ObservableObject {
                 let shouldRunPendingImport = self.isHistoryImportPending
                 self.isHistoryImportPending = false
                 if spawnDefaultIfEmpty, self.visibleSessions.isEmpty {
-                    self.spawn(cwd: NSHomeDirectory())
+                    self.spawn(cwd: homeDirectory)
                 }
                 if shouldRunPendingImport {
                     self.runHistoryImport()
@@ -2885,8 +2903,8 @@ final class SessionStore: ObservableObject {
         return SessionContextLookupInput(
             sessionID: session.id,
             cwd: session.cwd,
-            homeDirectory: NSHomeDirectory(),
-            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: homeDirectory,
+            environment: environment,
             title: session.title,
             titleURL: session.titleURL,
             displayTitle: session.displayTitle
@@ -2931,7 +2949,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func scratchWindowTitle(for session: BanyanSession) -> String {
-        "Scratch - \(PathDisplayName.make(path: session.cwd, homeDirectory: NSHomeDirectory()))"
+        "Scratch - \(PathDisplayName.make(path: session.cwd, homeDirectory: homeDirectory))"
     }
 
     /// Chooses the nearest visible session before the closing session is removed.
@@ -2986,13 +3004,13 @@ final class SessionStore: ObservableObject {
     }
 
     private func resolvedWorkingDirectory(_ cwd: String?) -> String {
-        let raw = cwd?.isEmpty == false ? cwd! : FileManager.default.currentDirectoryPath
+        let raw = cwd?.isEmpty == false ? cwd! : currentDirectory
         let expanded = NSString(string: raw).expandingTildeInPath
         var isDirectory: ObjCBool = false
         if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue {
             return PathDisplayName.canonicalPath(expanded)
         }
-        return PathDisplayName.canonicalPath(NSHomeDirectory())
+        return PathDisplayName.canonicalPath(homeDirectory)
     }
 
     private func normalizedParentSessionID(_ parentSessionID: String?) -> String? {
@@ -3005,8 +3023,13 @@ final class SessionStore: ObservableObject {
         return trimmed?.isEmpty == false ? trimmed : nil
     }
 
-    nonisolated private static func runBanyanWorktree(issueID: String, cwd: String) -> String? {
-        let executablePath = "\(NSHomeDirectory())/bin/banyan-worktree"
+    nonisolated private static func runBanyanWorktree(
+        issueID: String,
+        cwd: String,
+        homeDirectory: String,
+        environment: [String: String]
+    ) -> String? {
+        let executablePath = "\(homeDirectory)/bin/banyan-worktree"
         guard FileManager.default.isExecutableFile(atPath: executablePath) else {
             return "Missing ~/bin/banyan-worktree"
         }
@@ -3016,15 +3039,15 @@ final class SessionStore: ObservableObject {
         process.arguments = ["--banyan", issueID]
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         process.environment = AppProcessEnvironment.make(
-            base: ProcessInfo.processInfo.environment,
-            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: ProcessInfo.processInfo.environment),
+            base: environment,
+            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment),
             pathAdditions: [
-            "\(NSHomeDirectory())/bin",
-            "\(NSHomeDirectory())/.bun/bin",
-            "\(NSHomeDirectory())/.local/bin",
-            "\(NSHomeDirectory())/.cargo/bin",
-            "\(NSHomeDirectory())/go/bin",
-            "\(NSHomeDirectory())/.nix-profile/bin",
+            "\(homeDirectory)/bin",
+            "\(homeDirectory)/.bun/bin",
+            "\(homeDirectory)/.local/bin",
+            "\(homeDirectory)/.cargo/bin",
+            "\(homeDirectory)/go/bin",
+            "\(homeDirectory)/.nix-profile/bin",
             "/nix/var/nix/profiles/default/bin",
             "/opt/homebrew/bin",
             "/usr/local/bin",
@@ -3079,7 +3102,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func defaultTitle(for cwd: String) -> String {
-        PathDisplayName.make(path: cwd, homeDirectory: NSHomeDirectory())
+        PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
     }
 
     private func restoredTitle(from snapshot: SessionSnapshot) -> String {
@@ -3128,14 +3151,18 @@ final class SessionStore: ObservableObject {
     }
 }
 
-private func runHandoffDispatch(cwd: String) -> Result<Void, HandoffDispatchError> {
+private func runHandoffDispatch(
+    cwd: String,
+    homeDirectory: String,
+    environment: [String: String]
+) -> Result<Void, HandoffDispatchError> {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["\(NSHomeDirectory())/bin/handoff", "dispatch"]
+    process.arguments = ["\(homeDirectory)/bin/handoff", "dispatch"]
     process.currentDirectoryURL = URL(fileURLWithPath: cwd)
     process.environment = AppProcessEnvironment.make(
-        base: ProcessInfo.processInfo.environment,
-        shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: ProcessInfo.processInfo.environment)
+        base: environment,
+        shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment)
     )
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice

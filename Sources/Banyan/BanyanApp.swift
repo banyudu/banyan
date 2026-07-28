@@ -30,7 +30,10 @@ struct BanyanApp: App {
                 environment: ProcessInfo.processInfo.environment,
                 homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
             )
-        )
+        ),
+        homeDirectory: NSHomeDirectory(),
+        environment: ProcessInfo.processInfo.environment,
+        currentDirectory: FileManager.default.currentDirectoryPath
     )
 
     var body: some Scene {
