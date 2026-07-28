@@ -13,15 +13,18 @@ public struct SessionActions: Sendable, SessionListActions {
     private let persistence: any SessionPersistenceBackend
     private let tmux: any TmuxSessionLookupBackend
     private let catalog: any SessionCatalogBackend
+    private let history: any SessionHistoryBackend
 
     public init(
         persistence: any SessionPersistenceBackend,
         tmux: any TmuxSessionLookupBackend,
-        catalog: any SessionCatalogBackend
+        catalog: any SessionCatalogBackend,
+        history: any SessionHistoryBackend = DefaultSessionHistoryBackend()
     ) {
         self.persistence = persistence
         self.tmux = tmux
         self.catalog = catalog
+        self.history = history
     }
 
     public func createShellSession(
@@ -47,21 +50,21 @@ public struct SessionActions: Sendable, SessionListActions {
 
     /// Creates a resumed session and returns whether a trimmed transcript was used.
     public func resumeHistory(_ item: ImportedAgentSession, trimmed: Bool) throws -> Bool {
-        guard let sourceID = AgentSessionHistory.sourceID(
+        guard let sourceID = history.sourceID(
             fromImportedSessionID: item.id,
             provider: item.provider
         ) else {
             throw SessionActionError.unresumable(item.title)
         }
 
-        let prepared = trimmed ? TranscriptResumePreparer.prepare(
+        let preparedSourceID = trimmed ? history.prepareTrimmedTranscript(
             provider: item.provider,
             sourceID: sourceID,
             cwd: item.cwd,
             transcriptURL: item.transcriptURL
         ) : nil
-        let resumeSourceID = prepared?.newSourceID ?? sourceID
-        guard let command = AgentSessionHistory.resumeCommand(
+        let resumeSourceID = preparedSourceID ?? sourceID
+        guard let command = history.resumeCommand(
             provider: item.provider,
             sourceID: resumeSourceID,
             cwd: item.cwd
@@ -84,7 +87,7 @@ public struct SessionActions: Sendable, SessionListActions {
             updatedAt: now
         )
         try catalog.create(snapshot: snapshot)
-        return prepared != nil
+        return preparedSourceID != nil
     }
 
     public func recover(_ session: SessionSnapshot) throws {

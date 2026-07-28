@@ -25,6 +25,42 @@ import Testing
     #expect(backend.events == ["ensure:banyan-tui-shell"])
 }
 
+@Test func sessionActionsUsesInjectedHistoryBackend() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-history-actions-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let backend = SessionActionsTestBackend()
+    let actions = SessionActions(
+        persistence: database,
+        tmux: backend,
+        catalog: SessionCatalog(
+            persistence: database,
+            runtime: SessionRuntimeCoordinator(backend: backend)
+        ),
+        history: StubHistoryBackend()
+    )
+    let item = ImportedAgentSession(
+        id: "history-codex-original",
+        provider: .codex,
+        sourceID: "original",
+        title: "Injected history",
+        cwd: "/tmp/project",
+        transcriptURL: directory.appendingPathComponent("original.jsonl"),
+        createdAt: Date(timeIntervalSince1970: 1),
+        updatedAt: Date(timeIntervalSince1970: 2)
+    )
+
+    let trimmed = try actions.resumeHistory(item, trimmed: true)
+
+    #expect(trimmed)
+    #expect(database.load().first?.command == "fake-agent --resume trimmed-id")
+}
+
 private final class SessionActionsTestBackend: TmuxSessionLifecycleBackend, @unchecked Sendable {
     var events: [String] = []
 
@@ -41,5 +77,24 @@ private final class SessionActionsTestBackend: TmuxSessionLifecycleBackend, @unc
 
     func killSession(named name: String) {
         events.append("kill:\(name)")
+    }
+}
+
+private struct StubHistoryBackend: SessionHistoryBackend {
+    func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? {
+        "original"
+    }
+
+    func resumeCommand(provider: CodingAgentProvider, sourceID: String, cwd: String) -> String? {
+        "fake-agent --resume \(sourceID)"
+    }
+
+    func prepareTrimmedTranscript(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        transcriptURL: URL?
+    ) -> String? {
+        "trimmed-id"
     }
 }
