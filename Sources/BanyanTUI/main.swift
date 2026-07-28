@@ -31,6 +31,8 @@ private struct BanyanTUI {
                 selectedIndex = max(0, selectedIndex - 1)
             case 114: // r
                 continue
+            case 82: // R
+                recoverSelected()
             case 110: // n
                 createShellSession()
             case 99: // c
@@ -48,14 +50,37 @@ private struct BanyanTUI {
     }
 
     private mutating func reload() {
-        sessions = database.load().filter { $0.status != .closed }
+        let stored = database.load()
+        let processTable = ProcessTable.snapshot()
+        let supervisor = AgentSupervisor(
+            backend: tmux,
+            processDescendants: { rootPID in processTable.descendants(of: rootPID) }
+        )
+        var synchronized = false
+        let updated = stored.map { session in
+            guard session.status != .closed,
+                  tmux.hasSession(named: tmuxName(for: session)),
+                  let result = supervisor.inspect(
+                    tmuxSessionName: tmuxName(for: session),
+                    launchCommand: session.command,
+                    currentStatus: session.status
+                  ),
+                  result.status != .closed,
+                  result.status != session.status || result.tone != session.tone else {
+                return session
+            }
+            synchronized = true
+            return session.updating(status: result.status, tone: result.tone)
+        }
+        if synchronized { database.save(updated) }
+        sessions = updated.filter { $0.status != .closed }
         selectedIndex = min(selectedIndex, max(0, sessions.count - 1))
     }
 
     private func render() {
         let selected = sessions.indices.contains(selectedIndex) ? sessions[selectedIndex] : nil
         var output = "\u{1b}[2J\u{1b}[H"
-        output += "Banyan TUI  j/k navigate  enter attach  n new  c close  x remove  r refresh  q quit\n"
+        output += "Banyan TUI  j/k navigate  enter attach  R recover  n new  c close  x remove  r refresh  q quit\n"
         if let notice { output += "\(notice)\n" }
         output += "\n"
 
@@ -148,6 +173,22 @@ private struct BanyanTUI {
             notice = "Created \(id)"
         } catch {
             notice = "Unable to create session: \(error.localizedDescription)"
+        }
+    }
+
+    private mutating func recoverSelected() {
+        guard sessions.indices.contains(selectedIndex) else { return }
+        let session = sessions[selectedIndex]
+        let request = SessionLaunchRequest(
+            sessionName: tmuxName(for: session),
+            cwd: session.cwd,
+            command: session.command
+        )
+        do {
+            try runtime.ensureBackingSession(request)
+            notice = "Recovered \(session.id)"
+        } catch {
+            notice = "Unable to recover \(session.id): \(error.localizedDescription)"
         }
     }
 

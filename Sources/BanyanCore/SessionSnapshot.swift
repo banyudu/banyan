@@ -82,4 +82,29 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             updatedAt: try container.decode(Date.self, forKey: .updatedAt)
         )
     }
+
+    public func updating(
+        status: SessionStatus? = nil,
+        tone: SessionTone? = nil,
+        updatedAt: Date = Date()
+    ) -> SessionSnapshot {
+        SessionSnapshot(
+            id: id,
+            tmuxSessionName: tmuxSessionName,
+            title: title,
+            titleURL: titleURL,
+            titleURLWasAutoDetected: titleURLWasAutoDetected,
+            reportedTitle: reportedTitle,
+            generatedTitle: generatedTitle,
+            isTitlePinned: isTitlePinned,
+            cwd: cwd,
+            command: command,
+            status: status ?? self.status,
+            tone: tone ?? self.tone,
+            parentSessionID: parentSessionID,
+            agentSessionID: agentSessionID,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
 }
