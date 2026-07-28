@@ -1,9 +1,10 @@
 import XCTest
+import BanyanCore
 @testable import BanyanTUI
 
 final class TUIViewStateTests: XCTestCase {
     func testHistoryStartsPendingAndToggleResetsSelection() {
-        var state = TUIViewState()
+        var state = SessionListViewState()
         state.moveNext(rowCount: 4)
 
         state.toggleHistory()
@@ -14,7 +15,7 @@ final class TUIViewStateTests: XCTestCase {
     }
 
     func testHistoryRefreshOnlyMarksHistoryForReload() {
-        var state = TUIViewState()
+        var state = SessionListViewState()
         state.toggleHistory()
         state.markHistoryLoaded()
 
@@ -25,7 +26,7 @@ final class TUIViewStateTests: XCTestCase {
     }
 
     func testSelectionMovementAndClampingStayWithinRows() {
-        var state = TUIViewState()
+        var state = SessionListViewState()
 
         state.moveNext(rowCount: 3)
         state.moveNext(rowCount: 3)
@@ -40,7 +41,7 @@ final class TUIViewStateTests: XCTestCase {
     }
 
     func testNoticeIsReplacedByLatestMessage() {
-        var state = TUIViewState()
+        var state = SessionListViewState()
 
         state.showNotice("created")
         state.showNotice("closed")
