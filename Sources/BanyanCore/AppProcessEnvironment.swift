@@ -14,10 +14,8 @@ public enum AppProcessEnvironment {
         "LINEAR_API_KEY"
     ]
 
-    private static let cachedShellEnvironment: [String: String] = loadShellEnvironment()
-
-    public static func shellEnvironment() -> [String: String] {
-        cachedShellEnvironment
+    public static func shellEnvironment(environment: [String: String]) -> [String: String] {
+        loadShellEnvironment(environment: environment)
     }
 
     public static func make(
@@ -98,8 +96,8 @@ public enum AppProcessEnvironment {
             }
     }
 
-    private static func loadShellEnvironment() -> [String: String] {
-        let shell = HostShell.executablePath(environment: ProcessInfo.processInfo.environment)
+    private static func loadShellEnvironment(environment: [String: String]) -> [String: String] {
+        let shell = HostShell.executablePath(environment: environment)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = [

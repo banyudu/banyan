@@ -523,7 +523,7 @@ enum LinearIssueClient {
         ]
         return AppProcessEnvironment.make(
             base: ProcessInfo.processInfo.environment,
-            shellEnvironment: AppProcessEnvironment.shellEnvironment(),
+            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: ProcessInfo.processInfo.environment),
             pathAdditions: additions
         )
     }

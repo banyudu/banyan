@@ -318,7 +318,7 @@ public enum SessionContextResolver {
             + HostExecutablePaths.systemPaths()
         return AppProcessEnvironment.make(
             base: base,
-            shellEnvironment: AppProcessEnvironment.shellEnvironment(),
+            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: base),
             pathAdditions: additions
         )
     }
