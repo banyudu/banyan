@@ -12,6 +12,24 @@ private enum LinearFocusTarget: Hashable {
     case issueList
 }
 
+private enum LinearIssueSortOption: String, CaseIterable, Identifiable {
+    case defaultOrder
+    case updated
+    case priority
+    case title
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .defaultOrder: return "Default order"
+        case .updated: return "Recently updated"
+        case .priority: return "Priority"
+        case .title: return "Title"
+        }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     private let selection: SessionSelection
@@ -24,6 +42,7 @@ struct ContentView: View {
 
     @State private var linearIssueFilterText = ""
     @State private var selectedLinearIssueStateIDs: Set<String>?
+    @State private var linearIssueSortOption: LinearIssueSortOption = .defaultOrder
     @FocusState private var linearFocusTarget: LinearFocusTarget?
 
     var body: some View {
@@ -262,7 +281,7 @@ struct ContentView: View {
                 .layoutPriority(1)
                 .clipped()
 
-            HStack {
+            HStack(spacing: 10) {
                 Button {
                     store.refreshLinearIssueList()
                 } label: {
@@ -277,7 +296,7 @@ struct ContentView: View {
                 .help("Refresh Linear issues")
                 .disabled(store.isLinearIssueListRefreshing)
 
-                Spacer()
+                Spacer(minLength: 0)
 
                 Button {
                     store.startSelectedLinearListIssueSession()
@@ -334,7 +353,16 @@ struct ContentView: View {
     private var linearIssueFilterHeader: some View {
         VStack(spacing: 6) {
             linearIssueSearchField
-            linearIssueStateFilterMenu
+            HStack(spacing: 8) {
+                linearIssueStateFilterMenu
+                Text(issueCountLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+                linearIssueSortMenu
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -413,6 +441,27 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
         }
+    }
+
+    private var linearIssueSortMenu: some View {
+        Menu {
+            Picker("Sort", selection: $linearIssueSortOption) {
+                ForEach(LinearIssueSortOption.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .accessibilityIdentifier(AccessibilityID.linearIssueSortMenu)
+        .help("Sort Linear issues")
+    }
+
+    private var issueCountLabel: String {
+        let count = filteredLinearIssues.count
+        return "\(count) \(count == 1 ? "issue" : "issues")"
     }
 
     @ViewBuilder
@@ -498,12 +547,8 @@ struct ContentView: View {
                             LinearIssueRow(
                                 issue: issue,
                                 isSelected: store.selectedLinearListIssueID == issue.identifier,
-                                isStarting: store.linearIssueListLoadState.isStarting(issue.identifier),
                                 onSelect: {
                                     store.selectedLinearListIssueID = issue.identifier
-                                },
-                                onStart: {
-                                    store.startLinearIssueSession(issue.identifier)
                                 }
                             )
                             .id(issue.identifier)
@@ -575,12 +620,36 @@ struct ContentView: View {
             activeStateIDs: visibleStateIDs
         )
 
-        return store.linearIssues.filter { issue in
+        let matchingIssues = store.linearIssues.filter { issue in
             let matchesState = !hasKnownStates
                 || visibleStateIDs.contains(issue.state.id)
                 || visibleStateKeys.contains(issue.state.filterKey)
             let matchesText = tokens.isEmpty || issue.matchesFilterTokens(tokens)
             return matchesState && matchesText
+        }
+
+        switch linearIssueSortOption {
+        case .defaultOrder:
+            return matchingIssues
+        case .updated:
+            return matchingIssues.sorted { lhs, rhs in
+                (lhs.updatedAt ?? "") > (rhs.updatedAt ?? "")
+            }
+        case .priority:
+            return matchingIssues.sorted { lhs, rhs in
+                switch (lhs.priority, rhs.priority) {
+                case let (left?, right?):
+                    if left != right { return left < right }
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): break
+                }
+                return lhs.identifier.localizedCaseInsensitiveCompare(rhs.identifier) == .orderedAscending
+            }
+        case .title:
+            return matchingIssues.sorted {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
         }
     }
 
@@ -1044,61 +1113,38 @@ private extension SessionContextInfo {
 private struct LinearIssueRow: View {
     let issue: LinearIssueSummary
     let isSelected: Bool
-    let isStarting: Bool
     let onSelect: () -> Void
-    let onStart: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(issue.identifier)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    statusPill
-                    Spacer(minLength: 0)
-                }
-
-                Text(issue.title)
-                    .font(.system(size: 12, weight: .medium))
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text(issue.identifier)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isSelected ? .white : .secondary)
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                statusPill
+                Spacer(minLength: 0)
+            }
 
-                HStack(spacing: 6) {
-                    if let projectName = issue.projectName {
-                        Text(projectName)
-                    }
-                    if let priority = issue.priority, priority > 0 {
-                        Text("P\(priority)")
-                    }
-                    if let cycleName = issue.cycleName {
-                        Text(cycleName)
-                    }
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            Text(issue.title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .lineLimit(2)
                 .truncationMode(.tail)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
 
-            Button(action: onStart) {
-                if isStarting {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: "play.fill")
-                }
+            HStack(spacing: 6) {
+                metadataText(issue.projectName, fallback: "No project")
+                metadataText(issue.priorityLabel ?? priorityLabel, fallback: nil)
+                metadataText(issue.cycleName, fallback: nil)
             }
-            .buttonStyle(.banyanBorderless)
-            .frame(width: 24, height: 24)
-            .disabled(isStarting)
-            .help("Start Banyan session")
+            .font(.caption2)
+            .foregroundStyle(isSelected ? Color.white.opacity(0.82) : Color.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
         }
-        .frame(height: 52)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 72, alignment: .center)
         .padding(.horizontal, 8)
-        .foregroundStyle(isSelected ? Color.white : Color.primary)
         .background(rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -1118,16 +1164,30 @@ private struct LinearIssueRow: View {
     private var statusPill: some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(Color.linearHex(issue.state.color))
+                .fill(isSelected ? Color.white : Color.linearHex(issue.state.color))
                 .frame(width: 6, height: 6)
             Text(issue.state.name)
+                .foregroundStyle(isSelected ? Color.white : Color.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
         .font(.caption2)
-        .foregroundStyle(.secondary)
         .frame(maxWidth: 92, alignment: .leading)
         .clipped()
+    }
+
+    @ViewBuilder
+    private func metadataText(_ value: String?, fallback: String?) -> some View {
+        if let value, !value.isEmpty {
+            Text(value)
+        } else if let fallback {
+            Text(fallback)
+        }
+    }
+
+    private var priorityLabel: String? {
+        guard let priority = issue.priority, priority > 0 else { return nil }
+        return "P\(priority)"
     }
 }
 
