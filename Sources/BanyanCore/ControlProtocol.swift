@@ -79,7 +79,11 @@ public struct ControlToken {
     }
 
     public static func tokenFileURL() -> URL {
-        BanyanDataDirectory.url(for: "Banyan/control-token")
+        BanyanDataDirectory.url(
+            for: "Banyan/control-token",
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
     }
 }
 

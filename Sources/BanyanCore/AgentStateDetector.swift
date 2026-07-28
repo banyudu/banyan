@@ -59,6 +59,10 @@ public struct DetectorRule: Codable, Sendable {
     ]
 
     public static func rulesFileURL() -> URL {
-        BanyanDataDirectory.url(for: "Banyan/detectors.json")
+        BanyanDataDirectory.url(
+            for: "Banyan/detectors.json",
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
     }
 }

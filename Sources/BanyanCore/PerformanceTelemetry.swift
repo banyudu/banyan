@@ -186,7 +186,11 @@ public struct PerformanceEventStore {
     }
 
     public static func defaultDatabaseURL() -> URL {
-        BanyanDataDirectory.url(for: "Banyan/state.sqlite")
+        BanyanDataDirectory.url(
+            for: "Banyan/state.sqlite",
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        )
     }
 
     public static func thresholdMS(for name: String) -> Double {

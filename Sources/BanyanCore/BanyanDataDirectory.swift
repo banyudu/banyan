@@ -18,10 +18,14 @@ public enum BanyanDataDirectory {
         #endif
     }
 
-    public static func url(for relativePath: String) -> URL {
+    public static func url(
+        for relativePath: String,
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> URL {
         applicationSupportURL(
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: environment,
+            homeDirectory: homeDirectory
         ).appendingPathComponent(relativePath)
     }
 }
