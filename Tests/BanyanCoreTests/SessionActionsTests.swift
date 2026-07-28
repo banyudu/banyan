@@ -85,7 +85,12 @@ private struct StubHistoryBackend: SessionHistoryBackend {
         "original"
     }
 
-    func resumeCommand(provider: CodingAgentProvider, sourceID: String, cwd: String) -> String? {
+    func resumeCommand(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        prompt: String?
+    ) -> String? {
         "fake-agent --resume \(sourceID)"
     }
 

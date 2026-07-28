@@ -177,6 +177,7 @@ final class SessionStore: ObservableObject {
     private let tmuxBackend: any TmuxSessionStoreBackend
     private let processTable: @Sendable () -> ProcessTable
     private let historyLoader: @Sendable (Int) -> [ImportedAgentSession]
+    private let historyBackend: any SessionHistoryBackend
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
     /// Effective cadence the live `supervisorTimer` was installed with, so we can
@@ -234,12 +235,14 @@ final class SessionStore: ObservableObject {
         processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() },
         historyLoader: @escaping @Sendable (Int) -> [ImportedAgentSession] = { limit in
             AgentSessionHistoryImporter.load(maxPerProvider: limit)
-        }
+        },
+        historyBackend: any SessionHistoryBackend = DefaultSessionHistoryBackend()
     ) {
         self.persistence = persistence
         self.tmuxBackend = tmuxBackend
         self.processTable = processTable
         self.historyLoader = historyLoader
+        self.historyBackend = historyBackend
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
@@ -1190,7 +1193,7 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
 
-        let recoveryCommand = Self.recoveryCommand(for: session)
+        let recoveryCommand = recoveryCommand(for: session)
 
         session.recoverFromMissingBackingSessionInBackground(command: recoveryCommand)
         if select {
@@ -1205,16 +1208,17 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    private static func recoveryCommand(for session: BanyanSession) -> String? {
+    private func recoveryCommand(for session: BanyanSession) -> String? {
         guard let provider = session.agentProvider,
               let agentSessionID = session.agentSessionID,
               [.codex, .claude].contains(provider) else {
             return nil
         }
-        return AgentSessionHistoryImporter.resumeCommand(
+        return historyBackend.resumeCommand(
             provider: provider,
             sourceID: agentSessionID,
-            cwd: session.cwd
+            cwd: session.cwd,
+            prompt: nil
         )
     }
 
@@ -1262,22 +1266,29 @@ final class SessionStore: ObservableObject {
             return
         }
         let cwd = session.cwd
+        let historyBackend = historyBackend
         Task.detached(priority: .userInitiated) {
-            let prepared = TranscriptResumePreparer.prepare(provider: provider, sourceID: sourceID, cwd: cwd)
+            let preparedSourceID = historyBackend.prepareTrimmedTranscript(
+                provider: provider,
+                sourceID: sourceID,
+                cwd: cwd,
+                transcriptURL: nil
+            )
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                guard let prepared,
-                      let command = AgentSessionHistoryImporter.resumeCommand(
+                guard let preparedSourceID,
+                      let command = historyBackend.resumeCommand(
                         provider: provider,
-                        sourceID: prepared.newSourceID,
-                        cwd: cwd
+                        sourceID: preparedSourceID,
+                        cwd: cwd,
+                        prompt: nil
                       ),
                       let session = self.sessions.first(where: { $0.id == id }) else {
                     try? self.respawn(id: id)
                     return
                 }
                 session.command = command
-                session.markAgentSessionID(prepared.newSourceID)
+                session.markAgentSessionID(preparedSourceID)
                 session.reattachTerminalClient()
                 self.selectedSessionID = id
                 self.saveSessions()
@@ -1864,8 +1875,8 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
         guard let provider = history.agentProvider,
-              let sourceID = AgentSessionHistoryImporter.sourceID(fromImportedSessionID: history.id, provider: provider),
-              let command = AgentSessionHistoryImporter.resumeCommand(
+              let sourceID = historyBackend.sourceID(fromImportedSessionID: history.id, provider: provider),
+              let command = historyBackend.resumeCommand(
                 provider: provider,
                 sourceID: sourceID,
                 cwd: history.cwd,
@@ -1889,15 +1900,16 @@ final class SessionStore: ObservableObject {
     func resumeImportedHistoryTrimmed(id: String, prompt: String? = nil) {
         guard let history = sessions.first(where: { $0.id == id && $0.isImportedHistory }),
               let provider = history.agentProvider,
-              let sourceID = AgentSessionHistoryImporter.sourceID(fromImportedSessionID: history.id, provider: provider) else {
+              let sourceID = historyBackend.sourceID(fromImportedSessionID: history.id, provider: provider) else {
             _ = try? resumeImportedHistory(id: id, prompt: prompt)
             return
         }
         let cwd = history.cwd
         let title = history.displayTitle
         let transcriptURL = history.historyTranscriptURL
+        let historyBackend = historyBackend
         Task.detached(priority: .userInitiated) {
-            let prepared = TranscriptResumePreparer.prepare(
+            let preparedSourceID = historyBackend.prepareTrimmedTranscript(
                 provider: provider,
                 sourceID: sourceID,
                 cwd: cwd,
@@ -1905,10 +1917,10 @@ final class SessionStore: ObservableObject {
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                guard let prepared,
-                      let command = AgentSessionHistoryImporter.resumeCommand(
+                guard let preparedSourceID,
+                      let command = historyBackend.resumeCommand(
                         provider: provider,
-                        sourceID: prepared.newSourceID,
+                        sourceID: preparedSourceID,
                         cwd: cwd,
                         prompt: prompt
                       ) else {
@@ -1916,7 +1928,7 @@ final class SessionStore: ObservableObject {
                     return
                 }
                 self.spawn(
-                    id: "\(provider.rawValue)-\(String(prepared.newSourceID.prefix(8)))",
+                    id: "\(provider.rawValue)-\(String(preparedSourceID.prefix(8)))",
                     title: title,
                     cwd: cwd,
                     command: command,

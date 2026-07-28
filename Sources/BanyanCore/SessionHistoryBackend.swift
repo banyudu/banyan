@@ -8,7 +8,8 @@ public protocol SessionHistoryBackend: Sendable {
     func resumeCommand(
         provider: CodingAgentProvider,
         sourceID: String,
-        cwd: String
+        cwd: String,
+        prompt: String?
     ) -> String?
     func prepareTrimmedTranscript(
         provider: CodingAgentProvider,
@@ -31,9 +32,15 @@ public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
     public func resumeCommand(
         provider: CodingAgentProvider,
         sourceID: String,
-        cwd: String
+        cwd: String,
+        prompt: String? = nil
     ) -> String? {
-        AgentSessionHistory.resumeCommand(provider: provider, sourceID: sourceID, cwd: cwd)
+        AgentSessionHistory.resumeCommand(
+            provider: provider,
+            sourceID: sourceID,
+            cwd: cwd,
+            prompt: prompt
+        )
     }
 
     public func prepareTrimmedTranscript(

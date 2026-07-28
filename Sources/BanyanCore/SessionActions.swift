@@ -67,7 +67,8 @@ public struct SessionActions: Sendable, SessionListActions {
         guard let command = history.resumeCommand(
             provider: item.provider,
             sourceID: resumeSourceID,
-            cwd: item.cwd
+            cwd: item.cwd,
+            prompt: nil
         ) else {
             throw SessionActionError.unresumable(item.title)
         }
