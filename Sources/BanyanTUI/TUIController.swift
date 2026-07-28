@@ -18,7 +18,10 @@ struct BanyanTUI {
 
     init() {
         let database = SessionDatabase()
-        self.dataSource = TUISessionDataSource(database: database, tmux: TmuxBackend.shared)
+        self.dataSource = TUISessionDataSource(
+            persistence: database,
+            backend: TmuxBackend.shared
+        )
         self.actions = TUISessionActions(
             database: database,
             tmux: TmuxBackend.shared,
@@ -160,5 +163,4 @@ struct BanyanTUI {
     }
 
 }
-
 
