@@ -279,12 +279,7 @@ public enum SessionContextResolver {
             "\(NSHomeDirectory())/go/bin",
             "\(NSHomeDirectory())/.nix-profile/bin",
             "/nix/var/nix/profiles/default/bin",
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin"
-        ]
+        ] + HostExecutablePaths.systemPaths()
         return AppProcessEnvironment.make(pathAdditions: additions)
     }
 }
-

@@ -245,12 +245,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
     }
 
     private static func resolveExecutableURL() -> URL? {
-        let candidates = [
-            "/opt/homebrew/bin/tmux",
-            "/usr/local/bin/tmux",
-            "/usr/bin/tmux",
-            "/bin/tmux"
-        ]
+        let candidates = HostExecutablePaths.systemPaths()
+            .map { "\($0)/tmux" }
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return URL(fileURLWithPath: path)
         }
@@ -277,7 +273,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
 
     private static func processEnvironment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
-        let additions = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        let additions = HostExecutablePaths.systemPaths()
         let currentPath = environment["PATH"] ?? ""
         let merged = (additions + currentPath.split(separator: ":").map(String.init))
             .reduce(into: [String]()) { paths, path in
