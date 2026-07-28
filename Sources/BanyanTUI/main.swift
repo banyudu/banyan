@@ -12,6 +12,8 @@ private struct BanyanTUI {
     private let tmux = TmuxBackend.shared
     private let catalog: SessionCatalog
     private var sessions: [SessionSnapshot] = []
+    private var history: [ImportedAgentSession] = []
+    private var showingHistory = false
     private var selectedIndex = 0
     private var notice: String?
 
@@ -34,23 +36,31 @@ private struct BanyanTUI {
             switch byte {
             case 113: // q
                 return
+            case 104: // h
+                showingHistory.toggle()
+                selectedIndex = 0
+                continue
             case 106: // j
-                selectedIndex = min(selectedIndex + 1, max(0, sessions.count - 1))
+                selectedIndex = min(selectedIndex + 1, max(0, visibleRowCount - 1))
             case 107: // k
                 selectedIndex = max(0, selectedIndex - 1)
             case 114: // r
                 continue
             case 82: // R
-                recoverSelected()
+                if !showingHistory { recoverSelected() }
             case 110: // n
-                createShellSession()
+                if !showingHistory { createShellSession() }
             case 99: // c
-                closeSelected()
+                if !showingHistory { closeSelected() }
             case 120: // x
-                removeSelected()
+                if !showingHistory { removeSelected() }
             case 10, 13: // return
                 terminal.restore()
-                attachSelected()
+                if showingHistory {
+                    resumeHistorySelected()
+                } else {
+                    attachSelected()
+                }
                 terminal.enterRaw()
             default:
                 continue
@@ -59,6 +69,11 @@ private struct BanyanTUI {
     }
 
     private mutating func reload() {
+        if showingHistory {
+            history = AgentSessionHistoryImporter.load(maxPerProvider: 30)
+            selectedIndex = min(selectedIndex, max(0, history.count - 1))
+            return
+        }
         let stored = database.load()
         let processTable = ProcessTable.snapshot()
         let synchronizer = SessionStatusSynchronizer(
@@ -71,21 +86,33 @@ private struct BanyanTUI {
         selectedIndex = min(selectedIndex, max(0, sessions.count - 1))
     }
 
+    private var visibleRowCount: Int {
+        showingHistory ? history.count : sessions.count
+    }
+
     private func render() {
         let selected = sessions.indices.contains(selectedIndex) ? sessions[selectedIndex] : nil
         var output = "\u{1b}[2J\u{1b}[H"
-        output += "Banyan TUI  j/k navigate  enter attach  R recover  n new  c close  x remove  r refresh  q quit\n"
+        let mode = showingHistory ? "active" : "history"
+        let enterAction = showingHistory ? "resume" : "attach"
+        output += "Banyan TUI  h \(mode)  j/k navigate  enter \(enterAction)  R recover  n new  c close  x remove  r refresh  q quit\n"
         if let notice { output += "\(notice)\n" }
         output += "\n"
 
         let sidebarWidth = 34
-        output += "Sessions".padding(toLength: sidebarWidth, withPad: " ", startingAt: 0)
+        output += (showingHistory ? "History" : "Sessions").padding(toLength: sidebarWidth, withPad: " ", startingAt: 0)
         output += "│ Terminal\n"
         output += String(repeating: "─", count: sidebarWidth) + "┼" + String(repeating: "─", count: 45) + "\n"
 
-        let maxRows = max(sessions.count, 1)
+        let maxRows = max(visibleRowCount, 1)
         for row in 0..<maxRows {
-            if row < sessions.count {
+            if showingHistory, row < history.count {
+                let item = history[row]
+                let marker = row == selectedIndex ? ">" : " "
+                let label = "\(marker) ◷ \(item.title)"
+                output += label.padding(toLength: sidebarWidth, withPad: " ", startingAt: 0)
+                output += "│ Enter to resume"
+            } else if row < sessions.count {
                 let session = sessions[row]
                 let marker = row == selectedIndex ? ">" : " "
                 let label = "\(marker) \(session.status.emoji) \(session.title)"
@@ -95,7 +122,8 @@ private struct BanyanTUI {
                     output += terminalText(for: selected)
                 }
             } else {
-                output += "(no active sessions)".padding(toLength: sidebarWidth, withPad: " ", startingAt: 0)
+                let emptyLabel = showingHistory ? "(no history)" : "(no active sessions)"
+                output += emptyLabel.padding(toLength: sidebarWidth, withPad: " ", startingAt: 0)
                 output += "│"
             }
             output += "\n"
@@ -137,6 +165,50 @@ private struct BanyanTUI {
             process.waitUntilExit()
         } catch {
             print("Unable to attach to \(name): \(error.localizedDescription)")
+        }
+    }
+
+    private mutating func resumeHistorySelected() {
+        guard history.indices.contains(selectedIndex) else { return }
+        let item = history[selectedIndex]
+        guard let sourceID = AgentSessionHistory.sourceID(
+            fromImportedSessionID: item.id,
+            provider: item.provider
+        ), let command = AgentSessionHistory.resumeCommand(
+            provider: item.provider,
+            sourceID: sourceID,
+            cwd: item.cwd
+        ) else {
+            notice = "Unable to resume \(item.title)"
+            return
+        }
+
+        let id = uniqueSessionID(prefix: "\(item.provider.rawValue)-\(sourceID.prefix(8))")
+        let now = Date()
+        let request = SessionLaunchRequest(
+            sessionName: TmuxBackend.sessionName(for: id),
+            cwd: item.cwd,
+            command: command
+        )
+        let snapshot = SessionSnapshot(
+            id: id,
+            tmuxSessionName: request.sessionName,
+            title: item.title,
+            reportedTitle: item.title,
+            cwd: item.cwd,
+            command: command,
+            status: .running,
+            tone: .blue,
+            createdAt: now,
+            updatedAt: now
+        )
+        do {
+            try catalog.create(snapshot: snapshot, launchRequest: request)
+            showingHistory = false
+            selectedIndex = 0
+            notice = "Resumed \(item.title)"
+        } catch {
+            notice = "Unable to resume \(item.title): \(error.localizedDescription)"
         }
     }
 
@@ -199,12 +271,12 @@ private struct BanyanTUI {
         notice = "Removed \(session.id)"
     }
 
-    private func uniqueSessionID() -> String {
+    private func uniqueSessionID(prefix: String = "tui-shell") -> String {
         let existingIDs = Set(database.load().map(\.id))
-        var candidate = "tui-shell"
+        var candidate = prefix
         var suffix = 2
         while existingIDs.contains(candidate) || tmux.hasSession(named: TmuxBackend.sessionName(for: candidate)) {
-            candidate = "tui-shell-\(suffix)"
+            candidate = "\(prefix)-\(suffix)"
             suffix += 1
         }
         return candidate
