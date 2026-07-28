@@ -1,12 +1,14 @@
-import BanyanCore
 import Foundation
 
-enum ExternalSessionTitleGenerator {
-    static var isConfigured: Bool {
+/// Generates an optional session title through the user's configured command.
+/// The command receives a JSON description of the session on standard input and
+/// returns the title on its first output line.
+public enum ExternalSessionTitleGenerator {
+    public static var isConfigured: Bool {
         configuredCommand != nil
     }
 
-    static func generateTitle(for context: SessionTitleContext) -> String? {
+    public static func generateTitle(for context: SessionTitleContext) -> String? {
         guard let command = configuredCommand else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
