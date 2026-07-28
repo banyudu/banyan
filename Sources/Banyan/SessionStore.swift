@@ -177,6 +177,7 @@ final class SessionStore: ObservableObject {
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
     private let detector = AgentStateDetector()
     private let tmuxBackend: any TmuxSessionDiscoveryBackend
+    private let processTable: @Sendable () -> ProcessTable
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
     /// Effective cadence the live `supervisorTimer` was installed with, so we can
@@ -228,8 +229,12 @@ final class SessionStore: ObservableObject {
     private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
     private var isClosingScratchTerminal = false
 
-    init(tmuxBackend: any TmuxSessionDiscoveryBackend = TmuxBackend.shared) {
+    init(
+        tmuxBackend: any TmuxSessionDiscoveryBackend = TmuxBackend.shared,
+        processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() }
+    ) {
         self.tmuxBackend = tmuxBackend
+        self.processTable = processTable
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
@@ -2580,6 +2585,7 @@ final class SessionStore: ObservableObject {
 
         isSupervisorTickRunning = true
         let backend = tmuxBackend
+        let processTable = processTable()
 
         Task.detached(priority: .utility) { [weak self] in
             // Time the whole tick: `ps` snapshot + per-session tmux inspection. This
@@ -2588,7 +2594,7 @@ final class SessionStore: ObservableObject {
             let tickStartedAt = DispatchTime.now()
             let synchronizer = SessionStatusSynchronizer(
                 backend: backend,
-                processTable: ProcessTable.snapshot()
+                processTable: processTable
             )
             let results = synchronizer.observe(inputs)
 
