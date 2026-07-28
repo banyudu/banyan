@@ -28,7 +28,7 @@ enum LinearIssuePanelPresentation {
         case .sidebar:
             return nil
         case .main:
-            return 860
+            return 920
         }
     }
 }
@@ -46,6 +46,7 @@ struct LinearIssuePanel: View {
     let isStarting: Bool
     let presentation: LinearIssuePanelPresentation
     @State private var selectedStateID: String?
+    @State private var expandedCommentIDs: Set<String> = []
 
     init(
         context: SessionContextInfo,
@@ -192,42 +193,14 @@ struct LinearIssuePanel: View {
 
     private func issueContent(_ issue: LinearIssueDetails, statusMessage: String? = nil) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(issue.title)
-                        .font(.headline)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
+            VStack(alignment: .leading, spacing: 24) {
+                issueHero(issue)
 
                 metadataGrid(issue)
 
-                if !issue.workflowStates.isEmpty {
-                    HStack(spacing: 8) {
-                        sectionTitle("Status")
-                            .frame(width: 54, alignment: .leading)
-                        Picker("Status", selection: statusSelectionBinding(issue)) {
-                            ForEach(issue.workflowStates) { state in
-                                Label {
-                                    Text(state.name)
-                                } icon: {
-                                    Circle()
-                                        .fill(Color.linearHex(state.color))
-                                }
-                                .tag(state.id)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .controlSize(.small)
-                        .disabled(loadState.isBusy)
-                        .help("Change Linear status")
-                    }
-                }
-
                 if let description = issue.description?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !description.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         sectionTitle("Description")
                         MarkdownText(description, onToggleTask: onToggleTask)
                             .disabled(loadState.isBusy)
@@ -236,7 +209,7 @@ struct LinearIssuePanel: View {
                 }
 
                 if !issue.labels.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         sectionTitle("Labels")
                         FlowLayout(spacing: 6) {
                             ForEach(issue.labels) { label in
@@ -257,7 +230,7 @@ struct LinearIssuePanel: View {
                 }
 
                 if !issue.attachments.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         sectionTitle("Links")
                         ForEach(issue.attachments) { attachment in
                             Button {
@@ -279,16 +252,10 @@ struct LinearIssuePanel: View {
                 }
 
                 if !issue.comments.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 12) {
                         sectionTitle("Recent Comments")
                         ForEach(issue.comments) { comment in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(comment.userName ?? "Unknown")
-                                    .font(.caption.weight(.semibold))
-                                MarkdownText(comment.body, style: .comment)
-                                    .lineLimit(8)
-                            }
-                            .padding(.vertical, 2)
+                            commentView(comment)
                         }
                     }
                 }
@@ -318,6 +285,103 @@ struct LinearIssuePanel: View {
             Button("Retry", action: onRetryDescription).buttonStyle(.banyanBordered).controlSize(.small)
         }
         .font(.caption).foregroundStyle(.red).padding(.horizontal, 14).padding(.top, 10)
+    }
+
+    private func issueHero(_ issue: LinearIssueDetails) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(issue.identifier)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+
+                Spacer(minLength: 8)
+
+                if !issue.workflowStates.isEmpty {
+                    statusControl(issue)
+                }
+            }
+
+            Text(issue.title)
+                .font(presentation == .main ? .title2.weight(.semibold) : .title3.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func statusControl(_ issue: LinearIssueDetails) -> some View {
+        Picker("Status", selection: statusSelectionBinding(issue)) {
+            ForEach(issue.workflowStates) { state in
+                Label {
+                    Text(state.name)
+                } icon: {
+                    Circle()
+                        .fill(Color.linearHex(state.color))
+                }
+                .tag(state.id)
+            }
+        }
+        .pickerStyle(.menu)
+        .controlSize(.small)
+        .disabled(loadState.isBusy)
+        .help("Change Linear status")
+        .accessibilityIdentifier(AccessibilityID.linearIssueStatusPicker)
+    }
+
+    private func commentView(_ comment: LinearIssueComment) -> some View {
+        let isExpanded = expandedCommentIDs.contains(comment.id)
+        let isLong = comment.body.count > 420 || comment.body.split(separator: "\n").count > 8
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(comment.userName ?? "Unknown")
+                    .font(.caption.weight(.semibold))
+                if let timestamp = comment.relativeTimestamp {
+                    Text(timestamp)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if isLong {
+                DisclosureGroup(isExpanded: commentExpansionBinding(for: comment.id)) {
+                    MarkdownText(comment.body, style: .comment)
+                        .padding(.top, 4)
+                } label: {
+                    MarkdownText(comment.body, style: .comment)
+                        .frame(maxHeight: isExpanded ? nil : 112, alignment: .top)
+                        .clipped()
+                        .overlay(alignment: .bottom) {
+                            if !isExpanded {
+                                LinearGradient(
+                                    colors: [.clear, Color(nsColor: .windowBackgroundColor)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                .frame(height: 28)
+                                .allowsHitTesting(false)
+                            }
+                        }
+                }
+            } else {
+                MarkdownText(comment.body, style: .comment)
+            }
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func commentExpansionBinding(for id: String) -> Binding<Bool> {
+        Binding {
+            expandedCommentIDs.contains(id)
+        } set: { isExpanded in
+            if isExpanded {
+                expandedCommentIDs.insert(id)
+            } else {
+                expandedCommentIDs.remove(id)
+            }
+        }
     }
 
     private func statusSelectionBinding(_ issue: LinearIssueDetails) -> Binding<String> {
@@ -403,5 +467,17 @@ struct LinearIssuePanel: View {
         case .failed:
             return "Needs Linear auth"
         }
+    }
+}
+
+private extension LinearIssueComment {
+    var relativeTimestamp: String? {
+        guard let createdAt,
+              let date = ISO8601DateFormatter().date(from: createdAt) else {
+            return nil
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }

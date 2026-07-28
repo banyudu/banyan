@@ -11,6 +11,7 @@ enum AccessibilityID {
     static let linearIssuePanel = "banyan.linear.panel"
     static let linearIssueRefreshButton = "banyan.linear.refresh"
     static let linearIssueOpenButton = "banyan.linear.open"
+    static let linearIssueStatusPicker = "banyan.linear.status"
     static let githubIssuePanel = "banyan.github-issue.panel"
     static let githubIssueRefreshButton = "banyan.github-issue.refresh"
     static let githubIssueOpenButton = "banyan.github-issue.open"

@@ -816,7 +816,7 @@ final class SessionStore: ObservableObject {
                         self.linearIssueDetailsCache[issueID] != nil
                         || self.selectedLinearListIssueDetails?.identifier == issueID
                         ? .loaded
-                        : .failed("Unable to load issue details")
+                        : .failed(LinearIssueClient.message(for: error))
                 }
             }
         }
@@ -864,7 +864,7 @@ final class SessionStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self, self.selectedLinearListIssueID == issueID else { return }
                     self.selectedLinearListIssueTask = nil
-                    self.selectedLinearListIssueLoadState = .failed("Unable to update issue state")
+                    self.selectedLinearListIssueLoadState = .failed(LinearIssueClient.message(for: error, action: "update"))
                 }
             }
         }
@@ -1594,7 +1594,7 @@ final class SessionStore: ObservableObject {
                         self.selectedLinearIssueLoadState = .loaded
                         self.startSelectedLinearIssueStatusRefreshIfNeeded()
                     } else {
-                        self.selectedLinearIssueLoadState = .failed("Unable to load issue details")
+                        self.selectedLinearIssueLoadState = .failed(LinearIssueClient.message(for: error))
                         self.stopSelectedLinearIssueStatusRefresh()
                     }
                 }
@@ -1639,7 +1639,7 @@ final class SessionStore: ObservableObject {
                           self.selectedLinearIssueIdentifier == issueID else {
                         return
                     }
-                    self.selectedLinearIssueLoadState = .failed("Unable to update issue state")
+                    self.selectedLinearIssueLoadState = .failed(LinearIssueClient.message(for: error, action: "update"))
                 }
             }
         }
