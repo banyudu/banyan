@@ -8,6 +8,7 @@ import Testing
         reportedTitle: "Reported",
         generatedTitle: "Generated",
         cwd: "/tmp/project",
+        homeDirectory: "/home/test",
         detectedProvider: .codex,
         command: "codex"
     ) == "Pinned")
@@ -17,6 +18,7 @@ import Testing
         reportedTitle: "Reported",
         generatedTitle: "Generated",
         cwd: "/tmp/project",
+        homeDirectory: "/home/test",
         detectedProvider: .codex,
         command: "codex"
     ) == "Reported")
@@ -26,6 +28,7 @@ import Testing
         reportedTitle: nil,
         generatedTitle: "Generated",
         cwd: "/tmp/project",
+        homeDirectory: "/home/test",
         detectedProvider: nil,
         command: ""
     ) == "Generated")

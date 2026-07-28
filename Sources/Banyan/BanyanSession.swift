@@ -111,6 +111,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             reportedTitle: reportedTitle,
             generatedTitle: generatedTitle,
             cwd: cwd,
+            homeDirectory: NSHomeDirectory(),
             detectedProvider: detectedAgentProvider,
             command: command
         )
@@ -748,7 +749,8 @@ final class BanyanSession: ObservableObject, Identifiable {
         SessionDisplayPolicy.hasUsefulPinnedTitle(
             title: title,
             isTitlePinned: isTitlePinned,
-            cwd: cwd
+            cwd: cwd,
+            homeDirectory: NSHomeDirectory()
         )
     }
 

@@ -26,10 +26,16 @@ public enum SessionDisplayPolicy {
         reportedTitle: String?,
         generatedTitle: String?,
         cwd: String,
+        homeDirectory: String,
         detectedProvider: CodingAgentProvider?,
         command: String
     ) -> String {
-        if hasUsefulPinnedTitle(title: title, isTitlePinned: isTitlePinned, cwd: cwd) {
+        if hasUsefulPinnedTitle(
+            title: title,
+            isTitlePinned: isTitlePinned,
+            cwd: cwd,
+            homeDirectory: homeDirectory
+        ) {
             return title
         }
 
@@ -47,12 +53,13 @@ public enum SessionDisplayPolicy {
     public static func hasUsefulPinnedTitle(
         title: String,
         isTitlePinned: Bool,
-        cwd: String
+        cwd: String,
+        homeDirectory: String
     ) -> Bool {
         guard isTitlePinned else { return false }
         let cleanedTitle = SessionTitleGenerator.sanitizeTitle(title) ?? ""
         guard SessionTitleGenerator.isUsefulTitle(cleanedTitle) else { return false }
-        return cleanedTitle != PathDisplayName.make(path: cwd, homeDirectory: NSHomeDirectory())
+        return cleanedTitle != PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
     }
 
     public static func usefulAgentTitle(_ title: String?) -> String? {
