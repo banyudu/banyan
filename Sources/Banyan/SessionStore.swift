@@ -165,7 +165,7 @@ final class SessionStore: ObservableObject {
     private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
 
     private var controlServer: ControlServer?
-    private let persistence = SessionPersistence()
+    private let persistence: any SessionStorePersistenceBackend
     /// Serial queue for the SQLite session write, keeping the full-table rewrite off
     /// the main thread. Serial + ordered so concurrent saves can't collide on the
     /// `BEGIN IMMEDIATE` transaction.
@@ -229,12 +229,14 @@ final class SessionStore: ObservableObject {
     private var isClosingScratchTerminal = false
 
     init(
+        persistence: any SessionStorePersistenceBackend = SessionPersistence(),
         tmuxBackend: any TmuxSessionStoreBackend = TmuxBackend.shared,
         processTable: @escaping @Sendable () -> ProcessTable = { ProcessTable.snapshot() },
         historyLoader: @escaping @Sendable (Int) -> [ImportedAgentSession] = { limit in
             AgentSessionHistoryImporter.load(maxPerProvider: limit)
         }
     ) {
+        self.persistence = persistence
         self.tmuxBackend = tmuxBackend
         self.processTable = processTable
         self.historyLoader = historyLoader

@@ -18,7 +18,14 @@ struct LinearIssueListCacheSnapshot: Codable {
 
 /// macOS-specific facade for the shared session database. It owns only the
 /// serialization policy for workspace preferences and Linear cache data.
-struct SessionPersistence: SessionPersistenceBackend, Sendable {
+protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
+    func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot
+    func saveWorkspace(_ workspace: WorkspaceSnapshot)
+    func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot?
+    func saveLinearIssueListCache(_ snapshot: LinearIssueListCacheSnapshot)
+}
+
+struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
     private static let linearIssueListCacheKey = "linearIssueListCache"
 
     private let sessionDatabase: SessionDatabase
