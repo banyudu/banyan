@@ -173,7 +173,7 @@ final class SessionStore: ObservableObject {
     /// Last snapshot set written to disk; lets `saveSessions()` skip the frequent
     /// no-op saves (e.g. every supervisor tick) that re-serialized unchanged state.
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
-    private let detector = AgentStateDetector(rules: DetectorRule.loadConfiguredRules())
+    private let detector: AgentStateDetector
     private let tmuxBackend: any TmuxSessionStoreBackend
     private let sessionBackend: any TmuxClientBackend
     private let processTable: any ProcessTableProvider
@@ -234,13 +234,15 @@ final class SessionStore: ObservableObject {
         tmuxBackend: any TmuxSessionStoreBackend,
         sessionBackend: any TmuxClientBackend,
         processTable: any ProcessTableProvider,
-        historyBackend: any SessionHistoryBackend
+        historyBackend: any SessionHistoryBackend,
+        detector: AgentStateDetector
     ) {
         self.persistence = persistence
         self.tmuxBackend = tmuxBackend
         self.sessionBackend = sessionBackend
         self.processTable = processTable
         self.historyBackend = historyBackend
+        self.detector = detector
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),

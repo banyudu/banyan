@@ -36,8 +36,11 @@ public struct DetectorRule: Codable, Sendable {
         patterns.contains { text.contains($0) }
     }
 
-    public static func loadConfiguredRules() -> [DetectorRule] {
-        let url = rulesFileURL()
+    public static func loadConfiguredRules(
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> [DetectorRule] {
+        let url = rulesFileURL(environment: environment, homeDirectory: homeDirectory)
         if let data = try? Data(contentsOf: url) {
             let decoder = JSONDecoder()
             if let rules = try? decoder.decode([DetectorRule].self, from: data), !rules.isEmpty {
@@ -58,11 +61,14 @@ public struct DetectorRule: Codable, Sendable {
         ])
     ]
 
-    public static func rulesFileURL() -> URL {
+    public static func rulesFileURL(
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> URL {
         BanyanDataDirectory.url(
             for: "Banyan/detectors.json",
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: environment,
+            homeDirectory: homeDirectory
         )
     }
 }

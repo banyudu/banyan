@@ -11,6 +11,12 @@ struct BanyanApp: App {
         processTable: LiveProcessTableProvider(),
         historyBackend: DefaultSessionHistoryBackend(
             homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        ),
+        detector: AgentStateDetector(
+            rules: DetectorRule.loadConfiguredRules(
+                environment: ProcessInfo.processInfo.environment,
+                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            )
         )
     )
 
