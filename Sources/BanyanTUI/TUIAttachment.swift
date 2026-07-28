@@ -21,18 +21,20 @@ struct InteractiveProcessRunner: TUIProcessRunner {
 struct TUIAttachment {
     let tmux: any TmuxAttachmentBackend
     let processRunner: any TUIProcessRunner
+    let output: any TUIOutput
 
     init(
         tmux: any TmuxAttachmentBackend,
-        processRunner: any TUIProcessRunner = InteractiveProcessRunner()
+        processRunner: any TUIProcessRunner = InteractiveProcessRunner(),
+        output: any TUIOutput = StandardTUIOutput()
     ) {
         self.tmux = tmux
         self.processRunner = processRunner
+        self.output = output
     }
 
     func attach(to sessionName: String) {
-        print("\u{1b}[2J\u{1b}[H", terminator: "")
-        fflush(stdout)
+        output.write("\u{1b}[2J\u{1b}[H", terminator: "")
 
         do {
             try processRunner.run(
@@ -40,7 +42,7 @@ struct TUIAttachment {
                 arguments: tmux.attachArguments(for: sessionName)
             )
         } catch {
-            print("Unable to attach to \(sessionName): \(error.localizedDescription)")
+            output.write("Unable to attach to \(sessionName): \(error.localizedDescription)", terminator: "\n")
         }
     }
 }

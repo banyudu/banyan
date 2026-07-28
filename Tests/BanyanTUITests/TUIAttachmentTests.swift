@@ -5,15 +5,26 @@ import Testing
 
 @Test func attachmentPassesTmuxInvocationToTheProcessRunner() {
     let runner = RecordingProcessRunner()
+    let output = RecordingOutput()
     let attachment = TUIAttachment(
         tmux: AttachmentBackend(),
-        processRunner: runner
+        processRunner: runner,
+        output: output
     )
 
     attachment.attach(to: "banyan-session")
 
     #expect(runner.executableURL == URL(fileURLWithPath: "/usr/bin/tmux"))
     #expect(runner.arguments == ["attach-session", "-t", "banyan-session"])
+    #expect(output.text == "\u{1b}[2J\u{1b}[H")
+}
+
+private final class RecordingOutput: TUIOutput, @unchecked Sendable {
+    var text = ""
+
+    func write(_ text: String, terminator: String) {
+        self.text += text + terminator
+    }
 }
 
 private struct AttachmentBackend: TmuxAttachmentBackend {

@@ -1,30 +1,27 @@
 import BanyanCore
 import Foundation
 
-#if canImport(Glibc)
-import Glibc
-#elseif canImport(Darwin)
-import Darwin
-#endif
-
 struct BanyanTUI {
     private let tmux: any TmuxTerminalBackend
     private let attachment: TUIAttachment
     private let actions: any SessionListActions
     private let input: any TUIInput
+    private let output: any TUIOutput
     private var model: SessionListModel
 
     init(
         backend: any TmuxTerminalBackend,
         dataSource: any SessionListDataSource,
         actions: any SessionListActions,
-        input: any TUIInput
+        input: any TUIInput,
+        output: any TUIOutput
     ) {
         self.tmux = backend
-        self.attachment = TUIAttachment(tmux: backend)
+        self.attachment = TUIAttachment(tmux: backend, output: output)
         self.model = SessionListModel(dataSource: dataSource)
         self.actions = actions
         self.input = input
+        self.output = output
     }
 
     init(backend: any TmuxTerminalBackend = TmuxBackend.shared) {
@@ -43,7 +40,8 @@ struct BanyanTUI {
                     runtime: SessionRuntimeCoordinator(backend: backend)
                 )
             ),
-            input: TerminalMode()
+            input: TerminalMode(),
+            output: StandardTUIOutput()
         )
     }
 
@@ -106,8 +104,7 @@ struct BanyanTUI {
             notice: model.notice,
             tmux: tmux
         )
-        print(output, terminator: "")
-        fflush(stdout)
+        self.output.write(output, terminator: "")
     }
 
     private func attachSelected() {
