@@ -1,6 +1,13 @@
 import AppKit
+import BanyanCore
 import SwiftUI
 import SwiftTerm
+
+extension TmuxBackend {
+    func configureTerminalTheme(_ theme: TerminalTheme, for sessionName: String? = nil) {
+        configureTerminalTheme(style: theme.tmuxDefaultStyle, for: sessionName)
+    }
+}
 
 enum TerminalTheme: String, CaseIterable, Identifiable {
     case system

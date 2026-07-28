@@ -1,12 +1,11 @@
-import BanyanCore
 import Foundation
 
-struct TmuxBackend: Sendable {
-    enum BackendError: LocalizedError {
+public struct TmuxBackend: Sendable, AgentSupervisorBackend {
+    public enum BackendError: LocalizedError {
         case tmuxNotFound
         case commandFailed([String], String)
 
-        var errorDescription: String? {
+        public var errorDescription: String? {
             switch self {
             case .tmuxNotFound:
                 return "tmux is not installed or could not be found in PATH"
@@ -16,10 +15,10 @@ struct TmuxBackend: Sendable {
         }
     }
 
-    static let shared = TmuxBackend()
-    static let socketName = "banyan"
+    public static let shared = TmuxBackend()
+    public static let socketName = "banyan"
 
-    let executableURL: URL
+    public let executableURL: URL
 
     private init() {
         guard let url = Self.resolveExecutableURL() else {
@@ -28,29 +27,29 @@ struct TmuxBackend: Sendable {
         self.executableURL = url
     }
 
-    static func sessionName(for id: String) -> String {
+    public static func sessionName(for id: String) -> String {
         "banyan-\(id)"
     }
 
-    func hasSession(named name: String) -> Bool {
+    public func hasSession(named name: String) -> Bool {
         (try? run(["has-session", "-t", name])) != nil
     }
 
-    func attachArguments(for name: String) -> [String] {
+    public func attachArguments(for name: String) -> [String] {
         baseArguments + ["attach-session", "-t", name]
     }
 
-    func configureTerminalTheme(_ theme: TerminalTheme, for sessionName: String? = nil) {
+    public func configureTerminalTheme(style: String, for sessionName: String? = nil) {
         let targetArguments: [String]
         if let sessionName {
             targetArguments = ["-t", sessionName]
         } else {
             targetArguments = ["-g"]
         }
-        _ = try? run(["set-option"] + targetArguments + ["window-style", theme.tmuxDefaultStyle])
+        _ = try? run(["set-option"] + targetArguments + ["window-style", style])
     }
 
-    func listBanyanSessions() -> [String] {
+    public func listBanyanSessions() -> [String] {
         guard let output = try? run(["list-sessions", "-F", "#{session_name}"]) else {
             return []
         }
@@ -60,7 +59,7 @@ struct TmuxBackend: Sendable {
             .filter { $0.hasPrefix("banyan-") }
     }
 
-    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? {
+    public func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? {
         let format = [
             "#{pane_id}",
             "#{pane_pid}",
@@ -89,12 +88,12 @@ struct TmuxBackend: Sendable {
         )
     }
 
-    func captureVisibleText(paneID: String, lineLimit: Int = 80) -> String {
+    public func captureVisibleText(paneID: String, lineLimit: Int = 80) -> String {
         let start = "-\(max(1, lineLimit))"
         return (try? run(["capture-pane", "-p", "-J", "-t", paneID, "-S", start])) ?? ""
     }
 
-    func captureCurrentVisibleText(paneID: String) -> String {
+    public func captureCurrentVisibleText(paneID: String) -> String {
         (try? run(["capture-pane", "-p", "-J", "-t", paneID])) ?? ""
     }
 
@@ -109,7 +108,7 @@ struct TmuxBackend: Sendable {
     ///
     /// `copy-mode -e` exits automatically once the user scrolls back to the bottom,
     /// which keeps the pane out of a modal state we would otherwise have to unwind.
-    func scrollHistory(paneID: String, lines: Int, up: Bool) {
+    public func scrollHistory(paneID: String, lines: Int, up: Bool) {
         guard lines > 0 else { return }
         scrollQueue.async { [self] in
             if up {
@@ -124,7 +123,7 @@ struct TmuxBackend: Sendable {
         }
     }
 
-    func refreshClients(attachedTo name: String) {
+    public func refreshClients(attachedTo name: String) {
         guard let output = try? run(["list-clients", "-t", name, "-F", "#{client_name}"]) else {
             return
         }
@@ -133,7 +132,7 @@ struct TmuxBackend: Sendable {
         }
     }
 
-    func ensureSession(named name: String, cwd: String, command: String) throws {
+    public func ensureSession(named name: String, cwd: String, command: String) throws {
         // Most global options only need to be applied when the server starts.
         // The server lives as long as it has ≥1 session, but terminal capability
         // settings must also be migrated when the app is upgraded underneath an
@@ -167,7 +166,7 @@ struct TmuxBackend: Sendable {
         configureSessionOptions(named: name)
     }
 
-    func killSession(named name: String) {
+    public func killSession(named name: String) {
         _ = try? run(["kill-session", "-t", name])
     }
 
@@ -299,5 +298,3 @@ struct TmuxBackend: Sendable {
         return environment
     }
 }
-
-extension TmuxBackend: AgentSupervisorBackend {}
