@@ -185,11 +185,14 @@ public struct PerformanceEventStore {
         return lines.joined(separator: "\n")
     }
 
-    public static func defaultDatabaseURL() -> URL {
+    public static func defaultDatabaseURL(
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> URL {
         BanyanDataDirectory.url(
             for: "Banyan/state.sqlite",
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: environment,
+            homeDirectory: homeDirectory
         )
     }
 
@@ -361,7 +364,10 @@ public struct PerformanceEventStore {
 
 public final class PerformanceTelemetry: @unchecked Sendable {
     public static let shared = PerformanceTelemetry(
-        store: PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL())
+        store: PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+        ))
     )
 
     private struct ActiveSpan {
