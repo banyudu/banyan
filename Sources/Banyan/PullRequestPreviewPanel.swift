@@ -1,4 +1,5 @@
 import AppKit
+import BanyanCore
 import SwiftUI
 
 struct PullRequestPreviewPanel: View {

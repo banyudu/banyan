@@ -1,3 +1,4 @@
+import BanyanCore
 import SwiftUI
 
 struct GitHubIssuePanel: View {
