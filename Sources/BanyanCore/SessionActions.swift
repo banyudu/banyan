@@ -27,9 +27,7 @@ public struct SessionActions: Sendable, SessionListActions {
         self.history = history
     }
 
-    public func createShellSession(
-        cwd: String = FileManager.default.currentDirectoryPath
-    ) throws -> String {
+    public func createShellSession(cwd: String) throws -> String {
         let id = uniqueSessionID()
         let now = Date()
         let snapshot = SessionSnapshot(
