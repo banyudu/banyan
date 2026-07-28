@@ -66,13 +66,7 @@ private enum HandoffDispatchError: Error {
     case failed(Int32)
 }
 
-struct LivePromptTitleMatchInput: Equatable {
-    let id: String
-    let cwd: String
-    let createdAt: Date
-    let resetAt: Date?
-    let provider: CodingAgentProvider?
-}
+typealias LivePromptTitleMatchInput = AgentSessionMatchInput
 
 @MainActor
 final class SessionStore: ObservableObject {
@@ -2493,9 +2487,11 @@ final class SessionStore: ObservableObject {
         status: SessionStatus,
         provider: CodingAgentProvider?
     ) -> Bool {
-        guard !isImportedHistory, status != .closed else { return false }
-        guard let provider else { return true }
-        return [.claude, .codex].contains(provider)
+        AgentSessionMatcher.participatesInLiveAgentMatch(
+            isImportedHistory: isImportedHistory,
+            status: status,
+            provider: provider
+        )
     }
 
     private func refreshLiveAgentTitles(from imported: [ImportedAgentSession]) {
@@ -2551,25 +2547,13 @@ final class SessionStore: ObservableObject {
         provider: CodingAgentProvider?,
         in candidates: [ImportedAgentSession]
     ) -> ImportedAgentSession? {
-        let sessionCWD = standardizedPath(sessionCWD)
-        let matchWindow: TimeInterval = 5 * 60
-        let resetWindow: TimeInterval = 30
-        let matchingCandidates = candidates.filter {
-            (provider == nil || $0.provider == provider)
-                && standardizedPath($0.cwd) == sessionCWD
-        }
-
-        if let sessionResetAt {
-            return matchingCandidates
-                .filter { $0.updatedAt >= sessionResetAt.addingTimeInterval(-resetWindow) }
-                .max { $0.updatedAt < $1.updatedAt }
-        }
-
-        return matchingCandidates
-            .filter { abs($0.createdAt.timeIntervalSince(sessionCreatedAt)) <= matchWindow }
-            .min {
-                abs($0.createdAt.timeIntervalSince(sessionCreatedAt)) < abs($1.createdAt.timeIntervalSince(sessionCreatedAt))
-            }
+        AgentSessionMatcher.bestPromptTitleMatch(
+            sessionCWD: sessionCWD,
+            sessionCreatedAt: sessionCreatedAt,
+            sessionResetAt: sessionResetAt,
+            provider: provider,
+            in: candidates
+        )
     }
 
     /// Resolve the provider session behind a closed Banyan row. The live title
@@ -2587,143 +2571,21 @@ final class SessionStore: ObservableObject {
         provider: CodingAgentProvider?,
         in candidates: [ImportedAgentSession]
     ) -> ImportedAgentSession? {
-        if let strictMatch = bestPromptTitleMatch(
+        AgentSessionMatcher.bestHistoryResumeMatch(
             sessionCWD: sessionCWD,
             sessionCreatedAt: sessionCreatedAt,
+            sessionUpdatedAt: sessionUpdatedAt,
             sessionResetAt: sessionResetAt,
             provider: provider,
             in: candidates
-        ) {
-            return strictMatch
-        }
-
-        let normalizedCWD = standardizedPath(sessionCWD)
-        return candidates
-            .filter {
-                (provider == nil || $0.provider == provider)
-                    && standardizedPath($0.cwd) == normalizedCWD
-            }
-            .min {
-                let lhsDistance = abs($0.updatedAt.timeIntervalSince(sessionUpdatedAt))
-                let rhsDistance = abs($1.updatedAt.timeIntervalSince(sessionUpdatedAt))
-                if lhsDistance == rhsDistance {
-                    return $0.updatedAt > $1.updatedAt
-                }
-                return lhsDistance < rhsDistance
-            }
+        )
     }
 
     nonisolated static func bestPromptTitleAssignments(
         for sessions: [LivePromptTitleMatchInput],
         in candidates: [ImportedAgentSession]
     ) -> [String: ImportedAgentSession] {
-        struct Pair {
-            let sessionID: String
-            let candidate: ImportedAgentSession
-            let score: TimeInterval
-        }
-
-        let optionsBySessionID = Dictionary(uniqueKeysWithValues: sessions.map { session in
-            let options = promptTitleMatchCandidates(for: session, in: candidates).map { candidate in
-                Pair(
-                    sessionID: session.id,
-                    candidate: candidate,
-                    score: promptTitleMatchScore(session: session, candidate: candidate)
-                )
-            }
-            .sorted {
-                if $0.score == $1.score {
-                    return $0.candidate.updatedAt > $1.candidate.updatedAt
-                }
-                return $0.score < $1.score
-            }
-            return (session.id, options)
-        })
-        let candidateByID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0) })
-        let orderedSessionIDs = sessions
-            .filter { optionsBySessionID[$0.id]?.isEmpty == false }
-            .sorted {
-                let lhsCount = optionsBySessionID[$0.id]?.count ?? 0
-                let rhsCount = optionsBySessionID[$1.id]?.count ?? 0
-                if lhsCount == rhsCount {
-                    return $0.createdAt < $1.createdAt
-                }
-                return lhsCount < rhsCount
-            }
-            .map(\.id)
-
-        var sessionIDByCandidateID: [String: String] = [:]
-
-        func assign(_ sessionID: String, visitedCandidateIDs: inout Set<String>) -> Bool {
-            guard let options = optionsBySessionID[sessionID] else { return false }
-            for pair in options {
-                let candidateID = pair.candidate.id
-                guard !visitedCandidateIDs.contains(candidateID) else { continue }
-                visitedCandidateIDs.insert(candidateID)
-
-                if let displacedSessionID = sessionIDByCandidateID[candidateID] {
-                    guard assign(displacedSessionID, visitedCandidateIDs: &visitedCandidateIDs) else {
-                        continue
-                    }
-                }
-
-                sessionIDByCandidateID[candidateID] = sessionID
-                return true
-            }
-            return false
-        }
-
-        for sessionID in orderedSessionIDs {
-            var visitedCandidateIDs = Set<String>()
-            _ = assign(sessionID, visitedCandidateIDs: &visitedCandidateIDs)
-        }
-
-        var result: [String: ImportedAgentSession] = [:]
-        for (candidateID, sessionID) in sessionIDByCandidateID {
-            guard let candidate = candidateByID[candidateID] else {
-                continue
-            }
-            result[sessionID] = candidate
-        }
-
-        return result
-    }
-
-    nonisolated private static func promptTitleMatchCandidates(
-        for session: LivePromptTitleMatchInput,
-        in candidates: [ImportedAgentSession]
-    ) -> [ImportedAgentSession] {
-        let sessionCWD = standardizedPath(session.cwd)
-        let matchWindow: TimeInterval = 5 * 60
-        let resetWindow: TimeInterval = 30
-        let matchingCandidates = candidates.filter {
-            (session.provider == nil || $0.provider == session.provider)
-                && standardizedPath($0.cwd) == sessionCWD
-        }
-
-        if let resetAt = session.resetAt {
-            return matchingCandidates.filter {
-                $0.updatedAt >= resetAt.addingTimeInterval(-resetWindow)
-            }
-        }
-
-        return matchingCandidates.filter {
-            abs($0.createdAt.timeIntervalSince(session.createdAt)) <= matchWindow
-        }
-    }
-
-    nonisolated private static func promptTitleMatchScore(
-        session: LivePromptTitleMatchInput,
-        candidate: ImportedAgentSession
-    ) -> TimeInterval {
-        if session.resetAt != nil {
-            return -candidate.updatedAt.timeIntervalSinceReferenceDate
-        }
-        return abs(candidate.createdAt.timeIntervalSince(session.createdAt))
-    }
-
-    nonisolated private static func standardizedPath(_ path: String) -> String {
-        PathDisplayName.canonicalPath(path)
+        AgentSessionMatcher.bestPromptTitleAssignments(for: sessions, in: candidates)
     }
 
     private func detectAttention(in text: String, for session: BanyanSession) {
