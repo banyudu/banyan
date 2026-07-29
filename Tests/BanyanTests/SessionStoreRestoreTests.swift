@@ -53,7 +53,7 @@ import Testing
 }
 
 @Test func reopenResumesClosedCodexSessionInsteadOfReplayingLaunchCommand() {
-    let codex = SessionStore.reopenResumeCommand(
+    let codex = SessionRecoveryPolicy.resumeCommand(
         status: .closed,
         provider: .codex,
         agentSessionID: "abc12345-0000-0000-0000-000000000000",
@@ -61,7 +61,7 @@ import Testing
     )
     #expect(codex == "'codex' 'resume' '-C' '/tmp/project' 'abc12345-0000-0000-0000-000000000000'")
 
-    let claude = SessionStore.reopenResumeCommand(
+    let claude = SessionRecoveryPolicy.resumeCommand(
         status: .closed,
         provider: .claude,
         agentSessionID: "session-uuid",
@@ -72,7 +72,7 @@ import Testing
 
 @Test func reopenKeepsOriginalCommandWhenResumeIsNotApplicable() {
     // Still active — nothing to rebuild.
-    #expect(SessionStore.reopenResumeCommand(
+    #expect(SessionRecoveryPolicy.resumeCommand(
         status: .running,
         provider: .codex,
         agentSessionID: "abc",
@@ -80,7 +80,7 @@ import Testing
     ) == nil)
 
     // No underlying agent session resolved.
-    #expect(SessionStore.reopenResumeCommand(
+    #expect(SessionRecoveryPolicy.resumeCommand(
         status: .closed,
         provider: .codex,
         agentSessionID: nil,
@@ -88,7 +88,7 @@ import Testing
     ) == nil)
 
     // Empty agent session id is treated as unresolved.
-    #expect(SessionStore.reopenResumeCommand(
+    #expect(SessionRecoveryPolicy.resumeCommand(
         status: .closed,
         provider: .claude,
         agentSessionID: "",
@@ -96,7 +96,7 @@ import Testing
     ) == nil)
 
     // Provider without resume support.
-    #expect(SessionStore.reopenResumeCommand(
+    #expect(SessionRecoveryPolicy.resumeCommand(
         status: .closed,
         provider: .gemini,
         agentSessionID: "abc",
@@ -104,7 +104,7 @@ import Testing
     ) == nil)
 
     // Plain shell session (no agent provider).
-    #expect(SessionStore.reopenResumeCommand(
+    #expect(SessionRecoveryPolicy.resumeCommand(
         status: .closed,
         provider: nil,
         agentSessionID: "abc",
@@ -113,27 +113,27 @@ import Testing
 }
 
 @Test func closedAgentWithoutSessionIDRequiresRecoveryBeforeRespawn() {
-    #expect(SessionStore.requiresDeepHistoryRecovery(
+    #expect(SessionRecoveryPolicy.requiresDeepHistoryRecovery(
         status: .closed,
         provider: .codex,
         agentSessionID: nil
     ))
-    #expect(SessionStore.requiresDeepHistoryRecovery(
+    #expect(SessionRecoveryPolicy.requiresDeepHistoryRecovery(
         status: .closed,
         provider: .claude,
         agentSessionID: ""
     ))
-    #expect(!SessionStore.requiresDeepHistoryRecovery(
+    #expect(!SessionRecoveryPolicy.requiresDeepHistoryRecovery(
         status: .closed,
         provider: .codex,
         agentSessionID: "session-id"
     ))
-    #expect(!SessionStore.requiresDeepHistoryRecovery(
+    #expect(!SessionRecoveryPolicy.requiresDeepHistoryRecovery(
         status: .running,
         provider: .codex,
         agentSessionID: nil
     ))
-    #expect(!SessionStore.requiresDeepHistoryRecovery(
+    #expect(!SessionRecoveryPolicy.requiresDeepHistoryRecovery(
         status: .closed,
         provider: .gemini,
         agentSessionID: nil
@@ -141,7 +141,7 @@ import Testing
 }
 
 @Test func missingHistoryResumeDoesNotPromiseAFreshRestart() {
-    let message = SessionStore.missingHistoryResumeMessage(provider: .claude)
+    let message = SessionRecoveryPolicy.missingResumeMessage(provider: .claude)
     #expect(message.contains("No resumable Claude session"))
     #expect(message.contains("original command was not restarted"))
 }

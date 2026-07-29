@@ -1170,7 +1170,7 @@ final class SessionStore: ObservableObject {
         // Sessions closed before the live transcript match ran — or persisted by
         // an older build — have no `agentSessionID`. Try to recover it from the
         // imported history now so those still resume instead of replaying.
-        if Self.requiresDeepHistoryRecovery(
+        if SessionRecoveryPolicy.requiresDeepHistoryRecovery(
             status: session.status,
             provider: session.agentProvider,
             agentSessionID: session.agentSessionID
@@ -1334,7 +1334,7 @@ final class SessionStore: ObservableObject {
                     session.markAgentSessionID(match.sourceID)
                     try? self.respawnAfterHistoryRecovery(id: id)
                 } else {
-                    self.historyResumeErrors[id] = Self.missingHistoryResumeMessage(provider: provider)
+                    self.historyResumeErrors[id] = SessionRecoveryPolicy.missingResumeMessage(provider: provider)
                 }
             }
         }
@@ -1348,15 +1348,11 @@ final class SessionStore: ObservableObject {
         historyResumeErrors[id]
     }
 
-    nonisolated static func missingHistoryResumeMessage(provider: CodingAgentProvider?) -> String {
-        SessionRecoveryPolicy.missingResumeMessage(provider: provider)
-    }
-
     private func respawnAfterHistoryRecovery(id: String) throws {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
-        if let resumeCommand = Self.reopenResumeCommand(
+        if let resumeCommand = SessionRecoveryPolicy.resumeCommand(
             status: session.status,
             provider: session.agentProvider,
             agentSessionID: session.agentSessionID,
@@ -1367,36 +1363,6 @@ final class SessionStore: ObservableObject {
         session.reattachTerminalClient()
         selectedSessionID = id
         saveSessions()
-    }
-
-    nonisolated static func requiresDeepHistoryRecovery(
-        status: SessionStatus,
-        provider: CodingAgentProvider?,
-        agentSessionID: String?
-    ) -> Bool {
-        SessionRecoveryPolicy.requiresDeepHistoryRecovery(
-            status: status,
-            provider: provider,
-            agentSessionID: agentSessionID
-        )
-    }
-
-    /// Builds the resume command to use when reopening a closed coding-agent
-    /// session, or nil when the original launch command should be kept (session
-    /// still active, non-agent provider, resume unsupported, or the underlying
-    /// agent session was never resolved).
-    nonisolated static func reopenResumeCommand(
-        status: SessionStatus,
-        provider: CodingAgentProvider?,
-        agentSessionID: String?,
-        cwd: String
-    ) -> String? {
-        SessionRecoveryPolicy.resumeCommand(
-            status: status,
-            provider: provider,
-            agentSessionID: agentSessionID,
-            cwd: cwd
-        )
     }
 
     func restart(id: String) throws {
