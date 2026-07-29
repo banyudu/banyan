@@ -231,7 +231,7 @@ final class SessionStore: ObservableObject {
     private let homeDirectory: String
     private let environment: [String: String]
     private let currentDirectory: String
-    private let host: HostRuntimeContext
+    let host: HostRuntimeContext
 
     init(
         persistence: any SessionStorePersistenceBackend,

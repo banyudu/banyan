@@ -136,7 +136,7 @@ struct ContentView: View {
                     onOpenLinearIssue: { issueID in
                         if let url = URL(string: LinearIssueReference.issueURL(
                             for: issueID,
-                            environment: ProcessInfo.processInfo.environment
+                            environment: store.host.environment
                         )) {
                             NSWorkspace.shared.open(url)
                         }
@@ -2284,7 +2284,7 @@ private struct AgentProviderIcon: View {
     }
 
     private var codexTemplatePaths: [String] {
-        let home = NSHomeDirectory()
+        let home = store.host.homeDirectory.path
         return [
             "/Applications/Codex.app/Contents/Resources/codexTemplate@2x.png",
             "/Applications/Codex.app/Contents/Resources/codexTemplate.png",
@@ -2294,7 +2294,7 @@ private struct AgentProviderIcon: View {
     }
 
     private var codexColorIconPaths: [String] {
-        let home = NSHomeDirectory()
+        let home = store.host.homeDirectory.path
         return [
             "/Applications/Codex.app/Contents/Resources/icon-codex-dark-color.png",
             "/Applications/Codex.app/Contents/Resources/icon-codex-light.png",
@@ -2304,7 +2304,7 @@ private struct AgentProviderIcon: View {
     }
 
     private var candidateAppPaths: [String] {
-        let home = NSHomeDirectory()
+        let home = store.host.homeDirectory.path
         switch provider {
         case .claude:
             return [
@@ -2350,7 +2350,7 @@ private struct ClosedSessionHistoryView: View {
                     Text(session.displayTitle)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(PathDisplayName.make(path: session.cwd, homeDirectory: NSHomeDirectory()))
+                    Text(PathDisplayName.make(path: session.cwd, homeDirectory: store.host.homeDirectory.path))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -2442,7 +2442,7 @@ private struct ImportedSessionHistoryView: View {
                     Text(session.displayTitle)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(PathDisplayName.make(path: session.cwd, homeDirectory: NSHomeDirectory()))
+                    Text(PathDisplayName.make(path: session.cwd, homeDirectory: store.host.homeDirectory.path))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
