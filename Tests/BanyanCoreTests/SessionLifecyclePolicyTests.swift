@@ -2,6 +2,29 @@ import Foundation
 import Testing
 @testable import BanyanCore
 
+@Test func lifecyclePolicyReopensLiveBackingSessionsAfterTerminalExit() {
+    #expect(SessionLifecyclePolicy.statusAfterTerminalExit(
+        currentStatus: .executing,
+        hasBackingSession: true,
+        exitCode: 1
+    ) == .running)
+    #expect(SessionLifecyclePolicy.statusAfterTerminalExit(
+        currentStatus: .running,
+        hasBackingSession: false,
+        exitCode: 0
+    ) == .completed)
+    #expect(SessionLifecyclePolicy.statusAfterTerminalExit(
+        currentStatus: .running,
+        hasBackingSession: false,
+        exitCode: nil
+    ) == .failed)
+    #expect(SessionLifecyclePolicy.statusAfterTerminalExit(
+        currentStatus: .closed,
+        hasBackingSession: true,
+        exitCode: 0
+    ) == nil)
+}
+
 @Test func lifecyclePolicyPreservesRestoredStatuses() {
     #expect(SessionLifecyclePolicy.restoredStatus(snapshotStatus: .closed) == .closed)
     #expect(SessionLifecyclePolicy.restoredStatus(snapshotStatus: .needInput) == .needInput)

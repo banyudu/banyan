@@ -318,11 +318,15 @@ final class BanyanSession: ObservableObject, Identifiable {
                 onProcessExit(exitCode)
                 return
             }
-            if self.status != .closed, self.tmuxBackend.hasSession(named: self.tmuxSessionName) {
-                self.status = .running
-            } else if self.status != .closed {
-                self.status = exitCode == 0 ? .completed : .failed
-                self.onStatusSignal?(self.status)
+            if let nextStatus = SessionLifecyclePolicy.statusAfterTerminalExit(
+                currentStatus: self.status,
+                hasBackingSession: self.tmuxBackend.hasSession(named: self.tmuxSessionName),
+                exitCode: exitCode
+            ) {
+                self.status = nextStatus
+                if nextStatus != .running {
+                    self.onStatusSignal?(self.status)
+                }
             }
             self.touch()
         }
