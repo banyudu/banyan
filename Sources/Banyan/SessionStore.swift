@@ -2079,7 +2079,16 @@ final class SessionStore: ObservableObject {
     }
 
     func activeChildCount(of id: String) -> Int {
-        sessions.filter { $0.status != .closed && $0.parentSessionID == id }.count
+        SessionRelationshipPolicy.activeChildCount(
+            of: id,
+            in: sessions.map {
+                SessionRelationshipItem(
+                    id: $0.id,
+                    parentSessionID: $0.parentSessionID,
+                    status: $0.status
+                )
+            }
+        )
     }
 
     func hasActiveChildren(_ id: String) -> Bool {
@@ -2087,13 +2096,17 @@ final class SessionStore: ObservableObject {
     }
 
     func resolvedParentSessionIDForSpawn(_ parentSessionID: String?) throws -> String? {
-        guard let parentSessionID = SessionInputPolicy.normalizedOptionalText(parentSessionID) else {
+        guard let normalizedParentID = SessionInputPolicy.normalizedOptionalText(parentSessionID) else {
             return nil
         }
-        guard sessions.contains(where: { $0.id == parentSessionID && $0.status != .closed }) else {
-            throw ControlError.badRequest("No active parent session found for id '\(parentSessionID)'")
+        let activeSessionIDs = Set(sessions.filter { $0.status != .closed }.map(\.id))
+        guard let resolvedID = SessionRelationshipPolicy.resolvedActiveParentID(
+            normalizedParentID,
+            activeSessionIDs: activeSessionIDs
+        ) else {
+            throw ControlError.badRequest("No active parent session found for id '\(normalizedParentID)'")
         }
-        return parentSessionID
+        return resolvedID
     }
 
     private func attach(_ session: BanyanSession) {
