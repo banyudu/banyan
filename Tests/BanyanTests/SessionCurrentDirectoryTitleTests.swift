@@ -1,8 +1,9 @@
 import Testing
+import BanyanCore
 @testable import Banyan
 
 @Test func defaultDirectoryTitleTracksCurrentDirectory() {
-    #expect(BanyanSession.titleTracksCurrentDirectory(
+    #expect(SessionInputPolicy.titleTracksCurrentDirectory(
         "/Users/example/project",
         isTitlePinned: false,
         cwd: "/Users/example/project",
@@ -11,7 +12,7 @@ import Testing
 }
 
 @Test func pinnedDirectoryTitleDoesNotTrackCurrentDirectory() {
-    #expect(!BanyanSession.titleTracksCurrentDirectory(
+    #expect(!SessionInputPolicy.titleTracksCurrentDirectory(
         "/Users/example/project",
         isTitlePinned: true,
         cwd: "/Users/example/project",
@@ -20,7 +21,7 @@ import Testing
 }
 
 @Test func customUnpinnedTitleDoesNotTrackCurrentDirectory() {
-    #expect(!BanyanSession.titleTracksCurrentDirectory(
+    #expect(!SessionInputPolicy.titleTracksCurrentDirectory(
         "build logs",
         isTitlePinned: false,
         cwd: "/Users/example/project",

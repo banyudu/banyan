@@ -222,7 +222,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             cwd: cwd,
             environment: environment
         )
-        if let normalizedTitleURL = Self.normalizedTitleURL(titleURL) {
+        if let normalizedTitleURL = SessionInputPolicy.normalizedTitleURL(titleURL) {
             // A restore passes the persisted provenance. Without one (a fresh spawn),
             // infer it: a URL that matches what the cwd/branch says is auto-detected,
             // and anything else was chosen deliberately by the caller.
@@ -639,7 +639,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             isTitlePinned = true
         }
         if let titleURL {
-            self.titleURL = Self.normalizedTitleURL(titleURL)
+            self.titleURL = SessionInputPolicy.normalizedTitleURL(titleURL)
             titleURLWasAutoDetected = false
         }
         refreshGeneratedTitle()
@@ -660,7 +660,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func noteUserSubmittedInput(_ submittedInput: String? = nil) {
-        if Self.isConversationResetCommand(submittedInput), agentProvider != nil {
+        if SessionInputPolicy.isConversationResetCommand(submittedInput), agentProvider != nil {
             lastConversationResetAt = Date()
             if !hasUsefulPinnedTitle {
                 reportedTitle = nil
@@ -702,14 +702,14 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     private func markSubmittedPromptTitle(_ submittedInput: String?) {
         guard !hasUsefulPinnedTitle, usefulAgentTitle == nil, agentProvider != nil else { return }
-        guard let promptTitle = Self.submittedPromptTitle(from: submittedInput) else { return }
+        guard let promptTitle = SessionInputPolicy.submittedPromptTitle(from: submittedInput) else { return }
         reportedTitle = promptTitle
         refreshGeneratedTitle()
         touch()
     }
 
     func updateCurrentDirectory(_ directory: String?) {
-        guard let directory = Self.normalizedDirectory(directory) else { return }
+        guard let directory = SessionInputPolicy.normalizedDirectory(directory) else { return }
         let displayContext = SessionDisplayLabel.context(
             cwd: directory,
             homeDirectory: homeDirectory,
@@ -765,20 +765,6 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard contextChanged || titleURL != previousTitleURL else { return }
         refreshGeneratedTitle()
         touch()
-    }
-
-    nonisolated static func titleTracksCurrentDirectory(
-        _ title: String,
-        isTitlePinned: Bool,
-        cwd: String,
-        homeDirectory: String
-    ) -> Bool {
-        SessionInputPolicy.titleTracksCurrentDirectory(
-            title,
-            isTitlePinned: isTitlePinned,
-            cwd: cwd,
-            homeDirectory: homeDirectory
-        )
     }
 
     private var usefulAgentTitle: String? {
@@ -866,22 +852,6 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     private func titleForCurrentDirectory(_ cwd: String) -> String {
         PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
-    }
-
-    nonisolated private static func normalizedTitleURL(_ titleURL: String?) -> String? {
-        SessionInputPolicy.normalizedTitleURL(titleURL)
-    }
-
-    private static func normalizedDirectory(_ directory: String?) -> String? {
-        SessionInputPolicy.normalizedDirectory(directory)
-    }
-
-    private static func isConversationResetCommand(_ input: String?) -> Bool {
-        SessionInputPolicy.isConversationResetCommand(input)
-    }
-
-    private static func submittedPromptTitle(from input: String?) -> String? {
-        SessionInputPolicy.submittedPromptTitle(from: input)
     }
 
     private func requestExternalGeneratedTitleIfNeeded(context: SessionTitleContext) {
