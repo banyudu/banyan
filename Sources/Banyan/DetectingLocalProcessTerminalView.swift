@@ -68,7 +68,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         // SwiftTerm creates its tracking area when linkHighlightMode changes.
         // At terminal construction time the view has a zero-sized frame; repeat
         // the assignment after layout so hover links track the real terminal.
-        linkHighlightMode = .always
+        linkHighlightMode = .hoverWithModifier
     }
 
     private func restoreScrollbackPosition(_ row: Int) {

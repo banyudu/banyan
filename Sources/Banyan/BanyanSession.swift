@@ -244,11 +244,10 @@ final class BanyanSession: ObservableObject, Identifiable {
     func makeTerminalView() -> DetectingLocalProcessTerminalView {
         let view = DetectingLocalProcessTerminalView(frame: .zero)
         view.tmuxSessionName = tmuxSessionName
-        // SwiftTerm's `.hover` mode gates clicks on a second hover-range
-        // comparison during mouse-up. That is fragile in the embedded tmux
-        // terminal, so explicit OSC 8 links stay visibly marked and are always
-        // clickable.
-        view.linkHighlightMode = .always
+        // SwiftTerm's implicit link reporting recognizes raw http(s) URLs and
+        // its modifier-aware mode previews/opens them on Cmd-click. Keep plain
+        // clicks available for normal terminal selection and input.
+        view.linkHighlightMode = .hoverWithModifier
         pendingTheme.apply(to: view, fontFamily: pendingFontFamily, fontSize: pendingFontSize)
         appliedTheme = pendingTheme
         appliedFontFamily = pendingFontFamily
@@ -268,22 +267,32 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func openTerminalLink(_ link: String) {
-        guard let number = TerminalFooterLinkifier.pullRequestNumber(in: link) else { return }
-        let environment = self.environment
-        let homeDirectory = self.homeDirectory
-        Task.detached(priority: .utility) { [cwd, environment, homeDirectory] in
-            guard let url = try? await GitHubPullRequestClient.pullRequestURL(
-                number: number,
-                cwd: cwd,
-                environment: environment,
-                homeDirectory: homeDirectory
-            ) else {
-                return
+        if let number = TerminalFooterLinkifier.pullRequestNumber(in: link) {
+            let environment = self.environment
+            let homeDirectory = self.homeDirectory
+            Task.detached(priority: .utility) { [cwd, environment, homeDirectory] in
+                guard let url = try? await GitHubPullRequestClient.pullRequestURL(
+                    number: number,
+                    cwd: cwd,
+                    environment: environment,
+                    homeDirectory: homeDirectory
+                ) else {
+                    return
+                }
+                await MainActor.run {
+                    _ = NSWorkspace.shared.open(url)
+                }
             }
-            await MainActor.run {
-                _ = NSWorkspace.shared.open(url)
-            }
+            return
         }
+
+        guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host != nil else {
+            return
+        }
+        _ = NSWorkspace.shared.open(url)
     }
 
     /// Writes to the terminal if one exists, otherwise holds the text until one is
