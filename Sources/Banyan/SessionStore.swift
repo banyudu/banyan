@@ -2784,13 +2784,11 @@ final class SessionStore: ObservableObject {
     }
 
     private func resolvedWorkingDirectory(_ cwd: String?) -> String {
-        let raw = cwd?.isEmpty == false ? cwd! : currentDirectory
-        let expanded = NSString(string: raw).expandingTildeInPath
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory), isDirectory.boolValue {
-            return PathDisplayName.canonicalPath(expanded)
-        }
-        return PathDisplayName.canonicalPath(homeDirectory)
+        WorkingDirectoryPolicy.resolve(
+            proposedDirectory: cwd,
+            currentDirectory: currentDirectory,
+            homeDirectory: homeDirectory
+        )
     }
 
     nonisolated private static func runBanyanWorktree(
