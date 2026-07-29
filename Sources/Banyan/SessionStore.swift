@@ -1075,7 +1075,7 @@ final class SessionStore: ObservableObject {
         tone: SessionTone = .blue,
         select: Bool = true
     ) -> BanyanSession {
-        let baseID = sanitizeID(proposedID ?? proposedTitle ?? "session")
+        let baseID = SessionIdentityPolicy.sanitizedID(proposedID ?? proposedTitle ?? "session")
         let id = uniqueID(baseID, avoidingLiveTmuxSessions: true)
         let cwd = resolvedWorkingDirectory(proposedCWD)
         let command = proposedCommand ?? ""
@@ -2894,14 +2894,6 @@ final class SessionStore: ObservableObject {
             return defaultTitle(for: snapshot.cwd)
         }
         return snapshot.title
-    }
-
-    private func sanitizeID(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let source = trimmed.isEmpty ? "session" : trimmed
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-        let cleaned = source.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
-        return String(cleaned).trimmingCharacters(in: CharacterSet(charactersIn: "-_")).isEmpty ? "session" : String(cleaned)
     }
 
     private func uniqueID(_ baseID: String, avoidingLiveTmuxSessions: Bool) -> String {
