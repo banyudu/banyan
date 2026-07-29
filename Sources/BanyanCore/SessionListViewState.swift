@@ -23,8 +23,8 @@ public struct SessionListViewState: Sendable {
         historyNeedsReload = false
     }
 
-    public mutating func moveNext(rowCount: Int) {
-        selectedIndex = min(selectedIndex + 1, max(0, rowCount - 1))
+    public mutating func moveNext(rowCount: Int, by step: Int = 1) {
+        selectedIndex = min(selectedIndex + max(1, step), max(0, rowCount - 1))
     }
 
     public mutating func movePrevious() {

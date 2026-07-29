@@ -30,6 +30,33 @@ import Testing
     #expect(model.visibleRowCount == 1)
 }
 
+@Test func sessionListModelFiltersHistoryAcrossTitleProviderAndDirectory() {
+    let now = Date(timeIntervalSince1970: 100)
+    let matching = ImportedAgentSession(
+        id: "history-codex-match",
+        provider: .codex,
+        sourceID: "match",
+        title: "Review parser",
+        cwd: "/tmp/banyan-project",
+        transcriptURL: URL(fileURLWithPath: "/tmp/match.jsonl"),
+        createdAt: now,
+        updatedAt: now
+    )
+    let dataSource = SessionDataSource(
+        persistence: ModelTestPersistence(),
+        backend: ModelTestBackend(),
+        processTable: EmptyModelProcessTableProvider(),
+        historyBackend: ModelHistoryBackend(history: matching)
+    )
+    var model = SessionListModel(dataSource: dataSource)
+
+    model.toggleHistory()
+    model.setHistoryFilter("banyan-project")
+    model.reload()
+
+    #expect(model.selectedHistory == matching)
+}
+
 private final class ModelTestPersistence: SessionPersistenceBackend, @unchecked Sendable {
     func load() -> [SessionSnapshot] { [] }
     func save(_ snapshots: [SessionSnapshot]) {}

@@ -40,8 +40,8 @@ struct BanyanTUI {
             reload()
             render()
 
-            guard let byte = input.readByte() else { break }
-            guard handle(SessionListAction(byte: byte)) else { return }
+            guard let action = input.readAction() else { break }
+            guard handle(action) else { return }
         }
     }
 
@@ -51,16 +51,26 @@ struct BanyanTUI {
                 return false
             case .toggleHistory:
                 model.toggleHistory()
+            case .searchHistory:
+                searchHistory()
             case .next:
                 model.moveNext()
             case .previous:
                 model.movePrevious()
+            case .pageNext:
+                model.movePageNext()
+            case .pagePrevious:
+                model.movePagePrevious()
             case .refresh:
                 model.refresh()
             case .recover:
                 if !model.showingHistory { recoverSelected() }
             case .newSession:
                 if !model.showingHistory { createShellSession() }
+            case .newCustomSession:
+                if !model.showingHistory { createCustomSession() }
+            case .rename:
+                if !model.showingHistory { renameSelected() }
             case .close:
                 if !model.showingHistory { closeSelected() }
             case .remove:
@@ -120,6 +130,42 @@ struct BanyanTUI {
         } catch {
             model.showNotice("Unable to create session: \(error.localizedDescription)")
         }
+    }
+
+    private mutating func createCustomSession() {
+        guard let title = input.readLine(prompt: "Title (blank for Shell): "),
+              let cwd = input.readLine(prompt: "Working directory (blank for current): "),
+              let command = input.readLine(prompt: "Command (blank for shell): ") else {
+            return
+        }
+        do {
+            let id = try actions.createSession(
+                title: title,
+                cwd: cwd.isEmpty ? currentDirectory : cwd,
+                command: command
+            )
+            model.showNotice("Created \(id)")
+        } catch {
+            model.showNotice("Unable to create session: \(error.localizedDescription)")
+        }
+    }
+
+    private mutating func renameSelected() {
+        guard let session = model.selectedSession else { return }
+        let title = input.readLine(prompt: "New title (blank cancels): ")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let title, !title.isEmpty else { return }
+        actions.rename(session, title: title)
+        model.showNotice("Renamed \(session.id)")
+    }
+
+    private mutating func searchHistory() {
+        let query = input.readLine(prompt: "History search (blank clears): ") ?? ""
+        if !model.showingHistory { model.toggleHistory() }
+        model.setHistoryFilter(query)
+        model.showNotice(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "History filter cleared"
+            : "History filter: \(query.trimmingCharacters(in: .whitespacesAndNewlines))")
     }
 
     private mutating func recoverSelected() {

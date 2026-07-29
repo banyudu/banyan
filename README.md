@@ -93,9 +93,11 @@ swift build -c release --product BanyanTUI
 
 `BanyanTUI` uses the same SQLite session state, dedicated tmux backend, agent
 status detection, and local history importer as the macOS app. In the TUI,
-`j`/`k` navigate, Enter attaches or resumes, `n` creates a shell, `c` closes,
-`x` removes, `R` recovers a missing backing session, `h` toggles history, and
-`T` resumes history with transcript trimming. Press `q` to quit.
+`j`/`k` or the arrow keys navigate, Page Up/Down move by a page, `e` renames
+the selected session, Enter attaches or resumes, `n` creates a shell, `N` creates a custom titled/command session, `c` closes, `x` removes, `R` recovers a missing
+backing session, `h` toggles history, and `T` resumes history with transcript
+trimming. The detail pane shows the selected session's status, working
+directory, command, tmux name, and latest terminal output. Press `q` to quit.
 
 For a packaged macOS build:
 

@@ -17,6 +17,7 @@ import Testing
     #expect(output.contains("History"))
     #expect(output.contains("(no history)"))
     #expect(output.contains("enter resume/T trim"))
+    #expect(output.contains("h history"))
 }
 
 @Test func rendererUsesSelectedPaneTextForActiveSession() {
@@ -39,11 +40,38 @@ import Testing
         showingHistory: false,
         selectedIndex: 0,
         notice: nil,
-        tmux: RendererTestBackend(visibleText: "prompt> ")
+        tmux: RendererTestBackend(visibleText: "previous output\nprompt> \n")
     )
 
     #expect(output.contains("Shell"))
-    #expect(output.contains("prompt> "))
+    #expect(output.contains("last output: prompt> "))
+    #expect(output.contains("cwd: /tmp"))
+}
+
+@Test func rendererShowsSelectedHistoryDetails() {
+    let item = ImportedAgentSession(
+        id: "history-codex-1",
+        provider: .codex,
+        sourceID: "source-1",
+        title: "Fix the TUI",
+        cwd: "/tmp/project",
+        transcriptURL: URL(fileURLWithPath: "/tmp/project/transcript.jsonl"),
+        createdAt: Date(timeIntervalSince1970: 100),
+        updatedAt: Date(timeIntervalSince1970: 200)
+    )
+
+    let output = TerminalRenderer.render(
+        sessions: [],
+        history: [item],
+        showingHistory: true,
+        selectedIndex: 0,
+        notice: nil,
+        tmux: RendererTestBackend()
+    )
+
+    #expect(output.contains("Codex · Fix the TUI"))
+    #expect(output.contains("cwd: /tmp/project"))
+    #expect(output.contains("transcript: /tmp/project/transcript.jsonl"))
 }
 
 private struct RendererTestBackend: TmuxDisplayBackend {

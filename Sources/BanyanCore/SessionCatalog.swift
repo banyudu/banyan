@@ -5,6 +5,7 @@ import Foundation
 public protocol SessionCatalogBackend: Sendable {
     func create(snapshot: SessionSnapshot) throws
     func recover(snapshot: SessionSnapshot) throws
+    func rename(snapshot: SessionSnapshot, title: String)
     func close(snapshot: SessionSnapshot)
     func remove(snapshot: SessionSnapshot)
 }
@@ -28,6 +29,10 @@ public struct SessionCatalog: Sendable, SessionCatalogBackend {
 
     public func recover(snapshot: SessionSnapshot) throws {
         try runtime.ensureBackingSession(snapshot.launchRequest)
+    }
+
+    public func rename(snapshot: SessionSnapshot, title: String) {
+        update(snapshotID: snapshot.id) { $0.updating(title: title) }
     }
 
     public func close(snapshot: SessionSnapshot) {

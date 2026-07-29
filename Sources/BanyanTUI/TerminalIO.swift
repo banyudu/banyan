@@ -1,3 +1,4 @@
+import BanyanCore
 import Foundation
 
 #if canImport(Glibc)
@@ -8,6 +9,8 @@ import Darwin
 
 protocol TUIInput {
     func readByte() -> UInt8?
+    func readAction() -> SessionListAction?
+    func readLine(prompt: String) -> String?
     func enterRaw()
     func restore()
 }
@@ -28,6 +31,31 @@ final class TerminalMode: TUIInput {
         return byte
     }
 
+    func readAction() -> SessionListAction? {
+        guard let first = readByte() else { return nil }
+        guard first == 27 else { return SessionListAction(byte: first) }
+
+        // Escape sequences are short and arrive as a burst from a terminal.
+        // Read the remainder only when available so a standalone Escape key
+        // does not leave the TUI blocked waiting for more input.
+        var sequence = [first]
+        for _ in 0..<3 {
+            guard let byte = readAvailableByte(timeoutMilliseconds: 50) else { break }
+            sequence.append(byte)
+            if byte == 126 || (sequence.count == 3 && [65, 66, 67, 68].contains(byte)) { break }
+        }
+        return SessionListAction(sequence: sequence)
+    }
+
+    func readLine(prompt: String) -> String? {
+        restore()
+        print(prompt, terminator: "")
+        fflush(stdout)
+        let line = Swift.readLine()
+        enterRaw()
+        return line
+    }
+
     func enterRaw() {
         guard let original else { return }
         var raw = original
@@ -41,6 +69,16 @@ final class TerminalMode: TUIInput {
         guard let original else { return }
         var attributes = original
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &attributes)
+    }
+
+    private func readAvailableByte(timeoutMilliseconds: Int32) -> UInt8? {
+        var descriptor = pollfd(
+            fd: Int32(STDIN_FILENO),
+            events: Int16(POLLIN),
+            revents: 0
+        )
+        guard poll(&descriptor, 1, timeoutMilliseconds) > 0 else { return nil }
+        return readByte()
     }
 
     deinit {

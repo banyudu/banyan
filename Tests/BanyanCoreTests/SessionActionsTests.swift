@@ -31,6 +31,37 @@ import Testing
     #expect(backend.events == ["ensure:banyan-tui-shell"])
 }
 
+@Test func sessionActionsCreatesCustomCommandSessions() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-custom-actions-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let backend = SessionActionsTestBackend()
+    let actions = SessionActions(
+        idAllocator: UniqueSessionIDAllocator(persistence: database, tmux: backend),
+        catalog: SessionCatalog(
+            persistence: database,
+            runtime: SessionRuntimeCoordinator(backend: backend)
+        ),
+        history: DefaultSessionHistoryBackend(homeDirectory: directory)
+    )
+
+    let id = try actions.createSession(
+        title: "Build App",
+        cwd: "/tmp/project",
+        command: "swift test"
+    )
+
+    #expect(id == "Build-App")
+    #expect(database.load().first?.title == "Build App")
+    #expect(database.load().first?.command == "swift test")
+    #expect(backend.events == ["ensure:banyan-Build-App"])
+}
+
 @Test func sessionActionsUsesInjectedHistoryBackend() throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("banyan-history-actions-\(UUID().uuidString)")

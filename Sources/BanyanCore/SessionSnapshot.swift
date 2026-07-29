@@ -94,12 +94,13 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public func updating(
         status: SessionStatus? = nil,
         tone: SessionTone? = nil,
+        title: String? = nil,
         updatedAt: Date = Date()
     ) -> SessionSnapshot {
         SessionSnapshot(
             id: id,
             tmuxSessionName: tmuxSessionName,
-            title: title,
+            title: title ?? self.title,
             titleURL: titleURL,
             titleURLWasAutoDetected: titleURLWasAutoDetected,
             reportedTitle: reportedTitle,

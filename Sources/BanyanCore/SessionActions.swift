@@ -2,8 +2,10 @@ import Foundation
 
 public protocol SessionListActions: Sendable {
     func createShellSession(cwd: String) throws -> String
+    func createSession(title: String?, cwd: String, command: String) throws -> String
     func resumeHistory(_ item: ImportedAgentSession, trimmed: Bool) throws -> Bool
     func recover(_ session: SessionSnapshot) throws
+    func rename(_ session: SessionSnapshot, title: String)
     func close(_ session: SessionSnapshot)
     func remove(_ session: SessionSnapshot)
 }
@@ -25,15 +27,31 @@ public struct SessionActions: Sendable, SessionListActions {
     }
 
     public func createShellSession(cwd: String) throws -> String {
-        let id = idAllocator.allocate(prefix: "tui-shell")
+        try createSession(title: "Shell", cwd: cwd, command: "", idPrefix: "tui-shell")
+    }
+
+    public func createSession(title: String?, cwd: String, command: String) throws -> String {
+        try createSession(title: title, cwd: cwd, command: command, idPrefix: nil)
+    }
+
+    private func createSession(
+        title: String?,
+        cwd: String,
+        command: String,
+        idPrefix: String?
+    ) throws -> String {
+        let normalizedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionTitle = normalizedTitle?.isEmpty == false ? normalizedTitle! : "Shell"
+        let prefix = idPrefix ?? SessionIdentityPolicy.sanitizedID(sessionTitle)
+        let id = idAllocator.allocate(prefix: prefix.isEmpty ? "tui-session" : prefix)
         let now = Date()
         let snapshot = SessionSnapshot(
             id: id,
             tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
-            title: "Shell",
+            title: sessionTitle,
             reportedTitle: nil,
             cwd: cwd,
-            command: "",
+            command: command,
             status: .running,
             tone: .blue,
             createdAt: now,
@@ -89,6 +107,10 @@ public struct SessionActions: Sendable, SessionListActions {
 
     public func recover(_ session: SessionSnapshot) throws {
         try catalog.recover(snapshot: session)
+    }
+
+    public func rename(_ session: SessionSnapshot, title: String) {
+        catalog.rename(snapshot: session, title: title)
     }
 
     public func close(_ session: SessionSnapshot) {
