@@ -765,12 +765,17 @@ final class BanyanSession: ObservableObject, Identifiable {
         touch()
     }
 
-    nonisolated static func titleTracksCurrentDirectory(_ title: String, isTitlePinned: Bool, cwd: String) -> Bool {
+    nonisolated static func titleTracksCurrentDirectory(
+        _ title: String,
+        isTitlePinned: Bool,
+        cwd: String,
+        homeDirectory: String
+    ) -> Bool {
         SessionInputPolicy.titleTracksCurrentDirectory(
             title,
             isTitlePinned: isTitlePinned,
             cwd: cwd,
-            homeDirectory: NSHomeDirectory()
+            homeDirectory: homeDirectory
         )
     }
 

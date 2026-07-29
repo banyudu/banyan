@@ -5,7 +5,8 @@ import Testing
     #expect(BanyanSession.titleTracksCurrentDirectory(
         "/Users/example/project",
         isTitlePinned: false,
-        cwd: "/Users/example/project"
+        cwd: "/Users/example/project",
+        homeDirectory: "/Users/example"
     ))
 }
 
@@ -13,7 +14,8 @@ import Testing
     #expect(!BanyanSession.titleTracksCurrentDirectory(
         "/Users/example/project",
         isTitlePinned: true,
-        cwd: "/Users/example/project"
+        cwd: "/Users/example/project",
+        homeDirectory: "/Users/example"
     ))
 }
 
@@ -21,6 +23,7 @@ import Testing
     #expect(!BanyanSession.titleTracksCurrentDirectory(
         "build logs",
         isTitlePinned: false,
-        cwd: "/Users/example/project"
+        cwd: "/Users/example/project",
+        homeDirectory: "/Users/example"
     ))
 }
