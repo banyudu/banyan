@@ -19,6 +19,15 @@ public struct SessionRestorationPlan: Sendable, Equatable {
 /// Produces the runtime fields needed to turn a persisted row into a live
 /// frontend session.
 public enum SessionRestorationPolicy {
+    public static func needsManualAttach(
+        isRestored: Bool,
+        isProcessStarted: Bool,
+        status: SessionStatus,
+        needsRecovery: Bool
+    ) -> Bool {
+        isRestored && !isProcessStarted && (status == .failed || needsRecovery)
+    }
+
     public static func restoredTitle(
         for snapshot: SessionSnapshot,
         homeDirectory: String

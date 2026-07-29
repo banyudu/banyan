@@ -178,7 +178,12 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     var needsManualAttach: Bool {
-        isRestored && !isProcessStarted && (status == .failed || needsRecovery)
+        SessionRestorationPolicy.needsManualAttach(
+            isRestored: isRestored,
+            isProcessStarted: isProcessStarted,
+            status: status,
+            needsRecovery: needsRecovery
+        )
     }
 
     var isImportedHistory: Bool {

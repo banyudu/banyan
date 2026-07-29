@@ -1,6 +1,33 @@
 import Testing
 @testable import BanyanCore
 
+@Test func restorationPolicyRequiresManualAttachOnlyForUnstartedRecoveryStates() {
+    #expect(SessionRestorationPolicy.needsManualAttach(
+        isRestored: true,
+        isProcessStarted: false,
+        status: .failed,
+        needsRecovery: false
+    ))
+    #expect(SessionRestorationPolicy.needsManualAttach(
+        isRestored: true,
+        isProcessStarted: false,
+        status: .running,
+        needsRecovery: true
+    ))
+    #expect(!SessionRestorationPolicy.needsManualAttach(
+        isRestored: true,
+        isProcessStarted: true,
+        status: .failed,
+        needsRecovery: true
+    ))
+    #expect(!SessionRestorationPolicy.needsManualAttach(
+        isRestored: false,
+        isProcessStarted: false,
+        status: .failed,
+        needsRecovery: true
+    ))
+}
+
 @Test func restorationPolicyRestoresGenericUnpinnedTitlesFromWorkingDirectory() {
     let snapshot = SessionSnapshot(
         id: "restore-me",
