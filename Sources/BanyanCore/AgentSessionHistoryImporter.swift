@@ -268,19 +268,6 @@ public enum AgentSessionHistoryImporter {
         return preview.isEmpty ? "No readable transcript preview is available for this history file." : preview
     }
 
-    public static func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? {
-        AgentSessionHistory.sourceID(fromImportedSessionID: id, provider: provider)
-    }
-
-    public static func resumeCommand(provider: CodingAgentProvider, sourceID: String, cwd: String, prompt: String? = nil) -> String? {
-        AgentSessionHistory.resumeCommand(
-            provider: provider,
-            sourceID: sourceID,
-            cwd: cwd,
-            prompt: prompt
-        )
-    }
-
     private static func codexPreviewLine(_ object: [String: Any]) -> String? {
         guard let type = object["type"] as? String else { return nil }
         if type == "session_meta", let payload = object["payload"] as? [String: Any] {

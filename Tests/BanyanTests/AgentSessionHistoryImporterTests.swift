@@ -277,13 +277,13 @@ import Testing
 }
 
 @Test func resumeCommandsUseProviderNativeResumeSyntax() {
-    let codex = AgentSessionHistoryImporter.resumeCommand(
+    let codex = AgentSessionHistory.resumeCommand(
         provider: .codex,
         sourceID: "019efe8d-0514-72a2-ad62-daea0b976dcf",
         cwd: "/tmp/project with spaces",
         prompt: "continue here"
     )
-    let claude = AgentSessionHistoryImporter.resumeCommand(
+    let claude = AgentSessionHistory.resumeCommand(
         provider: .claude,
         sourceID: "867ceb9b-12de-47ff-a70e-e562c00c8bf5",
         cwd: "/tmp/project",
