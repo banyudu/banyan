@@ -160,26 +160,26 @@ import Testing
     // so their agentSessionID is captured — otherwise reopening a closed one
     // replays the initial prompt instead of resuming. Pinning is not one of the
     // predicate's inputs, so a pinned codex/claude session participates.
-    #expect(SessionStore.participatesInLiveAgentMatch(
+    #expect(AgentSessionMatcher.participatesInLiveAgentMatch(
         isImportedHistory: false, status: .running, provider: .claude
     ))
-    #expect(SessionStore.participatesInLiveAgentMatch(
+    #expect(AgentSessionMatcher.participatesInLiveAgentMatch(
         isImportedHistory: false, status: .needInput, provider: .codex
     ))
     // Unknown provider is still allowed (it gets detected during the pass).
-    #expect(SessionStore.participatesInLiveAgentMatch(
+    #expect(AgentSessionMatcher.participatesInLiveAgentMatch(
         isImportedHistory: false, status: .running, provider: nil
     ))
 }
 
 @Test func liveAgentMatchExcludesClosedImportedAndNonAgentSessions() {
-    #expect(!SessionStore.participatesInLiveAgentMatch(
+    #expect(!AgentSessionMatcher.participatesInLiveAgentMatch(
         isImportedHistory: false, status: .closed, provider: .claude
     ))
-    #expect(!SessionStore.participatesInLiveAgentMatch(
+    #expect(!AgentSessionMatcher.participatesInLiveAgentMatch(
         isImportedHistory: true, status: .running, provider: .codex
     ))
-    #expect(!SessionStore.participatesInLiveAgentMatch(
+    #expect(!AgentSessionMatcher.participatesInLiveAgentMatch(
         isImportedHistory: false, status: .running, provider: .gemini
     ))
 }
@@ -445,7 +445,7 @@ import Testing
         updatedAt: base.addingTimeInterval(620)
     )
 
-    let match = SessionStore.bestPromptTitleMatch(
+    let match = AgentSessionMatcher.bestPromptTitleMatch(
         sessionCWD: "/tmp/banyan",
         sessionCreatedAt: base,
         sessionResetAt: base.addingTimeInterval(600),
@@ -479,7 +479,7 @@ import Testing
         updatedAt: base.addingTimeInterval(910)
     )
 
-    let match = SessionStore.bestPromptTitleMatch(
+    let match = AgentSessionMatcher.bestPromptTitleMatch(
         sessionCWD: "/tmp/banyan",
         sessionCreatedAt: base,
         sessionResetAt: nil,
@@ -513,7 +513,7 @@ import Testing
         updatedAt: base.addingTimeInterval(3_600)
     )
 
-    let match = SessionStore.bestHistoryResumeMatch(
+    let match = AgentSessionMatcher.bestHistoryResumeMatch(
         sessionCWD: "/tmp/.worktrees/eng-1234/../eng-1234",
         sessionCreatedAt: base,
         sessionUpdatedAt: base.addingTimeInterval(3_600),
@@ -548,7 +548,7 @@ import Testing
         updatedAt: base.addingTimeInterval(3_590)
     )
 
-    let match = SessionStore.bestHistoryResumeMatch(
+    let match = AgentSessionMatcher.bestHistoryResumeMatch(
         sessionCWD: "/tmp/shared",
         sessionCreatedAt: base,
         sessionUpdatedAt: base.addingTimeInterval(3_600),
@@ -591,7 +591,7 @@ import Testing
         )
     ]
 
-    let matches = SessionStore.bestPromptTitleAssignments(
+    let matches = AgentSessionMatcher.bestPromptTitleAssignments(
         for: sessions,
         in: imported
     )
@@ -641,7 +641,7 @@ import Testing
         )
     ]
 
-    let matches = SessionStore.bestPromptTitleAssignments(
+    let matches = AgentSessionMatcher.bestPromptTitleAssignments(
         for: sessions,
         in: imported
     )
@@ -684,7 +684,7 @@ import Testing
         )
     ]
 
-    let matches = SessionStore.bestPromptTitleAssignments(
+    let matches = AgentSessionMatcher.bestPromptTitleAssignments(
         for: sessions,
         in: imported
     )

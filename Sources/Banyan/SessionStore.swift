@@ -1260,7 +1260,7 @@ final class SessionStore: ObservableObject {
     /// persisted by an older build) so they can still resume rather than replay.
     @discardableResult
     private func recoverAgentSessionID(for session: BanyanSession) -> Bool {
-        guard let match = Self.bestHistoryResumeMatch(
+        guard let match = AgentSessionMatcher.bestHistoryResumeMatch(
             sessionCWD: session.cwd,
             sessionCreatedAt: session.createdAt,
             sessionUpdatedAt: session.updatedAt,
@@ -1292,7 +1292,7 @@ final class SessionStore: ObservableObject {
 
         Task.detached(priority: .userInitiated) { [weak self] in
             let imported = historyBackend.load(maxPerProvider: .max)
-            let match = Self.bestHistoryResumeMatch(
+            let match = AgentSessionMatcher.bestHistoryResumeMatch(
                 sessionCWD: cwd,
                 sessionCreatedAt: createdAt,
                 sessionUpdatedAt: updatedAt,
@@ -2358,33 +2358,12 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    /// Whether a live session participates in the transcript-matching pass that
-    /// resolves both its display title and `agentSessionID`.
-    ///
-    /// Pinned-title sessions (e.g. Linear worktrees launched with an explicit
-    /// "ENG-1234 …" title) are intentionally included. Excluding them left the
-    /// pass resolving no `agentSessionID`, so reopening a closed one replayed the
-    /// initial prompt instead of resuming. The title updates in the caller are
-    /// individually guarded by `hasUsefulPinnedTitle`, so a user's pinned title is
-    /// still never overwritten.
-    nonisolated static func participatesInLiveAgentMatch(
-        isImportedHistory: Bool,
-        status: SessionStatus,
-        provider: CodingAgentProvider?
-    ) -> Bool {
-        AgentSessionMatcher.participatesInLiveAgentMatch(
-            isImportedHistory: isImportedHistory,
-            status: status,
-            provider: provider
-        )
-    }
-
     private func refreshLiveAgentTitles(from imported: [ImportedAgentSession]) {
         let candidates = imported.filter { [.claude, .codex].contains($0.provider) }
         guard !candidates.isEmpty else { return }
 
         let liveSessions = sessions.filter {
-            Self.participatesInLiveAgentMatch(
+            AgentSessionMatcher.participatesInLiveAgentMatch(
                 isImportedHistory: $0.isImportedHistory,
                 status: $0.status,
                 provider: $0.agentProvider
@@ -2399,7 +2378,7 @@ final class SessionStore: ObservableObject {
                 provider: $0.agentProvider
             )
         }
-        let matchesBySessionID = Self.bestPromptTitleAssignments(
+        let matchesBySessionID = AgentSessionMatcher.bestPromptTitleAssignments(
             for: inputs,
             in: candidates
         )
@@ -2425,22 +2404,6 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    nonisolated static func bestPromptTitleMatch(
-        sessionCWD: String,
-        sessionCreatedAt: Date,
-        sessionResetAt: Date?,
-        provider: CodingAgentProvider?,
-        in candidates: [ImportedAgentSession]
-    ) -> ImportedAgentSession? {
-        AgentSessionMatcher.bestPromptTitleMatch(
-            sessionCWD: sessionCWD,
-            sessionCreatedAt: sessionCreatedAt,
-            sessionResetAt: sessionResetAt,
-            provider: provider,
-            in: candidates
-        )
-    }
-
     /// Resolve the provider session behind a closed Banyan row. The live title
     /// matcher intentionally uses a narrow launch-time window to avoid assigning
     /// the wrong title among concurrent sessions. Reopen can be more practical:
@@ -2448,31 +2411,6 @@ final class SessionStore: ObservableObject {
     /// normally unique. Prefer the strict match, then use the exact provider + cwd;
     /// if several transcripts share that directory, choose the one whose last
     /// activity is closest to when the Banyan session was last active.
-    nonisolated static func bestHistoryResumeMatch(
-        sessionCWD: String,
-        sessionCreatedAt: Date,
-        sessionUpdatedAt: Date,
-        sessionResetAt: Date?,
-        provider: CodingAgentProvider?,
-        in candidates: [ImportedAgentSession]
-    ) -> ImportedAgentSession? {
-        AgentSessionMatcher.bestHistoryResumeMatch(
-            sessionCWD: sessionCWD,
-            sessionCreatedAt: sessionCreatedAt,
-            sessionUpdatedAt: sessionUpdatedAt,
-            sessionResetAt: sessionResetAt,
-            provider: provider,
-            in: candidates
-        )
-    }
-
-    nonisolated static func bestPromptTitleAssignments(
-        for sessions: [AgentSessionMatchInput],
-        in candidates: [ImportedAgentSession]
-    ) -> [String: ImportedAgentSession] {
-        AgentSessionMatcher.bestPromptTitleAssignments(for: sessions, in: candidates)
-    }
-
     private func detectAttention(in text: String, for session: BanyanSession) {
         guard let result = detector.detect(in: text), session.status != .closed else { return }
         guard result.status == .asking || result.status == .needInput else { return }
