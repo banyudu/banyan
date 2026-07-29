@@ -228,10 +228,10 @@ final class SessionStore: ObservableObject {
     private var scratchWindow: NSWindow?
     private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
     private var isClosingScratchTerminal = false
-    private let homeDirectory: String
-    private let environment: [String: String]
-    private let currentDirectory: String
     let host: HostRuntimeContext
+    private var homeDirectory: String { host.homeDirectory.path }
+    private var environment: [String: String] { host.environment }
+    private var currentDirectory: String { host.currentDirectory }
 
     init(
         persistence: any SessionStorePersistenceBackend,
@@ -249,9 +249,6 @@ final class SessionStore: ObservableObject {
         self.historyBackend = historyBackend
         self.detector = detector
         self.host = host
-        self.homeDirectory = host.homeDirectory.path
-        self.environment = host.environment
-        self.currentDirectory = host.currentDirectory
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
