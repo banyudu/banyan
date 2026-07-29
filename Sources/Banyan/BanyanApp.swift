@@ -21,6 +21,7 @@ struct BanyanApp: App {
     static let attentionNotifier = AttentionNotifier()
     private static let jumpOverlayMonitor = JumpOverlayMonitor()
     private static let commandWTerminalCloseMonitor = CommandWTerminalCloseMonitor()
+    private static let sessionRenameShortcutMonitor = SessionRenameShortcutMonitor()
     @StateObject private var store = SessionStore(
         persistence: SessionPersistence(
             databaseURL: SessionDatabase.defaultDatabaseURL(
@@ -87,7 +88,7 @@ struct BanyanApp: App {
                     Self.jumpOverlayMonitor.start()
                     store.selection.startClickMonitor()
 
-                    SessionRenameShortcutMonitor.shared.action = { [weak store] in
+                    Self.sessionRenameShortcutMonitor.action = { [weak store] in
                         guard let store,
                               store.sidebarMode == .sessions,
                               store.selectedSession != nil else {
@@ -96,7 +97,7 @@ struct BanyanApp: App {
                         store.selection.requestRenameSelectedSession()
                         return true
                     }
-                    SessionRenameShortcutMonitor.shared.start()
+                    Self.sessionRenameShortcutMonitor.start()
                 }
         }
         .windowStyle(.titleBar)
@@ -257,12 +258,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 private final class SessionRenameShortcutMonitor {
-    static let shared = SessionRenameShortcutMonitor()
-
     var action: () -> Bool = { false }
     private var monitor: Any?
 
-    private init() {}
+    init() {}
 
     deinit {
         stop()
