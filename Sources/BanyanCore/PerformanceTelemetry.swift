@@ -196,6 +196,13 @@ public struct PerformanceEventStore {
         )
     }
 
+    public static func defaultDatabaseURL(host: HostRuntimeContext) -> URL {
+        defaultDatabaseURL(
+            environment: host.environment,
+            homeDirectory: host.homeDirectory
+        )
+    }
+
     public static func thresholdMS(for name: String) -> Double {
         switch name {
         case "session_switch.total": return 1_000
@@ -363,11 +370,13 @@ public struct PerformanceEventStore {
 }
 
 public final class PerformanceTelemetry: @unchecked Sendable {
+    private static let host = HostRuntimeContext(
+        environment: ProcessInfo.processInfo.environment,
+        homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
+        currentDirectory: FileManager.default.currentDirectoryPath
+    )
     public static let shared = PerformanceTelemetry(
-        store: PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
-        ))
+        store: PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(host: host))
     )
 
     private struct ActiveSpan {

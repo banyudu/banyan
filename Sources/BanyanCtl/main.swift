@@ -76,10 +76,7 @@ struct BanyanCtl {
         switch subcommand {
         case "report":
             let options = try parsePerfReportOptions(Array(args.dropFirst()))
-            let store = PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(
-                environment: host.environment,
-                homeDirectory: host.homeDirectory
-            ))
+            let store = PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(host: host))
             if options.json {
                 let encoder = JSONEncoder()
                 encoder.dateEncodingStrategy = .iso8601
@@ -94,10 +91,7 @@ struct BanyanCtl {
             print(makePerformanceFixPrompt(since: options.since))
         case "fix":
             let options = try parsePerfFixOptions(Array(args.dropFirst()))
-            let store = PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(
-                environment: host.environment,
-                homeDirectory: host.homeDirectory
-            ))
+            let store = PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(host: host))
             let report = store.report(since: options.since)
             guard report.eventCount > 0 else {
                 throw CLIError.message("no performance events found for the requested window")
@@ -247,10 +241,7 @@ struct BanyanCtl {
 
     private func makePerformanceFixPrompt(since: Date) -> String {
         let report = PerformanceEventStore(
-            databaseURL: PerformanceEventStore.defaultDatabaseURL(
-                environment: host.environment,
-                homeDirectory: host.homeDirectory
-            )
+            databaseURL: PerformanceEventStore.defaultDatabaseURL(host: host)
         ).formattedReport(since: since)
         return """
         We need to fix Banyan performance regressions using collected local telemetry.
