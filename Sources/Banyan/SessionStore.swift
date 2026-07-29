@@ -2831,14 +2831,9 @@ final class SessionStore: ObservableObject {
     }
 
     private func uniqueID(_ baseID: String, avoidingLiveTmuxSessions: Bool) -> String {
-        if isAvailableID(baseID, avoidingLiveTmuxSessions: avoidingLiveTmuxSessions) {
-            return baseID
+        SessionIdentityPolicy.nextAvailableID(from: baseID) { candidate in
+            isAvailableID(candidate, avoidingLiveTmuxSessions: avoidingLiveTmuxSessions)
         }
-        var index = 2
-        while !isAvailableID("\(baseID)-\(index)", avoidingLiveTmuxSessions: avoidingLiveTmuxSessions) {
-            index += 1
-        }
-        return "\(baseID)-\(index)"
     }
 
     private func isAvailableID(_ id: String, avoidingLiveTmuxSessions: Bool) -> Bool {

@@ -11,3 +11,10 @@ import Testing
     #expect(SessionIdentityPolicy.sanitizedID("!!!") == "session")
     #expect(SessionIdentityPolicy.sanitizedID("session_2") == "session_2")
 }
+
+@Test func sessionIdentityAllocatesTheFirstAvailableSuffix() {
+    let unavailable: Set<String> = ["session", "session-2", "session-3"]
+
+    #expect(SessionIdentityPolicy.nextAvailableID(from: "session") { !unavailable.contains($0) } == "session-4")
+    #expect(SessionIdentityPolicy.nextAvailableID(from: "new") { !unavailable.contains($0) } == "new")
+}

@@ -14,4 +14,16 @@ public enum SessionIdentityPolicy {
     public static func sessionName(for id: String) -> String {
         "banyan-\(id)"
     }
+
+    public static func nextAvailableID(
+        from baseID: String,
+        isAvailable: (String) -> Bool
+    ) -> String {
+        guard !isAvailable(baseID) else { return baseID }
+        var suffix = 2
+        while !isAvailable("\(baseID)-\(suffix)") {
+            suffix += 1
+        }
+        return "\(baseID)-\(suffix)"
+    }
 }

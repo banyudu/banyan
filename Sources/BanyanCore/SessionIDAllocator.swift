@@ -21,13 +21,9 @@ public struct UniqueSessionIDAllocator: Sendable, SessionIDAllocator {
 
     public func allocate(prefix: String) -> String {
         let existingIDs = Set(persistence.load().map(\.id))
-        var candidate = prefix
-        var suffix = 2
-        while existingIDs.contains(candidate)
-                || tmux.hasSession(named: SessionIdentityPolicy.sessionName(for: candidate)) {
-            candidate = "\(prefix)-\(suffix)"
-            suffix += 1
+        return SessionIdentityPolicy.nextAvailableID(from: prefix) { candidate in
+            !existingIDs.contains(candidate)
+                && !tmux.hasSession(named: SessionIdentityPolicy.sessionName(for: candidate))
         }
-        return candidate
     }
 }
