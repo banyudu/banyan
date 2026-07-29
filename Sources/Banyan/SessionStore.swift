@@ -955,7 +955,11 @@ final class SessionStore: ObservableObject {
             tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
             title: "Scratch",
             isTitlePinned: true,
-            cwd: resolvedWorkingDirectory(cwd),
+            cwd: WorkingDirectoryPolicy.resolve(
+                proposedDirectory: cwd,
+                currentDirectory: currentDirectory,
+                homeDirectory: homeDirectory
+            ),
             command: "",
             tone: .neutral,
             theme: terminalTheme,
@@ -2744,14 +2748,6 @@ final class SessionStore: ObservableObject {
         let originX = min(max(anchorFrame.midX - width / 2, visibleFrame.minX + 40), visibleFrame.maxX - width - 40)
         let originY = min(max(anchorFrame.midY - height / 2, visibleFrame.minY + 40), visibleFrame.maxY - height - 40)
         window.setFrame(NSRect(x: originX, y: originY, width: width, height: height), display: false)
-    }
-
-    private func resolvedWorkingDirectory(_ cwd: String?) -> String {
-        WorkingDirectoryPolicy.resolve(
-            proposedDirectory: cwd,
-            currentDirectory: currentDirectory,
-            homeDirectory: homeDirectory
-        )
     }
 
     nonisolated private static func runBanyanWorktree(
