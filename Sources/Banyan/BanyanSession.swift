@@ -429,21 +429,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         isRestored = false
         status = .running
         touch()
-        let runtime = sessionRuntime
-        let request = launchRequest
-        Task.detached(priority: .userInitiated) { [weak self] in
-            do {
-                try runtime.ensureBackingSession(request)
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.isProcessStarted = true
-                    self.touch()
-                }
-            } catch {
-                let message = error.localizedDescription
-                await MainActor.run { [weak self] in self?.failToStart(message) }
-            }
-        }
+        startBackingSessionInBackground()
     }
 
     func refreshTerminalClient(immediately: Bool = false) {
@@ -573,7 +559,10 @@ final class BanyanSession: ObservableObject, Identifiable {
         isRestored = false
         status = .running
         touch()
+        startBackingSessionInBackground()
+    }
 
+    private func startBackingSessionInBackground() {
         let runtime = sessionRuntime
         let request = launchRequest
         Task.detached(priority: .userInitiated) { [weak self] in
