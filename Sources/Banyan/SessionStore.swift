@@ -326,34 +326,24 @@ final class SessionStore: ObservableObject {
 
     var sessionSidebarGroups: [SidebarSessionGroup] {
         let active = visibleSessions.filter { !$0.isImportedHistory }
-        var sessionsByProject: [String: [BanyanSession]] = [:]
-        var orderedProjectIDs: [String] = []
-
-        for session in active {
-            if sessionsByProject[session.projectGroupID] == nil {
-                orderedProjectIDs.append(session.projectGroupID)
-            }
-            sessionsByProject[session.projectGroupID, default: []].append(session)
-        }
-
-        let groups: [SidebarSessionGroup] = orderedProjectIDs.compactMap { projectID in
-            guard let projectSessions = sessionsByProject[projectID],
-                  let firstSession = projectSessions.first else {
-                return nil
-            }
-            return SidebarSessionGroup(
-                id: projectID,
-                title: firstSession.projectGroupTitle,
-                items: sidebarItems(for: projectSessions)
+        let candidates = active.map {
+            SessionSidebarCandidate(
+                id: $0.id,
+                groupID: $0.projectGroupID,
+                groupTitle: $0.projectGroupTitle,
+                parentSessionID: $0.parentSessionID
             )
         }
-
-        return groups.sorted {
-            let titleComparison = $0.title.localizedCaseInsensitiveCompare($1.title)
-            if titleComparison == .orderedSame {
-                return $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending
-            }
-            return titleComparison == .orderedAscending
+        let sessionsByID = Dictionary(active.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return SessionSidebarGroupingPolicy.groups(for: candidates).map { group in
+            SidebarSessionGroup(
+                id: group.id,
+                title: group.title,
+                items: group.rows.compactMap { row in
+                    guard let session = sessionsByID[row.id] else { return nil }
+                    return SidebarSessionItem(session: session, depth: row.depth)
+                }
+            )
         }
     }
 
@@ -377,17 +367,6 @@ final class SessionStore: ObservableObject {
 
     var sidebarSessions: [SidebarSessionItem] {
         sidebarGroups.flatMap(\.items)
-    }
-
-    private func sidebarItems(for sessions: [BanyanSession]) -> [SidebarSessionItem] {
-        let items = sessions.map {
-            SessionSelectionItem(id: $0.id, parentSessionID: $0.parentSessionID)
-        }
-        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return SessionSidebarHierarchyPolicy.rows(for: items).compactMap { row in
-            guard let session = sessionsByID[row.id] else { return nil }
-            return SidebarSessionItem(session: session, depth: row.depth)
-        }
     }
 
     var hasLocalHistorySessions: Bool {
