@@ -38,7 +38,7 @@ struct AddSessionDraft: Identifiable {
     let kind: Kind
     let initialCWD: String
 
-    static func sibling(cwd: String = FileManager.default.currentDirectoryPath) -> AddSessionDraft {
+    static func sibling(cwd: String) -> AddSessionDraft {
         AddSessionDraft(kind: .sibling, initialCWD: cwd)
     }
 
@@ -60,7 +60,7 @@ struct AddSessionSheet: View {
     @State private var command = ""
     @State private var tone: SessionTone = .blue
 
-    init(draft: AddSessionDraft = .sibling()) {
+    init(draft: AddSessionDraft) {
         self.draft = draft
         _cwd = State(initialValue: draft.initialCWD)
     }
