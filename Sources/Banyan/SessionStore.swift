@@ -2058,7 +2058,8 @@ final class SessionStore: ObservableObject {
 
     func requestClose(id: String) {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
-        if hasActiveChildren(id) || SessionLifecyclePolicy.isOngoingCodingAgentSession(
+        if SessionClosePolicy.requiresConfirmation(
+            hasActiveChildren: hasActiveChildren(id),
             status: session.status,
             provider: session.agentProvider
         ) {
