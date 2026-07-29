@@ -510,7 +510,10 @@ final class SessionStore: ObservableObject {
             let session = BanyanSession(
                 id: uniqueID(snapshot.id, avoidingLiveTmuxSessions: false),
                 tmuxSessionName: restorationPlan.tmuxSessionName,
-                title: restoredTitle(from: snapshot),
+                title: SessionRestorationPolicy.restoredTitle(
+                    for: snapshot,
+                    homeDirectory: homeDirectory
+                ),
                 titleURL: snapshot.titleURL,
                 titleURLWasAutoDetected: snapshot.titleURLWasAutoDetected,
                 generatedTitle: snapshot.generatedTitle,
@@ -2888,13 +2891,6 @@ final class SessionStore: ObservableObject {
 
     private func defaultTitle(for cwd: String) -> String {
         PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
-    }
-
-    private func restoredTitle(from snapshot: SessionSnapshot) -> String {
-        if !snapshot.isTitlePinned, SessionTitleGenerator.isGenericDefaultTitle(snapshot.title) {
-            return defaultTitle(for: snapshot.cwd)
-        }
-        return snapshot.title
     }
 
     private func uniqueID(_ baseID: String, avoidingLiveTmuxSessions: Bool) -> String {

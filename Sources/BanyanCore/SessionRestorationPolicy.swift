@@ -19,6 +19,16 @@ public struct SessionRestorationPlan: Sendable, Equatable {
 /// Produces the runtime fields needed to turn a persisted row into a live
 /// frontend session.
 public enum SessionRestorationPolicy {
+    public static func restoredTitle(
+        for snapshot: SessionSnapshot,
+        homeDirectory: String
+    ) -> String {
+        if !snapshot.isTitlePinned, SessionTitleGenerator.isGenericDefaultTitle(snapshot.title) {
+            return PathDisplayName.make(path: snapshot.cwd, homeDirectory: homeDirectory)
+        }
+        return snapshot.title
+    }
+
     public static func plan(
         for snapshot: SessionSnapshot,
         liveTmuxSessionNames: Set<String>
