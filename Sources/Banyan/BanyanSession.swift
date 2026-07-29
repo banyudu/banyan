@@ -186,15 +186,14 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     var canDispatchHandoff: Bool {
-        guard !isImportedHistory,
-              agentProvider != nil,
-              status.isCodingAgentIdle,
-              displayIsGitWorktree,
-              let branch = displayBranch,
-              !displayIsDefaultBranch else {
-            return false
-        }
-        return branch != "main" && branch != "master"
+        SessionHandoffPolicy.canDispatch(
+            isImportedHistory: isImportedHistory,
+            provider: agentProvider,
+            status: status,
+            isGitWorktree: displayIsGitWorktree,
+            branch: displayBranch,
+            isDefaultBranch: displayIsDefaultBranch
+        )
     }
 
     init(
