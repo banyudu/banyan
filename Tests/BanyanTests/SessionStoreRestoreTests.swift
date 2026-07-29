@@ -308,7 +308,12 @@ import Testing
         host: banyanTestHost
     )
 
-    #expect(SessionStore.isLocalHistorySession(session))
+    #expect(SessionHistoryPolicy.isLocalHistorySession(
+        status: session.status,
+        isImportedHistory: session.isImportedHistory,
+        provider: session.agentProvider,
+        hasIssueLink: session.titleLinkLabel != nil
+    ))
 }
 
 @MainActor
@@ -330,7 +335,12 @@ import Testing
         host: banyanTestHost
     )
 
-    #expect(SessionStore.isLocalHistorySession(session))
+    #expect(SessionHistoryPolicy.isLocalHistorySession(
+        status: session.status,
+        isImportedHistory: session.isImportedHistory,
+        provider: session.agentProvider,
+        hasIssueLink: session.titleLinkLabel != nil
+    ))
 }
 
 @MainActor
@@ -353,7 +363,12 @@ import Testing
         host: banyanTestHost
     )
 
-    #expect(!SessionStore.isLocalHistorySession(session))
+    #expect(!SessionHistoryPolicy.isLocalHistorySession(
+        status: session.status,
+        isImportedHistory: session.isImportedHistory,
+        provider: session.agentProvider,
+        hasIssueLink: session.titleLinkLabel != nil
+    ))
 }
 
 @MainActor
@@ -375,7 +390,12 @@ import Testing
         host: banyanTestHost
     )
 
-    #expect(!SessionStore.isLocalHistorySession(session))
+    #expect(!SessionHistoryPolicy.isLocalHistorySession(
+        status: session.status,
+        isImportedHistory: session.isImportedHistory,
+        provider: session.agentProvider,
+        hasIssueLink: session.titleLinkLabel != nil
+    ))
 }
 
 @MainActor
@@ -397,7 +417,12 @@ import Testing
         host: banyanTestHost
     )
 
-    #expect(!SessionStore.isLocalHistorySession(session))
+    #expect(!SessionHistoryPolicy.isLocalHistorySession(
+        status: session.status,
+        isImportedHistory: session.isImportedHistory,
+        provider: session.agentProvider,
+        hasIssueLink: session.titleLinkLabel != nil
+    ))
 }
 
 @MainActor
@@ -419,7 +444,12 @@ import Testing
         host: banyanTestHost
     )
 
-    #expect(!SessionStore.isLocalHistorySession(session))
+    #expect(!SessionHistoryPolicy.isLocalHistorySession(
+        status: session.status,
+        isImportedHistory: session.isImportedHistory,
+        provider: session.agentProvider,
+        hasIssueLink: session.titleLinkLabel != nil
+    ))
 }
 
 @Test func promptTitleMatchAfterResetUsesRecentlyUpdatedSession() {

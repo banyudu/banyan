@@ -412,7 +412,14 @@ final class SessionStore: ObservableObject {
     }
 
     var hasLocalHistorySessions: Bool {
-        sessions.contains(where: Self.isLocalHistorySession)
+        sessions.contains { session in
+            SessionHistoryPolicy.isLocalHistorySession(
+                status: session.status,
+                isImportedHistory: session.isImportedHistory,
+                provider: session.agentProvider,
+                hasIssueLink: session.titleLinkLabel != nil
+            )
+        }
     }
 
     private var sidebarHistoryItems: [SidebarSessionItem] {
@@ -421,7 +428,14 @@ final class SessionStore: ObservableObject {
             ? SessionHistoryPresentation.sidebarBrowseLimit
             : SessionHistoryPresentation.sidebarSearchLimit
         return sessions
-            .filter(Self.isLocalHistorySession)
+            .filter { session in
+                SessionHistoryPolicy.isLocalHistorySession(
+                    status: session.status,
+                    isImportedHistory: session.isImportedHistory,
+                    provider: session.agentProvider,
+                    hasIssueLink: session.titleLinkLabel != nil
+                )
+            }
             .sorted { $0.updatedAt > $1.updatedAt }
             .map { session in
                 (
@@ -436,16 +450,6 @@ final class SessionStore: ObservableObject {
             .filter { SessionHistoryPresentation.matchesFilter(title: $0.title, query: query) }
             .prefix(limit)
             .map { SidebarSessionItem(session: $0.session, depth: 0, titleOverride: $0.title) }
-    }
-
-    static func isLocalHistorySession(_ session: BanyanSession) -> Bool {
-        guard session.status == .closed, !session.isImportedHistory else {
-            return false
-        }
-        guard let provider = session.agentProvider, [.codex, .claude].contains(provider) else {
-            return false
-        }
-        return session.titleLinkLabel != nil
     }
 
     var selectedSession: BanyanSession? {
