@@ -104,6 +104,7 @@ private func makeSwitcherSession(id: String) -> BanyanSession {
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
+        telemetry: PerformanceTelemetry.shared,
         host: banyanTestHost
     )
 }

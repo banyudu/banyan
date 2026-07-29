@@ -200,7 +200,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         fontFamily: String? = nil,
         fontSize: Double = 13,
         tmuxBackend: any TmuxClientBackend,
-        telemetry: PerformanceTelemetry = .shared,
+        telemetry: PerformanceTelemetry,
         host: HostRuntimeContext
     ) {
         self.tmuxBackend = tmuxBackend
