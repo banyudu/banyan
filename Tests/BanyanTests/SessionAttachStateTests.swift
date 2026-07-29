@@ -302,7 +302,7 @@ import Testing
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 
@@ -329,7 +329,7 @@ private func makeAttachStateSession(
         isRestored: isRestored,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 }
@@ -349,7 +349,7 @@ private func makeIssueBindingSession(
         command: "",
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 }
@@ -370,7 +370,7 @@ private func makeHandoffSession(
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 }

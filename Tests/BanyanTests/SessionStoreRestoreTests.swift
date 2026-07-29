@@ -304,7 +304,7 @@ import Testing
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 
@@ -326,7 +326,7 @@ import Testing
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 
@@ -349,7 +349,7 @@ import Testing
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 
@@ -371,7 +371,7 @@ import Testing
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 
@@ -393,7 +393,7 @@ import Testing
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 
@@ -415,7 +415,7 @@ import Testing
         isRestored: true,
         theme: .system,
         tmuxBackend: TmuxBackend.shared,
-        telemetry: PerformanceTelemetry.shared,
+        telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
 

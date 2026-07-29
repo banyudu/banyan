@@ -370,15 +370,6 @@ public struct PerformanceEventStore {
 }
 
 public final class PerformanceTelemetry: @unchecked Sendable {
-    private static let host = HostRuntimeContext(
-        environment: ProcessInfo.processInfo.environment,
-        homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
-        currentDirectory: FileManager.default.currentDirectoryPath
-    )
-    public static let shared = PerformanceTelemetry(
-        store: PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(host: host))
-    )
-
     private struct ActiveSpan {
         let name: String
         let sessionID: String?
