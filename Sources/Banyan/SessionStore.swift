@@ -231,6 +231,7 @@ final class SessionStore: ObservableObject {
     private let homeDirectory: String
     private let environment: [String: String]
     private let currentDirectory: String
+    private let host: HostRuntimeContext
 
     init(
         persistence: any SessionStorePersistenceBackend,
@@ -247,6 +248,7 @@ final class SessionStore: ObservableObject {
         self.processTable = processTable
         self.historyBackend = historyBackend
         self.detector = detector
+        self.host = host
         self.homeDirectory = host.homeDirectory.path
         self.environment = host.environment
         self.currentDirectory = host.currentDirectory
@@ -884,7 +886,7 @@ final class SessionStore: ObservableObject {
 
     func startControlServer() {
         guard controlServer == nil else { return }
-        let server = ControlServer(store: self)
+        let server = ControlServer(store: self, host: host)
         server.start()
         controlServer = server
     }

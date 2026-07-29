@@ -14,11 +14,11 @@ final class ControlServer {
     /// the port on a quick restart, without looping forever.
     private let maxBindAttempts = 30
 
-    init(store: SessionStore) {
+    init(store: SessionStore, host: HostRuntimeContext) {
         self.store = store
         self.token = (try? ControlToken.loadOrCreate(
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: host.environment,
+            homeDirectory: host.homeDirectory
         )) ?? ""
     }
 
