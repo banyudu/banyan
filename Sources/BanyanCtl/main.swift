@@ -9,7 +9,17 @@ client.run()
 
 struct BanyanCtl {
     let arguments: [String]
+    let host: HostRuntimeContext
     let baseURL = URL(string: "http://127.0.0.1:7842")!
+
+    init(arguments: [String]) {
+        self.arguments = arguments
+        self.host = HostRuntimeContext(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
+            currentDirectory: FileManager.default.currentDirectoryPath
+        )
+    }
 
     func run() {
         guard let command = arguments.first else {
@@ -67,8 +77,8 @@ struct BanyanCtl {
         case "report":
             let options = try parsePerfReportOptions(Array(args.dropFirst()))
             let store = PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(
-                environment: ProcessInfo.processInfo.environment,
-                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+                environment: host.environment,
+                homeDirectory: host.homeDirectory
             ))
             if options.json {
                 let encoder = JSONEncoder()
@@ -85,8 +95,8 @@ struct BanyanCtl {
         case "fix":
             let options = try parsePerfFixOptions(Array(args.dropFirst()))
             let store = PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(
-                environment: ProcessInfo.processInfo.environment,
-                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+                environment: host.environment,
+                homeDirectory: host.homeDirectory
             ))
             let report = store.report(since: options.since)
             guard report.eventCount > 0 else {
@@ -202,7 +212,7 @@ struct BanyanCtl {
     private func parsePerfFixOptions(_ args: [String]) throws -> (since: Date, provider: CodingAgentProvider, cwd: String) {
         var since = Date().addingTimeInterval(-7 * 24 * 60 * 60)
         var provider = CodingAgentProvider.codex
-        var cwd = FileManager.default.currentDirectoryPath
+        var cwd = host.currentDirectory
         var index = 0
         while index < args.count {
             let token = args[index]
@@ -238,8 +248,8 @@ struct BanyanCtl {
     private func makePerformanceFixPrompt(since: Date) -> String {
         let report = PerformanceEventStore(
             databaseURL: PerformanceEventStore.defaultDatabaseURL(
-                environment: ProcessInfo.processInfo.environment,
-                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+                environment: host.environment,
+                homeDirectory: host.homeDirectory
             )
         ).formattedReport(since: since)
         return """
@@ -295,7 +305,7 @@ struct BanyanCtl {
 
     private func parseAgentRunPayload(_ args: [String]) throws -> [String: String] {
         var result: [String: String] = [
-            "cwd": FileManager.default.currentDirectoryPath
+            "cwd": host.currentDirectory
         ]
         var provider: CodingAgentProvider?
         var prompt: String?
@@ -402,8 +412,8 @@ struct BanyanCtl {
 
     private func authorize(_ request: inout URLRequest) throws {
         let token = try ControlToken.loadOrCreate(
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: host.environment,
+            homeDirectory: host.homeDirectory
         )
         request.setValue(token, forHTTPHeaderField: ControlToken.headerName)
     }
