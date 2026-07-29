@@ -588,12 +588,12 @@ enum LinearIssueClient {
         shellEnvironment: [String: String]
     ) -> [String: String] {
         let additions = [
-            "\(NSHomeDirectory())/bin",
-            "\(NSHomeDirectory())/.bun/bin",
-            "\(NSHomeDirectory())/.local/bin",
-            "\(NSHomeDirectory())/.cargo/bin",
-            "\(NSHomeDirectory())/go/bin",
-            "\(NSHomeDirectory())/.nix-profile/bin",
+            "\(homeDirectory)/bin",
+            "\(homeDirectory)/.bun/bin",
+            "\(homeDirectory)/.local/bin",
+            "\(homeDirectory)/.cargo/bin",
+            "\(homeDirectory)/go/bin",
+            "\(homeDirectory)/.nix-profile/bin",
             "/nix/var/nix/profiles/default/bin",
             "/opt/homebrew/bin",
             "/usr/local/bin",
