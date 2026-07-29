@@ -2753,38 +2753,21 @@ final class SessionStore: ObservableObject {
     /// Sidebar groups are already in their rendered order, so this preserves the
     /// user's project/session navigation order across all sort modes.
     private func preferredSelectionAfterClosing(id: String) -> String? {
-        guard let closingSession = sessions.first(where: { $0.id == id }),
-              let groupIndex = sessionSidebarGroups.firstIndex(where: {
-                  $0.id == closingSession.projectGroupID
-              }) else {
-            return nil
+        let groups = sessionSidebarGroups.map { group in
+            SessionSelectionGroup(
+                id: group.id,
+                items: group.items.map { item in
+                    SessionSelectionItem(
+                        id: item.id,
+                        parentSessionID: item.session.parentSessionID
+                    )
+                }
+            )
         }
-
-        let groups = sessionSidebarGroups
-        let group = groups[groupIndex]
-        guard let closingIndex = group.items.firstIndex(where: { $0.id == id }) else {
-            return nil
-        }
-
-        let siblings = group.items.enumerated().filter { index, item in
-            item.session.parentSessionID == closingSession.parentSessionID
-                && item.id != id
-                && index != closingIndex
-        }
-        if let nextSibling = siblings.first(where: { $0.offset > closingIndex }) {
-            return nextSibling.element.id
-        }
-        if let previousSibling = siblings.last(where: { $0.offset < closingIndex }) {
-            return previousSibling.element.id
-        }
-
-        if groupIndex + 1 < groups.count {
-            return groups[groupIndex + 1].items.first?.id
-        }
-        if groupIndex > 0 {
-            return groups[groupIndex - 1].items.last?.id
-        }
-        return nil
+        return SessionClosingSelectionPolicy.preferredIDAfterClosing(
+            closingID: id,
+            groups: groups
+        )
     }
 
     private func positionScratchWindow(_ window: NSWindow) {
