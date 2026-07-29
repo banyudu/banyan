@@ -1,12 +1,7 @@
 import BanyanCore
 import Foundation
 
-private func makeDefaultApp() -> BanyanTUI {
-    let host = HostRuntimeContext(
-        environment: ProcessInfo.processInfo.environment,
-        homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
-        currentDirectory: FileManager.default.currentDirectoryPath
-    )
+private func makeDefaultApp(host: HostRuntimeContext) -> BanyanTUI {
     let backend = TmuxBackend(
         environment: host.environment,
         workingDirectory: host.homeDirectory.path
@@ -53,5 +48,11 @@ private func makeDefaultApp() -> BanyanTUI {
     )
 }
 
-private var app = makeDefaultApp()
+private let host = HostRuntimeContext(
+    environment: ProcessInfo.processInfo.environment,
+    homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
+    currentDirectory: FileManager.default.currentDirectoryPath
+)
+
+private var app = makeDefaultApp(host: host)
 app.run()
