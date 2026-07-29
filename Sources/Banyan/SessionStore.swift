@@ -1271,13 +1271,14 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
-        if let resumeCommand = SessionRecoveryPolicy.resumeCommand(
+        if let resumePlan = SessionRecoveryPolicy.resumePlan(
             status: session.status,
             provider: session.agentProvider,
             agentSessionID: session.agentSessionID,
-            cwd: session.cwd
-        ), session.command != resumeCommand {
-            session.command = resumeCommand
+            cwd: session.cwd,
+            history: historyBackend
+        ), session.command != resumePlan.command {
+            session.command = resumePlan.command
         }
         session.reattachTerminalClient()
         selectedSessionID = id
