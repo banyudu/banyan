@@ -567,7 +567,9 @@ final class SessionStore: ObservableObject {
         let cwd = selectedSession?.cwd ?? homeDirectory
         let deadline = Date().addingTimeInterval(Self.linearIssueListLoadTimeout)
         linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]")
-        linearIssueListTask = Task.detached(priority: .utility) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        linearIssueListTask = Task.detached(priority: .utility) { [environment, homeDirectory] in
             do {
                 async let issuesRequest = LinearIssueClient.fetchIssueList(cwd: cwd, deadline: deadline, environment: environment, homeDirectory: homeDirectory)
                 async let workflowStatesRequest = LinearIssueClient.fetchWorkflowStates(cwd: cwd, deadline: deadline, environment: environment, homeDirectory: homeDirectory)
@@ -709,7 +711,9 @@ final class SessionStore: ObservableObject {
         }
 
         let cwd = selectedSession?.cwd ?? homeDirectory
-        selectedLinearListIssueTask = Task.detached(priority: .utility) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedLinearListIssueTask = Task.detached(priority: .utility) { [environment, homeDirectory] in
             do {
                 let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
@@ -763,7 +767,9 @@ final class SessionStore: ObservableObject {
         selectedLinearListIssueLoadState = .updating(state.name)
 
         let cwd = selectedSession?.cwd ?? homeDirectory
-        selectedLinearListIssueTask = Task.detached(priority: .userInitiated) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedLinearListIssueTask = Task.detached(priority: .userInitiated) { [environment, homeDirectory] in
             do {
                 try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
@@ -794,7 +800,9 @@ final class SessionStore: ObservableObject {
     func startLinearIssueSession(_ issueID: String) {
         linearIssueListLoadState = .starting(issueID)
         let cwd = selectedSession?.cwd ?? homeDirectory
-        Task.detached(priority: .userInitiated) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        Task.detached(priority: .userInitiated) { [environment, homeDirectory] in
             let errorMessage = Self.runBanyanWorktree(
                 issueID: issueID,
                 cwd: cwd,
@@ -1126,7 +1134,7 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
 
-        let recoveryCommand = session.agentProvider.flatMap { provider in
+        let recoveryCommand: String? = session.agentProvider.flatMap { provider in
             guard let agentSessionID = session.agentSessionID,
                   [.codex, .claude].contains(provider) else {
                 return nil
@@ -1361,7 +1369,9 @@ final class SessionStore: ObservableObject {
         selectedGitHubIssueLoadState = .loading
         let sessionID = session.id
         let cwd = session.cwd
-        selectedGitHubIssueTask = Task.detached(priority: .utility) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedGitHubIssueTask = Task.detached(priority: .utility) { [environment, homeDirectory] in
             do {
                 let details = try await GitHubIssueClient.fetchIssue(
                     url: url,
@@ -1428,7 +1438,9 @@ final class SessionStore: ObservableObject {
 
         let cwd = session.cwd
         let sessionID = session.id
-        selectedLinearIssueTask = Task.detached(priority: .utility) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedLinearIssueTask = Task.detached(priority: .utility) { [environment, homeDirectory] in
             do {
                 let issue = try await LinearIssueClient.fetchIssue(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
@@ -1478,7 +1490,9 @@ final class SessionStore: ObservableObject {
 
         let cwd = session.cwd
         let sessionID = session.id
-        selectedLinearIssueTask = Task.detached(priority: .userInitiated) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedLinearIssueTask = Task.detached(priority: .userInitiated) { [environment, homeDirectory] in
             do {
                 try await LinearIssueClient.updateIssueState(identifier: issueID, state: state, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 let status = try await LinearIssueClient.fetchIssueStatus(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
@@ -1530,7 +1544,9 @@ final class SessionStore: ObservableObject {
 
     private func saveSelectedLinearIssueDescription(issueID: String, description: String, cwd: String, sessionID: String) {
         selectedLinearIssueTask?.cancel()
-        selectedLinearIssueTask = Task.detached(priority: .userInitiated) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedLinearIssueTask = Task.detached(priority: .userInitiated) { [environment, homeDirectory] in
             do {
                 try await LinearIssueClient.updateIssueDescription(identifier: issueID, description: description, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
@@ -1574,7 +1590,9 @@ final class SessionStore: ObservableObject {
 
     private func saveSelectedLinearListIssueDescription(issueID: String, description: String, cwd: String) {
         selectedLinearListIssueTask?.cancel()
-        selectedLinearListIssueTask = Task.detached(priority: .userInitiated) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedLinearListIssueTask = Task.detached(priority: .userInitiated) { [environment, homeDirectory] in
             do {
                 try await LinearIssueClient.updateIssueDescription(identifier: issueID, description: description, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
@@ -1631,7 +1649,9 @@ final class SessionStore: ObservableObject {
 
         let cwd = session.cwd
         let sessionID = session.id
-        selectedLinearIssueStatusTask = Task.detached(priority: .utility) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedLinearIssueStatusTask = Task.detached(priority: .utility) { [environment, homeDirectory] in
             do {
                 let status = try await LinearIssueClient.fetchIssueStatus(identifier: issueID, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
@@ -1968,7 +1988,9 @@ final class SessionStore: ObservableObject {
         }
 
         pendingHandoffJobs.append(job)
-        Task.detached(priority: .utility) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        Task.detached(priority: .utility) { [environment, homeDirectory] in
             let result = runHandoffDispatch(
                 cwd: job.cwd,
                 homeDirectory: homeDirectory,
@@ -2174,7 +2196,8 @@ final class SessionStore: ObservableObject {
                 self.scratchWindow?.title = self.scratchWindowTitle(for: session)
             }
         }
-        session.onOutput = { [weak session] _ in
+        let telemetry = self.telemetry
+        session.onOutput = { [weak session, telemetry] _ in
             guard let session else { return }
             telemetry.noteSessionFirstOutput(sessionID: session.id)
         }
@@ -2399,7 +2422,8 @@ final class SessionStore: ObservableObject {
         let backend = tmuxBackend
         let processTable = processTable.snapshot()
 
-        Task.detached(priority: .utility) { [weak self] in
+        let telemetry = self.telemetry
+        Task.detached(priority: .utility) { [weak self, telemetry] in
             // Time the whole tick: `ps` snapshot + per-session tmux inspection. This
             // is the app's steady-state energy cost, previously untracked and so
             // invisible in `banyanctl perf report`.
@@ -2482,7 +2506,7 @@ final class SessionStore: ObservableObject {
         // titlebar isn't blank, then enrich from git/linear/gh in the background.
         selectedContextInfo = SessionContextResolver.resolveFast(input: input)
         selectedContextTask?.cancel()
-        selectedContextTask = Task.detached(priority: .utility) {
+        selectedContextTask = Task.detached(priority: .utility) { [telemetry = self.telemetry] in
             let startedAt = DispatchTime.now()
             let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
@@ -2521,7 +2545,7 @@ final class SessionStore: ObservableObject {
         }
         selectedContextSignature = input.signature
         selectedContextTask?.cancel()
-        selectedContextTask = Task.detached(priority: .userInitiated) {
+        selectedContextTask = Task.detached(priority: .userInitiated) { [telemetry = self.telemetry] in
             let startedAt = DispatchTime.now()
             let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
@@ -2578,7 +2602,7 @@ final class SessionStore: ObservableObject {
             return
         }
         selectedContextTask?.cancel()
-        selectedContextTask = Task.detached(priority: .userInitiated) {
+        selectedContextTask = Task.detached(priority: .userInitiated) { [telemetry = self.telemetry] in
             let startedAt = DispatchTime.now()
             let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
@@ -2630,7 +2654,9 @@ final class SessionStore: ObservableObject {
         selectedPullRequestDetails = nil
         selectedPullRequestLoadState = .loading
 
-        selectedPullRequestTask = Task.detached(priority: .utility) {
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        selectedPullRequestTask = Task.detached(priority: .utility) { [environment, homeDirectory] in
             do {
                 let details = try await GitHubPullRequestClient.fetchPullRequest(
                     url: url,

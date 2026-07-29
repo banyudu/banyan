@@ -55,7 +55,8 @@ extension BanyanSession {
 
         if immediately {
             let startedAt = DispatchTime.now()
-            DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            let telemetry = self.telemetry
+            DispatchQueue.global(qos: .userInteractive).async { [weak self, telemetry] in
                 tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
                 telemetry.recordDuration(
                     "tmux.refresh_clients",
@@ -82,7 +83,7 @@ extension BanyanSession {
             await Task.detached(priority: .utility) {
                 tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
             }.value
-            telemetry.recordDuration(
+            self?.telemetry.recordDuration(
                 "tmux.refresh_clients",
                 durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                 sessionID: sessionID,
@@ -223,7 +224,7 @@ extension BanyanSession {
     ) {
         // Set the server default before creating a new pane. Codex probes OSC
         // 10/11 during startup, before SwiftTerm has necessarily attached.
-        tmuxBackend.configureTerminalTheme(pendingTheme)
+        tmuxBackend.configureTerminalTheme(style: pendingTheme.tmuxDefaultStyle, for: nil)
         if !backingSessionAlreadyEnsured {
             do {
                 try sessionRuntime.ensureBackingSession(launchRequest)
@@ -232,7 +233,7 @@ extension BanyanSession {
                 return
             }
         }
-        tmuxBackend.configureTerminalTheme(pendingTheme, for: tmuxSessionName)
+        tmuxBackend.configureTerminalTheme(style: pendingTheme.tmuxDefaultStyle, for: tmuxSessionName)
         isRestored = false
         isProcessStarted = true
         if resetBlankRecoveryAttempt {
@@ -259,7 +260,7 @@ extension BanyanSession {
         // `makeTerminalView` applies it if and when one is created.
         guard let view = loadedTerminalView else { return }
         theme.apply(to: view, fontFamily: fontFamily, fontSize: fontSize)
-        tmuxBackend.configureTerminalTheme(theme, for: tmuxSessionName)
+        tmuxBackend.configureTerminalTheme(style: theme.tmuxDefaultStyle, for: tmuxSessionName)
         appliedTheme = theme
         appliedFontFamily = fontFamily
         appliedFontSize = fontSize

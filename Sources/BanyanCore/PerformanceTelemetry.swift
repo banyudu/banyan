@@ -1,5 +1,5 @@
 import Foundation
-import SQLite3
+import CSQLite
 
 public struct PerformanceEvent: Codable, Equatable {
     public let id: Int64?

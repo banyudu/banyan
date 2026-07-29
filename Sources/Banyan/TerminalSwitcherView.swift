@@ -135,7 +135,7 @@ final class TerminalSwitcherContainer: NSView {
             let sessionID = newID
             CATransaction.begin()
             CATransaction.setCompletionBlock {
-                telemetry?.recordDuration(
+                self.telemetry?.recordDuration(
                     "switcher.frame_painted",
                     durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                     sessionID: sessionID,
@@ -145,7 +145,7 @@ final class TerminalSwitcherContainer: NSView {
             CATransaction.commit()
 
             DispatchQueue.main.async {
-                telemetry?.recordDuration(
+                self.telemetry?.recordDuration(
                     "main_thread.free_after_switch",
                     durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                     sessionID: sessionID
@@ -200,6 +200,7 @@ final class TerminalSwitcherContainer: NSView {
         if let selectedSession, containers[selectedSession.id] == nil {
             let container = TerminalContainerView(
                 terminalView: selectedSession.terminalView,
+                session: selectedSession,
                 onUserSubmittedInput: { onUserSubmittedInput(selectedSession, $0) }
             )
             container.apply(theme: theme)

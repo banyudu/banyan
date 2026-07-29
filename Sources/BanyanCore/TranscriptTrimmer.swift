@@ -19,6 +19,11 @@ public enum TranscriptTrimmer {
         /// to still be load-bearing for the next turn.
         public var keepRecentResults: Int
 
+        public init(minResultBytes: Int, keepRecentResults: Int) {
+            self.minResultBytes = minResultBytes
+            self.keepRecentResults = keepRecentResults
+        }
+
         public static let `default` = Config(minResultBytes: 2048, keepRecentResults: 8)
     }
 
@@ -229,4 +234,3 @@ public enum TranscriptTrimmer {
         return line
     }
 }
-

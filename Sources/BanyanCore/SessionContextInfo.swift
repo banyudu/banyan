@@ -42,7 +42,7 @@ public struct SessionContextLookupInput: Equatable, Sendable {
 }
 
 public struct SessionContextInfo: Equatable, Sendable {
-    let sessionID: String
+    public let sessionID: String
     public let signature: String
     public let linearIssueID: String?
     public let linearIssueTitle: String?
@@ -53,6 +53,32 @@ public struct SessionContextInfo: Equatable, Sendable {
     public let pullRequestNumber: Int?
     public let pullRequestTitle: String?
     public let pullRequestURL: String?
+
+    public init(
+        sessionID: String,
+        signature: String,
+        linearIssueID: String?,
+        linearIssueTitle: String?,
+        linearIssueURL: String?,
+        githubIssueNumber: Int?,
+        githubIssueTitle: String?,
+        githubIssueURL: String?,
+        pullRequestNumber: Int?,
+        pullRequestTitle: String?,
+        pullRequestURL: String?
+    ) {
+        self.sessionID = sessionID
+        self.signature = signature
+        self.linearIssueID = linearIssueID
+        self.linearIssueTitle = linearIssueTitle
+        self.linearIssueURL = linearIssueURL
+        self.githubIssueNumber = githubIssueNumber
+        self.githubIssueTitle = githubIssueTitle
+        self.githubIssueURL = githubIssueURL
+        self.pullRequestNumber = pullRequestNumber
+        self.pullRequestTitle = pullRequestTitle
+        self.pullRequestURL = pullRequestURL
+    }
 
     /// Re-stamp a cached result for a new session/signature. The network-derived
     /// fields (linear title, PR) depend only on cwd + issue/PR tokens, so a cache

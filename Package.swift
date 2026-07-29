@@ -56,6 +56,9 @@ packageTargets.append(contentsOf: [
 
 let package = Package(
     name: "Banyan",
+    platforms: [
+        .macOS(.v14)
+    ],
     products: packageProducts,
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0")

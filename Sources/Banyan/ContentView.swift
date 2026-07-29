@@ -2284,7 +2284,7 @@ private struct AgentProviderIcon: View {
     }
 
     private var codexTemplatePaths: [String] {
-        let home = store.host.homeDirectory.path
+        let home = NSHomeDirectory()
         return [
             "/Applications/Codex.app/Contents/Resources/codexTemplate@2x.png",
             "/Applications/Codex.app/Contents/Resources/codexTemplate.png",
@@ -2294,7 +2294,7 @@ private struct AgentProviderIcon: View {
     }
 
     private var codexColorIconPaths: [String] {
-        let home = store.host.homeDirectory.path
+        let home = NSHomeDirectory()
         return [
             "/Applications/Codex.app/Contents/Resources/icon-codex-dark-color.png",
             "/Applications/Codex.app/Contents/Resources/icon-codex-light.png",
@@ -2304,7 +2304,7 @@ private struct AgentProviderIcon: View {
     }
 
     private var candidateAppPaths: [String] {
-        let home = store.host.homeDirectory.path
+        let home = NSHomeDirectory()
         switch provider {
         case .claude:
             return [

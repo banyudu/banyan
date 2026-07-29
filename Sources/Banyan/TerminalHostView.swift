@@ -12,6 +12,7 @@ struct TerminalHostView: NSViewRepresentable {
     func makeNSView(context: Context) -> TerminalContainerView {
         let container = TerminalContainerView(
             terminalView: session.terminalView,
+            session: session,
             onUserSubmittedInput: { session.noteUserSubmittedInput($0) }
         )
         container.apply(theme: theme)
@@ -93,6 +94,7 @@ struct TerminalHostView: NSViewRepresentable {
 
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
+    private let session: BanyanSession
     private let paintProbe = TerminalPaintProbeView()
     var onLayout: (() -> Void)?
     var onUserSubmittedInput: ((String?) -> Void)?
@@ -110,8 +112,9 @@ final class TerminalContainerView: NSView {
     private var pendingReadyCallback: (() -> Void)?
     private weak var pendingReadyTerminalView: LocalProcessTerminalView?
 
-    init(terminalView: LocalProcessTerminalView, onUserSubmittedInput: ((String?) -> Void)? = nil) {
+    init(terminalView: LocalProcessTerminalView, session: BanyanSession, onUserSubmittedInput: ((String?) -> Void)? = nil) {
         self.terminalView = terminalView
+        self.session = session
         self.onUserSubmittedInput = onUserSubmittedInput
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier(AccessibilityID.terminal)

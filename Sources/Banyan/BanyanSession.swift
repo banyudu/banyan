@@ -10,7 +10,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     let createdAt: Date
     let historyTranscriptURL: URL?
 
-    private var _terminalView: DetectingLocalProcessTerminalView?
+    var _terminalView: DetectingLocalProcessTerminalView?
 
     /// The SwiftTerm view backing this session, created on first access.
     ///
@@ -36,17 +36,17 @@ final class BanyanSession: ObservableObject, Identifiable {
     var loadedTerminalView: DetectingLocalProcessTerminalView? {
         _terminalView
     }
-    fileprivate var displayProject: String
-    fileprivate var displayBranch: String?
-    fileprivate var displayIsGitWorktree: Bool
-    fileprivate var displayIsDefaultBranch: Bool
+    var displayProject: String
+    var displayBranch: String?
+    var displayIsGitWorktree: Bool
+    var displayIsDefaultBranch: Bool
     /// `true` when the last git lookup for the fields above failed to run (timed
     /// out / couldn't launch) rather than answering. Those readings are then
     /// unreliable false-negatives, so we retry on later ticks until we get a
     /// trustworthy one. See `updateDisplayContext` / `retryDisplayContextIfDegraded`.
-    fileprivate var displayContextDegraded: Bool
-    @Published private(set) var projectGroupID: String
-    @Published private(set) var projectGroupTitle: String
+    var displayContextDegraded: Bool
+    @Published var projectGroupID: String
+    @Published var projectGroupTitle: String
 
     var projectName: String {
         displayProject
@@ -73,16 +73,16 @@ final class BanyanSession: ObservableObject, Identifiable {
     /// command when a closed session is reopened, instead of replaying the
     /// original launch command from scratch.
     @Published var agentSessionID: String?
-    fileprivate(set) var lastConversationResetAt: Date?
+    var lastConversationResetAt: Date?
 
-    private var delegate: TerminalSessionDelegate?
-    fileprivate let tmuxBackend: any TmuxClientBackend
-    fileprivate let sessionRuntime: any SessionRuntimeBackend
+    var delegate: TerminalSessionDelegate?
+    let tmuxBackend: any TmuxClientBackend
+    let sessionRuntime: any SessionRuntimeBackend
     let telemetry: PerformanceTelemetry
-    fileprivate let homeDirectory: String
-    fileprivate let environment: [String: String]
+    let homeDirectory: String
+    let environment: [String: String]
 
-    fileprivate var launchRequest: SessionLaunchRequest {
+    var launchRequest: SessionLaunchRequest {
         SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command)
     }
     var onDidChange: (() -> Void)?
@@ -90,22 +90,22 @@ final class BanyanSession: ObservableObject, Identifiable {
     var onStatusSignal: ((SessionStatus) -> Void)?
     var onProcessExit: ((Int32?) -> Void)?
     var onProjectContextObserved: ((String, SessionProjectContext) -> Void)?
-    fileprivate var didRenderRestoredMessage = false
-    fileprivate var appliedTheme: TerminalTheme?
-    fileprivate var appliedFontFamily: String?
-    fileprivate var appliedFontSize: Double?
+    var didRenderRestoredMessage = false
+    var appliedTheme: TerminalTheme?
+    var appliedFontFamily: String?
+    var appliedFontSize: Double?
     /// Desired appearance, tracked even while no terminal exists so one created
     /// later comes up already styled rather than flashing an unthemed frame.
-    fileprivate var pendingTheme: TerminalTheme
-    fileprivate var pendingFontFamily: String?
-    fileprivate var pendingFontSize: Double
-    private var pendingTerminalMessage: String?
-    fileprivate var externalTitleSignature: String?
-    fileprivate var externalTitleTask: Task<Void, Never>?
-    fileprivate var isDetachingTerminalClient = false
-    fileprivate var attemptedBlankTerminalRecovery = false
-    fileprivate(set) var titleURLWasAutoDetected = false
-    fileprivate var terminalRefreshTask: Task<Void, Never>?
+    var pendingTheme: TerminalTheme
+    var pendingFontFamily: String?
+    var pendingFontSize: Double
+    var pendingTerminalMessage: String?
+    var externalTitleSignature: String?
+    var externalTitleTask: Task<Void, Never>?
+    var isDetachingTerminalClient = false
+    var attemptedBlankTerminalRecovery = false
+    var titleURLWasAutoDetected = false
+    var terminalRefreshTask: Task<Void, Never>?
 
     init(
         id: String,
@@ -241,7 +241,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         refreshGeneratedTitle()
     }
 
-    private func makeTerminalView() -> DetectingLocalProcessTerminalView {
+    func makeTerminalView() -> DetectingLocalProcessTerminalView {
         let view = DetectingLocalProcessTerminalView(frame: .zero)
         view.tmuxSessionName = tmuxSessionName
         // SwiftTerm's `.hover` mode gates clicks on a second hover-range
@@ -267,9 +267,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         return view
     }
 
-    private func openTerminalLink(_ link: String) {
+    func openTerminalLink(_ link: String) {
         guard let number = TerminalFooterLinkifier.pullRequestNumber(in: link) else { return }
-        Task.detached(priority: .utility) { [cwd] in
+        let environment = self.environment
+        let homeDirectory = self.homeDirectory
+        Task.detached(priority: .utility) { [cwd, environment, homeDirectory] in
             guard let url = try? await GitHubPullRequestClient.pullRequestURL(
                 number: number,
                 cwd: cwd,
@@ -287,7 +289,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     /// Writes to the terminal if one exists, otherwise holds the text until one is
     /// created. A background start can fail before any terminal is allocated, and
     /// that diagnostic still needs to be there when the session is later opened.
-    private func feedOrQueue(_ text: String) {
+    func feedOrQueue(_ text: String) {
         if let terminalView = loadedTerminalView {
             terminalView.feed(text: text)
         } else {

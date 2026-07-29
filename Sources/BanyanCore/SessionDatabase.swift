@@ -1,5 +1,5 @@
 import Foundation
-import SQLite3
+import CSQLite
 
 /// SQLite storage for the portable session row model.
 ///

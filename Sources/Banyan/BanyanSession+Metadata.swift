@@ -164,7 +164,7 @@ extension BanyanSession {
         )
     }
 
-    private func refreshGeneratedTitle() {
+    func refreshGeneratedTitle() {
         guard !hasUsefulPinnedTitle else { return }
         guard agentProvider != nil else {
             generatedTitle = nil
