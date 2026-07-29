@@ -68,7 +68,12 @@ public struct SessionActions: Sendable, SessionListActions {
             throw SessionActionError.unresumable(item.title)
         }
 
-        let id = idAllocator.allocate(prefix: "\(item.provider.rawValue)-\(resumeSourceID.prefix(8))")
+        let id = idAllocator.allocate(
+            prefix: SessionResumePolicy.sessionIDPrefix(
+                provider: item.provider,
+                sourceID: resumeSourceID
+            )
+        )
         let now = Date()
         let snapshot = SessionSnapshot(
             id: id,

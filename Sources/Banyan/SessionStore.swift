@@ -1753,7 +1753,7 @@ final class SessionStore: ObservableObject {
             throw ControlError.badRequest("Session history item '\(id)' cannot be resumed")
         }
         return spawn(
-            id: "\(provider.rawValue)-\(String(sourceID.prefix(8)))",
+            id: SessionResumePolicy.sessionIDPrefix(provider: provider, sourceID: sourceID),
             title: history.displayTitle,
             cwd: history.cwd,
             command: command,
@@ -1796,7 +1796,10 @@ final class SessionStore: ObservableObject {
                     return
                 }
                 self.spawn(
-                    id: "\(provider.rawValue)-\(String(preparedSourceID.prefix(8)))",
+                    id: SessionResumePolicy.sessionIDPrefix(
+                        provider: provider,
+                        sourceID: preparedSourceID
+                    ),
                     title: title,
                     cwd: cwd,
                     command: command,
