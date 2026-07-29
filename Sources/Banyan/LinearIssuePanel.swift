@@ -131,8 +131,7 @@ struct LinearIssuePanel: View {
     private var panelBackground: some View {
         switch presentation {
         case .sidebar:
-            Rectangle()
-                .fill(.regularMaterial)
+            Color(nsColor: .controlBackgroundColor)
         case .main:
             Color.clear
         }

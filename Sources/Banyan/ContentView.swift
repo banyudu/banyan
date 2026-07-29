@@ -1269,6 +1269,17 @@ struct ContentView: View {
         HStack(spacing: 0) {
             Divider()
             content()
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .shadow(
+                    color: .black.opacity(0.14),
+                    radius: 12,
+                    x: -4,
+                    y: 0
+                )
+                .padding(.vertical, 10)
+                .padding(.leading, 10)
+                .padding(.trailing, 10)
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(.background)

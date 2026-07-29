@@ -34,7 +34,7 @@ struct GitHubIssuePanel: View {
         }
         .frame(width: 380)
         .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(.regularMaterial)
+        .background(Color(nsColor: .controlBackgroundColor))
         .accessibilityIdentifier(AccessibilityID.githubIssuePanel)
     }
 
