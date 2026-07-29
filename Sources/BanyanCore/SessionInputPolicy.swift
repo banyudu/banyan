@@ -32,6 +32,22 @@ public enum SessionInputPolicy {
         return normalized == "/clear" || normalized == "/new"
     }
 
+    public static func statusAfterSubmittedInput(
+        isImportedHistory: Bool,
+        isProcessStarted: Bool,
+        status: SessionStatus,
+        provider: CodingAgentProvider?
+    ) -> SessionStatus? {
+        guard !isImportedHistory,
+              isProcessStarted,
+              status != .closed,
+              provider != nil,
+              [.running, .longRunningShell, .needInput, .asking].contains(status) else {
+            return nil
+        }
+        return .executing
+    }
+
     public static func submittedPromptTitle(from input: String?) -> String? {
         guard let rawInput = input?.trimmingCharacters(in: .whitespacesAndNewlines), !rawInput.isEmpty else {
             return nil

@@ -706,9 +706,14 @@ final class BanyanSession: ObservableObject, Identifiable {
         } else {
             markSubmittedPromptTitle(submittedInput)
         }
-        guard !isImportedHistory, isProcessStarted, status != .closed, agentProvider != nil else { return }
-        guard [.running, .longRunningShell, .needInput, .asking].contains(status) else { return }
-        mark(status: .executing, tone: .blue)
+        if let nextStatus = SessionInputPolicy.statusAfterSubmittedInput(
+            isImportedHistory: isImportedHistory,
+            isProcessStarted: isProcessStarted,
+            status: status,
+            provider: agentProvider
+        ) {
+            mark(status: nextStatus, tone: .blue)
+        }
     }
 
     /// Drop a stale title when the agent transcript shows the current segment

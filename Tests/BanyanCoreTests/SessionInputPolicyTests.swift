@@ -8,6 +8,27 @@ import Testing
     #expect(!SessionInputPolicy.isConversationResetCommand("continue"))
 }
 
+@Test func inputPolicyMarksStartedAgentSessionsAsExecuting() {
+    #expect(SessionInputPolicy.statusAfterSubmittedInput(
+        isImportedHistory: false,
+        isProcessStarted: true,
+        status: .needInput,
+        provider: .codex
+    ) == .executing)
+    #expect(SessionInputPolicy.statusAfterSubmittedInput(
+        isImportedHistory: false,
+        isProcessStarted: true,
+        status: .completed,
+        provider: .codex
+    ) == nil)
+    #expect(SessionInputPolicy.statusAfterSubmittedInput(
+        isImportedHistory: true,
+        isProcessStarted: true,
+        status: .asking,
+        provider: .claude
+    ) == nil)
+}
+
 @Test func inputPolicyFiltersTrivialSubmittedTitles() {
     #expect(SessionInputPolicy.submittedPromptTitle(from: "Fix the provider icon") == "Fix the provider icon")
     #expect(SessionInputPolicy.submittedPromptTitle(from: "yes") == nil)
