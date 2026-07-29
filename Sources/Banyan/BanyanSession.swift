@@ -120,6 +120,27 @@ final class BanyanSession: ObservableObject, Identifiable {
         )
     }
 
+    var persistenceSnapshot: SessionSnapshot {
+        SessionSnapshot(
+            id: id,
+            tmuxSessionName: tmuxSessionName,
+            title: title,
+            titleURL: titleURL,
+            titleURLWasAutoDetected: titleURLWasAutoDetected,
+            reportedTitle: reportedTitle,
+            generatedTitle: generatedTitle,
+            isTitlePinned: isTitlePinned,
+            cwd: cwd,
+            command: command,
+            status: status,
+            tone: tone,
+            parentSessionID: parentSessionID,
+            agentSessionID: agentSessionID,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+
     /// `titleURL` comes first because the sidebar renders this as the label of a link
     /// *to* that URL: reading the ID off a title from an earlier chapter would show
     /// one issue and open another. The title and cwd only fill in when nothing is bound.

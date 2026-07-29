@@ -2212,26 +2212,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func saveSessions() {
-        let snapshots = sessions.filter { !$0.isImportedHistory }.map {
-            SessionSnapshot(
-                id: $0.id,
-                tmuxSessionName: $0.tmuxSessionName,
-                title: $0.title,
-                titleURL: $0.titleURL,
-                titleURLWasAutoDetected: $0.titleURLWasAutoDetected,
-                reportedTitle: $0.reportedTitle,
-                generatedTitle: $0.generatedTitle,
-                isTitlePinned: $0.isTitlePinned,
-                cwd: $0.cwd,
-                command: $0.command,
-                status: $0.status,
-                tone: $0.tone,
-                parentSessionID: $0.parentSessionID,
-                agentSessionID: $0.agentSessionID,
-                createdAt: $0.createdAt,
-                updatedAt: $0.updatedAt
-            )
-        }
+        let snapshots = sessions.filter { !$0.isImportedHistory }.map(\.persistenceSnapshot)
         // Supervisor ticks call this every cycle; skip the SQLite rewrite entirely
         // when nothing changed. This was the dominant main-thread stall behind the
         // "Application Not Responding" freezes.
