@@ -21,7 +21,7 @@ final class SessionSelection: ObservableObject {
                     PerformanceTelemetry.elapsedMS(since: timestamp) <= 1_000 ? timestamp : nil
                 }
                 if let clickAt {
-                    PerformanceTelemetry.shared.recordDuration(
+                    (store?.telemetry ?? .shared).recordDuration(
                         "selection.click_to_didset",
                         durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
                         sessionID: selectedSessionID

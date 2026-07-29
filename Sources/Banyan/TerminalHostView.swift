@@ -20,7 +20,7 @@ struct TerminalHostView: NSViewRepresentable {
         context.coordinator.lastFocusRequestID = focusRequestID
         let readyStartedAt = DispatchTime.now()
         container.performWhenTerminalReady(for: session.terminalView) {
-            PerformanceTelemetry.shared.recordDuration(
+            session.telemetry.recordDuration(
                 "terminal.ready_wait",
                 durationMS: PerformanceTelemetry.elapsedMS(since: readyStartedAt),
                 sessionID: session.id
@@ -35,7 +35,7 @@ struct TerminalHostView: NSViewRepresentable {
         let installStartedAt = DispatchTime.now()
         let didInstall = nsView.install(session.terminalView)
         if didInstall {
-            PerformanceTelemetry.shared.recordDuration(
+            session.telemetry.recordDuration(
                 "terminal.install_view",
                 durationMS: PerformanceTelemetry.elapsedMS(since: installStartedAt),
                 sessionID: session.id
@@ -51,7 +51,7 @@ struct TerminalHostView: NSViewRepresentable {
         }
         let readyStartedAt = DispatchTime.now()
         nsView.performWhenTerminalReady(for: session.terminalView) {
-            PerformanceTelemetry.shared.recordDuration(
+            session.telemetry.recordDuration(
                 "terminal.ready_wait",
                 durationMS: PerformanceTelemetry.elapsedMS(since: readyStartedAt),
                 sessionID: session.id
@@ -73,7 +73,7 @@ struct TerminalHostView: NSViewRepresentable {
     }
 
     private func handleTerminalReady() {
-        PerformanceTelemetry.shared.noteSessionTerminalReady(sessionID: session.id)
+        session.telemetry.noteSessionTerminalReady(sessionID: session.id)
         session.renderRestoredMessageIfNeeded(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         guard session.status != .closed,
               !session.isImportedHistory,
@@ -186,11 +186,13 @@ final class TerminalContainerView: NSView {
     func measureNextSwitchPaint(
         startedAt: DispatchTime,
         sessionID: String,
+        telemetry: PerformanceTelemetry,
         afterPaint: (() -> Void)? = nil
     ) {
         paintProbe.measureNextPaint(
             startedAt: startedAt,
             sessionID: sessionID,
+            telemetry: telemetry,
             afterPaint: afterPaint
         )
     }
@@ -613,6 +615,7 @@ private final class TerminalPaintProbeView: NSView {
     private var pendingMeasurement: (
         startedAt: DispatchTime,
         sessionID: String,
+        telemetry: PerformanceTelemetry,
         afterPaint: (() -> Void)?
     )?
 
@@ -620,7 +623,7 @@ private final class TerminalPaintProbeView: NSView {
         super.draw(dirtyRect)
         guard let pendingMeasurement else { return }
         self.pendingMeasurement = nil
-        PerformanceTelemetry.shared.recordDuration(
+        pendingMeasurement.telemetry.recordDuration(
             "switcher.terminal_drawn",
             durationMS: PerformanceTelemetry.elapsedMS(since: pendingMeasurement.startedAt),
             sessionID: pendingMeasurement.sessionID
@@ -637,9 +640,10 @@ private final class TerminalPaintProbeView: NSView {
     func measureNextPaint(
         startedAt: DispatchTime,
         sessionID: String,
+        telemetry: PerformanceTelemetry,
         afterPaint: (() -> Void)?
     ) {
-        pendingMeasurement = (startedAt, sessionID, afterPaint)
+        pendingMeasurement = (startedAt, sessionID, telemetry, afterPaint)
         needsDisplay = true
     }
 }
