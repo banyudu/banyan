@@ -1035,26 +1035,28 @@ final class SessionStore: ObservableObject {
         tone: SessionTone = .blue,
         select: Bool = true
     ) -> BanyanSession {
-        let baseID = SessionIdentityPolicy.sanitizedID(proposedID ?? proposedTitle ?? "session")
-        let id = uniqueID(baseID, avoidingLiveTmuxSessions: true)
-        let cwd = resolvedWorkingDirectory(proposedCWD)
-        let command = proposedCommand ?? ""
-        let hasExplicitTitle = proposedTitle?.isEmpty == false
-        let title = hasExplicitTitle
-            ? proposedTitle!
-            : PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
-        let parentSessionID = SessionInputPolicy.normalizedOptionalText(proposedParentSessionID)
+        let plan = SessionCreationPolicy.plan(
+            proposedID: proposedID,
+            proposedTitle: proposedTitle,
+            proposedTitleURL: proposedTitleURL,
+            proposedCWD: proposedCWD,
+            proposedCommand: proposedCommand,
+            proposedParentSessionID: proposedParentSessionID,
+            currentDirectory: currentDirectory,
+            homeDirectory: homeDirectory
+        )
+        let id = uniqueID(plan.baseID, avoidingLiveTmuxSessions: true)
         let session = BanyanSession(
             id: id,
             tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
-                title: title,
-            titleURL: SessionInputPolicy.normalizedTitleURL(proposedTitleURL),
+            title: plan.title,
+            titleURL: plan.titleURL,
                 generatedTitle: nil,
-                isTitlePinned: hasExplicitTitle,
-            cwd: cwd,
-            command: command,
+            isTitlePinned: plan.isTitlePinned,
+            cwd: plan.cwd,
+            command: plan.command,
             tone: tone,
-            parentSessionID: parentSessionID,
+            parentSessionID: plan.parentSessionID,
             theme: terminalTheme,
             fontFamily: terminalFontFamily,
             fontSize: terminalFontSize,
