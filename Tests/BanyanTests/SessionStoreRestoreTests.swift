@@ -4,16 +4,16 @@ import Testing
 @testable import Banyan
 
 @Test func restoreKeepsClosedSessionsHiddenEvenWhenBackingTmuxSessionExists() {
-    #expect(SessionStore.restoredStatus(snapshotStatus: .closed) == .closed)
+    #expect(SessionLifecyclePolicy.restoredStatus(snapshotStatus: .closed) == .closed)
 }
 
 @Test func missingBackingTmuxSessionRequiresRecoveryForActiveSnapshot() {
-    #expect(SessionStore.shouldMarkForRecovery(
+    #expect(SessionLifecyclePolicy.shouldMarkForRecovery(
         status: .running,
         tmuxSessionName: "banyan-1",
         liveTmuxSessionNames: []
     ))
-    #expect(!SessionStore.shouldMarkForRecovery(
+    #expect(!SessionLifecyclePolicy.shouldMarkForRecovery(
         status: .running,
         tmuxSessionName: "banyan-1",
         liveTmuxSessionNames: ["banyan-1"]
@@ -22,7 +22,7 @@ import Testing
 
 @Test func terminalSnapshotsDoNotRequireRecovery() {
     for status in [SessionStatus.closed, .completed, .failed] {
-        #expect(!SessionStore.shouldMarkForRecovery(
+        #expect(!SessionLifecyclePolicy.shouldMarkForRecovery(
             status: status,
             tmuxSessionName: "banyan-1",
             liveTmuxSessionNames: []
@@ -31,16 +31,16 @@ import Testing
 }
 
 @Test func restorePreservesActiveSessionStatus() {
-    #expect(SessionStore.restoredStatus(snapshotStatus: .running) == .running)
-    #expect(SessionStore.restoredStatus(snapshotStatus: .needInput) == .needInput)
+    #expect(SessionLifecyclePolicy.restoredStatus(snapshotStatus: .running) == .running)
+    #expect(SessionLifecyclePolicy.restoredStatus(snapshotStatus: .needInput) == .needInput)
 }
 
 @Test func supervisorInspectsRestoredSessionsBeforeTheirTerminalClientAttaches() {
     // Restored-but-unclicked: the row's provider icon and status come from here.
-    #expect(SessionStore.participatesInSupervisorTick(isProcessStarted: false, isRestored: true))
-    #expect(SessionStore.participatesInSupervisorTick(isProcessStarted: true, isRestored: false))
+    #expect(SessionLifecyclePolicy.participatesInSupervisorTick(isProcessStarted: false, isRestored: true))
+    #expect(SessionLifecyclePolicy.participatesInSupervisorTick(isProcessStarted: true, isRestored: false))
     // Never launched, or the client terminated: nothing to inspect.
-    #expect(!SessionStore.participatesInSupervisorTick(isProcessStarted: false, isRestored: false))
+    #expect(!SessionLifecyclePolicy.participatesInSupervisorTick(isProcessStarted: false, isRestored: false))
 }
 
 @Test func closeConfirmationOnlyTreatsActiveCodexOrClaudeAsOngoingAgents() {

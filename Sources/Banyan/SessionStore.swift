@@ -889,29 +889,6 @@ final class SessionStore: ObservableObject {
         controlServer = server
     }
 
-    /// A restored session's tmux pane is alive and inspectable long before its
-    /// terminal client attaches, and `detectedAgentProvider` is not persisted — so
-    /// gating the tick on `isProcessStarted` left every restored row showing the
-    /// stale snapshot status and no provider icon until the user clicked it (which
-    /// is what starts the client). Panes we have never started and are not restoring
-    /// have nothing to inspect.
-    nonisolated static func participatesInSupervisorTick(
-        isProcessStarted: Bool,
-        isRestored: Bool
-    ) -> Bool {
-        SessionLifecyclePolicy.participatesInSupervisorTick(
-            isProcessStarted: isProcessStarted,
-            isRestored: isRestored
-        )
-    }
-
-    /// Deliberately does not probe tmux for a backing session: the supervisor
-    /// reconciles live state on its first tick, and probing here cost one blocking
-    /// `tmux has-session` per persisted session on the main thread at launch.
-    nonisolated static func restoredStatus(snapshotStatus: SessionStatus) -> SessionStatus {
-        SessionLifecyclePolicy.restoredStatus(snapshotStatus: snapshotStatus)
-    }
-
     func startSupervisor() {
         installSupervisorLifecycleObserversIfNeeded()
         guard supervisorTimer == nil else { return }
@@ -1235,18 +1212,6 @@ final class SessionStore: ObservableObject {
             sourceID: agentSessionID,
             cwd: session.cwd,
             prompt: nil
-        )
-    }
-
-    nonisolated static func shouldMarkForRecovery(
-        status: SessionStatus,
-        tmuxSessionName: String,
-        liveTmuxSessionNames: Set<String>
-    ) -> Bool {
-        SessionLifecyclePolicy.shouldMarkForRecovery(
-            status: status,
-            tmuxSessionName: tmuxSessionName,
-            liveTmuxSessionNames: liveTmuxSessionNames
         )
     }
 
@@ -2577,7 +2542,7 @@ final class SessionStore: ObservableObject {
             guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
                 return nil
             }
-            guard Self.participatesInSupervisorTick(
+            guard SessionLifecyclePolicy.participatesInSupervisorTick(
                 isProcessStarted: session.isProcessStarted,
                 isRestored: session.isRestored
             ) else {
