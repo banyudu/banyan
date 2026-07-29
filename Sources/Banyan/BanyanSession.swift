@@ -17,7 +17,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     /// A terminal preallocates its scrollback eagerly (~4.7 MB here), so building
     /// one per session in `init` cost ~1.7 GB across a restored workspace: every
     /// persisted row gets a `BanyanSession`, and the overwhelming majority are
-    /// closed history entries that are never opened (only `historySidebarBrowseLimit`
+    /// closed history entries that are never opened (only `SessionHistoryPresentation.sidebarBrowseLimit`
     /// of them are even browsable). Allocating on demand keeps the cost proportional
     /// to the terminals actually shown. Use `loadedTerminalView` from paths that must
     /// not bring one into existence.

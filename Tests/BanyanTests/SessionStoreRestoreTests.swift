@@ -151,7 +151,7 @@ import Testing
 }
 
 @Test func backgroundHistoryImportCoversEveryBoundedSearchResult() {
-    #expect(SessionStore.historyRecoveryImportLimit >= SessionStore.historySidebarSearchLimit)
+    #expect(SessionHistoryPresentation.recoveryImportLimit >= SessionHistoryPresentation.sidebarSearchLimit)
 }
 
 @Test func liveAgentMatchIncludesPinnedTitleSessionsSoAgentSessionIDResolves() {
@@ -221,8 +221,8 @@ import Testing
 }
 
 @Test func historySidebarShowsMoreRowsWhenSearchingThanWhenBrowsing() {
-    #expect(SessionStore.historySidebarBrowseLimit == 30)
-    #expect(SessionStore.historySidebarSearchLimit > SessionStore.historySidebarBrowseLimit)
+    #expect(SessionHistoryPresentation.sidebarBrowseLimit == 30)
+    #expect(SessionHistoryPresentation.sidebarSearchLimit > SessionHistoryPresentation.sidebarBrowseLimit)
 }
 
 @Test func historySidebarTitleDoesNotDuplicateExistingIssuePrefix() {

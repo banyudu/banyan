@@ -411,23 +411,15 @@ final class SessionStore: ObservableObject {
         return result
     }
 
-    /// Unfiltered, History is a scrollable "recent work" shelf. A search is a request
-    /// for a specific session, so it reaches past that shelf into the full backlog.
-    nonisolated static let historySidebarBrowseLimit = 30
-    nonisolated static let historySidebarSearchLimit = 100
-    /// Keep the ordinary background import deep enough to resolve every history
-    /// row that can be returned by the sidebar's bounded search. An older mismatch
-    /// (10 imported transcripts vs. 30/100 visible rows) made Reopen silently fall
-    /// back to the original launch command for older rows.
-    nonisolated static let historyRecoveryImportLimit = historySidebarSearchLimit
-
     var hasLocalHistorySessions: Bool {
         sessions.contains(where: Self.isLocalHistorySession)
     }
 
     private var sidebarHistoryItems: [SidebarSessionItem] {
         let query = historyFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let limit = query.isEmpty ? Self.historySidebarBrowseLimit : Self.historySidebarSearchLimit
+        let limit = query.isEmpty
+            ? SessionHistoryPresentation.sidebarBrowseLimit
+            : SessionHistoryPresentation.sidebarSearchLimit
         return sessions
             .filter(Self.isLocalHistorySession)
             .sorted { $0.updatedAt > $1.updatedAt }
@@ -2469,7 +2461,7 @@ final class SessionStore: ObservableObject {
         isHistoryImportRunning = true
         let historyBackend = historyBackend
         Task.detached(priority: .utility) {
-            let imported = historyBackend.load(maxPerProvider: Self.historyRecoveryImportLimit)
+            let imported = historyBackend.load(maxPerProvider: SessionHistoryPresentation.recoveryImportLimit)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.applyImportedHistory(imported)

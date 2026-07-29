@@ -2,6 +2,16 @@ import Foundation
 
 /// Shared formatting and filtering rules for history rows.
 public enum SessionHistoryPresentation {
+    /// Number of recent history rows shown without a search query.
+    public static let sidebarBrowseLimit = 30
+
+    /// Maximum history rows searched when a query is present.
+    public static let sidebarSearchLimit = 100
+
+    /// Imported transcript depth needed to resolve every row returned by the
+    /// bounded history search.
+    public static let recoveryImportLimit = sidebarSearchLimit
+
     public static func matchesFilter(title: String, query: String) -> Bool {
         let tokens = query.split(whereSeparator: \.isWhitespace)
         guard !tokens.isEmpty else { return true }

@@ -1,6 +1,12 @@
 import Testing
 @testable import BanyanCore
 
+@Test func historyPresentationUsesSharedHistoryLimits() {
+    #expect(SessionHistoryPresentation.sidebarBrowseLimit == 30)
+    #expect(SessionHistoryPresentation.sidebarSearchLimit == 100)
+    #expect(SessionHistoryPresentation.recoveryImportLimit == 100)
+}
+
 @Test func historyPresentationBuildsAndFiltersSidebarTitles() {
     let title = SessionHistoryPresentation.sidebarTitle(
         projectName: "worktree",
