@@ -2,18 +2,23 @@ import BanyanCore
 import Foundation
 
 private func makeDefaultApp() -> BanyanTUI {
-    let backend = TmuxBackend(
+    let host = HostRuntimeContext(
         environment: ProcessInfo.processInfo.environment,
-        workingDirectory: NSHomeDirectory()
+        homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
+        currentDirectory: FileManager.default.currentDirectoryPath
+    )
+    let backend = TmuxBackend(
+        environment: host.environment,
+        workingDirectory: host.homeDirectory.path
     )
     let database = SessionDatabase(
         databaseURL: SessionDatabase.defaultDatabaseURL(
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: host.environment,
+            homeDirectory: host.homeDirectory
         ),
         legacyJSONURL: SessionDatabase.defaultLegacyJSONURL(
-            environment: ProcessInfo.processInfo.environment,
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            environment: host.environment,
+            homeDirectory: host.homeDirectory
         )
     )
     let output = StandardTUIOutput()
@@ -24,7 +29,7 @@ private func makeDefaultApp() -> BanyanTUI {
             backend: backend,
             processTable: LiveProcessTableProvider(),
             historyBackend: DefaultSessionHistoryBackend(
-                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+                homeDirectory: host.homeDirectory
             )
         ),
         actions: SessionActions(
@@ -37,14 +42,14 @@ private func makeDefaultApp() -> BanyanTUI {
                 runtime: SessionRuntimeCoordinator(backend: backend)
             ),
             history: DefaultSessionHistoryBackend(
-                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+                homeDirectory: host.homeDirectory
             )
         ),
         input: TerminalMode(),
         output: output,
         processRunner: InteractiveProcessRunner(),
         renderer: StandardTUIRenderer(),
-        currentDirectory: FileManager.default.currentDirectoryPath
+        currentDirectory: host.currentDirectory
     )
 }
 

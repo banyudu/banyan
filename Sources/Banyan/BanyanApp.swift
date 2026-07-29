@@ -4,36 +4,39 @@ import SwiftUI
 @main
 struct BanyanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    private static let tmuxBackend = TmuxBackend(
+    private static let host = HostRuntimeContext(
         environment: ProcessInfo.processInfo.environment,
-        workingDirectory: NSHomeDirectory()
+        homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
+        currentDirectory: FileManager.default.currentDirectoryPath
+    )
+    private static let tmuxBackend = TmuxBackend(
+        environment: Self.host.environment,
+        workingDirectory: Self.host.homeDirectory.path
     )
     @StateObject private var store = SessionStore(
         persistence: SessionPersistence(
             databaseURL: SessionDatabase.defaultDatabaseURL(
-                environment: ProcessInfo.processInfo.environment,
-                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+                environment: Self.host.environment,
+                homeDirectory: Self.host.homeDirectory
             ),
             legacyJSONURL: SessionDatabase.defaultLegacyJSONURL(
-                environment: ProcessInfo.processInfo.environment,
-                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+                environment: Self.host.environment,
+                homeDirectory: Self.host.homeDirectory
             )
         ),
         tmuxBackend: Self.tmuxBackend,
         sessionBackend: Self.tmuxBackend,
         processTable: LiveProcessTableProvider(),
         historyBackend: DefaultSessionHistoryBackend(
-            homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+            homeDirectory: Self.host.homeDirectory
         ),
         detector: AgentStateDetector(
             rules: DetectorRule.loadConfiguredRules(
-                environment: ProcessInfo.processInfo.environment,
-                homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+                environment: Self.host.environment,
+                homeDirectory: Self.host.homeDirectory
             )
         ),
-        homeDirectory: NSHomeDirectory(),
-        environment: ProcessInfo.processInfo.environment,
-        currentDirectory: FileManager.default.currentDirectoryPath
+        host: Self.host
     )
 
     var body: some Scene {

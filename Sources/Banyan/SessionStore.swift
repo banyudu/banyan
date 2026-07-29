@@ -239,9 +239,7 @@ final class SessionStore: ObservableObject {
         processTable: any ProcessTableProvider,
         historyBackend: any SessionHistoryBackend,
         detector: AgentStateDetector,
-        homeDirectory: String,
-        environment: [String: String],
-        currentDirectory: String
+        host: HostRuntimeContext
     ) {
         self.persistence = persistence
         self.tmuxBackend = tmuxBackend
@@ -249,9 +247,9 @@ final class SessionStore: ObservableObject {
         self.processTable = processTable
         self.historyBackend = historyBackend
         self.detector = detector
-        self.homeDirectory = homeDirectory
-        self.environment = environment
-        self.currentDirectory = currentDirectory
+        self.homeDirectory = host.homeDirectory.path
+        self.environment = host.environment
+        self.currentDirectory = host.currentDirectory
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
