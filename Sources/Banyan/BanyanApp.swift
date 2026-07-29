@@ -18,6 +18,7 @@ struct BanyanApp: App {
             databaseURL: PerformanceEventStore.defaultDatabaseURL(host: Self.host)
         )
     )
+    static let attentionNotifier = AttentionNotifier()
     @StateObject private var store = SessionStore(
         persistence: SessionPersistence(
             databaseURL: SessionDatabase.defaultDatabaseURL(
@@ -42,7 +43,8 @@ struct BanyanApp: App {
             )
         ),
         host: Self.host,
-        telemetry: Self.telemetry
+        telemetry: Self.telemetry,
+        attentionNotifier: Self.attentionNotifier
     )
 
     var body: some Scene {
@@ -228,7 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.disableDefaultCloseWindowShortcut()
         }
         Task { @MainActor in
-            AttentionNotifier.shared.requestAuthorization()
+            BanyanApp.attentionNotifier.requestAuthorization()
         }
     }
 

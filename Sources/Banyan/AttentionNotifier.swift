@@ -4,14 +4,12 @@ import UserNotifications
 
 @MainActor
 final class AttentionNotifier {
-    static let shared = AttentionNotifier()
-
     private var notifiedKeys = Set<String>()
     private var canUseUserNotifications: Bool {
         Bundle.main.bundleURL.pathExtension == "app"
     }
 
-    private init() {}
+    init() {}
 
     func requestAuthorization() {
         guard canUseUserNotifications else { return }

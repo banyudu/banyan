@@ -178,6 +178,7 @@ final class SessionStore: ObservableObject {
     private let sessionBackend: any TmuxClientBackend
     private let processTable: any ProcessTableProvider
     private let historyBackend: any SessionHistoryBackend
+    private let attentionNotifier: AttentionNotifier
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
     /// Effective cadence the live `supervisorTimer` was installed with, so we can
@@ -242,7 +243,8 @@ final class SessionStore: ObservableObject {
         historyBackend: any SessionHistoryBackend,
         detector: AgentStateDetector,
         host: HostRuntimeContext,
-        telemetry: PerformanceTelemetry
+        telemetry: PerformanceTelemetry,
+        attentionNotifier: AttentionNotifier
     ) {
         self.persistence = persistence
         self.tmuxBackend = tmuxBackend
@@ -252,6 +254,7 @@ final class SessionStore: ObservableObject {
         self.detector = detector
         self.host = host
         self.telemetry = telemetry
+        self.attentionNotifier = attentionNotifier
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
@@ -2314,7 +2317,7 @@ final class SessionStore: ObservableObject {
         }
         session.onStatusSignal = { [weak session] status in
             guard let session else { return }
-            AttentionNotifier.shared.notifyIfNeeded(session: session, status: status)
+            self.attentionNotifier.notifyIfNeeded(session: session, status: status)
         }
         session.onProjectContextObserved = { [weak self, weak session] cwd, context in
             guard let self else { return }
