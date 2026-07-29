@@ -5,8 +5,6 @@ import AppKit
 /// L and S are reserved for switching between the Linear and Sessions sidebars;
 /// N is reserved for Cmd+Shift+N, the plain-terminal fallback.
 final class JumpOverlayMonitor {
-    static let shared = JumpOverlayMonitor()
-
     var onJump: ((Int) -> Bool)?
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
@@ -14,7 +12,7 @@ final class JumpOverlayMonitor {
 
     private var keyMonitor: Any?
 
-    private init() {}
+    init() {}
 
     deinit {
         stop()

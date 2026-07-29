@@ -19,6 +19,7 @@ struct BanyanApp: App {
         )
     )
     static let attentionNotifier = AttentionNotifier()
+    private static let jumpOverlayMonitor = JumpOverlayMonitor()
     @StateObject private var store = SessionStore(
         persistence: SessionPersistence(
             databaseURL: SessionDatabase.defaultDatabaseURL(
@@ -59,10 +60,10 @@ struct BanyanApp: App {
                     }
                     CommandWTerminalCloseMonitor.shared.start()
 
-                    JumpOverlayMonitor.shared.onJump = { [weak store] index in
+                    Self.jumpOverlayMonitor.onJump = { [weak store] index in
                         store?.selectSession(shortcutIndex: index) ?? false
                     }
-                    JumpOverlayMonitor.shared.onNext = { [weak store] in
+                    Self.jumpOverlayMonitor.onNext = { [weak store] in
                         guard let store else { return }
                         if store.sidebarMode == .linear {
                             store.selectNextLinearIssue()
@@ -70,7 +71,7 @@ struct BanyanApp: App {
                             store.selectNextSession()
                         }
                     }
-                    JumpOverlayMonitor.shared.onPrevious = { [weak store] in
+                    Self.jumpOverlayMonitor.onPrevious = { [weak store] in
                         guard let store else { return }
                         if store.sidebarMode == .linear {
                             store.selectPreviousLinearIssue()
@@ -78,11 +79,11 @@ struct BanyanApp: App {
                             store.selectPreviousSession()
                         }
                     }
-                    JumpOverlayMonitor.shared.onHandoff = { [weak store] in
+                    Self.jumpOverlayMonitor.onHandoff = { [weak store] in
                         store?.handleHandoffShortcut()
                         return true
                     }
-                    JumpOverlayMonitor.shared.start()
+                    Self.jumpOverlayMonitor.start()
                     store.selection.startClickMonitor()
 
                     SessionRenameShortcutMonitor.shared.action = { [weak store] in
