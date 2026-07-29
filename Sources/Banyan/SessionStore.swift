@@ -2878,7 +2878,12 @@ final class SessionStore: ObservableObject {
 
         selectedPullRequestTask = Task.detached(priority: .utility) {
             do {
-                let details = try await GitHubPullRequestClient.fetchPullRequest(url: url, cwd: cwd)
+                let details = try await GitHubPullRequestClient.fetchPullRequest(
+                    url: url,
+                    cwd: cwd,
+                    environment: environment,
+                    homeDirectory: homeDirectory
+                )
                 await MainActor.run { [weak self] in
                     guard let self,
                           self.selectedSessionID == sessionID,

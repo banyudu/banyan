@@ -333,7 +333,12 @@ final class BanyanSession: ObservableObject, Identifiable {
     private func openTerminalLink(_ link: String) {
         guard let number = TerminalFooterLinkifier.pullRequestNumber(in: link) else { return }
         Task.detached(priority: .utility) { [cwd] in
-            guard let url = try? await GitHubPullRequestClient.pullRequestURL(number: number, cwd: cwd) else {
+            guard let url = try? await GitHubPullRequestClient.pullRequestURL(
+                number: number,
+                cwd: cwd,
+                environment: environment,
+                homeDirectory: homeDirectory
+            ) else {
                 return
             }
             await MainActor.run {

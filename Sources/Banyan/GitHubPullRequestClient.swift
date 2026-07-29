@@ -45,12 +45,19 @@ enum GitHubPullRequestLoadState: Equatable {
 }
 
 enum GitHubPullRequestClient {
-    static func pullRequestURL(number: Int, cwd: String) async throws -> URL {
+    static func pullRequestURL(
+        number: Int,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> URL {
         let output = try await Task.detached(priority: .utility) {
             try runCommand(
                 ["gh", "pr", "view", String(number), "--json", "url"],
                 cwd: cwd,
-                timeout: 12
+                timeout: 12,
+                environment: environment,
+                homeDirectory: homeDirectory
             )
         }.value
         let payload = try JSONDecoder().decode(GitHubPullRequestReferencePayload.self, from: Data(output.utf8))
@@ -60,7 +67,12 @@ enum GitHubPullRequestClient {
         return url
     }
 
-    static func fetchPullRequest(url: URL?, cwd: String) async throws -> GitHubPullRequestDetails {
+    static func fetchPullRequest(
+        url: URL?,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> GitHubPullRequestDetails {
         let fields = [
             "additions",
             "author",
@@ -83,13 +95,13 @@ enum GitHubPullRequestClient {
 
         let output: String
         do {
-            output = try await pullRequestOutput(url: url, fields: fields, cwd: cwd)
+            output = try await pullRequestOutput(url: url, fields: fields, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
         } catch {
             guard url == nil,
-                  let resolvedURL = try? await resolvePullRequestURL(cwd: cwd) else {
+                  let resolvedURL = try? await resolvePullRequestURL(cwd: cwd, environment: environment, homeDirectory: homeDirectory) else {
                 throw error
             }
-            output = try await pullRequestOutput(url: resolvedURL, fields: fields, cwd: cwd)
+            output = try await pullRequestOutput(url: resolvedURL, fields: fields, cwd: cwd, environment: environment, homeDirectory: homeDirectory)
         }
 
         let payload = try JSONDecoder().decode(GitHubPullRequestPayload.self, from: Data(output.utf8))
@@ -110,7 +122,13 @@ enum GitHubPullRequestClient {
         }
     }
 
-    private static func pullRequestOutput(url: URL?, fields: String, cwd: String) async throws -> String {
+    private static func pullRequestOutput(
+        url: URL?,
+        fields: String,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> String {
         var arguments = ["gh", "pr", "view"]
         if let url {
             arguments.append(url.absoluteString)
@@ -118,15 +136,19 @@ enum GitHubPullRequestClient {
         arguments += ["--json", fields]
 
         return try await Task.detached(priority: .utility) {
-            try runCommand(arguments, cwd: cwd, timeout: 12)
+            try runCommand(arguments, cwd: cwd, timeout: 12, environment: environment, homeDirectory: homeDirectory)
         }.value
     }
 
-    private static func resolvePullRequestURL(cwd: String) async throws -> URL {
+    private static func resolvePullRequestURL(
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> URL {
         let branch = try await Task.detached(priority: .utility) {
-            try currentBranch(cwd: cwd)
+            try currentBranch(cwd: cwd, environment: environment, homeDirectory: homeDirectory)
         }.value
-        guard !isDefaultBranch(branch, cwd: cwd) else {
+        guard !isDefaultBranch(branch, cwd: cwd, environment: environment, homeDirectory: homeDirectory) else {
             throw GitHubPullRequestClientError.requestFailed("No GitHub pull request found for branch \(branch)")
         }
 
@@ -146,7 +168,9 @@ enum GitHubPullRequestClient {
                     "url"
                 ],
                 cwd: cwd,
-                timeout: 12
+                timeout: 12,
+                environment: environment,
+                homeDirectory: homeDirectory
             )
         }.value
         let payload = try JSONDecoder().decode([GitHubPullRequestReferencePayload].self, from: Data(output.utf8))
@@ -157,14 +181,18 @@ enum GitHubPullRequestClient {
         return url
     }
 
-    private static func currentBranch(cwd: String) throws -> String {
-        if let branch = try? runCommand(["git", "branch", "--show-current"], cwd: cwd, timeout: 4)
+    private static func currentBranch(
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) throws -> String {
+        if let branch = try? runCommand(["git", "branch", "--show-current"], cwd: cwd, timeout: 4, environment: environment, homeDirectory: homeDirectory)
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !branch.isEmpty {
             return branch
         }
 
-        let fallback = try runCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd: cwd, timeout: 4)
+        let fallback = try runCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd: cwd, timeout: 4, environment: environment, homeDirectory: homeDirectory)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fallback.isEmpty, fallback != "HEAD" else {
             throw GitHubPullRequestClientError.requestFailed("No current git branch found")
@@ -172,7 +200,12 @@ enum GitHubPullRequestClient {
         return fallback
     }
 
-    private static func isDefaultBranch(_ branch: String, cwd: String) -> Bool {
+    private static func isDefaultBranch(
+        _ branch: String,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) -> Bool {
         if branch == "main" || branch == "master" {
             return true
         }
@@ -180,7 +213,9 @@ enum GitHubPullRequestClient {
         guard let remoteHead = try? runCommand(
             ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
             cwd: cwd,
-            timeout: 4
+            timeout: 4,
+            environment: environment,
+            homeDirectory: homeDirectory
         )
         .trimmingCharacters(in: .whitespacesAndNewlines)
         else {
@@ -193,17 +228,18 @@ enum GitHubPullRequestClient {
     private static func runCommand(
         _ arguments: [String],
         cwd: String,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        environment: [String: String],
+        homeDirectory: String
     ) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = arguments
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        let inheritedEnvironment = ProcessInfo.processInfo.environment
         process.environment = processEnvironment(
-            base: inheritedEnvironment,
-            homeDirectory: NSHomeDirectory(),
-            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: inheritedEnvironment)
+            base: environment,
+            homeDirectory: homeDirectory,
+            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment)
         )
 
         let stdout = Pipe()
@@ -252,12 +288,12 @@ enum GitHubPullRequestClient {
         shellEnvironment: [String: String]
     ) -> [String: String] {
         let additions = [
-            "\(NSHomeDirectory())/bin",
-            "\(NSHomeDirectory())/.bun/bin",
-            "\(NSHomeDirectory())/.local/bin",
-            "\(NSHomeDirectory())/.cargo/bin",
-            "\(NSHomeDirectory())/go/bin",
-            "\(NSHomeDirectory())/.nix-profile/bin",
+            "\(homeDirectory)/bin",
+            "\(homeDirectory)/.bun/bin",
+            "\(homeDirectory)/.local/bin",
+            "\(homeDirectory)/.cargo/bin",
+            "\(homeDirectory)/go/bin",
+            "\(homeDirectory)/.nix-profile/bin",
             "/nix/var/nix/profiles/default/bin",
             "/opt/homebrew/bin",
             "/usr/local/bin",
