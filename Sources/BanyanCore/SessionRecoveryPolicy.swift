@@ -13,26 +13,6 @@ public enum SessionRecoveryPolicy {
             && (agentSessionID?.isEmpty != false)
     }
 
-    public static func resumeCommand(
-        status: SessionStatus,
-        provider: CodingAgentProvider?,
-        agentSessionID: String?,
-        cwd: String
-    ) -> String? {
-        guard status == .closed,
-              let provider,
-              [.codex, .claude].contains(provider),
-              let agentSessionID,
-              !agentSessionID.isEmpty else {
-            return nil
-        }
-        return AgentSessionHistory.resumeCommand(
-            provider: provider,
-            sourceID: agentSessionID,
-            cwd: cwd
-        )
-    }
-
     /// Builds a recovery plan through the caller's history backend. This keeps
     /// recovery behavior injectable for frontends and test doubles while the
     /// eligibility rules remain shared here.

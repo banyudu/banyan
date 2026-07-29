@@ -21,23 +21,29 @@ import Testing
 }
 
 @Test func recoveryPolicyBuildsProviderSpecificResumeCommands() {
-    #expect(SessionRecoveryPolicy.resumeCommand(
+    let history = DefaultSessionHistoryBackend(
+        homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+    )
+    #expect(SessionRecoveryPolicy.resumePlan(
         status: .closed,
         provider: .codex,
         agentSessionID: "abc",
-        cwd: "/tmp/project"
-    ) == "'codex' 'resume' '-C' '/tmp/project' 'abc'")
-    #expect(SessionRecoveryPolicy.resumeCommand(
+        cwd: "/tmp/project",
+        history: history
+    )?.command == "'codex' 'resume' '-C' '/tmp/project' 'abc'")
+    #expect(SessionRecoveryPolicy.resumePlan(
         status: .closed,
         provider: .claude,
         agentSessionID: "abc",
-        cwd: "/tmp/project"
-    ) == "'claude' '--resume' 'abc'")
-    #expect(SessionRecoveryPolicy.resumeCommand(
+        cwd: "/tmp/project",
+        history: history
+    )?.command == "'claude' '--resume' 'abc'")
+    #expect(SessionRecoveryPolicy.resumePlan(
         status: .running,
         provider: .codex,
         agentSessionID: "abc",
-        cwd: "/tmp/project"
+        cwd: "/tmp/project",
+        history: history
     ) == nil)
 }
 
