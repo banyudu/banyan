@@ -265,4 +265,84 @@ extension BanyanSession {
         appliedFontSize = fontSize
         view.needsDisplay = true
     }
+    func terminate(markClosed: Bool = true) {
+        stopTerminalClient()
+        if markClosed {
+            status = .closed
+        }
+        touch()
+    }
+
+    func killBackingSession() {
+        status = .closed
+        stopTerminalClient()
+        sessionRuntime.removeBackingSession(named: tmuxSessionName)
+        touch()
+    }
+
+    private func stopTerminalClient() {
+        terminalRefreshTask?.cancel()
+        isDetachingTerminalClient = false
+        loadedTerminalView?.terminate()
+        isProcessStarted = false
+        isRestored = false
+    }
+
+    func detachTerminalClient() {
+        guard status != .closed else { return }
+        if let terminalView = loadedTerminalView, terminalView.process.running {
+            isDetachingTerminalClient = true
+            terminalView.terminate()
+        }
+        isProcessStarted = false
+        isRestored = false
+        touch()
+    }
+
+    func touch() {
+        updatedAt = Date()
+        onDidChange?()
+    }
+
+    fileprivate func restoredMessage() -> String {
+        let commandText = command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "default login shell" : command
+        let recoveryText = needsRecovery
+            ? "The tmux session disappeared while Banyan was stopped. Use Recover to recreate it."
+            : "The tmux session is not currently attached in Banyan. Use Attach to reconnect."
+        return [
+            "Restored Banyan session metadata.",
+            "",
+            "Title: \(title)",
+            "Directory: \(cwd)",
+            "Command: \(commandText)",
+            "tmux: \(tmuxSessionName)",
+            "",
+            recoveryText,
+            "Use Remove to kill the persisted session entry.",
+            ""
+        ].joined(separator: "\r\n")
+    }
+
+    fileprivate func failToStart(_ message: String) {
+        isRestored = true
+        isProcessStarted = false
+        status = .failed
+        feedOrQueue("Banyan could not attach this session.\r\n\r\n\(message)\r\n")
+        onStatusSignal?(status)
+        touch()
+    }
+
+    fileprivate func terminalEnvironment() -> [String] {
+        var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
+        let inherited = self.environment
+        for key in ["PATH", "SHELL", "TMPDIR", "SSH_AUTH_SOCK"] {
+            if let value = inherited[key] {
+                environment.append("\(key)=\(value)")
+            }
+        }
+        environment.append("CLICOLOR=1")
+        environment.append("CLICOLOR_FORCE=1")
+        environment.append("FORCE_COLOR=3")
+        return environment
+    }
 }
