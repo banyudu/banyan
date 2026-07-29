@@ -201,18 +201,17 @@ final class BanyanSession: ObservableObject, Identifiable {
         fontSize: Double = 13,
         tmuxBackend: any TmuxClientBackend,
         telemetry: PerformanceTelemetry = .shared,
-        homeDirectory: String = NSHomeDirectory(),
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        host: HostRuntimeContext
     ) {
         self.tmuxBackend = tmuxBackend
         self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)
         self.telemetry = telemetry
-        self.homeDirectory = homeDirectory
-        self.environment = environment
+        self.homeDirectory = host.homeDirectory.path
+        self.environment = host.environment
         let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(
             cwd: cwd,
-            homeDirectory: homeDirectory,
-            environment: environment
+            homeDirectory: self.homeDirectory,
+            environment: self.environment
         )
         self.id = id
         self.tmuxSessionName = tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id)

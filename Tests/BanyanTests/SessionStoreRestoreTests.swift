@@ -303,7 +303,8 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 
     #expect(SessionStore.isLocalHistorySession(session))
@@ -323,7 +324,8 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 
     #expect(SessionStore.isLocalHistorySession(session))
@@ -344,7 +346,8 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 
     #expect(!SessionStore.isLocalHistorySession(session))
@@ -364,7 +367,8 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 
     #expect(!SessionStore.isLocalHistorySession(session))
@@ -384,7 +388,8 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 
     #expect(!SessionStore.isLocalHistorySession(session))
@@ -404,7 +409,8 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 
     #expect(!SessionStore.isLocalHistorySession(session))

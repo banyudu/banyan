@@ -551,8 +551,7 @@ final class SessionStore: ObservableObject {
                 fontSize: terminalFontSize,
                 tmuxBackend: sessionBackend,
                 telemetry: telemetry,
-                homeDirectory: homeDirectory,
-                environment: environment
+                host: host
             )
             session.reportedTitle = snapshot.reportedTitle
             attach(session)
@@ -1081,8 +1080,7 @@ final class SessionStore: ObservableObject {
             fontSize: terminalFontSize,
             tmuxBackend: sessionBackend,
             telemetry: telemetry,
-            homeDirectory: homeDirectory,
-            environment: environment
+            host: host
         )
         attachScratch(session)
         scratchSession = session
@@ -1177,8 +1175,7 @@ final class SessionStore: ObservableObject {
             fontSize: terminalFontSize,
             tmuxBackend: sessionBackend,
             telemetry: telemetry,
-            homeDirectory: homeDirectory,
-            environment: environment
+            host: host
         )
         attach(session)
         sessions.append(session)

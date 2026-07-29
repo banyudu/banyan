@@ -103,6 +103,7 @@ private func makeSwitcherSession(id: String) -> BanyanSession {
         command: "",
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 }

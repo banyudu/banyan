@@ -301,7 +301,8 @@ import Testing
         command: "",
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 
     #expect(tmux.hasSession(named: tmuxSessionName))
@@ -326,7 +327,8 @@ private func makeAttachStateSession(
         status: status,
         isRestored: isRestored,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 }
 
@@ -344,7 +346,8 @@ private func makeIssueBindingSession(
         cwd: cwd,
         command: "",
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 }
 
@@ -363,7 +366,8 @@ private func makeHandoffSession(
         status: status,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared
+        tmuxBackend: TmuxBackend.shared,
+        host: banyanTestHost
     )
 }
 
