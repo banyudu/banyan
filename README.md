@@ -1,6 +1,19 @@
 # Banyan
 
-Banyan is a native macOS session cockpit for running many long-lived agent or terminal tasks without packing every session into a grid of panes.
+Banyan is an internal workspace for running and supervising many long-lived
+terminal and coding-agent sessions. Each session runs inside a dedicated
+`tmux` session, so closing or restarting a frontend does not normally stop the
+underlying shell or agent.
+
+This repository provides three products over one shared runtime:
+
+- **Banyan** — native macOS SwiftUI app with embedded SwiftTerm terminals.
+- **BanyanTUI** — terminal frontend for Linux and macOS.
+- **`banyanctl`** — local CLI for creating, selecting, marking, closing,
+  recovering, and inspecting sessions.
+
+> Internal preview: this is optimized for our team’s workflows and is not yet
+> a polished signed/notarized product. Expect interface and command changes.
 
 The first screen is the working surface:
 
@@ -24,12 +37,33 @@ The toolbar is intentionally small:
 - Sidebar options, including sort order and custom session creation, live behind the small sidebar menu.
 - Restored sessions attach to existing `tmux` sessions when possible.
 
+## Quick start
+
+Clone the repository and enter it:
+
+```sh
+git clone git@github.com:banyudu/banyan.git
+cd banyan
+```
+
+Then follow the macOS or terminal-only instructions below. Banyan is designed
+for personal workspaces: the database, control token, and tmux sessions stay
+on the machine where the frontend is running.
+
 ## Requirements
 
-Banyan requires `tmux` for every terminal session:
+Banyan requires Swift 6.3 or a compatible Swift toolchain and `tmux` for every
+terminal session. The macOS app requires macOS 14 or newer. The TUI builds on
+Linux and macOS without SwiftUI or AppKit.
 
 ```sh
 brew install tmux
+```
+
+On Debian/Ubuntu Linux:
+
+```sh
+sudo apt install tmux
 ```
 
 Banyan owns the native macOS UI; `tmux` owns the long-running shell or agent process. Closing Banyan or detaching a session only closes the tmux client in Banyan, not the underlying tmux session.
@@ -46,15 +80,15 @@ This keeps Banyan sessions out of the default `tmux ls`, while still allowing ma
 ## Build
 
 ```sh
-swift build
+swift build -c release
 ```
 
 On Linux, the package also builds a terminal frontend that runs without
 SwiftUI or AppKit:
 
 ```sh
-swift build --product BanyanTUI
-swift run BanyanTUI
+swift build -c release --product BanyanTUI
+.build/release/BanyanTUI
 ```
 
 `BanyanTUI` uses the same SQLite session state, dedicated tmux backend, agent
@@ -63,7 +97,18 @@ status detection, and local history importer as the macOS app. In the TUI,
 `x` removes, `R` recovers a missing backing session, `h` toggles history, and
 `T` resumes history with transcript trimming. Press `q` to quit.
 
-## Run
+For a packaged macOS build:
+
+```sh
+./scripts/package-app.sh
+./scripts/restart-app.sh --stable
+```
+
+This builds all products, installs `Banyan.app` to `/Applications`, and places
+the companion CLI at `dist/bin/banyanctl`. For iterative development, use
+`swift run Banyan` or `./scripts/dev-watch.sh`.
+
+## Run the macOS app
 
 ```sh
 swift run Banyan
@@ -81,11 +126,20 @@ The app starts a local control server on `127.0.0.1:7842`.
 
 Live terminal processes are kept by `tmux -L banyan` using session names prefixed with `banyan-`.
 
-Session and workspace state are saved to SQLite:
+Session and workspace state are saved to SQLite. Data stays local to each
+machine:
 
 ```text
-~/Library/Application Support/Banyan/state.sqlite
+macOS: ~/Library/Application Support/Banyan/state.sqlite
+Linux:  $XDG_DATA_HOME/Banyan/state.sqlite or ~/.local/share/Banyan/state.sqlite
 ```
+
+The local control server listens only on `127.0.0.1:7842`. Its token is stored
+next to the database as `control-token`; `banyanctl` loads it automatically.
+
+Run only one Banyan frontend at a time when using the default data directory:
+the macOS app and TUI share port `7842`, the `banyan` tmux socket, and the same
+SQLite state.
 
 On first launch after upgrading, Banyan migrates legacy session metadata from `sessions.json` when the SQLite database has no sessions.
 
@@ -165,12 +219,15 @@ dist/bin/banyanctl perf fix --since 7d --agent codex --cwd "$PWD"
 ## Package
 
 ```sh
-scripts/generate-icons.sh
 scripts/package-app.sh
-open dist/Banyan.app
+scripts/restart-app.sh --stable
 ```
 
-The logo source lives at `Assets/BanyanLogo.svg`. The icon script generates `Assets/AppIcon.icns`, and the packaging script creates an ad-hoc signed `dist/Banyan.app` with that icon plus the companion CLI at `dist/bin/banyanctl`.
+The packaging script builds all products, creates `dist/Banyan.app`, installs a
+copy to `/Applications/Banyan.app`, and writes the companion CLI to
+`dist/bin/banyanctl`. It uses a Developer ID identity when one is available and
+falls back to an ad-hoc signature for local development. There is currently no
+separate installer or notarized release channel.
 
 ## Control From Scripts
 
@@ -289,4 +346,6 @@ Example:
 
 ## Current Scope
 
-This repo starts as a Swift Package executable for fast native iteration. The local package script creates an ad-hoc signed `.app`; distribution signing/notarization can be added later if needed.
+This repo is currently distributed internally from source. The package script
+creates a locally installable app, but distribution signing and notarization
+are not yet part of the release flow.
