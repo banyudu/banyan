@@ -523,6 +523,21 @@ final class SessionStore: ObservableObject {
         runHistoryImport(spawnDefaultIfEmpty: spawnDefaultIfEmpty)
     }
 
+    func transcriptPreview(
+        from url: URL,
+        provider: CodingAgentProvider,
+        maxMessages: Int = 40
+    ) async -> String {
+        let historyBackend = historyBackend
+        return await Task.detached(priority: .utility) {
+            historyBackend.transcriptPreview(
+                from: url,
+                provider: provider,
+                maxMessages: maxMessages
+            )
+        }.value
+    }
+
     /// Shows the cached list immediately, then refreshes it in the background
     /// whenever the Linear tab becomes visible.
     func refreshLinearIssueListOnEnter() {

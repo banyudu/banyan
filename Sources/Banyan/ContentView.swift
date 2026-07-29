@@ -2522,9 +2522,7 @@ private struct ImportedSessionHistoryView: View {
             return
         }
         preview = "Loading..."
-        let loadedPreview = await Task.detached(priority: .utility) {
-            AgentSessionHistoryImporter.transcriptPreview(from: url, provider: provider)
-        }.value
+        let loadedPreview = await store.transcriptPreview(from: url, provider: provider)
         guard !Task.isCancelled else { return }
         preview = loadedPreview
     }

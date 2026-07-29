@@ -18,6 +18,21 @@ public protocol SessionHistoryBackend: Sendable {
         cwd: String,
         transcriptURL: URL?
     ) -> String?
+    func transcriptPreview(
+        from url: URL,
+        provider: CodingAgentProvider,
+        maxMessages: Int
+    ) -> String
+}
+
+public extension SessionHistoryBackend {
+    func transcriptPreview(
+        from url: URL,
+        provider: CodingAgentProvider,
+        maxMessages: Int = 40
+    ) -> String {
+        "No readable transcript preview is available for this history file."
+    }
 }
 
 public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
@@ -68,5 +83,17 @@ public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
             transcriptURL: transcriptURL,
             home: homeDirectory
         )?.newSourceID
+    }
+
+    public func transcriptPreview(
+        from url: URL,
+        provider: CodingAgentProvider,
+        maxMessages: Int = 40
+    ) -> String {
+        AgentSessionHistoryImporter.transcriptPreview(
+            from: url,
+            provider: provider,
+            maxMessages: maxMessages
+        )
     }
 }
