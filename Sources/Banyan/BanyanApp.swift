@@ -20,6 +20,7 @@ struct BanyanApp: App {
     )
     static let attentionNotifier = AttentionNotifier()
     private static let jumpOverlayMonitor = JumpOverlayMonitor()
+    private static let commandWTerminalCloseMonitor = CommandWTerminalCloseMonitor()
     @StateObject private var store = SessionStore(
         persistence: SessionPersistence(
             databaseURL: SessionDatabase.defaultDatabaseURL(
@@ -55,10 +56,10 @@ struct BanyanApp: App {
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
-                    CommandWTerminalCloseMonitor.shared.action = { window in
+                    Self.commandWTerminalCloseMonitor.action = { window in
                         store.handleCloseCommand(in: window)
                     }
-                    CommandWTerminalCloseMonitor.shared.start()
+                    Self.commandWTerminalCloseMonitor.start()
 
                     Self.jumpOverlayMonitor.onJump = { [weak store] index in
                         store?.selectSession(shortcutIndex: index) ?? false
@@ -304,12 +305,10 @@ private extension NSMenu {
 }
 
 private final class CommandWTerminalCloseMonitor {
-    static let shared = CommandWTerminalCloseMonitor()
-
     var action: (NSWindow?) -> Void = { _ in }
     private var monitor: Any?
 
-    private init() {}
+    init() {}
 
     deinit {
         stop()
