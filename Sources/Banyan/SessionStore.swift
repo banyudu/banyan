@@ -2890,19 +2890,10 @@ final class SessionStore: ObservableObject {
     }
 
     private func restoredTitle(from snapshot: SessionSnapshot) -> String {
-        if !snapshot.isTitlePinned, isGenericDefaultTitle(snapshot.title) {
+        if !snapshot.isTitlePinned, SessionTitleGenerator.isGenericDefaultTitle(snapshot.title) {
             return defaultTitle(for: snapshot.cwd)
         }
         return snapshot.title
-    }
-
-    private func isGenericDefaultTitle(_ title: String) -> Bool {
-        let value = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return value.isEmpty
-            || value == "shell"
-            || value.hasPrefix("shell-")
-            || value == "session"
-            || value.hasPrefix("session-")
     }
 
     private func sanitizeID(_ value: String) -> String {

@@ -107,6 +107,18 @@ public enum SessionTitleGenerator {
             || CodingAgentProvider.allCases.contains { $0.rawValue == lowercased || $0.displayName.lowercased() == lowercased }
     }
 
+    /// Titles produced for sessions that have not received a meaningful name.
+    /// This intentionally excludes provider names, which can be useful labels
+    /// when restoring a persisted snapshot.
+    public static func isGenericDefaultTitle(_ value: String) -> Bool {
+        let lowercased = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lowercased.isEmpty
+            || lowercased == "shell"
+            || lowercased.hasPrefix("shell-")
+            || lowercased == "session"
+            || lowercased.hasPrefix("session-")
+    }
+
     public static func looksLikeHostTitle(_ value: String) -> Bool {
         let parts = value.split(separator: "@", maxSplits: 1)
         guard parts.count == 2 else { return false }

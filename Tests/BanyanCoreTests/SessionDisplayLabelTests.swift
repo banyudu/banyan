@@ -26,6 +26,12 @@ import Foundation
     #expect(label == "banyan · main · \"shell\"")
 }
 
+@Test func titleGeneratorDistinguishesGenericDefaultsFromProviderNames() {
+    #expect(SessionTitleGenerator.isGenericDefaultTitle("shell-2"))
+    #expect(SessionTitleGenerator.isGenericDefaultTitle("session"))
+    #expect(!SessionTitleGenerator.isGenericDefaultTitle("codex"))
+}
+
 @Test func displayLabelIgnoresHostTitleAndUsesAgentPrompt() {
     let label = SessionDisplayLabel.make(
         project: "banyan",
