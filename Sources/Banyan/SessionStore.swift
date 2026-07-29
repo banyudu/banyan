@@ -1009,7 +1009,7 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func spawnSiblingSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? homeDirectory
-        let command = Self.siblingRuntimeCommand(for: selectedSession?.agentProvider)
+        let command = SessionLaunchPolicy.siblingRuntimeCommand(for: selectedSession?.agentProvider)
         return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
     }
 
@@ -1019,15 +1019,6 @@ final class SessionStore: ObservableObject {
     func spawnTerminalSiblingSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? homeDirectory
         return spawn(cwd: cwd, command: "", parentSessionID: selectedSession?.parentSessionID)
-    }
-
-    nonisolated static func siblingRuntimeCommand(for provider: CodingAgentProvider?) -> String {
-        switch provider {
-        case .claude, .codex:
-            return provider?.defaultExecutableName ?? ""
-        default:
-            return ""
-        }
     }
 
     /// The kind the project header's split "+" button spawns by default —
