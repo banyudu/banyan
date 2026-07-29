@@ -1040,7 +1040,9 @@ final class SessionStore: ObservableObject {
         let cwd = resolvedWorkingDirectory(proposedCWD)
         let command = proposedCommand ?? ""
         let hasExplicitTitle = proposedTitle?.isEmpty == false
-        let title = hasExplicitTitle ? proposedTitle! : defaultTitle(for: cwd)
+        let title = hasExplicitTitle
+            ? proposedTitle!
+            : PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
         let parentSessionID = SessionInputPolicy.normalizedOptionalText(proposedParentSessionID)
         let session = BanyanSession(
             id: id,
@@ -2822,10 +2824,6 @@ final class SessionStore: ObservableObject {
             status: session.status,
             isImportedHistory: session.isImportedHistory
         )
-    }
-
-    private func defaultTitle(for cwd: String) -> String {
-        PathDisplayName.make(path: cwd, homeDirectory: homeDirectory)
     }
 
     private func uniqueID(_ baseID: String, avoidingLiveTmuxSessions: Bool) -> String {
