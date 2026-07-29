@@ -610,7 +610,7 @@ final class SessionStore: ObservableObject {
                     self.isLinearIssueListRefreshing = false
                     self.linearIssues = issues
                     let workflowStateSource = workflowStates ?? self.linearIssueWorkflowStates
-                    self.linearIssueWorkflowStates = Self.mergedWorkflowStates(workflowStateSource, issues: issues)
+                    self.linearIssueWorkflowStates = LinearIssuePolicy.mergedWorkflowStates(workflowStateSource, issues: issues)
                     linearDebugLog("list refresh applied issueCount=\(issues.count) issueStates=[\(linearIssueStateCountSummary(issues))] workflowStateCount=\(self.linearIssueWorkflowStates.count) workflowStates=[\(linearWorkflowStateSummary(self.linearIssueWorkflowStates))]")
                     if let selectedLinearListIssueID = self.selectedLinearListIssueID,
                        !issues.contains(where: { $0.identifier == selectedLinearListIssueID }) {
@@ -676,7 +676,7 @@ final class SessionStore: ObservableObject {
         }
 
         linearIssues = cache.issues
-        linearIssueWorkflowStates = Self.mergedWorkflowStates(cache.workflowStates ?? [], issues: cache.issues)
+        linearIssueWorkflowStates = LinearIssuePolicy.mergedWorkflowStates(cache.workflowStates ?? [], issues: cache.issues)
         linearDebugLog("list cache loaded issueCount=\(cache.issues.count) issueStates=[\(linearIssueStateCountSummary(cache.issues))] workflowStateCount=\(linearIssueWorkflowStates.count) selectedIssueID=\(cache.selectedIssueID ?? "nil") updatedAt=\(cache.updatedAt)")
         let cachedIssueIDs = Set(cache.issues.map(\.identifier))
         if let selectedLinearListIssueID, cachedIssueIDs.contains(selectedLinearListIssueID) {
@@ -692,34 +692,9 @@ final class SessionStore: ObservableObject {
         linearIssueListLoadState = .loaded
     }
 
-    private static func mergedWorkflowStates(
-        _ workflowStates: [LinearWorkflowState],
-        issues: [LinearIssueSummary]
-    ) -> [LinearWorkflowState] {
-        var statesByID: [String: LinearWorkflowState] = [:]
-        for state in workflowStates {
-            statesByID[state.id] = state
-        }
-        for issue in issues {
-            statesByID[issue.state.id] = issue.state
-        }
-        return statesByID.values.sorted {
-            switch ($0.position, $1.position) {
-            case let (lhs?, rhs?):
-                return lhs < rhs
-            case (_?, nil):
-                return true
-            case (nil, _?):
-                return false
-            case (nil, nil):
-                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-            }
-        }
-    }
-
     private func mergeLinearWorkflowStates(_ workflowStates: [LinearWorkflowState]) {
         guard !workflowStates.isEmpty else { return }
-        let mergedWorkflowStates = Self.mergedWorkflowStates(
+        let mergedWorkflowStates = LinearIssuePolicy.mergedWorkflowStates(
             linearIssueWorkflowStates + workflowStates,
             issues: linearIssues
         )
