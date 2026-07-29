@@ -185,7 +185,7 @@ import Testing
 }
 
 @Test func startupCleanupOnlyTargetsUnpersistedBanyanTmuxSessions() {
-    let stale = SessionStore.staleTmuxSessionNames(
+    let stale = SessionHistoryPresentation.staleTmuxSessionNames(
         liveSessionNames: ["banyan-session-2", "banyan-session-1", "banyan-session-3"],
         persistedSessionNames: ["banyan-session-1", "banyan-session-3"]
     )
@@ -194,7 +194,7 @@ import Testing
 }
 
 @Test func historySidebarTitleUsesIssueIDInsteadOfWorktreeName() {
-    let title = SessionStore.historySidebarTitle(
+    let title = SessionHistoryPresentation.sidebarTitle(
         projectName: "yudu-eng-6061-32baaf",
         displayTitle: "Personal coding run",
         issueID: "ENG-6061"
@@ -204,20 +204,20 @@ import Testing
 }
 
 @Test func historyFilterMatchesTokensAgainstTheRenderedRowTitle() {
-    let title = SessionStore.historySidebarTitle(
+    let title = SessionHistoryPresentation.sidebarTitle(
         projectName: "clawly",
         displayTitle: "Fix stale provider icon",
         issueID: "ENG-6061"
     )
 
-    #expect(SessionStore.matchesHistoryFilter(title: title, query: ""))
-    #expect(SessionStore.matchesHistoryFilter(title: title, query: "   "))
-    #expect(SessionStore.matchesHistoryFilter(title: title, query: "eng-6061"))
-    #expect(SessionStore.matchesHistoryFilter(title: title, query: "PROVIDER"))
+    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: ""))
+    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "   "))
+    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "eng-6061"))
+    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "PROVIDER"))
     // Tokens may match out of order, and all of them must match.
-    #expect(SessionStore.matchesHistoryFilter(title: title, query: "icon eng-6061"))
-    #expect(!SessionStore.matchesHistoryFilter(title: title, query: "icon eng-9999"))
-    #expect(!SessionStore.matchesHistoryFilter(title: title, query: "codex"))
+    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "icon eng-6061"))
+    #expect(!SessionHistoryPresentation.matchesFilter(title: title, query: "icon eng-9999"))
+    #expect(!SessionHistoryPresentation.matchesFilter(title: title, query: "codex"))
 }
 
 @Test func historySidebarShowsMoreRowsWhenSearchingThanWhenBrowsing() {
@@ -226,7 +226,7 @@ import Testing
 }
 
 @Test func historySidebarTitleDoesNotDuplicateExistingIssuePrefix() {
-    let title = SessionStore.historySidebarTitle(
+    let title = SessionHistoryPresentation.sidebarTitle(
         projectName: "yudu-eng-6061-32baaf",
         displayTitle: "ENG-6061 Personal coding run",
         issueID: "ENG-6061"
@@ -236,7 +236,7 @@ import Testing
 }
 
 @Test func historySidebarTitleKeepsProjectNameWithoutIssueID() {
-    let title = SessionStore.historySidebarTitle(
+    let title = SessionHistoryPresentation.sidebarTitle(
         projectName: "banyan",
         displayTitle: "Fix sidebar grouping",
         issueID: nil

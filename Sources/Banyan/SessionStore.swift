@@ -426,31 +426,16 @@ final class SessionStore: ObservableObject {
             .map { session in
                 (
                     session: session,
-                    title: Self.historySidebarTitle(
+                    title: SessionHistoryPresentation.sidebarTitle(
                         projectName: session.projectName,
                         displayTitle: session.displayTitle,
                         issueID: session.titleLinkLabel
                     )
                 )
             }
-            .filter { Self.matchesHistoryFilter(title: $0.title, query: query) }
+            .filter { SessionHistoryPresentation.matchesFilter(title: $0.title, query: query) }
             .prefix(limit)
             .map { SidebarSessionItem(session: $0.session, depth: 0, titleOverride: $0.title) }
-    }
-
-    /// Matches against the row's rendered title (project · issue · title), so what the
-    /// user reads is what they can search. Every whitespace-separated token must appear,
-    /// which lets "clawly eng-74" narrow without demanding the exact rendered order.
-    nonisolated static func matchesHistoryFilter(title: String, query: String) -> Bool {
-        SessionHistoryPresentation.matchesFilter(title: title, query: query)
-    }
-
-    nonisolated static func historySidebarTitle(projectName: String, displayTitle: String, issueID: String?) -> String {
-        SessionHistoryPresentation.sidebarTitle(
-            projectName: projectName,
-            displayTitle: displayTitle,
-            issueID: issueID
-        )
     }
 
     static func isLocalHistorySession(_ session: BanyanSession) -> Bool {
@@ -461,13 +446,6 @@ final class SessionStore: ObservableObject {
             return false
         }
         return session.titleLinkLabel != nil
-    }
-
-    nonisolated static func staleTmuxSessionNames(liveSessionNames: [String], persistedSessionNames: Set<String>) -> [String] {
-        SessionHistoryPresentation.staleTmuxSessionNames(
-            liveSessionNames: liveSessionNames,
-            persistedSessionNames: persistedSessionNames
-        )
     }
 
     var selectedSession: BanyanSession? {
@@ -558,7 +536,7 @@ final class SessionStore: ObservableObject {
                 loadedTmuxSessionNames.insert(session.tmuxSessionName)
             }
         }
-        for tmuxSessionName in Self.staleTmuxSessionNames(
+        for tmuxSessionName in SessionHistoryPresentation.staleTmuxSessionNames(
             liveSessionNames: tmuxBackend.listBanyanSessions(),
             persistedSessionNames: loadedTmuxSessionNames
         ) {
