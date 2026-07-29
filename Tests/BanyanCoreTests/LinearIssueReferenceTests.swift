@@ -22,6 +22,30 @@ import Testing
     #expect(reference?.id == "ENG-1234")
 }
 
+@Test func linearIssueReferencePrefersExplicitURLThenTitleThenContext() {
+    #expect(LinearIssueReference.preferredID(
+        titleURL: "https://linear.app/2en/issue/ENG-9",
+        title: "ENG-8 task",
+        branch: "eng-7-task",
+        cwd: "/tmp/ENG-6",
+        environment: [:]
+    ) == "ENG-9")
+    #expect(LinearIssueReference.preferredID(
+        titleURL: nil,
+        title: "ENG-8 task",
+        branch: "eng-7-task",
+        cwd: "/tmp/ENG-6",
+        environment: [:]
+    ) == "ENG-8")
+    #expect(LinearIssueReference.preferredID(
+        titleURL: nil,
+        title: nil,
+        branch: "eng-7-task",
+        cwd: "/tmp/ENG-6",
+        environment: [:]
+    ) == "ENG-7")
+}
+
 @Test func linearIssueReferenceRejectsNonIssueText() {
     #expect(LinearIssueReference.issueID(in: "release-2026-07-06") == nil)
     #expect(LinearIssueReference.issueID(in: "engineering-notes") == nil)

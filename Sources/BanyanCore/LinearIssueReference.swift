@@ -20,6 +20,20 @@ public struct LinearIssueReference: Equatable {
         return LinearIssueReference(id: id, url: issueURL(for: id, environment: environment))
     }
 
+    /// Resolves the issue label shown for a session, preserving explicit
+    /// bindings before falling back to title text and repository context.
+    public static func preferredID(
+        titleURL: String?,
+        title: String?,
+        branch: String?,
+        cwd: String,
+        environment: [String: String]
+    ) -> String? {
+        issueID(in: titleURL)
+            ?? issueID(in: title)
+            ?? detect(branch: branch, cwd: cwd, environment: environment)?.id
+    }
+
     public static func issueID(in value: String?) -> String? {
         guard let value else { return nil }
         let pattern = #"(?i)(?:^|[^A-Z0-9])([A-Z]{2,5}-\d+)(?=$|[^A-Z0-9])"#

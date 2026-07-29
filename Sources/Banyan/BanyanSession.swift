@@ -145,13 +145,13 @@ final class BanyanSession: ObservableObject, Identifiable {
     /// *to* that URL: reading the ID off a title from an earlier chapter would show
     /// one issue and open another. The title and cwd only fill in when nothing is bound.
     var titleLinkLabel: String? {
-        LinearIssueReference.issueID(in: titleURL)
-            ?? LinearIssueReference.issueID(in: title)
-            ?? LinearIssueReference.detect(
-                branch: displayBranch,
-                cwd: cwd,
-                environment: environment
-            )?.id
+        LinearIssueReference.preferredID(
+            titleURL: titleURL,
+            title: title,
+            branch: displayBranch,
+            cwd: cwd,
+            environment: environment
+        )
     }
 
     var agentProvider: CodingAgentProvider? {
