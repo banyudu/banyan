@@ -1978,9 +1978,9 @@ final class SessionStore: ObservableObject {
 
         let activeSidebarIDs = groups.flatMap { $0.items.map(\.id) }
         let groupSessionIDs = group.items.map(\.id)
-        guard let reorderedIDs = Self.reorderedSidebarSessionIDs(
-            activeSidebarIDs: activeSidebarIDs,
-            groupSessionIDs: groupSessionIDs,
+        guard let reorderedIDs = SessionSidebarOrdering.reorderedIDs(
+            activeIDs: activeSidebarIDs,
+            groupIDs: groupSessionIDs,
             sourceOffsets: sourceOffsets,
             destinationOffset: destinationOffset
         ), reorderedIDs != activeSidebarIDs else {
@@ -2015,9 +2015,9 @@ final class SessionStore: ObservableObject {
 
         let groupSessionIDs = group.items.map(\.id)
         let activeSidebarIDs = groups.flatMap { $0.items.map(\.id) }
-        guard let reorderedIDs = Self.reorderedSidebarSessionIDs(
-            activeSidebarIDs: activeSidebarIDs,
-            groupSessionIDs: groupSessionIDs,
+        guard let reorderedIDs = SessionSidebarOrdering.reorderedIDs(
+            activeIDs: activeSidebarIDs,
+            groupIDs: groupSessionIDs,
             sourceID: sourceID,
             targetID: targetID
         ), reorderedIDs != activeSidebarIDs else {
@@ -2025,34 +2025,6 @@ final class SessionStore: ObservableObject {
         }
 
         applySidebarSessionOrder(activeSidebarIDs: activeSidebarIDs, reorderedIDs: reorderedIDs)
-    }
-
-    nonisolated static func reorderedSidebarSessionIDs(
-        activeSidebarIDs: [String],
-        groupSessionIDs: [String],
-        sourceOffsets: IndexSet,
-        destinationOffset: Int
-    ) -> [String]? {
-        SessionSidebarOrdering.reorderedIDs(
-            activeIDs: activeSidebarIDs,
-            groupIDs: groupSessionIDs,
-            sourceOffsets: sourceOffsets,
-            destinationOffset: destinationOffset
-        )
-    }
-
-    nonisolated static func reorderedSidebarSessionIDs(
-        activeSidebarIDs: [String],
-        groupSessionIDs: [String],
-        sourceID: String,
-        targetID: String
-    ) -> [String]? {
-        SessionSidebarOrdering.reorderedIDs(
-            activeSidebarIDs: activeSidebarIDs,
-            groupIDs: groupSessionIDs,
-            sourceID: sourceID,
-            targetID: targetID
-        )
     }
 
     func selectNextSession() {

@@ -246,9 +246,9 @@ import Testing
 }
 
 @Test func sidebarMoveReordersOnlyTheMovedProjectGroup() {
-    let reordered = SessionStore.reorderedSidebarSessionIDs(
-        activeSidebarIDs: ["one", "two", "three", "four", "five"],
-        groupSessionIDs: ["two", "three", "four"],
+    let reordered = SessionSidebarOrdering.reorderedIDs(
+        activeIDs: ["one", "two", "three", "four", "five"],
+        groupIDs: ["two", "three", "four"],
         sourceOffsets: IndexSet(integer: 0),
         destinationOffset: 3
     )
@@ -257,9 +257,9 @@ import Testing
 }
 
 @Test func sidebarMovePreservesRowsOutsideTheMovedProjectGroup() {
-    let reordered = SessionStore.reorderedSidebarSessionIDs(
-        activeSidebarIDs: ["project-a-1", "project-a-2", "project-b-1", "project-b-2"],
-        groupSessionIDs: ["project-b-1", "project-b-2"],
+    let reordered = SessionSidebarOrdering.reorderedIDs(
+        activeIDs: ["project-a-1", "project-a-2", "project-b-1", "project-b-2"],
+        groupIDs: ["project-b-1", "project-b-2"],
         sourceOffsets: IndexSet(integer: 1),
         destinationOffset: 0
     )
@@ -268,9 +268,9 @@ import Testing
 }
 
 @Test func sidebarDragDropAfterTargetWhenDraggingDown() {
-    let reordered = SessionStore.reorderedSidebarSessionIDs(
-        activeSidebarIDs: ["one", "two", "three", "four"],
-        groupSessionIDs: ["one", "two", "three", "four"],
+    let reordered = SessionSidebarOrdering.reorderedIDs(
+        activeIDs: ["one", "two", "three", "four"],
+        groupIDs: ["one", "two", "three", "four"],
         sourceID: "one",
         targetID: "three"
     )
@@ -279,9 +279,9 @@ import Testing
 }
 
 @Test func sidebarDragDropBeforeTargetWhenDraggingUp() {
-    let reordered = SessionStore.reorderedSidebarSessionIDs(
-        activeSidebarIDs: ["one", "two", "three", "four"],
-        groupSessionIDs: ["one", "two", "three", "four"],
+    let reordered = SessionSidebarOrdering.reorderedIDs(
+        activeIDs: ["one", "two", "three", "four"],
+        groupIDs: ["one", "two", "three", "four"],
         sourceID: "four",
         targetID: "two"
     )
