@@ -13,3 +13,8 @@ let banyanTestTelemetry = PerformanceTelemetry(
             .appendingPathComponent("banyan-tests-telemetry.sqlite")
     )
 )
+
+let banyanTestTmuxBackend = TmuxBackend(
+    environment: banyanTestHost.environment,
+    workingDirectory: banyanTestHost.currentDirectory
+)

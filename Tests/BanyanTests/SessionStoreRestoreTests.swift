@@ -303,7 +303,7 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
@@ -325,7 +325,7 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
@@ -348,7 +348,7 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
@@ -370,7 +370,7 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
@@ -392,7 +392,7 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
@@ -414,7 +414,7 @@ import Testing
         updatedAt: base,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )

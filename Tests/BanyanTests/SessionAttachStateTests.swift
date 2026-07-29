@@ -285,7 +285,7 @@ import Testing
 
 @MainActor
 @Test func killBackingSessionKillsUnderlyingTmuxSession() throws {
-    let tmux = TmuxBackend.shared
+    let tmux = banyanTestTmuxBackend
     let id = "close-kills-\(UUID().uuidString.lowercased())"
     let tmuxSessionName = TmuxBackend.sessionName(for: id)
     try tmux.ensureSession(named: tmuxSessionName, cwd: "/tmp", command: "")
@@ -301,7 +301,7 @@ import Testing
         command: "",
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
@@ -328,7 +328,7 @@ private func makeAttachStateSession(
         status: status,
         isRestored: isRestored,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
@@ -348,7 +348,7 @@ private func makeIssueBindingSession(
         cwd: cwd,
         command: "",
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
@@ -369,7 +369,7 @@ private func makeHandoffSession(
         status: status,
         isRestored: true,
         theme: .system,
-        tmuxBackend: TmuxBackend.shared,
+        tmuxBackend: banyanTestTmuxBackend,
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )

@@ -15,7 +15,6 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         }
     }
 
-    public static let shared = TmuxBackend()
     public static let socketName = "banyan"
 
     public let executableURL: URL
@@ -40,13 +39,6 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
             executableURL: executableURL,
             workingDirectory: workingDirectory,
             environment: environment
-        )
-    }
-
-    private init() {
-        self.init(
-            environment: ProcessInfo.processInfo.environment,
-            workingDirectory: NSHomeDirectory()
         )
     }
 
