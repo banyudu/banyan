@@ -44,12 +44,12 @@ import Testing
 }
 
 @Test func closeConfirmationOnlyTreatsActiveCodexOrClaudeAsOngoingAgents() {
-    #expect(SessionStore.isOngoingCodexOrClaudeSession(status: .executing, provider: .codex))
-    #expect(SessionStore.isOngoingCodexOrClaudeSession(status: .needInput, provider: .claude))
-    #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .completed, provider: .codex))
-    #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .failed, provider: .claude))
-    #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .executing, provider: .gemini))
-    #expect(!SessionStore.isOngoingCodexOrClaudeSession(status: .running, provider: nil))
+    #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .codex))
+    #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .needInput, provider: .claude))
+    #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .completed, provider: .codex))
+    #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .failed, provider: .claude))
+    #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .gemini))
+    #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .running, provider: nil))
 }
 
 @Test func reopenResumesClosedCodexSessionInsteadOfReplayingLaunchCommand() {

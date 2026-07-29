@@ -491,7 +491,10 @@ final class SessionStore: ObservableObject {
 
     var pendingCloseHasOngoingAgent: Bool {
         guard let session = pendingCloseSession else { return false }
-        return Self.isOngoingCodexOrClaudeSession(status: session.status, provider: session.agentProvider)
+        return SessionLifecyclePolicy.isOngoingCodingAgentSession(
+            status: session.status,
+            provider: session.agentProvider
+        )
     }
 
     func loadPersistedSessionsIfNeeded() {
@@ -2247,7 +2250,10 @@ final class SessionStore: ObservableObject {
 
     func requestClose(id: String) {
         guard let session = sessions.first(where: { $0.id == id }) else { return }
-        if hasActiveChildren(id) || Self.isOngoingCodexOrClaudeSession(status: session.status, provider: session.agentProvider) {
+        if hasActiveChildren(id) || SessionLifecyclePolicy.isOngoingCodingAgentSession(
+            status: session.status,
+            provider: session.agentProvider
+        ) {
             pendingCloseSessionID = id
         } else {
             try? close(id: id)
@@ -2270,16 +2276,6 @@ final class SessionStore: ObservableObject {
 
     func hasActiveChildren(_ id: String) -> Bool {
         activeChildCount(of: id) > 0
-    }
-
-    nonisolated static func isOngoingCodexOrClaudeSession(
-        status: SessionStatus,
-        provider: CodingAgentProvider?
-    ) -> Bool {
-        SessionLifecyclePolicy.isOngoingCodingAgentSession(
-            status: status,
-            provider: provider
-        )
     }
 
     func resolvedParentSessionIDForSpawn(_ parentSessionID: String?) throws -> String? {
