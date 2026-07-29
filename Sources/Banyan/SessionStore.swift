@@ -1130,7 +1130,18 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
 
-        let recoveryCommand = recoveryCommand(for: session)
+        let recoveryCommand = session.agentProvider.flatMap { provider in
+            guard let agentSessionID = session.agentSessionID,
+                  [.codex, .claude].contains(provider) else {
+                return nil
+            }
+            return historyBackend.resumeCommand(
+                provider: provider,
+                sourceID: agentSessionID,
+                cwd: session.cwd,
+                prompt: nil
+            )
+        }
 
         session.recoverFromMissingBackingSessionInBackground(command: recoveryCommand)
         if select {
@@ -1143,20 +1154,6 @@ final class SessionStore: ObservableObject {
         for session in recoverySessions {
             try? recover(id: session.id, select: selectRecoveredSession)
         }
-    }
-
-    private func recoveryCommand(for session: BanyanSession) -> String? {
-        guard let provider = session.agentProvider,
-              let agentSessionID = session.agentSessionID,
-              [.codex, .claude].contains(provider) else {
-            return nil
-        }
-        return historyBackend.resumeCommand(
-            provider: provider,
-            sourceID: agentSessionID,
-            cwd: session.cwd,
-            prompt: nil
-        )
     }
 
     @discardableResult
