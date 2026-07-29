@@ -2,9 +2,13 @@ import Foundation
 
 /// Normalization and input interpretation shared by terminal frontends.
 public enum SessionInputPolicy {
-    public static func normalizedTitleURL(_ titleURL: String?) -> String? {
-        let trimmed = titleURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+    public static func normalizedOptionalText(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    public static func normalizedTitleURL(_ titleURL: String?) -> String? {
+        normalizedOptionalText(titleURL)
     }
 
     public static func normalizedDirectory(_ directory: String?) -> String? {

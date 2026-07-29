@@ -1106,12 +1106,12 @@ final class SessionStore: ObservableObject {
         let command = proposedCommand ?? ""
         let hasExplicitTitle = proposedTitle?.isEmpty == false
         let title = hasExplicitTitle ? proposedTitle! : defaultTitle(for: cwd)
-        let parentSessionID = normalizedParentSessionID(proposedParentSessionID)
+        let parentSessionID = SessionInputPolicy.normalizedOptionalText(proposedParentSessionID)
         let session = BanyanSession(
             id: id,
             tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
                 title: title,
-                titleURL: normalizedTitleURL(proposedTitleURL),
+            titleURL: SessionInputPolicy.normalizedTitleURL(proposedTitleURL),
                 generatedTitle: nil,
                 isTitlePinned: hasExplicitTitle,
             cwd: cwd,
@@ -1360,7 +1360,7 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
-        session.mark(status: status, tone: tone, title: title, titleURL: normalizedTitleURL(titleURL))
+        session.mark(status: status, tone: tone, title: title, titleURL: SessionInputPolicy.normalizedTitleURL(titleURL))
         saveSessions()
     }
 
@@ -2153,7 +2153,7 @@ final class SessionStore: ObservableObject {
     }
 
     func resolvedParentSessionIDForSpawn(_ parentSessionID: String?) throws -> String? {
-        guard let parentSessionID = normalizedParentSessionID(parentSessionID) else {
+        guard let parentSessionID = SessionInputPolicy.normalizedOptionalText(parentSessionID) else {
             return nil
         }
         guard sessions.contains(where: { $0.id == parentSessionID && $0.status != .closed }) else {
@@ -2832,16 +2832,6 @@ final class SessionStore: ObservableObject {
         return PathDisplayName.canonicalPath(homeDirectory)
     }
 
-    private func normalizedParentSessionID(_ parentSessionID: String?) -> String? {
-        let trimmed = parentSessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed?.isEmpty == false ? trimmed : nil
-    }
-
-    private func normalizedTitleURL(_ titleURL: String?) -> String? {
-        let trimmed = titleURL?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed?.isEmpty == false ? trimmed : nil
-    }
-
     nonisolated private static func runBanyanWorktree(
         issueID: String,
         cwd: String,
@@ -2895,7 +2885,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func detachChildren(of parentID: String, to newParentID: String?) {
-        let parentIDForChildren = normalizedParentSessionID(newParentID)
+        let parentIDForChildren = SessionInputPolicy.normalizedOptionalText(newParentID)
         for session in sessions where session.parentSessionID == parentID {
             session.parentSessionID = parentIDForChildren
             session.touch()
