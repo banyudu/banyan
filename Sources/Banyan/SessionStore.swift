@@ -1169,27 +1169,24 @@ final class SessionStore: ObservableObject {
         let cwd = session.cwd
         let historyBackend = historyBackend
         Task.detached(priority: .userInitiated) {
-            let preparedSourceID = historyBackend.prepareTrimmedTranscript(
+            let plan = SessionResumePolicy.plan(
                 provider: provider,
                 sourceID: sourceID,
                 cwd: cwd,
-                transcriptURL: nil
+                prompt: nil,
+                transcriptURL: nil,
+                trimmed: true,
+                history: historyBackend
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                guard let preparedSourceID,
-                      let command = historyBackend.resumeCommand(
-                        provider: provider,
-                        sourceID: preparedSourceID,
-                        cwd: cwd,
-                        prompt: nil
-                      ),
+                guard let plan,
                       let session = self.sessions.first(where: { $0.id == id }) else {
                     try? self.respawn(id: id)
                     return
                 }
-                session.command = command
-                session.markAgentSessionID(preparedSourceID)
+                session.command = plan.command
+                session.markAgentSessionID(plan.sourceID)
                 session.reattachTerminalClient()
                 self.selectedSessionID = id
                 self.saveSessions()
@@ -1748,19 +1745,22 @@ final class SessionStore: ObservableObject {
         }
         guard let provider = history.agentProvider,
               let sourceID = historyBackend.sourceID(fromImportedSessionID: history.id, provider: provider),
-              let command = historyBackend.resumeCommand(
+              let plan = SessionResumePolicy.plan(
                 provider: provider,
                 sourceID: sourceID,
                 cwd: history.cwd,
-                prompt: prompt
+                prompt: prompt,
+                transcriptURL: history.historyTranscriptURL,
+                trimmed: false,
+                history: historyBackend
               ) else {
             throw ControlError.badRequest("Session history item '\(id)' cannot be resumed")
         }
         return spawn(
-            id: SessionResumePolicy.sessionIDPrefix(provider: provider, sourceID: sourceID),
+            id: SessionResumePolicy.sessionIDPrefix(provider: provider, sourceID: plan.sourceID),
             title: history.displayTitle,
             cwd: history.cwd,
-            command: command,
+            command: plan.command,
             tone: .blue
         )
     }
@@ -1781,32 +1781,29 @@ final class SessionStore: ObservableObject {
         let transcriptURL = history.historyTranscriptURL
         let historyBackend = historyBackend
         Task.detached(priority: .userInitiated) {
-            let preparedSourceID = historyBackend.prepareTrimmedTranscript(
+            let plan = SessionResumePolicy.plan(
                 provider: provider,
                 sourceID: sourceID,
                 cwd: cwd,
-                transcriptURL: transcriptURL
+                prompt: prompt,
+                transcriptURL: transcriptURL,
+                trimmed: true,
+                history: historyBackend
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                guard let preparedSourceID,
-                      let command = historyBackend.resumeCommand(
-                        provider: provider,
-                        sourceID: preparedSourceID,
-                        cwd: cwd,
-                        prompt: prompt
-                      ) else {
+                guard let plan else {
                     _ = try? self.resumeImportedHistory(id: id, prompt: prompt)
                     return
                 }
                 self.spawn(
                     id: SessionResumePolicy.sessionIDPrefix(
                         provider: provider,
-                        sourceID: preparedSourceID
+                        sourceID: plan.sourceID
                     ),
                     title: title,
                     cwd: cwd,
-                    command: command,
+                    command: plan.command,
                     tone: .blue
                 )
             }

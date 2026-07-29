@@ -52,18 +52,14 @@ public struct SessionActions: Sendable, SessionListActions {
             throw SessionActionError.unresumable(item.title)
         }
 
-        let preparedSourceID = trimmed ? history.prepareTrimmedTranscript(
+        guard let plan = SessionResumePolicy.plan(
             provider: item.provider,
             sourceID: sourceID,
             cwd: item.cwd,
-            transcriptURL: item.transcriptURL
-        ) : nil
-        let resumeSourceID = preparedSourceID ?? sourceID
-        guard let command = history.resumeCommand(
-            provider: item.provider,
-            sourceID: resumeSourceID,
-            cwd: item.cwd,
-            prompt: nil
+            prompt: nil,
+            transcriptURL: item.transcriptURL,
+            trimmed: trimmed,
+            history: history
         ) else {
             throw SessionActionError.unresumable(item.title)
         }
@@ -71,7 +67,7 @@ public struct SessionActions: Sendable, SessionListActions {
         let id = idAllocator.allocate(
             prefix: SessionResumePolicy.sessionIDPrefix(
                 provider: item.provider,
-                sourceID: resumeSourceID
+                sourceID: plan.sourceID
             )
         )
         let now = Date()
@@ -81,14 +77,14 @@ public struct SessionActions: Sendable, SessionListActions {
             title: item.title,
             reportedTitle: item.title,
             cwd: item.cwd,
-            command: command,
+            command: plan.command,
             status: .running,
             tone: .blue,
             createdAt: now,
             updatedAt: now
         )
         try catalog.create(snapshot: snapshot)
-        return preparedSourceID != nil
+        return plan.usedTrimmedTranscript
     }
 
     public func recover(_ session: SessionSnapshot) throws {
