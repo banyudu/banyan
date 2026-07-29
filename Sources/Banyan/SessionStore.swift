@@ -386,29 +386,14 @@ final class SessionStore: ObservableObject {
     }
 
     private func sidebarItems(for sessions: [BanyanSession]) -> [SidebarSessionItem] {
-        let activeIDs = Set(sessions.map(\.id))
-        let grouped = Dictionary(grouping: sessions) { session in
-            session.parentSessionID.flatMap { activeIDs.contains($0) ? $0 : nil }
+        let items = sessions.map {
+            SessionSelectionItem(id: $0.id, parentSessionID: $0.parentSessionID)
         }
-        var visited = Set<String>()
-        var result: [SidebarSessionItem] = []
-
-        func append(_ session: BanyanSession, depth: Int) {
-            guard !visited.contains(session.id) else { return }
-            visited.insert(session.id)
-            result.append(SidebarSessionItem(session: session, depth: depth))
-            for child in grouped[session.id] ?? [] {
-                append(child, depth: depth + 1)
-            }
+        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return SessionSidebarHierarchyPolicy.rows(for: items).compactMap { row in
+            guard let session = sessionsByID[row.id] else { return nil }
+            return SidebarSessionItem(session: session, depth: row.depth)
         }
-
-        for root in grouped[nil] ?? [] {
-            append(root, depth: 0)
-        }
-        for session in sessions where !visited.contains(session.id) {
-            append(session, depth: 0)
-        }
-        return result
     }
 
     var hasLocalHistorySessions: Bool {
