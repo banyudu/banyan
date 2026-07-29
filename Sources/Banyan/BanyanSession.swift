@@ -915,11 +915,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func terminate(markClosed: Bool = true) {
-        terminalRefreshTask?.cancel()
-        isDetachingTerminalClient = false
-        loadedTerminalView?.terminate()
-        isProcessStarted = false
-        isRestored = false
+        stopTerminalClient()
         if markClosed {
             status = .closed
         }
@@ -927,14 +923,18 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
 
     func killBackingSession() {
+        status = .closed
+        stopTerminalClient()
+        sessionRuntime.removeBackingSession(named: tmuxSessionName)
+        touch()
+    }
+
+    private func stopTerminalClient() {
         terminalRefreshTask?.cancel()
         isDetachingTerminalClient = false
-        status = .closed
         loadedTerminalView?.terminate()
-        sessionRuntime.removeBackingSession(named: tmuxSessionName)
         isProcessStarted = false
         isRestored = false
-        touch()
     }
 
     func detachTerminalClient() {
