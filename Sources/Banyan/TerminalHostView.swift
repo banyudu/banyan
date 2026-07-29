@@ -186,7 +186,7 @@ final class TerminalContainerView: NSView {
     func measureNextSwitchPaint(
         startedAt: DispatchTime,
         sessionID: String,
-        telemetry: PerformanceTelemetry,
+        telemetry: PerformanceTelemetry?,
         afterPaint: (() -> Void)? = nil
     ) {
         paintProbe.measureNextPaint(
@@ -615,7 +615,7 @@ private final class TerminalPaintProbeView: NSView {
     private var pendingMeasurement: (
         startedAt: DispatchTime,
         sessionID: String,
-        telemetry: PerformanceTelemetry,
+        telemetry: PerformanceTelemetry?,
         afterPaint: (() -> Void)?
     )?
 
@@ -623,7 +623,7 @@ private final class TerminalPaintProbeView: NSView {
         super.draw(dirtyRect)
         guard let pendingMeasurement else { return }
         self.pendingMeasurement = nil
-        pendingMeasurement.telemetry.recordDuration(
+        pendingMeasurement.telemetry?.recordDuration(
             "switcher.terminal_drawn",
             durationMS: PerformanceTelemetry.elapsedMS(since: pendingMeasurement.startedAt),
             sessionID: pendingMeasurement.sessionID
@@ -640,7 +640,7 @@ private final class TerminalPaintProbeView: NSView {
     func measureNextPaint(
         startedAt: DispatchTime,
         sessionID: String,
-        telemetry: PerformanceTelemetry,
+        telemetry: PerformanceTelemetry?,
         afterPaint: (() -> Void)?
     ) {
         pendingMeasurement = (startedAt, sessionID, telemetry, afterPaint)

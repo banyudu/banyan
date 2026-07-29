@@ -63,7 +63,7 @@ struct TerminalSwitcherView: NSViewRepresentable {
 final class TerminalSwitcherContainer: NSView {
     private var containers: [String: TerminalContainerView] = [:]
     private var initializedSessions: Set<String> = []
-    private var telemetry: PerformanceTelemetry = .shared
+    private var telemetry: PerformanceTelemetry?
     private var activeSessionID: String?
     private var lastFocusRequestID: UUID?
     private var pendingAfterPaint: (sessionID: String, action: () -> Void)?
@@ -97,7 +97,7 @@ final class TerminalSwitcherContainer: NSView {
         }
         let isRevisit = newID.map { containers[$0] != nil } ?? false
         if let clickAt {
-            telemetry.recordDuration(
+            telemetry?.recordDuration(
                 "switcher.from_click",
                 durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
                 sessionID: newID,
@@ -135,7 +135,7 @@ final class TerminalSwitcherContainer: NSView {
             let sessionID = newID
             CATransaction.begin()
             CATransaction.setCompletionBlock {
-                telemetry.recordDuration(
+                telemetry?.recordDuration(
                     "switcher.frame_painted",
                     durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                     sessionID: sessionID,
@@ -145,7 +145,7 @@ final class TerminalSwitcherContainer: NSView {
             CATransaction.commit()
 
             DispatchQueue.main.async {
-                telemetry.recordDuration(
+                telemetry?.recordDuration(
                     "main_thread.free_after_switch",
                     durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                     sessionID: sessionID
@@ -220,7 +220,7 @@ final class TerminalSwitcherContainer: NSView {
         if selectionChanged {
             let isRevisit = selectedSessionID.map { initializedSessions.contains($0) } ?? false
             if let selAt = selectionChangedAt {
-                telemetry.recordDuration(
+                telemetry?.recordDuration(
                     "switcher.from_selection",
                     durationMS: PerformanceTelemetry.elapsedMS(since: selAt),
                     sessionID: selectedSessionID,
@@ -228,7 +228,7 @@ final class TerminalSwitcherContainer: NSView {
                 )
             }
             if let clickAt {
-                telemetry.recordDuration(
+                telemetry?.recordDuration(
                     "switcher.from_click",
                     durationMS: PerformanceTelemetry.elapsedMS(since: clickAt),
                     sessionID: selectedSessionID,
@@ -236,7 +236,7 @@ final class TerminalSwitcherContainer: NSView {
                 )
             }
             if let switchAt = switchRequestedAt {
-                telemetry.recordDuration(
+                telemetry?.recordDuration(
                     "switcher.switch_visible",
                     durationMS: PerformanceTelemetry.elapsedMS(since: switchAt),
                     sessionID: selectedSessionID,
@@ -345,7 +345,7 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     private func recordSynchronousStage(_ stage: String, since startedAt: DispatchTime, sessionID: String?) {
-        telemetry.recordDuration(
+        telemetry?.recordDuration(
             "switcher.sync_\(stage)",
             durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
             sessionID: sessionID
