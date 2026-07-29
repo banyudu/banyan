@@ -834,26 +834,26 @@ final class SessionStore: ObservableObject {
     /// session count. The supervisor still runs in the background (it drives the
     /// "agent needs input" notification) — just far less often.
     private var supervisorInterval: TimeInterval {
-        var interval: TimeInterval = NSApp.isActive ? 2.0 : 6.0
-
-        // Cost scales with the number of sessions inspected each tick.
         let startedSessions = sessions.reduce(into: 0) { count, session in
             if session.status != .closed && session.isProcessStarted { count += 1 }
         }
-        if startedSessions > 8 {
-            interval *= min(3.0, Double(startedSessions) / 8.0)
-        }
-
-        if ProcessInfo.processInfo.isLowPowerModeEnabled {
-            interval *= 2.0
-        }
+        let thermalState: SupervisorThermalState
         switch ProcessInfo.processInfo.thermalState {
-        case .serious, .critical: interval *= 3.0
-        case .fair: interval *= 1.5
-        default: break
+        case .fair:
+            thermalState = .fair
+        case .serious:
+            thermalState = .serious
+        case .critical:
+            thermalState = .critical
+        default:
+            thermalState = .nominal
         }
-
-        return min(interval, 30.0)
+        return SessionSupervisorCadencePolicy.interval(
+            isForeground: NSApp.isActive,
+            startedSessionCount: startedSessions,
+            isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            thermalState: thermalState
+        )
     }
 
     /// Re-evaluate the adaptive cadence and reinstall the timer only when it
