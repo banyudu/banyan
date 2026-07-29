@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import BanyanCore
 
 @Test func historyPresentationUsesSharedHistoryLimits() {
@@ -25,6 +26,30 @@ import Testing
         displayTitle: "ENG-6061 · Fix provider icon",
         issueID: "eng-6061"
     ) == "ENG-6061 · Fix provider icon")
+}
+
+@Test func historyPresentationBuildsSortedFilteredSidebarEntries() {
+    let candidates = [
+        SessionHistorySidebarCandidate(
+            id: "older",
+            projectName: "worktree",
+            displayTitle: "Old task",
+            issueID: "eng-1",
+            updatedAt: .init(timeIntervalSince1970: 100)
+        ),
+        SessionHistorySidebarCandidate(
+            id: "newer",
+            projectName: "worktree",
+            displayTitle: "Provider icon",
+            issueID: "eng-2",
+            updatedAt: .init(timeIntervalSince1970: 200)
+        )
+    ]
+
+    #expect(SessionHistoryPresentation.sidebarEntries(from: candidates, query: "provider") == [
+        SessionHistorySidebarEntry(id: "newer", title: "ENG-2 · Provider icon")
+    ])
+    #expect(SessionHistoryPresentation.sidebarEntries(from: candidates, query: "").map(\.id) == ["newer", "older"])
 }
 
 @Test func historyPresentationFindsSortedStaleTmuxSessions() {

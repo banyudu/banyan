@@ -408,11 +408,7 @@ final class SessionStore: ObservableObject {
     }
 
     private var sidebarHistoryItems: [SidebarSessionItem] {
-        let query = historyFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let limit = query.isEmpty
-            ? SessionHistoryPresentation.sidebarBrowseLimit
-            : SessionHistoryPresentation.sidebarSearchLimit
-        return sessions
+        let candidates = sessions
             .filter { session in
                 SessionHistoryPolicy.isLocalHistorySession(
                     status: session.status,
@@ -421,20 +417,23 @@ final class SessionStore: ObservableObject {
                     hasIssueLink: session.titleLinkLabel != nil
                 )
             }
-            .sorted { $0.updatedAt > $1.updatedAt }
             .map { session in
-                (
-                    session: session,
-                    title: SessionHistoryPresentation.sidebarTitle(
+                SessionHistorySidebarCandidate(
+                    id: session.id,
                         projectName: session.projectName,
                         displayTitle: session.displayTitle,
-                        issueID: session.titleLinkLabel
-                    )
+                    issueID: session.titleLinkLabel,
+                    updatedAt: session.updatedAt
                 )
             }
-            .filter { SessionHistoryPresentation.matchesFilter(title: $0.title, query: query) }
-            .prefix(limit)
-            .map { SidebarSessionItem(session: $0.session, depth: 0, titleOverride: $0.title) }
+        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return SessionHistoryPresentation.sidebarEntries(
+            from: candidates,
+            query: historyFilterText
+        ).compactMap { entry in
+            guard let session = sessionsByID[entry.id] else { return nil }
+            return SidebarSessionItem(session: session, depth: 0, titleOverride: entry.title)
+        }
     }
 
     var selectedSession: BanyanSession? {
