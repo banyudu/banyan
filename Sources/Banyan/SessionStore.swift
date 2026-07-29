@@ -308,22 +308,16 @@ final class SessionStore: ObservableObject {
     }
 
     var visibleSessions: [BanyanSession] {
-        let active = sessions.filter { $0.status != .closed }
-        switch sortMode {
-        case .manual:
-            return active
-        case .status:
-            return active.sorted {
-                if $0.status.priority == $1.status.priority {
-                    return $0.updatedAt > $1.updatedAt
-                }
-                return $0.status.priority < $1.status.priority
-            }
-        case .updated:
-            return active.sorted { $0.updatedAt > $1.updatedAt }
-        case .title:
-            return active.sorted { $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending }
+        let items = sessions.map {
+            SessionVisibilityItem(
+                id: $0.id,
+                status: $0.status,
+                updatedAt: $0.updatedAt,
+                displayTitle: $0.displayTitle
+            )
         }
+        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return SessionVisibilityPolicy.visibleIDs(from: items, sortMode: sortMode).compactMap { sessionsByID[$0] }
     }
 
     var recoverySessions: [BanyanSession] {
