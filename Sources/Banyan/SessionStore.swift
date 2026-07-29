@@ -2688,19 +2688,26 @@ final class SessionStore: ObservableObject {
         var didUpdateProvider = false
         var didChangePersistentState = false
         for result in results {
-            guard let session = sessions.first(where: { $0.id == result.id }), session.status != .closed else {
+            guard let session = sessions.first(where: { $0.id == result.id }),
+                  let reconciliation = SessionObservationPolicy.reconcile(
+                      currentStatus: session.status,
+                      currentTone: session.tone,
+                      currentProvider: session.detectedAgentProvider,
+                      currentPath: session.cwd,
+                      observation: result
+                  ) else {
                 continue
             }
-            if session.detectedAgentProvider != result.provider {
+            if reconciliation.providerChanged {
                 session.markDetectedAgentProvider(result.provider)
                 didUpdateProvider = true
                 didChangePersistentState = true
             }
-            if let currentPath = result.currentPath, session.cwd != currentPath {
+            if reconciliation.currentPathChanged, let currentPath = result.currentPath {
                 session.updateCurrentDirectory(currentPath)
                 didChangePersistentState = true
             }
-            if session.status != result.status || session.tone != result.tone {
+            if reconciliation.runtimeStateChanged {
                 session.mark(status: result.status, tone: result.tone)
                 didChangePersistentState = true
             }

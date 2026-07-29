@@ -22,7 +22,7 @@ public struct SessionStatusObservationInput: Sendable {
     }
 }
 
-public struct SessionStatusObservation: Sendable {
+public struct SessionStatusObservation: Sendable, Equatable {
     public let id: String
     public let status: SessionStatus
     public let tone: SessionTone
