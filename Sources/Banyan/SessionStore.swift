@@ -1258,11 +1258,9 @@ final class SessionStore: ObservableObject {
         return spawn(
             title: "zsh",
             cwd: session.cwd,
-            command: Self.historyFallbackShellCommand
+            command: HostShell.loginCommand(environment: environment)
         )
     }
-
-    nonisolated static let historyFallbackShellCommand = "/bin/zsh -l"
 
     /// Reopen a closed codex/claude session, but first write a trimmed copy of
     /// its transcript (stale tool output cleared) and resume that instead — so the

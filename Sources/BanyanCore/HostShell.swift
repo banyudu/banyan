@@ -24,4 +24,10 @@ public enum HostShell {
     ) -> URL {
         URL(fileURLWithPath: executablePath(environment: environment))
     }
+
+    public static func loginCommand(
+        environment: [String: String]
+    ) -> String {
+        "\(executablePath(environment: environment)) -l"
+    }
 }

@@ -147,7 +147,7 @@ import Testing
 }
 
 @Test func missingHistoryResumeFallbackLaunchesZsh() {
-    #expect(SessionStore.historyFallbackShellCommand == "/bin/zsh -l")
+    #expect(HostShell.loginCommand(environment: [:]) == "/bin/zsh -l")
 }
 
 @Test func backgroundHistoryImportCoversEveryBoundedSearchResult() {
