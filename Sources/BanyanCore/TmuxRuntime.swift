@@ -85,6 +85,7 @@ public struct SessionLaunchRequest: Sendable {
 public protocol SessionRuntimeBackend: Sendable {
     func ensureBackingSession(_ request: SessionLaunchRequest) throws
     func removeBackingSession(named name: String)
+    func restartBackingSession(_ request: SessionLaunchRequest) throws
 }
 
 public struct SessionRuntimeCoordinator: Sendable, SessionRuntimeBackend {

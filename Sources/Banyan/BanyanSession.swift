@@ -594,21 +594,31 @@ final class BanyanSession: ObservableObject, Identifiable {
             terminalView.terminate()
         }
         isDetachingTerminalClient = false
-        sessionRuntime.removeBackingSession(named: tmuxSessionName)
         isProcessStarted = false
         isRestored = false
-        startTerminalClient()
-    }
-
-    private func startTerminalClient(resetBlankRecoveryAttempt: Bool = true) {
-        // Set the server default before creating a new pane. Codex probes OSC
-        // 10/11 during startup, before SwiftTerm has necessarily attached.
-        tmuxBackend.configureTerminalTheme(pendingTheme)
         do {
-            try sessionRuntime.ensureBackingSession(launchRequest)
+            try sessionRuntime.restartBackingSession(launchRequest)
         } catch {
             failToStart(error.localizedDescription)
             return
+        }
+        startTerminalClient(backingSessionAlreadyEnsured: true)
+    }
+
+    private func startTerminalClient(
+        resetBlankRecoveryAttempt: Bool = true,
+        backingSessionAlreadyEnsured: Bool = false
+    ) {
+        // Set the server default before creating a new pane. Codex probes OSC
+        // 10/11 during startup, before SwiftTerm has necessarily attached.
+        tmuxBackend.configureTerminalTheme(pendingTheme)
+        if !backingSessionAlreadyEnsured {
+            do {
+                try sessionRuntime.ensureBackingSession(launchRequest)
+            } catch {
+                failToStart(error.localizedDescription)
+                return
+            }
         }
         tmuxBackend.configureTerminalTheme(pendingTheme, for: tmuxSessionName)
         isRestored = false
