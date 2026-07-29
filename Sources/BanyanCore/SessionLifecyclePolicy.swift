@@ -2,6 +2,15 @@ import Foundation
 
 /// Frontend-independent decisions used while restoring and supervising sessions.
 public enum SessionLifecyclePolicy {
+    public static func isWorkable(
+        status: SessionStatus,
+        isImportedHistory: Bool
+    ) -> Bool {
+        !isImportedHistory
+            && status != .closed
+            && [.asking, .needInput].contains(status)
+    }
+
     public static func participatesInSupervisorTick(
         isProcessStarted: Bool,
         isRestored: Bool

@@ -2880,9 +2880,10 @@ final class SessionStore: ObservableObject {
 
     private func isWorkableSession(_ id: String) -> Bool {
         guard let session = sessions.first(where: { $0.id == id }) else { return false }
-        return !session.isImportedHistory
-            && session.status != .closed
-            && [.asking, .needInput].contains(session.status)
+        return SessionLifecyclePolicy.isWorkable(
+            status: session.status,
+            isImportedHistory: session.isImportedHistory
+        )
     }
 
     private func defaultTitle(for cwd: String) -> String {

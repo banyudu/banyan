@@ -25,6 +25,13 @@ import Testing
     ))
 }
 
+@Test func lifecyclePolicyIdentifiesWorkableSessions() {
+    #expect(SessionLifecyclePolicy.isWorkable(status: .asking, isImportedHistory: false))
+    #expect(SessionLifecyclePolicy.isWorkable(status: .needInput, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.isWorkable(status: .closed, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.isWorkable(status: .needInput, isImportedHistory: true))
+}
+
 @Test func lifecyclePolicyIncludesRestoredSessionsInSupervision() {
     #expect(SessionLifecyclePolicy.participatesInSupervisorTick(
         isProcessStarted: false,
