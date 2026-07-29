@@ -53,62 +53,75 @@ import Testing
 }
 
 @Test func reopenResumesClosedCodexSessionInsteadOfReplayingLaunchCommand() {
-    let codex = SessionRecoveryPolicy.resumeCommand(
+    let history = DefaultSessionHistoryBackend(
+        homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+    )
+    let codex = SessionRecoveryPolicy.resumePlan(
         status: .closed,
         provider: .codex,
         agentSessionID: "abc12345-0000-0000-0000-000000000000",
-        cwd: "/tmp/project"
-    )
+        cwd: "/tmp/project",
+        history: history
+    )?.command
     #expect(codex == "'codex' 'resume' '-C' '/tmp/project' 'abc12345-0000-0000-0000-000000000000'")
 
-    let claude = SessionRecoveryPolicy.resumeCommand(
+    let claude = SessionRecoveryPolicy.resumePlan(
         status: .closed,
         provider: .claude,
         agentSessionID: "session-uuid",
-        cwd: "/tmp/project"
-    )
+        cwd: "/tmp/project",
+        history: history
+    )?.command
     #expect(claude == "'claude' '--resume' 'session-uuid'")
 }
 
 @Test func reopenKeepsOriginalCommandWhenResumeIsNotApplicable() {
+    let history = DefaultSessionHistoryBackend(
+        homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
+    )
     // Still active — nothing to rebuild.
-    #expect(SessionRecoveryPolicy.resumeCommand(
+    #expect(SessionRecoveryPolicy.resumePlan(
         status: .running,
         provider: .codex,
         agentSessionID: "abc",
-        cwd: "/tmp"
+        cwd: "/tmp",
+        history: history
     ) == nil)
 
     // No underlying agent session resolved.
-    #expect(SessionRecoveryPolicy.resumeCommand(
+    #expect(SessionRecoveryPolicy.resumePlan(
         status: .closed,
         provider: .codex,
         agentSessionID: nil,
-        cwd: "/tmp"
+        cwd: "/tmp",
+        history: history
     ) == nil)
 
     // Empty agent session id is treated as unresolved.
-    #expect(SessionRecoveryPolicy.resumeCommand(
+    #expect(SessionRecoveryPolicy.resumePlan(
         status: .closed,
         provider: .claude,
         agentSessionID: "",
-        cwd: "/tmp"
+        cwd: "/tmp",
+        history: history
     ) == nil)
 
     // Provider without resume support.
-    #expect(SessionRecoveryPolicy.resumeCommand(
+    #expect(SessionRecoveryPolicy.resumePlan(
         status: .closed,
         provider: .gemini,
         agentSessionID: "abc",
-        cwd: "/tmp"
+        cwd: "/tmp",
+        history: history
     ) == nil)
 
     // Plain shell session (no agent provider).
-    #expect(SessionRecoveryPolicy.resumeCommand(
+    #expect(SessionRecoveryPolicy.resumePlan(
         status: .closed,
         provider: nil,
         agentSessionID: "abc",
-        cwd: "/tmp"
+        cwd: "/tmp",
+        history: history
     ) == nil)
 }
 
