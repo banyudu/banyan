@@ -78,6 +78,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     private var delegate: TerminalSessionDelegate?
     private let tmuxBackend: any TmuxClientBackend
     private let sessionRuntime: any SessionRuntimeBackend
+    let telemetry: PerformanceTelemetry
     private let homeDirectory: String
     private let environment: [String: String]
 
@@ -199,11 +200,13 @@ final class BanyanSession: ObservableObject, Identifiable {
         fontFamily: String? = nil,
         fontSize: Double = 13,
         tmuxBackend: any TmuxClientBackend,
+        telemetry: PerformanceTelemetry = .shared,
         homeDirectory: String = NSHomeDirectory(),
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.tmuxBackend = tmuxBackend
         self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)
+        self.telemetry = telemetry
         self.homeDirectory = homeDirectory
         self.environment = environment
         let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(
@@ -375,7 +378,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         isDetachingTerminalClient = false
         let startedAt = DispatchTime.now()
         startTerminalClient()
-        PerformanceTelemetry.shared.recordDuration(
+        telemetry.recordDuration(
             "terminal.start_client",
             durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
             sessionID: id,
@@ -425,7 +428,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             let startedAt = DispatchTime.now()
             DispatchQueue.global(qos: .userInteractive).async { [weak self] in
                 tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
-                PerformanceTelemetry.shared.recordDuration(
+                telemetry.recordDuration(
                     "tmux.refresh_clients",
                     durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                     sessionID: sessionID,
@@ -450,7 +453,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             await Task.detached(priority: .utility) {
                 tmuxBackend.refreshClients(attachedTo: tmuxSessionName)
             }.value
-            PerformanceTelemetry.shared.recordDuration(
+            telemetry.recordDuration(
                 "tmux.refresh_clients",
                 durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                 sessionID: sessionID,
@@ -485,7 +488,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         guard capturedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             return
         }
-        PerformanceTelemetry.shared.recordDuration(
+        telemetry.recordDuration(
             "terminal.blank_recovery",
             durationMS: 1,
             sessionID: id,
@@ -509,7 +512,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         isRestored = false
         terminalView.resetForNewProcess(preserveScrollPosition: true)
         startTerminalClient(resetBlankRecoveryAttempt: resetBlankRecoveryAttempt)
-        PerformanceTelemetry.shared.recordDuration(
+        telemetry.recordDuration(
             "terminal.reattach_client",
             durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
             sessionID: id,

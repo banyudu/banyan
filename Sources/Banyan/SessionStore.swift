@@ -118,7 +118,7 @@ final class SessionStore: ObservableObject {
             selection.syncFromStore(selectedSessionID)
             if oldValue != selectedSessionID {
                 sessionSwitchRequestedAt = .now()
-                PerformanceTelemetry.shared.beginSessionSwitch(
+                telemetry.beginSessionSwitch(
                     from: oldValue,
                     to: selectedSessionID,
                     visibleSessionCount: visibleSessions.count
@@ -229,6 +229,7 @@ final class SessionStore: ObservableObject {
     private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
     private var isClosingScratchTerminal = false
     let host: HostRuntimeContext
+    let telemetry: PerformanceTelemetry
     private var homeDirectory: String { host.homeDirectory.path }
     private var environment: [String: String] { host.environment }
     private var currentDirectory: String { host.currentDirectory }
@@ -240,7 +241,8 @@ final class SessionStore: ObservableObject {
         processTable: any ProcessTableProvider,
         historyBackend: any SessionHistoryBackend,
         detector: AgentStateDetector,
-        host: HostRuntimeContext
+        host: HostRuntimeContext,
+        telemetry: PerformanceTelemetry
     ) {
         self.persistence = persistence
         self.tmuxBackend = tmuxBackend
@@ -249,6 +251,7 @@ final class SessionStore: ObservableObject {
         self.historyBackend = historyBackend
         self.detector = detector
         self.host = host
+        self.telemetry = telemetry
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
@@ -547,6 +550,7 @@ final class SessionStore: ObservableObject {
                 fontFamily: terminalFontFamily,
                 fontSize: terminalFontSize,
                 tmuxBackend: sessionBackend,
+                telemetry: telemetry,
                 homeDirectory: homeDirectory,
                 environment: environment
             )
@@ -1076,6 +1080,7 @@ final class SessionStore: ObservableObject {
             fontFamily: terminalFontFamily,
             fontSize: terminalFontSize,
             tmuxBackend: sessionBackend,
+            telemetry: telemetry,
             homeDirectory: homeDirectory,
             environment: environment
         )
@@ -1171,6 +1176,7 @@ final class SessionStore: ObservableObject {
             fontFamily: terminalFontFamily,
             fontSize: terminalFontSize,
             tmuxBackend: sessionBackend,
+            telemetry: telemetry,
             homeDirectory: homeDirectory,
             environment: environment
         )
@@ -2306,7 +2312,7 @@ final class SessionStore: ObservableObject {
         }
         session.onOutput = { [weak self, weak session] text in
             guard let self, let session else { return }
-            PerformanceTelemetry.shared.noteSessionFirstOutput(sessionID: session.id)
+            telemetry.noteSessionFirstOutput(sessionID: session.id)
             self.detectAttention(in: text, for: session)
         }
         session.onStatusSignal = { [weak session] status in
@@ -2338,7 +2344,7 @@ final class SessionStore: ObservableObject {
         }
         session.onOutput = { [weak session] _ in
             guard let session else { return }
-            PerformanceTelemetry.shared.noteSessionFirstOutput(sessionID: session.id)
+            telemetry.noteSessionFirstOutput(sessionID: session.id)
         }
         session.onStatusSignal = nil
         session.onProcessExit = { [weak self, weak session] _ in
@@ -2653,7 +2659,7 @@ final class SessionStore: ObservableObject {
             )
             let results = synchronizer.observe(inputs)
 
-            PerformanceTelemetry.shared.recordDuration(
+            telemetry.recordDuration(
                 "supervisor.tick",
                 durationMS: PerformanceTelemetry.elapsedMS(since: tickStartedAt),
                 detail: "sessions=\(inputs.count)"
@@ -2730,7 +2736,7 @@ final class SessionStore: ObservableObject {
             let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
-            PerformanceTelemetry.shared.recordDuration(
+            telemetry.recordDuration(
                 "selected_context.resolve",
                 durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                 sessionID: input.sessionID,
@@ -2769,7 +2775,7 @@ final class SessionStore: ObservableObject {
             let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
-            PerformanceTelemetry.shared.recordDuration(
+            telemetry.recordDuration(
                 "selected_context.resolve",
                 durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                 sessionID: input.sessionID,
@@ -2826,7 +2832,7 @@ final class SessionStore: ObservableObject {
             let info = await SessionContextResolver.resolve(input: input) {
                 Task.isCancelled
             }
-            PerformanceTelemetry.shared.recordDuration(
+            telemetry.recordDuration(
                 "selected_context.resolve",
                 durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
                 sessionID: input.sessionID,

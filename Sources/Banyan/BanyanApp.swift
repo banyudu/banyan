@@ -13,6 +13,11 @@ struct BanyanApp: App {
         environment: Self.host.environment,
         workingDirectory: Self.host.homeDirectory.path
     )
+    private static let telemetry = PerformanceTelemetry(
+        store: PerformanceEventStore(
+            databaseURL: PerformanceEventStore.defaultDatabaseURL(host: Self.host)
+        )
+    )
     @StateObject private var store = SessionStore(
         persistence: SessionPersistence(
             databaseURL: SessionDatabase.defaultDatabaseURL(
@@ -36,7 +41,8 @@ struct BanyanApp: App {
                 homeDirectory: Self.host.homeDirectory
             )
         ),
-        host: Self.host
+        host: Self.host,
+        telemetry: Self.telemetry
     )
 
     var body: some Scene {
