@@ -54,7 +54,7 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
         case .dark:
             return NSColor(red: 0.055, green: 0.060, blue: 0.070, alpha: 1)
         case .light:
-            return NSColor(red: 0.980, green: 0.980, blue: 0.960, alpha: 1)
+            return NSColor(red: 0.995, green: 0.995, blue: 0.990, alpha: 1)
         }
     }
 
@@ -65,7 +65,7 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
         case .dark:
             return NSColor(red: 0.870, green: 0.885, blue: 0.900, alpha: 1)
         case .light:
-            return NSColor(red: 0.090, green: 0.095, blue: 0.110, alpha: 1)
+            return NSColor(red: 0.105, green: 0.115, blue: 0.135, alpha: 1)
         }
     }
 
@@ -75,8 +75,9 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
     /// defaults in sync with SwiftTerm lets that query work even though tmux is
     /// the process between Codex and the terminal view.
     var tmuxDefaultStyle: String {
-        let background = tmuxHex(backgroundColor, fallback: "0e0f12")
-        let foreground = tmuxHex(foregroundColor ?? NSColor.textColor, fallback: "e0e3e7")
+        let effectiveTheme = resolvedTheme
+        let background = tmuxHex(effectiveTheme.backgroundColor, fallback: "0e0f12")
+        let foreground = tmuxHex(effectiveTheme.foregroundColor ?? NSColor.textColor, fallback: "e0e3e7")
         return "fg=#\(foreground),bg=#\(background)"
     }
 
@@ -102,17 +103,22 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
         }
         terminalView.disableFullRedrawOnAnyChanges = true
 
-        switch self {
-        case .system:
-            terminalView.configureNativeColors()
-            terminalView.installColors(Self.xtermPalette)
-        default:
-            terminalView.nativeBackgroundColor = backgroundColor
-            if let foregroundColor {
-                terminalView.nativeForegroundColor = foregroundColor
-            }
-            terminalView.installColors(ansiPalette)
+        let effectiveTheme = resolvedTheme
+        terminalView.nativeBackgroundColor = effectiveTheme.backgroundColor
+        if let foregroundColor = effectiveTheme.foregroundColor {
+            terminalView.nativeForegroundColor = foregroundColor
         }
+        terminalView.installColors(effectiveTheme.ansiPalette)
+    }
+
+    /// System follows the app's effective macOS appearance. Resolving this once
+    /// at application time keeps the terminal ANSI palette aligned with the
+    /// surrounding SwiftUI interface instead of falling back to xterm colors.
+    private var resolvedTheme: TerminalTheme {
+        guard self == .system else { return self }
+        let appearance = NSApp?.effectiveAppearance ?? NSAppearance(named: .aqua)!
+        let match = appearance.bestMatch(from: [.aqua, .darkAqua])
+        return match == .darkAqua ? .dark : .light
     }
 
     private var ansiPalette: [SwiftTerm.Color] {
@@ -140,22 +146,22 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
             ]
         case .light:
             return [
-                Self.color(0x24, 0x29, 0x2f),
-                Self.color(0xcf, 0x22, 0x2e),
-                Self.color(0x1a, 0x7f, 0x37),
-                Self.color(0x9a, 0x67, 0x00),
-                Self.color(0x09, 0x6a, 0xda),
-                Self.color(0x82, 0x50, 0xdf),
-                Self.color(0x1b, 0x7c, 0x83),
-                Self.color(0x6e, 0x77, 0x80),
-                Self.color(0x57, 0x60, 0x6a),
-                Self.color(0xa4, 0x0e, 0x26),
-                Self.color(0x11, 0x69, 0x29),
-                Self.color(0x7d, 0x4e, 0x00),
-                Self.color(0x05, 0x56, 0xb3),
-                Self.color(0x66, 0x37, 0xba),
-                Self.color(0x0e, 0x6e, 0x75),
-                Self.color(0x24, 0x29, 0x2f)
+                Self.color(0x1f, 0x29, 0x37),
+                Self.color(0xb9, 0x1c, 0x1c),
+                Self.color(0x16, 0x65, 0x34),
+                Self.color(0x85, 0x4d, 0x0e),
+                Self.color(0x1d, 0x4e, 0xd8),
+                Self.color(0x7e, 0x22, 0xce),
+                Self.color(0x0f, 0x76, 0x6e),
+                Self.color(0x4b, 0x55, 0x63),
+                Self.color(0x37, 0x41, 0x51),
+                Self.color(0x99, 0x1b, 0x1b),
+                Self.color(0x14, 0x53, 0x2d),
+                Self.color(0x71, 0x3f, 0x12),
+                Self.color(0x1e, 0x40, 0xaf),
+                Self.color(0x6b, 0x21, 0xa8),
+                Self.color(0x11, 0x5e, 0x59),
+                Self.color(0x1f, 0x29, 0x37)
             ]
         }
     }

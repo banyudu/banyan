@@ -2256,6 +2256,13 @@ final class SessionStore: ObservableObject {
         scratchSession?.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
     }
 
+    func refreshTerminalAppearance() {
+        sessions.forEach {
+            $0.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize, force: true)
+        }
+        scratchSession?.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize, force: true)
+    }
+
     private func saveSessions() {
         let snapshots = sessions.filter { !$0.isImportedHistory }.map(\.persistenceSnapshot)
         // Supervisor ticks call this every cycle; skip the SQLite rewrite entirely

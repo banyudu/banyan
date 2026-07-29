@@ -128,6 +128,9 @@ struct ContentView: View {
         }
         .background(WindowTitleConfigurator(trigger: titlebarConfigurationTrigger))
         .preferredColorScheme(store.terminalTheme.colorScheme)
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("AppleInterfaceThemeChangedNotification"))) { _ in
+            store.refreshTerminalAppearance()
+        }
         .overlay {
             if showingCommandPalette {
                 CommandPaletteView(
@@ -599,14 +602,32 @@ struct ContentView: View {
                     Text("No states loaded")
                 } else {
                     ForEach(states) { state in
-                        Toggle(isOn: linearIssueStateFilterBinding(for: state)) {
+                        Button {
+                            toggleLinearIssueState(state)
+                        } label: {
                             Label {
                                 Text(state.name)
                             } icon: {
-                                Circle()
-                                    .fill(Color.linearHex(state.color))
+                                Image(systemName: isLinearIssueStateSelected(state)
+                                    ? "checkmark.square.fill"
+                                    : "square")
+                                .foregroundStyle(isLinearIssueStateSelected(state) ? Color.accentColor : Color.secondary)
                             }
                         }
+                    }
+
+                    Divider()
+
+                    Button {
+                        selectedLinearIssueStateIDs = Set(allLinearIssueStatesForFiltering.map(\.id))
+                    } label: {
+                        Label("Check All States", systemImage: "checkmark.square")
+                    }
+
+                    Button {
+                        selectedLinearIssueStateIDs = []
+                    } label: {
+                        Label("Uncheck All States", systemImage: "square")
                     }
 
                     Divider()
@@ -922,6 +943,15 @@ struct ContentView: View {
         }
     }
 
+    private func isLinearIssueStateSelected(_ state: LinearWorkflowState) -> Bool {
+        !activeLinearIssueStateIDs.intersection(linearIssueStateIDs(matching: state)).isEmpty
+    }
+
+    private func toggleLinearIssueState(_ state: LinearWorkflowState) {
+        let binding = linearIssueStateFilterBinding(for: state)
+        binding.wrappedValue.toggle()
+    }
+
     private var allLinearIssueStatesForFiltering: [LinearWorkflowState] {
         var statesByID: [String: LinearWorkflowState] = [:]
         for state in store.linearIssueWorkflowStates {
@@ -1206,6 +1236,7 @@ struct ContentView: View {
                     .accessibilityIdentifier(AccessibilityID.emptyDetail)
                 }
             }
+            .padding(.trailing, issuePreviewReservedWidth == 0 ? 0 : issuePreviewReservedWidth + 12)
 
             if let session = store.selectedSession {
                 if store.isPullRequestPreviewPresented,
@@ -1283,6 +1314,17 @@ struct ContentView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(.background)
+    }
+
+    private var issuePreviewReservedWidth: CGFloat {
+        guard let session = store.selectedSession, session.status != .closed else { return 0 }
+        if store.isPullRequestPreviewPresented || store.selectedContextInfo?.githubIssueURL?.isEmpty == false {
+            return 400 // 380-point panel plus the overlay's horizontal insets.
+        }
+        if store.selectedContextInfo?.linearIssueID?.isEmpty == false {
+            return 380 // 360-point panel plus the overlay's horizontal insets.
+        }
+        return 0
     }
 
     @ViewBuilder

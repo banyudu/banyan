@@ -249,8 +249,8 @@ extension BanyanSession {
         touch()
     }
 
-    func apply(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13) {
-        guard appliedTheme != theme || appliedFontFamily != fontFamily || appliedFontSize != fontSize else {
+    func apply(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13, force: Bool = false) {
+        guard force || appliedTheme != theme || appliedFontFamily != fontFamily || appliedFontSize != fontSize else {
             return
         }
         pendingTheme = theme
