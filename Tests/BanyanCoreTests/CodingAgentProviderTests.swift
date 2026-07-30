@@ -10,6 +10,7 @@ import Testing
     #expect(CodingAgentProvider.detect(in: "mimo code") == .xiaomiMiMo)
     #expect(CodingAgentProvider.detect(in: "minimax agent") == .minimax)
     #expect(CodingAgentProvider.detect(in: "opencode") == .opencode)
+    #expect(CodingAgentProvider.detect(in: "BANYAN_AGENT_PROVIDER=deepseek opencode") == .deepseek)
 }
 
 @Test func providerDetectionRejectsNearMatches() {
@@ -42,6 +43,15 @@ import Testing
     )
 
     #expect(prompt == "implement sidebar titles")
+}
+
+@Test func promptCandidateIgnoresDeepSeekLaunchMarkerAndOpenCodeExecutable() {
+    let prompt = CodingAgentProvider.promptCandidate(
+        in: "BANYAN_AGENT_PROVIDER=deepseek opencode",
+        provider: .deepseek
+    )
+
+    #expect(prompt == nil)
 }
 
 @Test func promptCandidatePreservesQuotedPromptText() {

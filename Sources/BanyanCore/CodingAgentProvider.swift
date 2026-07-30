@@ -123,6 +123,12 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         }
 
         var arguments = Array(tokens.dropFirst(providerIndex + 1))
+        // The DeepSeek picker launches OpenCode with an environment marker so
+        // the session keeps its DeepSeek identity even though the executable is
+        // `opencode`. It is launch metadata, not a user prompt.
+        if isProviderMarker(tokens[providerIndex]), arguments.first == "opencode" {
+            arguments.removeFirst()
+        }
         var promptTokens: [String] = []
         while !arguments.isEmpty {
             let token = arguments.removeFirst()
@@ -150,6 +156,14 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
 
     private static func provider(forExecutable token: String) -> CodingAgentProvider? {
         let executable = URL(fileURLWithPath: token).lastPathComponent.lowercased()
+        if isProviderMarker(executable) {
+            switch executable.dropFirst("banyan_agent_provider=".count) {
+            case "deepseek":
+                return .deepseek
+            default:
+                return nil
+            }
+        }
         switch executable {
         case "claude":
             return .claude
@@ -170,6 +184,11 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         default:
             return nil
         }
+    }
+
+    private static func isProviderMarker(_ token: String) -> Bool {
+        URL(fileURLWithPath: token).lastPathComponent.lowercased()
+            .hasPrefix("banyan_agent_provider=")
     }
 
     private static let optionsTakingValue: Set<String> = [

@@ -10,6 +10,7 @@ enum NewSessionLaunch: String, CaseIterable, Identifiable, Codable {
     case zsh
     case claude
     case codex
+    case deepseek
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ enum NewSessionLaunch: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .zsh: return ""
         case .claude, .codex: return rawValue
+        case .deepseek: return "BANYAN_AGENT_PROVIDER=deepseek opencode"
         }
     }
 
@@ -26,6 +28,7 @@ enum NewSessionLaunch: String, CaseIterable, Identifiable, Codable {
         case .zsh: return "zsh"
         case .claude: return "Claude"
         case .codex: return "Codex"
+        case .deepseek: return "DeepSeek"
         }
     }
 
@@ -36,6 +39,7 @@ enum NewSessionLaunch: String, CaseIterable, Identifiable, Codable {
         case .zsh: return nil
         case .claude: return .claude
         case .codex: return .codex
+        case .deepseek: return .deepseek
         }
     }
 
@@ -43,13 +47,13 @@ enum NewSessionLaunch: String, CaseIterable, Identifiable, Codable {
     var systemImage: String {
         switch self {
         case .zsh: return "terminal"
-        case .claude, .codex: return "sparkle"
+        case .claude, .codex, .deepseek: return "sparkle"
         }
     }
 
     /// A leaf `Image` for a native menu item, which renders only plain images —
     /// not composed views. Uses the provider's brand SVG when available so the
-    /// dropdown shows the real Claude/Codex marks, falling back to an SF Symbol.
+    /// dropdown shows the real provider marks, falling back to an SF Symbol.
     var menuIconImage: Image {
         if let name = brandResourceName,
            let url = Bundle.module.url(forResource: name, withExtension: "svg"),
@@ -72,6 +76,7 @@ enum NewSessionLaunch: String, CaseIterable, Identifiable, Codable {
         case .zsh: return nil
         case .claude: return "ClaudeLogo"
         case .codex: return "ChatGPTLogo"
+        case .deepseek: return "DeepSeekLogo"
         }
     }
 }
