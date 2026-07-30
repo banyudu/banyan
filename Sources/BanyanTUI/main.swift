@@ -44,7 +44,8 @@ private func makeDefaultApp(host: HostRuntimeContext) -> BanyanTUI {
         output: output,
         processRunner: InteractiveProcessRunner(),
         renderer: StandardTUIRenderer(),
-        currentDirectory: host.currentDirectory
+        currentDirectory: host.currentDirectory,
+        terminalClient: ProcessTmuxControlModeClient(executableURL: backend.executableURL)
     )
 }
 

@@ -7,7 +7,8 @@ protocol TUIRenderer {
         showingHistory: Bool,
         selectedIndex: Int,
         notice: String?,
-        tmux: any TmuxDisplayBackend
+        tmux: any TmuxDisplayBackend,
+        terminal: TerminalGrid?
     ) -> String
 }
 
@@ -18,7 +19,8 @@ struct StandardTUIRenderer: TUIRenderer {
         showingHistory: Bool,
         selectedIndex: Int,
         notice: String?,
-        tmux: any TmuxDisplayBackend
+        tmux: any TmuxDisplayBackend,
+        terminal: TerminalGrid?
     ) -> String {
         TerminalRenderer.render(
             sessions: sessions,
@@ -26,7 +28,8 @@ struct StandardTUIRenderer: TUIRenderer {
             showingHistory: showingHistory,
             selectedIndex: selectedIndex,
             notice: notice,
-            tmux: tmux
+            tmux: tmux,
+            terminal: terminal
         )
     }
 }
@@ -38,7 +41,8 @@ struct TerminalRenderer {
         showingHistory: Bool,
         selectedIndex: Int,
         notice: String?,
-        tmux: any TmuxDisplayBackend
+        tmux: any TmuxDisplayBackend,
+        terminal: TerminalGrid? = nil
     ) -> String {
         var output = "\u{1b}[2J\u{1b}[H"
         let mode = showingHistory ? "history" : "active"
@@ -49,7 +53,7 @@ struct TerminalRenderer {
 
         let sidebarWidth = 34
         let rightWidth = 45
-        let rightLines = detailLines(
+        let rightLines = terminal?.visibleLines() ?? detailLines(
             sessions: sessions,
             history: history,
             showingHistory: showingHistory,
@@ -58,7 +62,7 @@ struct TerminalRenderer {
             width: rightWidth
         )
         output += (showingHistory ? "History" : "Sessions").padding(toLength: sidebarWidth, withPad: " ", startingAt: 0)
-        output += "│ " + (showingHistory ? "History detail" : "Terminal detail") + "\n"
+        output += "│ " + (terminal == nil ? (showingHistory ? "History detail" : "Terminal detail") : "Embedded terminal") + "\n"
         output += String(repeating: "─", count: sidebarWidth) + "┼" + String(repeating: "─", count: rightWidth) + "\n"
 
         let rowCount = showingHistory ? history.count : sessions.count

@@ -10,6 +10,10 @@ struct BanyanTUI {
     private let renderer: any TUIRenderer
     private let currentDirectory: String
     private var model: SessionListModel
+    private let controlModeClient: (any TmuxControlModeClient)?
+    private var terminalActive = false
+    private var terminalStore: TerminalGridStore?
+    private var terminalPrefix = false
 
     init(
         backend: any TmuxTerminalBackend,
@@ -19,7 +23,8 @@ struct BanyanTUI {
         output: any TUIOutput,
         processRunner: any TUIProcessRunner,
         renderer: any TUIRenderer,
-        currentDirectory: String
+        currentDirectory: String,
+        terminalClient: (any TmuxControlModeClient)? = nil
     ) {
         self.tmux = backend
         self.attachment = TUIAttachment(
@@ -33,6 +38,7 @@ struct BanyanTUI {
         self.output = output
         self.renderer = renderer
         self.currentDirectory = currentDirectory
+        self.controlModeClient = terminalClient
     }
 
     mutating func run() {
@@ -40,8 +46,14 @@ struct BanyanTUI {
             reload()
             render()
 
-            guard let action = input.readAction() else { break }
-            guard handle(action) else { return }
+            if terminalActive {
+                guard let byte = input.readByte() else { break }
+                if handleTerminalByte(byte) { continue }
+                continue
+            } else {
+                guard let action = input.readAction() else { break }
+                guard handle(action) else { return }
+            }
         }
     }
 
@@ -76,13 +88,15 @@ struct BanyanTUI {
             case .remove:
                 if !model.showingHistory { removeSelected() }
             case .activate:
-                input.restore()
                 if model.showingHistory {
                     resumeHistorySelected()
+                } else if controlModeClient != nil {
+                    startEmbeddedTerminal()
                 } else {
+                    input.restore()
                     attachSelected()
+                    input.enterRaw()
                 }
-                input.enterRaw()
             case .trimResume:
                 if model.showingHistory { resumeHistorySelected(trimmed: true) }
             case .unknown:
@@ -102,7 +116,8 @@ struct BanyanTUI {
             showingHistory: model.showingHistory,
             selectedIndex: model.selectedIndex,
             notice: model.notice,
-            tmux: tmux
+            tmux: tmux,
+            terminal: terminalStore?.snapshot()
         )
         self.output.write(output, terminator: "")
     }
@@ -110,6 +125,50 @@ struct BanyanTUI {
     private func attachSelected() {
         guard let session = model.selectedSession else { return }
         attachment.attach(to: session.launchRequest.sessionName)
+    }
+
+    private mutating func startEmbeddedTerminal() {
+        guard let session = model.selectedSession, let terminalClient = controlModeClient else { return }
+        let store = TerminalGridStore(columns: 45, rows: 24)
+        do {
+            try terminalClient.start(sessionName: session.launchRequest.sessionName, columns: 45, rows: 24) { data in
+                store.feed(data)
+            }
+            terminalStore = store
+            terminalActive = true
+        } catch {
+            model.showNotice("Unable to open embedded terminal: \(error.localizedDescription)")
+        }
+    }
+
+    /// Ctrl-Q leaves the embedded client; Ctrl-B followed by j/k switches the
+    /// sidebar selection while keeping the tmux session alive. All other bytes
+    /// are forwarded unchanged, including escape sequences and mouse reports.
+    private mutating func handleTerminalByte(_ byte: UInt8) -> Bool {
+        if terminalPrefix {
+            terminalPrefix = false
+            switch byte {
+            case 113: controlModeClient?.stop(); terminalActive = false; terminalStore = nil
+            case 106: model.moveNext(); restartEmbeddedTerminal()
+            case 107: model.movePrevious(); restartEmbeddedTerminal()
+            default: controlModeClient?.send(Data([2, byte]))
+            }
+            return true
+        }
+        if byte == 17 {
+            controlModeClient?.stop(); terminalActive = false; terminalStore = nil
+            return true
+        }
+        if byte == 2 { terminalPrefix = true; return true }
+        controlModeClient?.send(Data([byte]))
+        return true
+    }
+
+    private mutating func restartEmbeddedTerminal() {
+        controlModeClient?.stop()
+        terminalActive = false
+        terminalStore = nil
+        startEmbeddedTerminal()
     }
 
     private mutating func resumeHistorySelected(trimmed: Bool = false) {
