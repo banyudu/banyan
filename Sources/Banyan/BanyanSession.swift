@@ -174,7 +174,11 @@ final class BanyanSession: ObservableObject, Identifiable {
             self.titleURLWasAutoDetected = detectedReference != nil
         }
         self.generatedTitle = generatedTitle
-        self.detectedAgentProvider = nil
+        // Recover the launched identity synchronously from the persisted command.
+        // A restored/recovered session starts in `.running` before the supervisor
+        // has had a chance to inspect its process tree; leaving this nil makes the
+        // sidebar render every agent as a plain terminal during that window.
+        self.detectedAgentProvider = CodingAgentProvider.detect(in: command)
         self.isTitlePinned = isTitlePinned
         self.cwd = cwd
         self.command = command

@@ -34,11 +34,24 @@ import Testing
     ) == "Generated")
 }
 
-@Test func displayPolicyHidesLaunchedAgentForBareRunningShells() {
+@Test func displayPolicyKeepsKnownProviderDuringStartup() {
     #expect(SessionDisplayPolicy.displayAgentProvider(
         status: .running,
         command: "codex",
         detectedProvider: .codex
+    ) == .codex)
+    #expect(SessionDisplayPolicy.displayAgentProvider(
+        status: .running,
+        command: "BANYAN_AGENT_PROVIDER=deepseek opencode",
+        detectedProvider: .deepseek
+    ) == .deepseek)
+}
+
+@Test func displayPolicyHidesBareRunningShellAfterAgentClears() {
+    #expect(SessionDisplayPolicy.displayAgentProvider(
+        status: .running,
+        command: "codex",
+        detectedProvider: nil
     ) == nil)
     #expect(SessionDisplayPolicy.displayAgentProvider(
         status: .needInput,

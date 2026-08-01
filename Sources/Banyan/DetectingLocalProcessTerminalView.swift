@@ -7,6 +7,34 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// off to tmux's copy-mode instead of keeping a duplicate local history.
     var tmuxSessionName: String?
     private var preservedScrollbackTopRow: Int?
+    private let displayInvalidationLock = NSLock()
+    private var displayInvalidationPending = false
+
+    /// SwiftTerm requests a full surface repaint for terminal input. Agent
+    /// output can arrive in many small PTY chunks, so forwarding every request
+    /// directly to AppKit creates a repaint storm and keeps the main thread in
+    /// `drawTerminalContents` indefinitely. Coalesce invalidations to one per
+    /// main-run-loop turn; terminal state is still fed for every chunk.
+    override func setNeedsDisplay(_ invalidRect: NSRect) {
+        displayInvalidationLock.lock()
+        guard !displayInvalidationPending else {
+            displayInvalidationLock.unlock()
+            return
+        }
+        displayInvalidationPending = true
+        displayInvalidationLock.unlock()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.flushCoalescedDisplayInvalidation()
+        }
+    }
+
+    private func flushCoalescedDisplayInvalidation() {
+        displayInvalidationLock.lock()
+        displayInvalidationPending = false
+        displayInvalidationLock.unlock()
+        super.setNeedsDisplay(bounds)
+    }
 
     var hasVisibleText: Bool {
         let dimensions = terminal.getDims()

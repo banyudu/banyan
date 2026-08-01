@@ -14,8 +14,11 @@ public enum SessionDisplayPolicy {
         command: String,
         detectedProvider: CodingAgentProvider?
     ) -> CodingAgentProvider? {
-        if status == .running, CodingAgentProvider.detect(in: command) != nil {
-            return nil
+        if status == .running {
+            // `.running` is also the startup/recovery state. Preserve a provider
+            // already confirmed or inferred for this launch, while allowing the
+            // supervisor to clear it when the agent exits back to a shell.
+            return detectedProvider
         }
         return agentProvider(command: command, detectedProvider: detectedProvider)
     }

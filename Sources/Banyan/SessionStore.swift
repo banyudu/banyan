@@ -210,12 +210,15 @@ final class SessionStore: ObservableObject {
     private var selectedGitHubIssueURL: URL?
     private var selectedLinearIssueStatusTask: Task<Void, Never>?
     private var selectedLinearIssueStatusTimer: Timer?
+    private var selectedLinearIssueStatusRetryAfter = Date.distantPast
     private var selectedLinearIssueIdentifier: String?
     private var pendingSelectedLinearDescriptionUpdate: PendingLinearDescriptionUpdate?
     private var selectedPullRequestTask: Task<Void, Never>?
     private var selectedPullRequestPreviewURL: URL?
     private var didLoadCachedLinearIssues = false
     private var linearIssueListTask: Task<Void, Never>?
+    private var linearIssueListWatchdogTask: Task<Void, Never>?
+    private var linearIssueListRequestID = UUID()
     private var linearIssueListRefreshTimer: Timer?
     private static let linearIssueListRefreshInterval: TimeInterval = 30 * 60
     private static let linearIssueListLoadTimeout: TimeInterval = 45
@@ -566,6 +569,8 @@ final class SessionStore: ObservableObject {
         isLinearIssueListRefreshing = true
         let cwd = selectedSession?.cwd ?? homeDirectory
         let deadline = Date().addingTimeInterval(Self.linearIssueListLoadTimeout)
+        let requestID = UUID()
+        linearIssueListRequestID = requestID
         linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]")
         let environment = self.environment
         let homeDirectory = self.homeDirectory
@@ -582,7 +587,9 @@ final class SessionStore: ObservableObject {
                     workflowStates = nil
                 }
                 await MainActor.run { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.linearIssueListRequestID == requestID else { return }
+                    self.linearIssueListWatchdogTask?.cancel()
+                    self.linearIssueListWatchdogTask = nil
                     self.linearIssueListTask = nil
                     self.isLinearIssueListRefreshing = false
                     self.linearIssues = issues
@@ -608,7 +615,9 @@ final class SessionStore: ObservableObject {
             } catch {
                 linearDebugLog("list refresh failed error=\(error.localizedDescription)")
                 await MainActor.run { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.linearIssueListRequestID == requestID else { return }
+                    self.linearIssueListWatchdogTask?.cancel()
+                    self.linearIssueListWatchdogTask = nil
                     self.linearIssueListTask = nil
                     self.isLinearIssueListRefreshing = false
                     let timedOut: Bool
@@ -625,6 +634,21 @@ final class SessionStore: ObservableObject {
                     )
                 }
             }
+        }
+        // A subprocess can wedge without returning through its async bridge.
+        // Do not let that permanently suppress every future refresh; a late
+        // completion is ignored by the request-generation check above.
+        linearIssueListWatchdogTask?.cancel()
+        linearIssueListWatchdogTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard let self, self.linearIssueListRequestID == requestID else { return }
+            self.linearIssueListRequestID = UUID()
+            self.linearIssueListTask?.cancel()
+            self.linearIssueListTask = nil
+            self.isLinearIssueListRefreshing = false
+            self.linearIssueListLoadState = .failed("Linear refresh timed out. Click refresh to try again.")
+            linearDebugLog("list refresh watchdog expired")
         }
     }
 
@@ -1425,6 +1449,7 @@ final class SessionStore: ObservableObject {
         selectedLinearIssueTask?.cancel()
         selectedLinearIssueStatusTask?.cancel()
         selectedLinearIssueStatusTask = nil
+        selectedLinearIssueStatusRetryAfter = .distantPast
         selectedLinearIssueIdentifier = issueID
         let cachedDetails = linearIssueDetailsCache[issueID]
         let hasStaleDetails = cachedDetails != nil
@@ -1643,7 +1668,8 @@ final class SessionStore: ObservableObject {
               let issueID = selectedLinearIssueIdentifier,
               selectedLinearIssueDetails?.identifier == issueID,
               selectedLinearIssueStatusTask == nil,
-              selectedLinearIssueLoadState == .loaded else {
+              selectedLinearIssueLoadState == .loaded,
+              Date() >= selectedLinearIssueStatusRetryAfter else {
             return
         }
 
@@ -1657,6 +1683,7 @@ final class SessionStore: ObservableObject {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.selectedLinearIssueStatusTask = nil
+                    self.selectedLinearIssueStatusRetryAfter = .distantPast
                     guard self.selectedSessionID == sessionID,
                           self.selectedContextInfo?.linearIssueID == issueID,
                           self.selectedLinearIssueIdentifier == issueID else {
@@ -1666,7 +1693,12 @@ final class SessionStore: ObservableObject {
                 }
             } catch {
                 await MainActor.run { [weak self] in
-                    self?.selectedLinearIssueStatusTask = nil
+                    guard let self else { return }
+                    self.selectedLinearIssueStatusTask = nil
+                    // Keep the timer, but cool down failed requests. This avoids
+                    // spawning a CLI process every 20 seconds when cached issue
+                    // data is available but Linear auth/network access is not.
+                    self.selectedLinearIssueStatusRetryAfter = Date().addingTimeInterval(300)
                 }
             }
         }
