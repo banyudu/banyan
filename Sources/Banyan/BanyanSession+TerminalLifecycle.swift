@@ -179,6 +179,10 @@ extension BanyanSession {
     }
 
     private func startBackingSessionInBackground() {
+        guard ProjectFolderAccess.requestIfNeeded(for: cwd) else {
+            failToStart("Banyan needs access to the project folder before it can start this session. Select the folder when prompted and try again.")
+            return
+        }
         let runtime = sessionRuntime
         let request = launchRequest
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -222,6 +226,10 @@ extension BanyanSession {
         resetBlankRecoveryAttempt: Bool = true,
         backingSessionAlreadyEnsured: Bool = false
     ) {
+        guard ProjectFolderAccess.requestIfNeeded(for: cwd) else {
+            failToStart("Banyan needs access to the project folder before it can start this session. Select the folder when prompted and try again.")
+            return
+        }
         // Set the server default before creating a new pane. Codex probes OSC
         // 10/11 during startup, before SwiftTerm has necessarily attached.
         tmuxBackend.configureTerminalTheme(style: pendingTheme.tmuxDefaultStyle, for: nil)
