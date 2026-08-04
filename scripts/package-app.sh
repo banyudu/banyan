@@ -10,6 +10,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICON_FILE="$ROOT_DIR/Assets/AppIcon.icns"
 INSTALL_DIR="${BANYAN_INSTALL_DIR:-/Applications}"
 INSTALLED_APP="$INSTALL_DIR/Banyan.app"
+APP_VERSION="${BANYAN_VERSION:-0.1.0}"
 
 cd "$ROOT_DIR"
 rm -rf "$ROOT_DIR/.build/arm64-apple-macosx/release/ModuleCache"
@@ -61,7 +62,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${APP_VERSION}</string>
   <key>CFBundleVersion</key>
   <string>${GIT_BUILD}</string>
   <key>LSMinimumSystemVersion</key>
