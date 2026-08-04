@@ -43,6 +43,8 @@ struct ContentView: View {
 
     @State private var linearIssueFilterText = ""
     @State private var selectedLinearIssueStateIDs: Set<String>?
+    @State private var draftLinearIssueStateIDs: Set<String>?
+    @State private var isLinearIssueStateFilterPresented = false
     @State private var linearIssueSortOption: LinearIssueSortOption = .defaultOrder
     @FocusState private var linearFocusTarget: LinearFocusTarget?
 
@@ -597,60 +599,88 @@ struct ContentView: View {
     private var linearIssueStateFilterMenu: some View {
         let states = availableLinearIssueStates
         return HStack(spacing: 8) {
-            Menu {
-                if states.isEmpty {
-                    Text("No states loaded")
-                } else {
-                    ForEach(states) { state in
-                        Button {
-                            toggleLinearIssueState(state)
-                        } label: {
-                            Label {
-                                Text(state.name)
-                            } icon: {
-                                Image(systemName: isLinearIssueStateSelected(state)
-                                    ? "checkmark.square.fill"
-                                    : "square")
-                                .foregroundStyle(isLinearIssueStateSelected(state) ? Color.accentColor : Color.secondary)
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    Button {
-                        selectedLinearIssueStateIDs = Set(allLinearIssueStatesForFiltering.map(\.id))
-                    } label: {
-                        Label("Check All States", systemImage: "checkmark.square")
-                    }
-
-                    Button {
-                        selectedLinearIssueStateIDs = []
-                    } label: {
-                        Label("Uncheck All States", systemImage: "square")
-                    }
-
-                    Divider()
-
-                    Button("Use Default States") {
-                        selectedLinearIssueStateIDs = nil
-                    }
-
-                    Button("Show All States") {
-                        selectedLinearIssueStateIDs = Set(allLinearIssueStatesForFiltering.map(\.id))
-                    }
-                }
+            Button {
+                draftLinearIssueStateIDs = selectedLinearIssueStateIDs
+                isLinearIssueStateFilterPresented = true
             } label: {
                 Label(linearIssueStateFilterLabel(availableStates: states), systemImage: "line.3.horizontal.decrease.circle")
                     .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
             }
-            .menuStyle(.borderlessButton)
+            .buttonStyle(.banyanPlain)
+            .popover(isPresented: $isLinearIssueStateFilterPresented, arrowEdge: .bottom) {
+                linearIssueStateFilterPopover(states: states)
+            }
             .focused($linearFocusTarget, equals: .stateFilter)
             .accessibilityIdentifier(AccessibilityID.linearIssueStateFilterMenu)
             .help("Filter Linear issues by state")
 
             Spacer(minLength: 0)
+        }
+    }
+
+    private func linearIssueStateFilterPopover(states: [LinearWorkflowState]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                toggleDraftAllLinearIssueStates()
+            } label: {
+                Label {
+                    Text("All States")
+                } icon: {
+                    Image(systemName: draftLinearIssueStateCheckboxName)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .buttonStyle(.banyanPlain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            if states.isEmpty {
+                Text("No states loaded")
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(states) { state in
+                            Toggle(isOn: draftLinearIssueStateBinding(for: state)) {
+                                Label {
+                                    Text(state.name)
+                                } icon: {
+                                    Circle()
+                                        .fill(Color.linearHex(state.color))
+                                }
+                            }
+                            .toggleStyle(.checkbox)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+                .frame(maxHeight: 320)
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    Button("Use Default States") {
+                        draftLinearIssueStateIDs = nil
+                    }
+                    .buttonStyle(.banyanPlain)
+
+                    Button("Show All States") {
+                        draftLinearIssueStateIDs = Set(allLinearIssueStatesForFiltering.map(\.id))
+                    }
+                    .buttonStyle(.banyanPlain)
+                }
+                .padding(10)
+            }
+        }
+        .frame(width: 260)
+        .onDisappear {
+            selectedLinearIssueStateIDs = draftLinearIssueStateIDs
         }
     }
 
@@ -928,28 +958,38 @@ struct ContentView: View {
         return "\(visibleCount) states"
     }
 
-    private func linearIssueStateFilterBinding(for state: LinearWorkflowState) -> Binding<Bool> {
+    private var draftLinearIssueStateCheckboxName: String {
+        let allIDs = Set(allLinearIssueStatesForFiltering.map(\.id))
+        let selectedIDs = draftLinearIssueStateIDs ?? defaultLinearIssueStateIDs(in: allLinearIssueStatesForFiltering)
+        if !allIDs.isEmpty && selectedIDs.isSuperset(of: allIDs) {
+            return "checkmark.square.fill"
+        }
+        if selectedIDs.isEmpty {
+            return "square"
+        }
+        return "minus.square.fill"
+    }
+
+    private func draftLinearIssueStateBinding(for state: LinearWorkflowState) -> Binding<Bool> {
         Binding {
-            !activeLinearIssueStateIDs.intersection(linearIssueStateIDs(matching: state)).isEmpty
+            let selectedIDs = draftLinearIssueStateIDs ?? defaultLinearIssueStateIDs(in: allLinearIssueStatesForFiltering)
+            return !selectedIDs.intersection(linearIssueStateIDs(matching: state)).isEmpty
         } set: { isSelected in
-            var selectedIDs = activeLinearIssueStateIDs
+            var selectedIDs = draftLinearIssueStateIDs ?? defaultLinearIssueStateIDs(in: allLinearIssueStatesForFiltering)
             let matchingIDs = linearIssueStateIDs(matching: state)
             if isSelected {
                 selectedIDs.formUnion(matchingIDs)
             } else {
                 selectedIDs.subtract(matchingIDs)
             }
-            selectedLinearIssueStateIDs = selectedIDs
+            draftLinearIssueStateIDs = selectedIDs
         }
     }
 
-    private func isLinearIssueStateSelected(_ state: LinearWorkflowState) -> Bool {
-        !activeLinearIssueStateIDs.intersection(linearIssueStateIDs(matching: state)).isEmpty
-    }
-
-    private func toggleLinearIssueState(_ state: LinearWorkflowState) {
-        let binding = linearIssueStateFilterBinding(for: state)
-        binding.wrappedValue.toggle()
+    private func toggleDraftAllLinearIssueStates() {
+        let allIDs = Set(allLinearIssueStatesForFiltering.map(\.id))
+        let selectedIDs = draftLinearIssueStateIDs ?? defaultLinearIssueStateIDs(in: allLinearIssueStatesForFiltering)
+        draftLinearIssueStateIDs = !allIDs.isEmpty && selectedIDs.isSuperset(of: allIDs) ? [] : allIDs
     }
 
     private var allLinearIssueStatesForFiltering: [LinearWorkflowState] {
