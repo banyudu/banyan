@@ -230,6 +230,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // Resolve the login shell environment now so the first Linear/GitHub/session
+        // caller doesn't pay shell startup synchronously on its own thread.
+        AppProcessEnvironment.prewarmShellEnvironment(
+            environment: ProcessInfo.processInfo.environment
+        )
         DispatchQueue.main.async {
             Self.disableDefaultCloseWindowShortcut()
         }
