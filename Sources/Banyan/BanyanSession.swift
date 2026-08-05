@@ -82,6 +82,38 @@ final class BanyanSession: ObservableObject, Identifiable {
     let homeDirectory: String
     let environment: [String: String]
 
+    // MARK: - Presentation memoization
+    //
+    // `displayTitle` and `titleLinkLabel` are pure functions of the fields below, but
+    // both are expensive (path canonicalization, command tokenizing, regex matching)
+    // and the sidebar evaluates them for every session on every pass — measured at
+    // ~1,200 and ~1,000 calls per pass across 734 sessions. Caching the result against
+    // its inputs turns all but the first into a handful of string comparisons.
+    //
+    // `homeDirectory` and `environment` are `let`, so they are deliberately absent from
+    // both keys. Every other input is listed; anything added to the policy calls in
+    // BanyanSession+Presentation.swift must be added to the matching key too, or the
+    // cache will serve a stale value.
+    struct DisplayTitleKey: Equatable {
+        let title: String
+        let isTitlePinned: Bool
+        let reportedTitle: String?
+        let generatedTitle: String?
+        let cwd: String
+        let detectedProvider: CodingAgentProvider?
+        let command: String
+    }
+
+    struct TitleLinkLabelKey: Equatable {
+        let titleURL: String?
+        let title: String
+        let displayBranch: String?
+        let cwd: String
+    }
+
+    var displayTitleCache: (key: DisplayTitleKey, value: String)?
+    var titleLinkLabelCache: (key: TitleLinkLabelKey, value: String?)?
+
     var launchRequest: SessionLaunchRequest {
         SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command)
     }

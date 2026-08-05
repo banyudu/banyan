@@ -3,7 +3,19 @@ import BanyanCore
 
 extension BanyanSession {
     var displayTitle: String {
-        SessionDisplayPolicy.displayTitle(
+        let key = DisplayTitleKey(
+            title: title,
+            isTitlePinned: isTitlePinned,
+            reportedTitle: reportedTitle,
+            generatedTitle: generatedTitle,
+            cwd: cwd,
+            detectedProvider: detectedAgentProvider,
+            command: command
+        )
+        if let cached = displayTitleCache, cached.key == key {
+            return cached.value
+        }
+        let value = SessionDisplayPolicy.displayTitle(
             title: title,
             isTitlePinned: isTitlePinned,
             reportedTitle: reportedTitle,
@@ -13,6 +25,8 @@ extension BanyanSession {
             detectedProvider: detectedAgentProvider,
             command: command
         )
+        displayTitleCache = (key, value)
+        return value
     }
 
     var persistenceSnapshot: SessionSnapshot {
@@ -40,13 +54,24 @@ extension BanyanSession {
     /// *to* that URL: reading the ID off a title from an earlier chapter would show
     /// one issue and open another. The title and cwd only fill in when nothing is bound.
     var titleLinkLabel: String? {
-        LinearIssueReference.preferredID(
+        let key = TitleLinkLabelKey(
+            titleURL: titleURL,
+            title: title,
+            displayBranch: displayBranch,
+            cwd: cwd
+        )
+        if let cached = titleLinkLabelCache, cached.key == key {
+            return cached.value
+        }
+        let value = LinearIssueReference.preferredID(
             titleURL: titleURL,
             title: title,
             branch: displayBranch,
             cwd: cwd,
             environment: environment
         )
+        titleLinkLabelCache = (key, value)
+        return value
     }
 
     var agentProvider: CodingAgentProvider? {
