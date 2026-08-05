@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 import Testing
 @testable import BanyanCore
 
@@ -87,6 +90,7 @@ struct ShellEnvironmentLoadingTests {
 }
 
 private func threadCount() -> Int {
+#if canImport(Darwin)
     var count = mach_msg_type_number_t(0)
     var threads: thread_act_array_t?
     guard task_threads(mach_task_self_, &threads, &count) == KERN_SUCCESS, let threads else {
@@ -101,6 +105,16 @@ private func threadCount() -> Int {
         vm_size_t(Int(count) * MemoryLayout<thread_t>.size)
     )
     return Int(count)
+#elseif os(Linux)
+    guard let status = try? String(contentsOfFile: "/proc/self/status", encoding: .utf8),
+          let line = status.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix("Threads:") }),
+          let count = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).last.flatMap({ Int($0) }) else {
+        return 0
+    }
+    return count
+#else
+    return 0
+#endif
 }
 
 private func hasZombieChildren() -> Bool {
