@@ -50,6 +50,7 @@ struct BanyanApp: App {
         telemetry: Self.telemetry,
         attentionNotifier: Self.attentionNotifier
     )
+    @StateObject private var updater = AppUpdater()
 
     var body: some Scene {
         WindowGroup {
@@ -58,6 +59,7 @@ struct BanyanApp: App {
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
+                    updater.checkForUpdates()
                     Self.commandWTerminalCloseMonitor.action = { window in
                         store.handleCloseCommand(in: window)
                     }
@@ -100,6 +102,25 @@ struct BanyanApp: App {
                     }
                     Self.sessionRenameShortcutMonitor.start()
                 }
+                .alert(item: $updater.prompt) { prompt in
+                    switch prompt {
+                    case .available(let update):
+                        return Alert(
+                            title: Text("New Version Available"),
+                            message: Text("\(update.release.displayName) has been downloaded and is ready to install."),
+                            primaryButton: .default(Text("Install and Relaunch")) {
+                                updater.install(update)
+                            },
+                            secondaryButton: .cancel()
+                        )
+                    case .failed(let message):
+                        return Alert(
+                            title: Text("Banyan Update"),
+                            message: Text(message),
+                            dismissButton: .default(Text("OK"))
+                        )
+                    }
+                }
         }
         .windowStyle(.titleBar)
         .commands {
@@ -126,6 +147,12 @@ struct BanyanApp: App {
                 .disabled(store.sidebarMode == .linear
                     ? false
                     : store.selectedSession?.isImportedHistory != false)
+            }
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updater.checkForUpdates(userInitiated: true)
+                }
+                .disabled(updater.isChecking || updater.isDownloading || updater.isInstalling)
             }
             CommandMenu("Session") {
                 Button("Rename Session") {

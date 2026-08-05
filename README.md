@@ -34,6 +34,7 @@ The toolbar is intentionally small:
 
 - `+` forks the selected session's working directory into a new default shell.
 - `slider.horizontal.3` opens Preferences for app theme and terminal font.
+- Banyan checks GitHub Releases for updates, downloads new packages in the background, and offers to install and relaunch after confirmation.
 - Sidebar options, including sort order and custom session creation, live behind the small sidebar menu.
 - Restored sessions attach to existing `tmux` sessions when possible.
 
