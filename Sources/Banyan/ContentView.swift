@@ -32,6 +32,7 @@ private enum LinearIssueSortOption: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
+    @EnvironmentObject private var updater: AppUpdater
     private let selection: SessionSelection
     @State private var showingPreferences = false
     @State private var showingCommandPalette = false
@@ -68,6 +69,17 @@ struct ContentView: View {
                 }
             }
             ToolbarItemGroup(placement: .primaryAction) {
+                if let update = updater.pendingUpdate {
+                    Button {
+                        updater.install(update)
+                    } label: {
+                        Label("Upgrade", systemImage: "arrow.down.circle.fill")
+                    }
+                    .accessibilityIdentifier(AccessibilityID.toolbarUpdate)
+                    .help("Install \(update.release.displayName) and relaunch")
+                    .disabled(updater.isInstalling)
+                }
+
                 if store.canAttemptSelectedPullRequestPreview {
                     Button {
                         store.showSelectedPullRequestPreview()

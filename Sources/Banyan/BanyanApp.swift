@@ -56,6 +56,7 @@ struct BanyanApp: App {
         WindowGroup {
             ContentView(selection: store.selection)
                 .environmentObject(store)
+                .environmentObject(updater)
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {

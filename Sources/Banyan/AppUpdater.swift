@@ -122,6 +122,7 @@ final class AppUpdater: ObservableObject {
     @Published private(set) var isChecking = false
     @Published private(set) var isDownloading = false
     @Published private(set) var isInstalling = false
+    @Published private(set) var pendingUpdate: PendingAppUpdate?
     @Published var prompt: AppUpdatePrompt?
 
     private let session: URLSession
@@ -165,7 +166,9 @@ final class AppUpdater: ObservableObject {
                 isDownloading = true
                 let packageURL = try await downloadPackage(for: release)
                 isDownloading = false
-                prompt = .available(PendingAppUpdate(release: release, downloadedPackageURL: packageURL))
+                let update = PendingAppUpdate(release: release, downloadedPackageURL: packageURL)
+                pendingUpdate = update
+                prompt = .available(update)
             } catch {
                 isChecking = false
                 isDownloading = false
