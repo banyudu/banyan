@@ -326,7 +326,12 @@ final class TerminalContainerView: NSView {
                 }
                 return event
             case .keyDown:
-                guard self.isTerminalFirstResponder else { return event }
+                // SwiftTerm's find bar is a child of the terminal view. It must
+                // receive text editing and control-key events itself; treating
+                // any descendant as the terminal would submit search text to
+                // the shell when Return/Escape is pressed and could consume
+                // Cmd+F while the search field is focused.
+                guard self.isTerminalInputFirstResponder else { return event }
                 if self.handlePageScrollShortcut(event) {
                     return nil
                 }
@@ -363,15 +368,8 @@ final class TerminalContainerView: NSView {
         return !(hit !== terminalView && hit.isDescendant(of: terminalView))
     }
 
-    private var isTerminalFirstResponder: Bool {
-        guard let firstResponder = window?.firstResponder else { return false }
-        if firstResponder === terminalView {
-            return true
-        }
-        if let view = firstResponder as? NSView {
-            return view === terminalView || view.isDescendant(of: terminalView)
-        }
-        return false
+    private var isTerminalInputFirstResponder: Bool {
+        window?.firstResponder === terminalView
     }
 
     private func isSubmitKey(_ event: NSEvent) -> Bool {

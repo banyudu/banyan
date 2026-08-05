@@ -31,7 +31,7 @@ echo "Building Banyan $VERSION with: $IDENTITY"
 BANYAN_VERSION="$VERSION" \
 BANYAN_SKIP_INSTALL=1 \
 BANYAN_SIGNING_IDENTITY="$IDENTITY" \
-  Scripts/package-app.sh
+  scripts/package-app.sh
 
 rm -f "$DMG"
 hdiutil create -volname "Banyan $VERSION" -srcfolder "$ROOT_DIR/dist/Banyan.app" \

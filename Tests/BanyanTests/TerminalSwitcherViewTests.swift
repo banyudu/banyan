@@ -72,6 +72,13 @@ import Testing
     #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .control]))
 }
 
+@Test func terminalFindShortcutRequiresPlainCommand() {
+    #expect(TerminalContainerView.isPlainCommandTerminalShortcut([.command]))
+    #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .shift]))
+    #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .option]))
+    #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .control]))
+}
+
 @MainActor
 private func update(
     _ switcher: TerminalSwitcherContainer,
