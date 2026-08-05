@@ -323,22 +323,9 @@ public enum SessionContextResolver {
         ), output.terminationStatus == 0 else {
             return nil
         }
-        let text = cleanCommandOutput(String(decoding: output.standardOutput, as: UTF8.self))
+        let text = CommandOutputText.strippingANSIEscapes(String(decoding: output.standardOutput, as: UTF8.self))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
-    }
-
-    // The ESC is written as a Swift escape, not inside a raw string. In a raw string
-    // Swift leaves `\u{001B}` untouched and ICU rejects the literal characters, so this
-    // pattern silently failed to compile for its whole life and `cleanCommandOutput`
-    // never stripped anything.
-    static let ansiEscapeRegex = try! NSRegularExpression(
-        pattern: "\u{001B}\\[[0-?]*[ -/]*[@-~]"
-    )
-
-    static func cleanCommandOutput(_ value: String) -> String {
-        let range = NSRange(value.startIndex..., in: value)
-        return ansiEscapeRegex.stringByReplacingMatches(in: value, range: range, withTemplate: "")
     }
 
     private static func processEnvironment(

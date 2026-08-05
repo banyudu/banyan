@@ -550,13 +550,13 @@ enum LinearIssueClient {
 
         let elapsed = Date().timeIntervalSince(startedAt)
         guard output.terminationStatus == 0 else {
-            let stderrOutput = cleanCommandOutput(String(decoding: output.standardError, as: UTF8.self))
+            let stderrOutput = CommandOutputText.strippingANSIEscapes(String(decoding: output.standardError, as: UTF8.self))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             linearDebugLog("command failed status=\(output.terminationStatus) elapsed=\(String(format: "%.2f", elapsed))s stderr=\(stderrOutput) command=\(arguments.joined(separator: " "))")
             throw LinearIssueClientError.requestFailed
         }
 
-        let text = cleanCommandOutput(String(decoding: output.standardOutput, as: UTF8.self))
+        let text = CommandOutputText.strippingANSIEscapes(String(decoding: output.standardOutput, as: UTF8.self))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             linearDebugLog("command empty output elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))")
@@ -571,19 +571,6 @@ enum LinearIssueClient {
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0 else { throw LinearIssueClientError.requestTimedOut }
         return min(maximum, remaining)
-    }
-
-    // The ESC is written as a Swift escape, not inside a raw string. In a raw string
-    // Swift leaves `\u{001B}` untouched and ICU rejects the literal characters, so this
-    // pattern silently failed to compile for its whole life and `cleanCommandOutput`
-    // never stripped anything.
-    static let ansiEscapeRegex = try! NSRegularExpression(
-        pattern: "\u{001B}\\[[0-?]*[ -/]*[@-~]"
-    )
-
-    static func cleanCommandOutput(_ value: String) -> String {
-        let range = NSRange(value.startIndex..., in: value)
-        return ansiEscapeRegex.stringByReplacingMatches(in: value, range: range, withTemplate: "")
     }
 
     private static func processEnvironment(
