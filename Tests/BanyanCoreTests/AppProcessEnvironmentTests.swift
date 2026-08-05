@@ -42,7 +42,8 @@ struct ShellEnvironmentLoadingTests {
         }
         AppProcessEnvironment.resetShellEnvironmentCacheForTesting()
 
-        let environment = ["SHELL": "/bin/zsh"]
+        let shell = FileManager.default.isExecutableFile(atPath: "/bin/zsh") ? "/bin/zsh" : "/bin/sh"
+        let environment = ["SHELL": shell]
         let first = AppProcessEnvironment.shellEnvironment(environment: environment)
         #expect(first[marker] == "1")
 
