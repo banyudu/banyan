@@ -573,13 +573,13 @@ enum LinearIssueClient {
         return min(maximum, remaining)
     }
 
+    private static let ansiEscapeRegex = try! NSRegularExpression(
+        pattern: #"\u{001B}\[[0-?]*[ -/]*[@-~]"#
+    )
+
     private static func cleanCommandOutput(_ value: String) -> String {
-        let pattern = #"\u{001B}\[[0-?]*[ -/]*[@-~]"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return value
-        }
         let range = NSRange(value.startIndex..., in: value)
-        return regex.stringByReplacingMatches(in: value, range: range, withTemplate: "")
+        return ansiEscapeRegex.stringByReplacingMatches(in: value, range: range, withTemplate: "")
     }
 
     private static func processEnvironment(

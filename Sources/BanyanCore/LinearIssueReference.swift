@@ -34,11 +34,16 @@ public struct LinearIssueReference: Equatable {
             ?? detect(branch: branch, cwd: cwd, environment: environment)?.id
     }
 
+    /// Compiled once: `issueID(in:)` runs up to four times per session row via
+    /// `preferredID`, and the sidebar evaluates every row, so compiling this per call
+    /// cost tens of thousands of ICU regex compilations per sidebar refresh.
+    private static let issueIDRegex = try! NSRegularExpression(
+        pattern: #"(?i)(?:^|[^A-Z0-9])([A-Z]{2,5}-\d+)(?=$|[^A-Z0-9])"#
+    )
+
     public static func issueID(in value: String?) -> String? {
         guard let value else { return nil }
-        let pattern = #"(?i)(?:^|[^A-Z0-9])([A-Z]{2,5}-\d+)(?=$|[^A-Z0-9])"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+        guard let match = issueIDRegex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
               match.numberOfRanges > 1,
               let range = Range(match.range(at: 1), in: value) else {
             return nil

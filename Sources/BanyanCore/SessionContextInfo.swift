@@ -271,12 +271,14 @@ public enum SessionContextResolver {
 
     private struct GitHubIssueTitlePayload: Decodable { let title: String? }
 
+    private static let pullRequestURLRegex = try! NSRegularExpression(
+        pattern: #"https://github\.com/[^\s/]+/[^\s/]+/pull/\d+"#
+    )
+
     private static func pullRequestURL(in value: String?) -> String? {
         guard let value else { return nil }
-        let pattern = #"https://github\.com/[^\s/]+/[^\s/]+/pull/\d+"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(value.startIndex..., in: value)
-        guard let match = regex.firstMatch(in: value, range: range),
+        guard let match = pullRequestURLRegex.firstMatch(in: value, range: range),
               let matchRange = Range(match.range, in: value) else {
             return nil
         }
@@ -326,13 +328,13 @@ public enum SessionContextResolver {
         return text.isEmpty ? nil : text
     }
 
+    private static let ansiEscapeRegex = try! NSRegularExpression(
+        pattern: #"\u{001B}\[[0-?]*[ -/]*[@-~]"#
+    )
+
     private static func cleanCommandOutput(_ value: String) -> String {
-        let pattern = #"\u{001B}\[[0-?]*[ -/]*[@-~]"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return value
-        }
         let range = NSRange(value.startIndex..., in: value)
-        return regex.stringByReplacingMatches(in: value, range: range, withTemplate: "")
+        return ansiEscapeRegex.stringByReplacingMatches(in: value, range: range, withTemplate: "")
     }
 
     private static func processEnvironment(

@@ -9,11 +9,18 @@ public struct GitHubIssueReference: Equatable, Sendable {
         self.number = number
     }
 
+    private static let issueURLRegex = try! NSRegularExpression(
+        pattern: #"https://github\.com/[^\s/]+/[^\s/]+/issues/(\d+)(?=$|[^\d])"#,
+        options: [.caseInsensitive]
+    )
+
+    private static let branchNumberRegex = try! NSRegularExpression(
+        pattern: #"(?:^|/)(\d+)-(?=[a-zA-Z])"#
+    )
+
     public static func detect(in value: String?) -> GitHubIssueReference? {
         guard let value else { return nil }
-        let pattern = #"https://github\.com/[^\s/]+/[^\s/]+/issues/(\d+)(?=$|[^\d])"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-              let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+        guard let match = issueURLRegex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
               let urlRange = Range(match.range, in: value),
               let numberRange = Range(match.range(at: 1), in: value),
               let number = Int(value[numberRange]) else { return nil }
@@ -29,9 +36,7 @@ public struct GitHubIssueReference: Equatable, Sendable {
               remoteAddress.hasPrefix("github.com/") else { return nil }
         let repoPath = String(remoteAddress.dropFirst("github.com/".count))
         guard !repoPath.isEmpty else { return nil }
-        let pattern = #"(?:^|/)(\d+)-(?=[a-zA-Z])"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: branch, range: NSRange(branch.startIndex..., in: branch)),
+        guard let match = branchNumberRegex.firstMatch(in: branch, range: NSRange(branch.startIndex..., in: branch)),
               let numberRange = Range(match.range(at: 1), in: branch),
               let number = Int(branch[numberRange]) else { return nil }
         return GitHubIssueReference(

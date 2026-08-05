@@ -713,10 +713,12 @@ enum MarkdownTaskListEditor {
         return nil
     }
 
+    private static let taskMarkerRegex = try! NSRegularExpression(
+        pattern: #"^\s*(?:[-*+]|\d+[.)])\s+\[([ xX])\]"#
+    )
+
     private static func taskMarkerRange(in line: String) -> Range<String.Index>? {
-        let pattern = #"^\s*(?:[-*+]|\d+[.)])\s+\[([ xX])\]"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+        guard let match = taskMarkerRegex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               let range = Range(match.range(at: 1), in: line) else { return nil }
         return range
     }
