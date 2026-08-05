@@ -384,15 +384,34 @@ final class SessionStore: ObservableObject {
     }
 
     private var sidebarHistoryItems: [SidebarSessionItem] {
-        let candidates = sessions
-            .filter { session in
-                SessionHistoryPolicy.isLocalHistorySession(
-                    status: session.status,
-                    isImportedHistory: session.isImportedHistory,
-                    provider: session.agentProvider,
-                    hasIssueLink: session.titleLinkLabel != nil
-                )
-            }
+        let historySessions = sessions.filter { session in
+            SessionHistoryPolicy.isLocalHistorySession(
+                status: session.status,
+                isImportedHistory: session.isImportedHistory,
+                provider: session.agentProvider,
+                hasIssueLink: session.titleLinkLabel != nil
+            )
+        }
+
+        // `sidebarEntries` orders by `updatedAt` and then keeps a bounded window, and
+        // with no query its filter admits everything. So for the common browse case the
+        // visible window is decided entirely by `updatedAt` — cheap, already stored —
+        // and we can take it *before* rendering. That turns ~720 title renders into 30.
+        //
+        // A query has to stay exhaustive: it matches against the composed title, so
+        // every candidate must be rendered before it can be tested.
+        let normalizedQuery = historyFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rendered: [BanyanSession]
+        if normalizedQuery.isEmpty {
+            rendered = historySessions
+                .sorted { $0.updatedAt > $1.updatedAt }
+                .prefix(SessionHistoryPresentation.sidebarBrowseLimit)
+                .map { $0 }
+        } else {
+            rendered = historySessions
+        }
+
+        let candidates = rendered
             .map { session in
                 SessionHistorySidebarCandidate(
                     id: session.id,
