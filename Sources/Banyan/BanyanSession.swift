@@ -111,8 +111,25 @@ final class BanyanSession: ObservableObject, Identifiable {
         let cwd: String
     }
 
+    /// Resolving a provider tokenizes the command line, which made
+    /// `CodingAgentProvider.shellTokens` the hottest single frame on the main thread.
+    /// The sidebar's history filter asks every session for its provider on every pass,
+    /// so this is evaluated far more often than either title.
+    struct AgentProviderKey: Equatable {
+        let command: String
+        let detectedProvider: CodingAgentProvider?
+    }
+
+    struct DisplayAgentProviderKey: Equatable {
+        let status: SessionStatus
+        let command: String
+        let detectedProvider: CodingAgentProvider?
+    }
+
     var displayTitleCache: (key: DisplayTitleKey, value: String)?
     var titleLinkLabelCache: (key: TitleLinkLabelKey, value: String?)?
+    var agentProviderCache: (key: AgentProviderKey, value: CodingAgentProvider?)?
+    var displayAgentProviderCache: (key: DisplayAgentProviderKey, value: CodingAgentProvider?)?
 
     var launchRequest: SessionLaunchRequest {
         SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command)

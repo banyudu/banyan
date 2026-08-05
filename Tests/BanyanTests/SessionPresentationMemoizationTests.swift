@@ -99,6 +99,49 @@ private func makeMemoSession() -> BanyanSession {
 }
 
 @MainActor
+@Test func agentProviderInvalidatesWhenCommandChanges() {
+    let session = makeMemoSession()
+    session.command = "claude"
+    #expect(session.agentProvider == .claude)
+
+    session.command = "codex"
+    #expect(session.agentProvider == .codex)
+
+    session.command = "zsh"
+    #expect(session.agentProvider == nil)
+}
+
+@MainActor
+@Test func agentProviderInvalidatesWhenDetectedProviderChanges() {
+    let session = makeMemoSession()
+    session.command = ""
+    session.detectedAgentProvider = .claude
+    #expect(session.agentProvider == .claude)
+
+    session.detectedAgentProvider = .codex
+    #expect(session.agentProvider == .codex)
+}
+
+@MainActor
+@Test func displayAgentProviderInvalidatesWhenStatusChanges() {
+    let session = makeMemoSession()
+    // Launched as claude, but the supervisor has not confirmed a live agent process.
+    session.command = "claude"
+    session.detectedAgentProvider = nil
+
+    session.status = .executing
+    let executing = session.displayAgentProvider
+
+    // `.running` means the supervisor sees a bare shell, so the row must stop showing
+    // the agent — status has to be part of the key or this stays stale at .claude.
+    session.status = .running
+    let running = session.displayAgentProvider
+
+    #expect(executing == .claude)
+    #expect(running == nil)
+}
+
+@MainActor
 @Test func titleLinkLabelInvalidatesWhenCwdChanges() {
     let session = makeMemoSession()
     session.titleURL = nil

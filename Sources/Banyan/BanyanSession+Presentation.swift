@@ -75,10 +75,16 @@ extension BanyanSession {
     }
 
     var agentProvider: CodingAgentProvider? {
-        SessionDisplayPolicy.agentProvider(
+        let key = AgentProviderKey(command: command, detectedProvider: detectedAgentProvider)
+        if let cached = agentProviderCache, cached.key == key {
+            return cached.value
+        }
+        let value = SessionDisplayPolicy.agentProvider(
             command: command,
             detectedProvider: detectedAgentProvider
         )
+        agentProviderCache = (key, value)
+        return value
     }
 
     /// Provider to show in the live sidebar row. Normally the launched identity,
@@ -90,11 +96,21 @@ extension BanyanSession {
     /// `.running` (the supervisor only emits it when no agent process is alive), so
     /// this never hides the icon for a genuinely running agent.
     var displayAgentProvider: CodingAgentProvider? {
-        SessionDisplayPolicy.displayAgentProvider(
+        let key = DisplayAgentProviderKey(
             status: status,
             command: command,
             detectedProvider: detectedAgentProvider
         )
+        if let cached = displayAgentProviderCache, cached.key == key {
+            return cached.value
+        }
+        let value = SessionDisplayPolicy.displayAgentProvider(
+            status: status,
+            command: command,
+            detectedProvider: detectedAgentProvider
+        )
+        displayAgentProviderCache = (key, value)
+        return value
     }
 
     var needsManualAttach: Bool {
