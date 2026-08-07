@@ -433,6 +433,26 @@ import Testing
     #expect(result?.tone == .yellow)
 }
 
+@Test func supervisorDoesNotDoubleCountAgentForegroundCommandUnderLoginShell() {
+    // tmux exposes the foreground command independently of `ps`. A login
+    // shell running opencode therefore reports opencode in both places, but
+    // this is one agent, not a parent plus subagent.
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "opencode"),
+        processes: [
+            process(pid: 100, parentPID: 1, commandName: "/bin/zsh", arguments: "/bin/zsh -l", elapsed: 300),
+            process(pid: 101, parentPID: 100, commandName: "/opt/homebrew/bin/opencode", arguments: "opencode", elapsed: 5)
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "opencode",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
 @Test func supervisorDoesNotCountShellLauncherAsSubagent() {
     let result = makeSupervisor(
         pane: pane(rootPID: 100, currentCommand: "zsh"),
