@@ -2478,17 +2478,14 @@ final class SessionStore: ObservableObject {
 
         isSupervisorTickRunning = true
         let backend = tmuxBackend
-        let processTable = processTable.snapshot()
+        let processTableProvider = processTable
 
         let telemetry = self.telemetry
         Task.detached(priority: .utility) { [weak self, telemetry] in
-            // Time the whole tick: `ps` snapshot + per-session tmux inspection. This
-            // is the app's steady-state energy cost, previously untracked and so
-            // invisible in `banyanctl perf report`.
             let tickStartedAt = DispatchTime.now()
             let synchronizer = SessionStatusSynchronizer(
                 backend: backend,
-                processTable: processTable
+                processTable: processTableProvider.snapshot()
             )
             let results = synchronizer.observe(inputs)
 
