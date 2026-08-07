@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import QuartzCore
 import SwiftTerm
 final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
@@ -9,12 +10,13 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     private var preservedScrollbackTopRow: Int?
     private let displayInvalidationLock = NSLock()
     private var displayInvalidationPending = false
+    private var lastFlushTime: CFTimeInterval = 0
+    private var throttleTimer: Timer?
 
-    /// SwiftTerm requests a full surface repaint for terminal input. Agent
-    /// output can arrive in many small PTY chunks, so forwarding every request
-    /// directly to AppKit creates a repaint storm and keeps the main thread in
-    /// `drawTerminalContents` indefinitely. Coalesce invalidations to one per
-    /// main-run-loop turn; terminal state is still fed for every chunk.
+    // 30 Hz keeps typing echo immediate while eliminating the ~60 Hz
+    // full-grid redraws that dominate CPU under streaming agent output.
+    private static let throttleInterval: CFTimeInterval = 1.0 / 30.0
+
     override func setNeedsDisplay(_ invalidRect: NSRect) {
         displayInvalidationLock.lock()
         guard !displayInvalidationPending else {
@@ -25,14 +27,44 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         displayInvalidationLock.unlock()
 
         DispatchQueue.main.async { [weak self] in
-            self?.flushCoalescedDisplayInvalidation()
+            self?.scheduleThrottledFlush()
+        }
+    }
+
+    private func scheduleThrottledFlush() {
+        throttleTimer?.invalidate()
+        throttleTimer = nil
+
+        let now = CACurrentMediaTime()
+        let elapsed = now - lastFlushTime
+
+        if elapsed >= Self.throttleInterval {
+            flushCoalescedDisplayInvalidation()
+        } else {
+            let delay = Self.throttleInterval - elapsed
+            throttleTimer = Timer.scheduledTimer(
+                withTimeInterval: delay,
+                repeats: false
+            ) { [weak self] _ in
+                self?.flushCoalescedDisplayInvalidation()
+            }
         }
     }
 
     private func flushCoalescedDisplayInvalidation() {
+        throttleTimer?.invalidate()
+        throttleTimer = nil
+
         displayInvalidationLock.lock()
         displayInvalidationPending = false
         displayInvalidationLock.unlock()
+
+        guard !isHiddenOrHasHiddenAncestor,
+              window?.occlusionState.contains(.visible) == true else {
+            return
+        }
+
+        lastFlushTime = CACurrentMediaTime()
         super.setNeedsDisplay(bounds)
     }
 
