@@ -212,6 +212,7 @@ public struct PerformanceEventStore {
         case "terminal.install_view": return 100
         case "terminal.start_client": return 500
         case "terminal.reattach_client": return 750
+        case "terminal.draw": return 16
         case "terminal.blank_recovery": return 1
         case "tmux.refresh_clients": return 250
         case "selected_context.resolve": return 500
