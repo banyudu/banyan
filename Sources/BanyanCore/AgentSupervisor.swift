@@ -53,8 +53,19 @@ public struct AgentSupervisor: Sendable {
             return Result(status: .running, tone: .blue, provider: nil, currentPath: pane.currentPath)
         }
 
-        let rootAgentProcessCount = Self.isSupportedAgentCommand(pane.currentCommand)
-            && !descendants.contains { $0.pid == pane.rootPID && $0.isSupportedAgent } ? 1 : 0
+        // tmux reports the foreground command separately from the process
+        // table. When the pane is backed by a login shell, both can describe
+        // the same agent (for example `pane_current_command == opencode` and
+        // an `opencode` child of the shell). Do not count that representation
+        // twice, but do count the pane's agent when a different agent appears
+        // below it.
+        let rootAgentProvider = CodingAgentProvider.detect(in: pane.currentCommand)
+        let rootAgentProcessCount = if let rootAgentProvider,
+                                        !descendants.contains(where: { $0.supportedAgentProvider == rootAgentProvider }) {
+            1
+        } else {
+            0
+        }
         let agentProcessCount = Self.logicalAgentProcessCount(in: descendants)
         if rootAgentProcessCount + agentProcessCount > 1 {
             return Result(status: .subagents, tone: .purple, provider: provider, currentPath: pane.currentPath)
