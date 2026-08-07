@@ -63,6 +63,33 @@ import Testing
     #expect(events.first?.durationMS == 200)
 }
 
+@Test func terminalDrawMetricRecordsCountAndPercentiles() {
+    let store = PerformanceEventStore(databaseURL: temporaryDatabaseURL(), retentionDays: 30, maxEvents: 1_000)
+    let now = Date()
+
+    for i in 0..<10 {
+        store.record(PerformanceEvent(
+            name: "terminal.draw",
+            durationMS: Double(5 + i),
+            createdAt: now.addingTimeInterval(Double(-10 + i))
+        ))
+    }
+    store.record(PerformanceEvent(
+        name: "terminal.draw",
+        durationMS: 25,
+        createdAt: now
+    ))
+
+    let report = store.report(since: now.addingTimeInterval(-60))
+    let drawSummary = report.summaries.first { $0.name == "terminal.draw" }
+
+    #expect(drawSummary != nil)
+    #expect(drawSummary?.count == 11)
+    #expect(drawSummary?.thresholdMS == 16)
+    #expect(drawSummary?.slowCount == 1)
+    #expect(drawSummary?.maxMS == 25)
+}
+
 @Test func switchCapAcceptsRealSwitchesAndRejectsIdleSpans() {
     // Real switches (sub-cap) are recorded; idle/abandoned spans past the cap are
     // discarded so they can't inflate the switch-latency percentiles.

@@ -1,4 +1,5 @@
 import AppKit
+import BanyanCore
 import Foundation
 import QuartzCore
 import SwiftTerm
@@ -7,23 +8,25 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// The tmux pane backing this view, so the scroll handler can hand scrollback
     /// off to tmux's copy-mode instead of keeping a duplicate local history.
     var tmuxSessionName: String?
+    var telemetry: PerformanceTelemetry?
     private var preservedScrollbackTopRow: Int?
     private let displayInvalidationLock = NSLock()
     private var displayInvalidationPending = false
+    private var accumulatedDirtyRect: NSRect = .zero
     private var lastFlushTime: CFTimeInterval = 0
     private var throttleTimer: Timer?
 
-    // 30 Hz keeps typing echo immediate while eliminating the ~60 Hz
-    // full-grid redraws that dominate CPU under streaming agent output.
     private static let throttleInterval: CFTimeInterval = 1.0 / 30.0
 
     override func setNeedsDisplay(_ invalidRect: NSRect) {
         displayInvalidationLock.lock()
-        guard !displayInvalidationPending else {
+        if displayInvalidationPending {
+            accumulatedDirtyRect = accumulatedDirtyRect.union(invalidRect)
             displayInvalidationLock.unlock()
             return
         }
         displayInvalidationPending = true
+        accumulatedDirtyRect = invalidRect
         displayInvalidationLock.unlock()
 
         DispatchQueue.main.async { [weak self] in
@@ -42,12 +45,11 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
             flushCoalescedDisplayInvalidation()
         } else {
             let delay = Self.throttleInterval - elapsed
-            throttleTimer = Timer.scheduledTimer(
-                withTimeInterval: delay,
-                repeats: false
-            ) { [weak self] _ in
+            let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
                 self?.flushCoalescedDisplayInvalidation()
             }
+            RunLoop.main.add(timer, forMode: .common)
+            throttleTimer = timer
         }
     }
 
@@ -57,6 +59,8 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
 
         displayInvalidationLock.lock()
         displayInvalidationPending = false
+        let dirtyRect = accumulatedDirtyRect
+        accumulatedDirtyRect = .zero
         displayInvalidationLock.unlock()
 
         guard !isHiddenOrHasHiddenAncestor,
@@ -65,7 +69,15 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         }
 
         lastFlushTime = CACurrentMediaTime()
-        super.setNeedsDisplay(bounds)
+        let rect = dirtyRect.isEmpty ? bounds : dirtyRect
+        super.setNeedsDisplay(rect)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let start = CACurrentMediaTime()
+        super.draw(dirtyRect)
+        let elapsed = (CACurrentMediaTime() - start) * 1000.0
+        telemetry?.recordDuration("terminal.draw", durationMS: elapsed)
     }
 
     var hasVisibleText: Bool {
@@ -145,16 +157,6 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     }
 
     private func configureInteraction() {
-        // tmux owns this pane's history (see `TmuxBackend.scrollHistory`), so the
-        // local buffer only has to cover what tmux repaints plus a little slack —
-        // it is no longer the scrollback of record.
-        //
-        // The old 20_000 mirrored tmux's `history-limit`, which meant carrying a
-        // second copy of the same history in a far costlier representation:
-        // `BufferLine` allocates a dense `cols`-wide `CharData` array per line and
-        // fills every cell, so a line costs ~6 KB whether it holds text or not, and
-        // the count tracks the configured limit rather than actual content. That was
-        // ~118 MB per terminal against ~35 MB for tmux's whole server.
         changeScrollback(1_000)
         allowMouseReporting = false
     }

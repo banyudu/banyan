@@ -61,7 +61,7 @@ let package = Package(
     ],
     products: packageProducts,
     dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0")
+        .package(path: "Packages/SwiftTerm")
     ],
     targets: packageTargets,
     swiftLanguageModes: [.v5]
