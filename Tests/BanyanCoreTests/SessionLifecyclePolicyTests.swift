@@ -66,9 +66,11 @@ import Testing
     ))
 }
 
-@Test func lifecyclePolicyRecognizesOnlyOngoingCodexAndClaudeSessions() {
+@Test func lifecyclePolicyRecognizesOngoingSupportedAgentSessions() {
     #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .codex))
     #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .needInput, provider: .claude))
+    #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .deepseek))
+    #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .needInput, provider: .opencode))
     #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .completed, provider: .codex))
     #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .gemini))
 }

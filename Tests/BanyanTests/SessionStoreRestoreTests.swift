@@ -43,9 +43,11 @@ import Testing
     #expect(!SessionLifecyclePolicy.participatesInSupervisorTick(isProcessStarted: false, isRestored: false))
 }
 
-@Test func closeConfirmationOnlyTreatsActiveCodexOrClaudeAsOngoingAgents() {
+@Test func closeConfirmationTreatsSupportedAgentSessionsAsOngoingAgents() {
     #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .codex))
     #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .needInput, provider: .claude))
+    #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .deepseek))
+    #expect(SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .needInput, provider: .opencode))
     #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .completed, provider: .codex))
     #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .failed, provider: .claude))
     #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .gemini))

@@ -1190,7 +1190,7 @@ struct ContentView: View {
         }
         var details = ["Closing \(session.displayTitle) will kill its tmux session."]
         if store.pendingCloseHasOngoingAgent {
-            details.append("Any running Codex or Claude process in that session will be terminated.")
+            details.append("Any running coding-agent process in that session will be terminated.")
         }
         if store.pendingCloseHasActiveChildren {
             details.append("Child sessions will be detached to the same level as this parent session.")
