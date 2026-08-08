@@ -232,6 +232,10 @@ final class SessionStore: ObservableObject {
     private var scratchWindow: NSWindow?
     private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
     private var isClosingScratchTerminal = false
+    private var cachedSessionSidebarGroups: [SidebarSessionGroup]?
+    private var sessionSidebarGroupsCacheHash: Int = 0
+    private var cachedSidebarHistoryItems: [SidebarSessionItem]?
+    private var sidebarHistoryItemsCacheHash: Int = 0
     let host: HostRuntimeContext
     let telemetry: PerformanceTelemetry
     private var homeDirectory: String { host.homeDirectory.path }
@@ -328,6 +332,28 @@ final class SessionStore: ObservableObject {
     }
 
     var sessionSidebarGroups: [SidebarSessionGroup] {
+        var hasher = Hasher()
+        hasher.combine(sortMode)
+        for session in sessions {
+            hasher.combine(session.id)
+            hasher.combine(session.status)
+            hasher.combine(session.isImportedHistory)
+            hasher.combine(session.updatedAt)
+            hasher.combine(session.title)
+            hasher.combine(session.isTitlePinned)
+            hasher.combine(session.reportedTitle)
+            hasher.combine(session.generatedTitle)
+            hasher.combine(session.cwd)
+            hasher.combine(session.detectedAgentProvider)
+            hasher.combine(session.command)
+            hasher.combine(session.projectGroupID)
+            hasher.combine(session.projectGroupTitle)
+            hasher.combine(session.parentSessionID)
+        }
+        let hash = hasher.finalize()
+        if hash == sessionSidebarGroupsCacheHash, let cached = cachedSessionSidebarGroups {
+            return cached
+        }
         let active = visibleSessions.filter { !$0.isImportedHistory }
         let candidates = active.map {
             SessionSidebarCandidate(
@@ -338,7 +364,7 @@ final class SessionStore: ObservableObject {
             )
         }
         let sessionsByID = Dictionary(active.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return SessionSidebarGroupingPolicy.groups(for: candidates).map { group in
+        let result = SessionSidebarGroupingPolicy.groups(for: candidates).map { group in
             SidebarSessionGroup(
                 id: group.id,
                 title: group.title,
@@ -348,6 +374,9 @@ final class SessionStore: ObservableObject {
                 }
             )
         }
+        sessionSidebarGroupsCacheHash = hash
+        cachedSessionSidebarGroups = result
+        return result
     }
 
     var historySidebarGroup: SidebarSessionGroup? {
@@ -384,6 +413,29 @@ final class SessionStore: ObservableObject {
     }
 
     private var sidebarHistoryItems: [SidebarSessionItem] {
+        var hasher = Hasher()
+        hasher.combine(historyFilterText)
+        for session in sessions {
+            hasher.combine(session.id)
+            hasher.combine(session.status)
+            hasher.combine(session.isImportedHistory)
+            hasher.combine(session.updatedAt)
+            hasher.combine(session.command)
+            hasher.combine(session.detectedAgentProvider)
+            hasher.combine(session.titleURL)
+            hasher.combine(session.title)
+            hasher.combine(session.displayBranch)
+            hasher.combine(session.cwd)
+            hasher.combine(session.isTitlePinned)
+            hasher.combine(session.reportedTitle)
+            hasher.combine(session.generatedTitle)
+            hasher.combine(session.projectGroupTitle)
+        }
+        let hash = hasher.finalize()
+        if hash == sidebarHistoryItemsCacheHash, let cached = cachedSidebarHistoryItems {
+            return cached
+        }
+
         let historySessions = sessions.filter { session in
             SessionHistoryPolicy.isLocalHistorySession(
                 status: session.status,
@@ -393,13 +445,8 @@ final class SessionStore: ObservableObject {
             )
         }
 
-        // `sidebarEntries` orders by `updatedAt` and then keeps a bounded window, and
-        // with no query its filter admits everything. So for the common browse case the
-        // visible window is decided entirely by `updatedAt` — cheap, already stored —
-        // and we can take it *before* rendering. That turns ~720 title renders into 30.
-        //
-        // A query has to stay exhaustive: it matches against the composed title, so
-        // every candidate must be rendered before it can be tested.
+        // Browse path pre-limits by `updatedAt` before rendering titles;
+        // search path must be exhaustive because it matches against composed titles.
         let normalizedQuery = historyFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
         let rendered: [BanyanSession]
         if normalizedQuery.isEmpty {
@@ -422,13 +469,16 @@ final class SessionStore: ObservableObject {
                 )
             }
         let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return SessionHistoryPresentation.sidebarEntries(
+        let result: [SidebarSessionItem] = SessionHistoryPresentation.sidebarEntries(
             from: candidates,
             query: historyFilterText
         ).compactMap { entry in
             guard let session = sessionsByID[entry.id] else { return nil }
             return SidebarSessionItem(session: session, depth: 0, titleOverride: entry.title)
         }
+        sidebarHistoryItemsCacheHash = hash
+        cachedSidebarHistoryItems = result
+        return result
     }
 
     var selectedSession: BanyanSession? {
