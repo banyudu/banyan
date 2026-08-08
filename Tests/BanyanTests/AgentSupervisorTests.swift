@@ -199,8 +199,8 @@ import Testing
 @Test func supervisorIgnoresShellWrapperProcesses() {
     let result = makeSupervisor(processes: [
         process(commandName: "/bin/zsh", arguments: "zsh -lc codex", elapsed: 300),
-        process(commandName: "/usr/bin/env", arguments: "env", elapsed: 300),
-        process(commandName: "/opt/homebrew/bin/tmux", arguments: "tmux attach", elapsed: 300)
+        process(pid: 102, commandName: "/usr/bin/env", arguments: "env", elapsed: 300),
+        process(pid: 103, commandName: "/opt/homebrew/bin/tmux", arguments: "tmux attach", elapsed: 300)
     ]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",

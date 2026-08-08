@@ -261,7 +261,8 @@ public struct ProcessTable: Sendable {
 
     public init(rows: [ProcessInfoRow]) {
         self.childrenByParent = Dictionary(grouping: rows, by: \.parentPID)
-        self.rowByPID = Dictionary(uniqueKeysWithValues: rows.map { ($0.pid, $0) })
+        // `ps` output is external input; never crash on a duplicate pid row.
+        self.rowByPID = Dictionary(rows.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     public static func snapshot() -> ProcessTable {
