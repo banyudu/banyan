@@ -100,6 +100,57 @@ import Testing
     #expect(!PerformanceTelemetry.isWithinSwitchCap(137_681))
 }
 
+@Test func performanceStoreEnforcesMaxEventsCapAcrossSessions() {
+    // Prune no longer runs per insert, so the cap has to be enforced when the
+    // write connection is opened — otherwise a table left over cap by a previous
+    // run would stay that way until 500 more events arrived.
+    let databaseURL = temporaryDatabaseURL()
+    let now = Date()
+
+    let unbounded = PerformanceEventStore(databaseURL: databaseURL, retentionDays: 30, maxEvents: 1_000)
+    for index in 0..<50 {
+        unbounded.record(PerformanceEvent(
+            name: "terminal.draw",
+            durationMS: Double(index),
+            createdAt: now.addingTimeInterval(Double(index))
+        ))
+    }
+    #expect(unbounded.loadEvents(since: now.addingTimeInterval(-60)).count == 50)
+
+    let capped = PerformanceEventStore(databaseURL: databaseURL, retentionDays: 30, maxEvents: 10)
+    capped.record(PerformanceEvent(
+        name: "terminal.draw",
+        durationMS: 999,
+        createdAt: now.addingTimeInterval(100)
+    ))
+
+    // 10 newest survivors of the open-time prune, plus the event just recorded.
+    let events = capped.loadEvents(since: now.addingTimeInterval(-60))
+    #expect(events.count == 11)
+    #expect(events.last?.durationMS == 999)
+    // The oldest events were the ones dropped.
+    #expect(events.first?.durationMS == 40)
+}
+
+@Test func performanceStoreStillRecordsAfterManyEvents() {
+    // Crossing the amortised prune boundary must not lose the write connection
+    // or stop recording.
+    let store = PerformanceEventStore(databaseURL: temporaryDatabaseURL(), retentionDays: 30, maxEvents: 100)
+    let now = Date()
+    for index in 0..<600 {
+        store.record(PerformanceEvent(
+            name: "terminal.draw",
+            durationMS: Double(index),
+            createdAt: now.addingTimeInterval(Double(index))
+        ))
+    }
+
+    let events = store.loadEvents(since: now.addingTimeInterval(-60))
+    #expect(!events.isEmpty)
+    #expect(events.count <= 600)
+    #expect(events.last?.durationMS == 599)
+}
+
 private func temporaryDatabaseURL() -> URL {
     FileManager.default.temporaryDirectory
         .appendingPathComponent("BanyanCoreTests-\(UUID().uuidString)", isDirectory: true)

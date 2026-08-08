@@ -55,6 +55,28 @@ public struct PerformanceEventStore {
     public var maxEvents: Int
 
     private let databaseURL: URL
+    private let writer = WriteConnection()
+
+    /// Prune is a full scan and sort of the capped table, so it must not run per
+    /// insert. `terminal.draw` alone records several events a second, and the
+    /// table sits pinned at `maxEvents`, which made every one of those a 10k-row
+    /// scan plus a journal fsync — disk churn that dominated the app's energy
+    /// score. Amortise it instead; overshooting the cap by this much is harmless.
+    private static let insertsBetweenPrunes = 500
+
+    /// Holds the writer's long-lived handle. `record` is only ever called from
+    /// `PerformanceTelemetry`'s serial queue, so the box needs no locking of its
+    /// own; struct copies deliberately share it.
+    private final class WriteConnection: @unchecked Sendable {
+        var handle: OpaquePointer?
+        var insertsSincePrune = 0
+
+        deinit {
+            if let handle {
+                sqlite3_close(handle)
+            }
+        }
+    }
 
     public init(
         databaseURL: URL,
@@ -68,14 +90,33 @@ public struct PerformanceEventStore {
 
     public func record(_ event: PerformanceEvent) {
         do {
-            let database = try openDatabase()
-            defer { sqlite3_close(database) }
-            try migrate(database)
+            let database = try writableDatabase()
             try insert(event, database: database)
-            try prune(database)
+            writer.insertsSincePrune += 1
+            if writer.insertsSincePrune >= Self.insertsBetweenPrunes {
+                writer.insertsSincePrune = 0
+                try prune(database)
+            }
         } catch {
             NSLog("Banyan failed to record performance event: \(error.localizedDescription)")
         }
+    }
+
+    /// Opens the write handle once and keeps it. WAL plus `synchronous=NORMAL`
+    /// suits disposable diagnostic data: no journal file is created and torn down
+    /// per transaction, and writes are not fsynced individually.
+    private func writableDatabase() throws -> OpaquePointer {
+        if let handle = writer.handle {
+            return handle
+        }
+        let database = try openDatabase()
+        try execute(database, "PRAGMA journal_mode=WAL")
+        try execute(database, "PRAGMA synchronous=NORMAL")
+        try migrate(database)
+        // The table may already be over cap from a previous run.
+        try prune(database)
+        writer.handle = database
+        return database
     }
 
     public func loadEvents(since: Date) -> [PerformanceEvent] {
