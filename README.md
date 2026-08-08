@@ -1,8 +1,8 @@
 # Banyan
 
-Banyan is an internal workspace for running and supervising many long-lived
-terminal and coding-agent sessions. Each session runs inside a dedicated
-`tmux` session, so closing or restarting a frontend does not normally stop the
+Banyan is a workspace for running and supervising many long-lived terminal
+and coding-agent sessions. Each session runs inside a dedicated `tmux`
+session, so closing or restarting a frontend does not normally stop the
 underlying shell or agent.
 
 This repository provides three products over one shared runtime:
@@ -12,8 +12,8 @@ This repository provides three products over one shared runtime:
 - **`banyanctl`** — local CLI for creating, selecting, marking, closing,
   recovering, and inspecting sessions.
 
-> Internal preview: this is optimized for our team’s workflows and is not yet
-> a polished signed/notarized product. Expect interface and command changes.
+> Early preview: Banyan is under active development and is not yet a polished
+> signed/notarized product. Expect interface and command changes.
 
 The first screen is the working surface:
 
@@ -43,7 +43,7 @@ The toolbar is intentionally small:
 Clone the repository and enter it:
 
 ```sh
-git clone git@github.com:banyudu/banyan.git
+git clone https://github.com/banyudu/banyan.git
 cd banyan
 ```
 
@@ -187,7 +187,7 @@ If the Banyan app is hung or broken, all sessions are still reachable — they a
 ```sh
 scripts/iterm-rescue.sh              # attach everything
 scripts/iterm-rescue.sh --dry-run    # print the tab/pane plan
-scripts/iterm-rescue.sh -p clawly    # only one project
+scripts/iterm-rescue.sh -p myproject # only one project
 scripts/iterm-rescue.sh -d           # kick other clients (including a wedged Banyan)
 ```
 
@@ -238,16 +238,16 @@ Keep Banyan open, then drive it from another shell:
 
 ```sh
 swift run banyanctl spawn \
-  --id ENG-6685 \
-  --title "ENG-6685" \
-  --cwd /Users/banyudu/dev/2enai/clawly \
+  --id TASK-123 \
+  --title "TASK-123" \
+  --cwd ~/dev/my-project \
   --cmd "codex"
 
 swift run banyanctl spawn \
-  --parent ENG-6685 \
-  --id ENG-6685-sub-1 \
-  --title "ENG-6685 subtask" \
-  --cwd /Users/banyudu/dev/2enai/clawly \
+  --parent TASK-123 \
+  --id TASK-123-sub-1 \
+  --title "TASK-123 subtask" \
+  --cwd ~/dev/my-project \
   --cmd "codex"
 
 swift run banyanctl session new \
@@ -261,13 +261,13 @@ swift run banyanctl agent run \
 
 swift run banyanctl agent run \
   --agent claude \
-  --prompt-file /tmp/handoff-prompt.txt
+  --prompt-file /tmp/prompt.txt
 
-swift run banyanctl mark --id ENG-6685 --status need-input --tone yellow
-swift run banyanctl mark --id ENG-6685 --status review --tone purple --title "ENG-6685 review"
-swift run banyanctl close --id ENG-6685
-swift run banyanctl respawn --id ENG-6685
-swift run banyanctl remove --id ENG-6685
+swift run banyanctl mark --id TASK-123 --status need-input --tone yellow
+swift run banyanctl mark --id TASK-123 --status review --tone purple --title "TASK-123 review"
+swift run banyanctl close --id TASK-123
+swift run banyanctl respawn --id TASK-123
+swift run banyanctl remove --id TASK-123
 swift run banyanctl list
 ```
 
@@ -305,7 +305,11 @@ purple
 
 ## Terminal Rendering
 
-Banyan embeds SwiftTerm, so terminal applications can use ANSI, 256-color, and truecolor escape sequences for syntax highlighting and colorized output. Banyan exposes app theme and terminal font controls in Preferences.
+Banyan embeds [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT
+licensed, vendored under `Packages/SwiftTerm` with local rendering patches), so
+terminal applications can use ANSI, 256-color, and truecolor escape sequences
+for syntax highlighting and colorized output. Banyan exposes app theme and
+terminal font controls in Preferences.
 
 The embedded terminal supports normal desktop text selection and clipboard shortcuts. Drag to select visible terminal text, use `Cmd+C` to copy the selection, and use `Cmd+V` to paste into the active tmux-backed session.
 
@@ -349,6 +353,11 @@ Example:
 
 ## Current Scope
 
-This repo is currently distributed internally from source. The package script
-creates a locally installable app, but distribution signing and notarization
-are not yet part of the release flow.
+Banyan is currently distributed from source and via GitHub Releases. The
+package script creates a locally installable app, but distribution signing and
+notarization are not yet part of the release flow.
+
+## License
+
+Banyan is released under the [MIT License](LICENSE). The vendored
+`Packages/SwiftTerm` retains its own MIT license and copyright.
