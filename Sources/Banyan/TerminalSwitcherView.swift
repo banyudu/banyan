@@ -336,7 +336,18 @@ final class TerminalSwitcherContainer: NSView {
             addSubview(container)
             container.needsLayout = true
         }
+        let wasHidden = container.isHidden
         container.isHidden = false
+
+        // While a container is hidden its terminal drops every invalidation (see
+        // DetectingLocalProcessTerminalView.flushCoalescedDisplayInvalidation), and
+        // nothing else repaints it on a session switch — the window-lifecycle
+        // observers below only fire for app/window/occlusion changes. Without this
+        // the revealed terminal keeps whatever it last painted until the next byte
+        // of output happens to arrive, which reads as the terminal lagging behind.
+        if wasHidden {
+            (container.terminalView as? DetectingLocalProcessTerminalView)?.invalidateEntireSurface()
+        }
     }
 
     private func takeAfterPaint(for sessionID: String) -> (() -> Void)? {

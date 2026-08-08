@@ -13,11 +13,15 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     private let displayInvalidationLock = NSLock()
     private var displayInvalidationPending = false
     private var accumulatedDirtyRect: NSRect = .zero
-    private var lastFlushTime: CFTimeInterval = 0
-    private var throttleTimer: Timer?
 
-    private static let throttleInterval: CFTimeInterval = 1.0 / 30.0
-
+    /// SwiftTerm invalidates per row as output is parsed, and agent output arrives
+    /// in many small PTY chunks. Coalesce those into one invalidation per main
+    /// run-loop turn, accumulating the union of the dirty rects so SwiftTerm's
+    /// per-row draw skip still only repaints rows that actually changed.
+    ///
+    /// Deliberately *not* rate-limited: a wall-clock throttle was measured to give
+    /// no CPU benefit (the cost was per-repaint, not per-second — see #31) while
+    /// adding up to a frame of latency to every paint, which reads as lag.
     override func setNeedsDisplay(_ invalidRect: NSRect) {
         displayInvalidationLock.lock()
         if displayInvalidationPending {
@@ -30,33 +34,24 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         displayInvalidationLock.unlock()
 
         DispatchQueue.main.async { [weak self] in
-            self?.scheduleThrottledFlush()
+            self?.flushCoalescedDisplayInvalidation()
         }
     }
 
-    private func scheduleThrottledFlush() {
-        throttleTimer?.invalidate()
-        throttleTimer = nil
+    /// Repaint everything, discarding any partial accumulated rect. Used when the
+    /// view is revealed after invalidations were dropped while it was hidden.
+    func invalidateEntireSurface() {
+        displayInvalidationLock.lock()
+        displayInvalidationPending = false
+        accumulatedDirtyRect = .zero
+        displayInvalidationLock.unlock()
 
-        let now = CACurrentMediaTime()
-        let elapsed = now - lastFlushTime
-
-        if elapsed >= Self.throttleInterval {
-            flushCoalescedDisplayInvalidation()
-        } else {
-            let delay = Self.throttleInterval - elapsed
-            let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-                self?.flushCoalescedDisplayInvalidation()
-            }
-            RunLoop.main.add(timer, forMode: .common)
-            throttleTimer = timer
-        }
+        terminal.updateFullScreen()
+        needsDisplay = true
+        super.setNeedsDisplay(bounds)
     }
 
     private func flushCoalescedDisplayInvalidation() {
-        throttleTimer?.invalidate()
-        throttleTimer = nil
-
         displayInvalidationLock.lock()
         displayInvalidationPending = false
         let dirtyRect = accumulatedDirtyRect
@@ -68,7 +63,6 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
             return
         }
 
-        lastFlushTime = CACurrentMediaTime()
         let rect = dirtyRect.isEmpty ? bounds : dirtyRect
         super.setNeedsDisplay(rect)
     }
