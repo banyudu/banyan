@@ -292,6 +292,15 @@ public struct ProcessInfoRow: Sendable {
     public let commandName: String
     public let arguments: String
 
+    let supportedAgentProvider: CodingAgentProvider?
+    let isSupportedAgent: Bool
+    let isShellOrWrapper: Bool
+    let isBanyanAgentLogProcess: Bool
+    let isCodexRuntimeHelper: Bool
+    let isTmuxPlumbing: Bool
+    let isNodeAgentLauncher: Bool
+    let isLikelyMCPServer: Bool
+
     public init(
         pid: Int,
         parentPID: Int,
@@ -306,70 +315,36 @@ public struct ProcessInfoRow: Sendable {
         self.elapsed = elapsed
         self.commandName = commandName
         self.arguments = arguments
-    }
 
-    var isSupportedAgent: Bool {
-        // A Banyan launch wrapper carries the real agent name in its argument
-        // list (for example `bash banyan-agent-wrapper ... --agent claude ...
-        // -- claude`).  The wrapper is not a second agent and must not make a
-        // single Claude session look like a sub-agent session.
-        guard !isBanyanAgentWrapper, !isCodexRuntimeHelper else { return false }
-        return supportedAgentProvider != nil
-    }
+        let lastComponent = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
+        let lowercasedArguments = arguments.lowercased()
+        let haystack = commandName.lowercased() + " " + lowercasedArguments
 
-    var supportedAgentProvider: CodingAgentProvider? {
-        CodingAgentProvider.detect(in: commandName)
+        let isBanyanAgentWrapper = lastComponent == "banyan-agent-wrapper"
+            || lowercasedArguments.contains("banyan-agent-wrapper")
+
+        let isCodexRuntimeHelper = haystack.contains("codex-code-mode-host") || haystack.contains("cua_node")
+        self.isCodexRuntimeHelper = isCodexRuntimeHelper
+
+        let provider = CodingAgentProvider.detect(in: commandName)
             ?? CodingAgentProvider.detect(in: arguments)
-            ?? arguments
-                .lowercased()
+            ?? lowercasedArguments
                 .split(whereSeparator: { $0 == " " || $0 == "/" })
                 .compactMap { CodingAgentProvider.detect(in: String($0)) }
                 .first
-    }
+        self.supportedAgentProvider = provider
+        self.isSupportedAgent = !isBanyanAgentWrapper && !isCodexRuntimeHelper && provider != nil
 
-    var isShellOrWrapper: Bool {
-        let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
-        return [
+        self.isShellOrWrapper = [
             "bash", "zsh", "sh", "fish", "login", "env", "script",
             "banyan-agent-wrapper"
-        ].contains(name)
-    }
+        ].contains(lastComponent)
 
-    private var isBanyanAgentWrapper: Bool {
-        let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
-        return name == "banyan-agent-wrapper"
-            || arguments.lowercased().contains("banyan-agent-wrapper")
-    }
+        self.isBanyanAgentLogProcess = lastComponent == "tee" && arguments.contains("banyan-agent-process.log")
+        self.isTmuxPlumbing = lastComponent == "tmux" || lastComponent == "reattach-to-user-namespace"
+        self.isNodeAgentLauncher = lastComponent == "node"
 
-    var isBanyanAgentLogProcess: Bool {
-        let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
-        return name == "tee" && arguments.contains("banyan-agent-process.log")
-    }
-
-    /// Codex launches these internal runtimes alongside the actual agent. Their
-    /// command lines contain agent/runtime names, so generic process detection
-    /// otherwise reports either Subagents or an active external command while
-    /// the agent is idle.
-    var isCodexRuntimeHelper: Bool {
-        let haystack = (commandName + " " + arguments).lowercased()
-        return haystack.contains("codex-code-mode-host") || haystack.contains("cua_node")
-    }
-
-    var isTmuxPlumbing: Bool {
-        let name = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
-        return name == "tmux" || name == "reattach-to-user-namespace"
-    }
-
-    var isNodeAgentLauncher: Bool {
-        URL(fileURLWithPath: commandName).lastPathComponent.lowercased() == "node"
-    }
-
-    /// A persistent MCP server (e.g. `axiom-mcp`, `npx @modelcontextprotocol/…`,
-    /// `uvx mcp-server-foo`, `node mcp-server.js`). Matched by name so it can be
-    /// distinguished from a real foreground command an agent runs directly.
-    var isLikelyMCPServer: Bool {
-        let haystack = (commandName + " " + arguments).lowercased()
-        return haystack.contains("modelcontextprotocol")
+        self.isLikelyMCPServer = haystack.contains("modelcontextprotocol")
             || haystack.contains("mcp-server")
             || haystack.contains("mcp_server")
             || haystack.contains("-mcp")
