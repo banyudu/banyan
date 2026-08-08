@@ -4,7 +4,7 @@ import Testing
 @Test func linearIssueReferenceDetectsBranchPattern() {
     let reference = LinearIssueReference.detect(
         branch: "yudu/eng-6772-fix-scroll",
-        cwd: "/Users/banyudu/dev/yudu/banyan",
+        cwd: "/Users/example/dev/yudu/banyan",
         environment: [:]
     )
 
@@ -15,7 +15,7 @@ import Testing
 @Test func linearIssueReferenceFallsBackToWorkingDirectory() {
     let reference = LinearIssueReference.detect(
         branch: nil,
-        cwd: "/Users/banyudu/dev/yudu/.worktrees/yudu-eng-1234",
+        cwd: "/Users/example/dev/yudu/.worktrees/yudu-eng-1234",
         environment: [:]
     )
 

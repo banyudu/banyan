@@ -3,20 +3,20 @@ import Testing
 @testable import BanyanCore
 
 @Test func homeDirectoryDisplaysAsTilde() {
-    #expect(PathDisplayName.make(path: "/Users/banyudu", homeDirectory: "/Users/banyudu") == "~")
+    #expect(PathDisplayName.make(path: "/Users/example", homeDirectory: "/Users/example") == "~")
 }
 
 @Test func homeSubdirectoryDisplaysWithTildePrefix() {
     #expect(
         PathDisplayName.make(
-            path: "/Users/banyudu/dev/yudu/banyan",
-            homeDirectory: "/Users/banyudu"
+            path: "/Users/example/dev/yudu/banyan",
+            homeDirectory: "/Users/example"
         ) == "~/dev/yudu/banyan"
     )
 }
 
 @Test func nonHomePathDisplaysAsAbsolutePath() {
-    #expect(PathDisplayName.make(path: "/tmp/banyan", homeDirectory: "/Users/banyudu") == "/tmp/banyan")
+    #expect(PathDisplayName.make(path: "/tmp/banyan", homeDirectory: "/Users/example") == "/tmp/banyan")
 }
 
 @Test func symlinkedHomePathDisplaysUsingCanonicalTildePath() throws {

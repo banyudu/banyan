@@ -12,20 +12,20 @@ import Foundation
     let title = SessionHistoryPresentation.sidebarTitle(
         projectName: "worktree",
         displayTitle: "Fix provider icon",
-        issueID: "eng-6061"
+        issueID: "task-601"
     )
 
-    #expect(title == "ENG-6061 · Fix provider icon")
-    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "provider eng-6061"))
+    #expect(title == "TASK-601 · Fix provider icon")
+    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "provider task-601"))
     #expect(!SessionHistoryPresentation.matchesFilter(title: title, query: "codex"))
 }
 
 @Test func historyPresentationDoesNotDuplicateExistingIssuePrefix() {
     #expect(SessionHistoryPresentation.sidebarTitle(
         projectName: "worktree",
-        displayTitle: "ENG-6061 · Fix provider icon",
-        issueID: "eng-6061"
-    ) == "ENG-6061 · Fix provider icon")
+        displayTitle: "TASK-601 · Fix provider icon",
+        issueID: "task-601"
+    ) == "TASK-601 · Fix provider icon")
 }
 
 @Test func historyPresentationBuildsSortedFilteredSidebarEntries() {

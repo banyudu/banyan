@@ -2,6 +2,29 @@
 
 Guidance for coding agents (and human contributors) working in this repository.
 
+## Shareable content only
+
+This repository is shared beyond its original author. Never commit personal or
+internal identifiers, in any file — sources, tests, docs, scripts, or commit
+messages:
+
+- No real issue-tracker IDs (e.g. `ENG-1234`). Use `TASK-123`-style
+  placeholders in docs, examples, and test fixtures.
+- No personal home paths (`/Users/<real-name>/...`) or private
+  project/workspace names. Use `~/dev/my-project` in docs and
+  `/Users/example/...` in test fixtures.
+- No internal org slugs, tracker workspace names, or company-specific URLs.
+  Org-specific values must come from configuration (environment variables or
+  Preferences) with a neutral or documented default.
+- Machine- or person-specific workflow assumptions (personal wrapper scripts,
+  log file conventions) must be optional and detected at runtime, never
+  hardcoded as required.
+
+If a task's context contains such identifiers (a real issue ID, a local path),
+generalize them before writing them into the repo.
+
+## Engineering conventions
+
 - Delivery workflow: when asked to ship a change, review the scoped diff, commit,
   push the current branch, rebuild/package the app (`scripts/package-app.sh`),
   restart the requested Banyan channel (`scripts/restart-app.sh`), and verify that

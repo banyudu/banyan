@@ -66,22 +66,22 @@ private func makeMemoSession() -> BanyanSession {
 @MainActor
 @Test func titleLinkLabelInvalidatesWhenTitleURLChanges() {
     let session = makeMemoSession()
-    session.titleURL = "https://linear.app/2en/issue/ENG-1111"
-    #expect(session.titleLinkLabel == "ENG-1111")
+    session.titleURL = "https://linear.app/2en/issue/TASK-1111"
+    #expect(session.titleLinkLabel == "TASK-1111")
 
-    session.titleURL = "https://linear.app/2en/issue/ENG-2222"
-    #expect(session.titleLinkLabel == "ENG-2222")
+    session.titleURL = "https://linear.app/2en/issue/TASK-2222"
+    #expect(session.titleLinkLabel == "TASK-2222")
 }
 
 @MainActor
 @Test func titleLinkLabelInvalidatesWhenTitleChanges() {
     let session = makeMemoSession()
     session.titleURL = nil
-    session.title = "working on ENG-3333"
-    #expect(session.titleLinkLabel == "ENG-3333")
+    session.title = "working on TASK-3333"
+    #expect(session.titleLinkLabel == "TASK-3333")
 
-    session.title = "working on ENG-4444"
-    #expect(session.titleLinkLabel == "ENG-4444")
+    session.title = "working on TASK-4444"
+    #expect(session.titleLinkLabel == "TASK-4444")
 }
 
 @MainActor
@@ -89,13 +89,13 @@ private func makeMemoSession() -> BanyanSession {
     let session = makeMemoSession()
     session.titleURL = nil
     session.title = "no issue here"
-    session.displayBranch = "yudu/eng-5555-something"
-    #expect(session.titleLinkLabel == "ENG-5555")
+    session.displayBranch = "yudu/task-5555-something"
+    #expect(session.titleLinkLabel == "TASK-5555")
 
     // displayBranch is a plain `var`, not @Published, so nothing else would catch a
     // stale reading here — the key must cover it.
-    session.displayBranch = "yudu/eng-6666-something"
-    #expect(session.titleLinkLabel == "ENG-6666")
+    session.displayBranch = "yudu/task-6666-something"
+    #expect(session.titleLinkLabel == "TASK-6666")
 }
 
 @MainActor
@@ -147,9 +147,9 @@ private func makeMemoSession() -> BanyanSession {
     session.titleURL = nil
     session.title = "no issue here"
     session.displayBranch = nil
-    session.cwd = "/tmp/eng-7777-worktree"
-    #expect(session.titleLinkLabel == "ENG-7777")
+    session.cwd = "/tmp/task-7777-worktree"
+    #expect(session.titleLinkLabel == "TASK-7777")
 
-    session.cwd = "/tmp/eng-8888-worktree"
-    #expect(session.titleLinkLabel == "ENG-8888")
+    session.cwd = "/tmp/task-8888-worktree"
+    #expect(session.titleLinkLabel == "TASK-8888")
 }

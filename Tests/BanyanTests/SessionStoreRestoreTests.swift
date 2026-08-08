@@ -210,27 +210,27 @@ import Testing
 
 @Test func historySidebarTitleUsesIssueIDInsteadOfWorktreeName() {
     let title = SessionHistoryPresentation.sidebarTitle(
-        projectName: "yudu-eng-6061-32baaf",
+        projectName: "yudu-task-601-32baaf",
         displayTitle: "Personal coding run",
-        issueID: "ENG-6061"
+        issueID: "TASK-601"
     )
 
-    #expect(title == "ENG-6061 · Personal coding run")
+    #expect(title == "TASK-601 · Personal coding run")
 }
 
 @Test func historyFilterMatchesTokensAgainstTheRenderedRowTitle() {
     let title = SessionHistoryPresentation.sidebarTitle(
         projectName: "clawly",
         displayTitle: "Fix stale provider icon",
-        issueID: "ENG-6061"
+        issueID: "TASK-601"
     )
 
     #expect(SessionHistoryPresentation.matchesFilter(title: title, query: ""))
     #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "   "))
-    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "eng-6061"))
+    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "task-601"))
     #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "PROVIDER"))
     // Tokens may match out of order, and all of them must match.
-    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "icon eng-6061"))
+    #expect(SessionHistoryPresentation.matchesFilter(title: title, query: "icon task-601"))
     #expect(!SessionHistoryPresentation.matchesFilter(title: title, query: "icon eng-9999"))
     #expect(!SessionHistoryPresentation.matchesFilter(title: title, query: "codex"))
 }
@@ -242,12 +242,12 @@ import Testing
 
 @Test func historySidebarTitleDoesNotDuplicateExistingIssuePrefix() {
     let title = SessionHistoryPresentation.sidebarTitle(
-        projectName: "yudu-eng-6061-32baaf",
-        displayTitle: "ENG-6061 Personal coding run",
-        issueID: "ENG-6061"
+        projectName: "yudu-task-601-32baaf",
+        displayTitle: "TASK-601 Personal coding run",
+        issueID: "TASK-601"
     )
 
-    #expect(title == "ENG-6061 Personal coding run")
+    #expect(title == "TASK-601 Personal coding run")
 }
 
 @Test func historySidebarTitleKeepsProjectNameWithoutIssueID() {

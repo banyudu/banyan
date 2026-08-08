@@ -11,7 +11,7 @@ import Testing
 
 @Test func terminalFooterLinkifierExtractsPullRequestNumber() {
     #expect(TerminalFooterLinkifier.pullRequestNumber(in: "banyan-pr://6965") == 6965)
-    #expect(TerminalFooterLinkifier.pullRequestNumber(in: "https://github.com/2enai/clawly/pull/6965") == nil)
+    #expect(TerminalFooterLinkifier.pullRequestNumber(in: "https://github.com/example/other-repo/pull/6965") == nil)
 }
 
 @Test func terminalFooterLinkifierAnnotatesAcrossNonUTF8Bytes() {

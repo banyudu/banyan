@@ -112,8 +112,8 @@ import Testing
 
     // Bound deliberately, the way `banyanctl mark --title-url` does it.
     let session = makeIssueBindingSession(cwd: repo.path)
-    session.mark(titleURL: "https://linear.app/2en/issue/ENG-7664")
-    #expect(session.titleLinkLabel == "ENG-7664")
+    session.mark(titleURL: "https://linear.app/2en/issue/TASK-764")
+    #expect(session.titleLinkLabel == "TASK-764")
 
     session.updateCurrentDirectory(worktree.path)
 
@@ -130,7 +130,7 @@ import Testing
 
     // A title left over from the issue this pane used to be working on.
     let session = makeIssueBindingSession(cwd: worktree.path)
-    session.mark(title: "ENG-7664 监听 main 分支 CI 失败")
+    session.mark(title: "TASK-764 watch main branch CI failures")
 
     #expect(session.titleURL == "https://linear.app/2en/issue/ENG-7420")
     #expect(session.titleLinkLabel == "ENG-7420")
@@ -147,7 +147,7 @@ import Testing
     // has since moved back to the main checkout), which used to stick forever.
     let session = makeIssueBindingSession(
         cwd: repo.path,
-        titleURL: "https://linear.app/2en/issue/ENG-7664",
+        titleURL: "https://linear.app/2en/issue/TASK-764",
         titleURLWasAutoDetected: true
     )
 
@@ -190,13 +190,13 @@ import Testing
 
     let session = makeIssueBindingSession(
         cwd: repo.path,
-        titleURL: "https://linear.app/2en/issue/ENG-7664",
+        titleURL: "https://linear.app/2en/issue/TASK-764",
         titleURLWasAutoDetected: false
     )
 
     session.updateCurrentDirectory(repo.path)
 
-    #expect(session.titleLinkLabel == "ENG-7664")
+    #expect(session.titleLinkLabel == "TASK-764")
 }
 
 @MainActor
@@ -223,9 +223,9 @@ import Testing
     let json = """
     {
         "id": "session-167",
-        "title": "~/dev/2enai/clawly",
-        "titleURL": "https://linear.app/2en/issue/ENG-7664",
-        "cwd": "/Users/banyudu/dev/2enai/clawly",
+        "title": "~/dev/my-project",
+        "titleURL": "https://linear.app/2en/issue/TASK-764",
+        "cwd": "/Users/example/dev/my-project",
         "command": "",
         "status": "running",
         "tone": "blue",

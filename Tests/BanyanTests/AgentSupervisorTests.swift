@@ -215,12 +215,12 @@ import Testing
     let result = makeSupervisor(processes: [
         process(
             commandName: "/bin/bash",
-            arguments: "/Users/banyudu/.agents/bin/banyan-agent-wrapper --agent claude -- claude",
+            arguments: "/Users/example/.agents/bin/banyan-agent-wrapper --agent claude -- claude",
             elapsed: 300
         ),
         process(
             commandName: "/usr/bin/tee",
-            arguments: "tee -a /Users/banyudu/.agents/logs/banyan-agent-process.log",
+            arguments: "tee -a /Users/example/.agents/logs/banyan-agent-process.log",
             elapsed: 300
         ),
         agentProcess("claude", pid: 102)
@@ -244,7 +244,7 @@ import Testing
             process(
                 pid: 101,
                 parentPID: 100,
-                commandName: "/Users/banyudu/go/bin/axiom-mcp",
+                commandName: "/Users/example/go/bin/axiom-mcp",
                 arguments: "axiom-mcp -token redacted -url https://api.axiom.co",
                 elapsed: 599
             )
@@ -323,14 +323,14 @@ import Testing
                 pid: 100,
                 parentPID: 1,
                 commandName: "node",
-                arguments: "node /Users/banyudu/.nvm/versions/node/v24.4.1/bin/codex",
+                arguments: "node /Users/example/.nvm/versions/node/v24.4.1/bin/codex",
                 elapsed: 5
             ),
             process(
                 pid: 101,
                 parentPID: 100,
-                commandName: "/Users/banyudu/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
-                arguments: "/Users/banyudu/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
+                commandName: "/Users/example/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
+                arguments: "/Users/example/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
                 elapsed: 5
             )
         ]
@@ -491,14 +491,14 @@ import Testing
                 pid: 100,
                 parentPID: 1,
                 commandName: "node",
-                arguments: "node /Users/banyudu/.nvm/versions/node/v24.4.1/bin/codex",
+                arguments: "node /Users/example/.nvm/versions/node/v24.4.1/bin/codex",
                 elapsed: 5
             ),
             process(
                 pid: 101,
                 parentPID: 100,
-                commandName: "/Users/banyudu/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
-                arguments: "/Users/banyudu/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
+                commandName: "/Users/example/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
+                arguments: "/Users/example/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
                 elapsed: 5
             ),
             process(pid: 102, parentPID: 101, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 5)
@@ -534,7 +534,7 @@ import Testing
     let result = makeSupervisor(
         pane: pane(currentCommand: "node"),
         processes: [
-            process(commandName: "node", arguments: "node /Users/banyudu/.nvm/versions/node/v24.4.1/bin/codex", elapsed: 5)
+            process(commandName: "node", arguments: "node /Users/example/.nvm/versions/node/v24.4.1/bin/codex", elapsed: 5)
         ]
     ).inspect(
         tmuxSessionName: "agent",

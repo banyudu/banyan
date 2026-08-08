@@ -36,7 +36,7 @@ import Foundation
     let label = SessionDisplayLabel.make(
         project: "banyan",
         branch: "main",
-        title: "banyudu@Yudus-MacBook-Pro.local",
+        title: "user@Example-MacBook-Pro.local",
         id: "session",
         command: "codex implement the sidebar label"
     )
