@@ -2837,11 +2837,10 @@ final class SessionStore: ObservableObject {
         let anchorFrame = anchorWindow?.frame ?? fallbackScreen
         let visibleFrame = anchorWindow?.screen?.visibleFrame ?? fallbackScreen
 
-        let width = min(max(anchorFrame.width * 0.72, 720), visibleFrame.width - 80)
-        let height = min(max(anchorFrame.height * 0.52, 420), visibleFrame.height - 80)
-        let originX = min(max(anchorFrame.midX - width / 2, visibleFrame.minX + 40), visibleFrame.maxX - width - 40)
-        let originY = min(max(anchorFrame.midY - height / 2, visibleFrame.minY + 40), visibleFrame.maxY - height - 40)
-        window.setFrame(NSRect(x: originX, y: originY, width: width, height: height), display: false)
+        window.setFrame(
+            ScratchWindowGeometry.frame(anchorFrame: anchorFrame, visibleFrame: visibleFrame),
+            display: false
+        )
     }
 
     nonisolated private static func runBanyanWorktree(
