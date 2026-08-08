@@ -109,6 +109,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var selectedLinearListIssueLoadState: LinearIssueLoadState = .idle
     @Published private(set) var linearFilterFocusRequestID = UUID()
     @Published private(set) var pendingHandoffJobs: [HandoffJob] = []
+    @Published private(set) var isHandoffAvailable = false
     @Published var handoffNotice: String?
     @Published var addSessionDraft: AddSessionDraft?
     private(set) var sessionSwitchRequestedAt: DispatchTime?
@@ -294,6 +295,10 @@ final class SessionStore: ObservableObject {
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
             projectLaunchByGroup = stored.compactMapValues(NewSessionLaunch.init(rawValue:))
         }
+        isHandoffAvailable = Self.resolveHandoffCommand(
+            environment: host.environment,
+            homeDirectory: host.homeDirectory.path
+        ) != nil
 
         selection.bind(to: self)
 
@@ -2068,7 +2073,15 @@ final class SessionStore: ObservableObject {
 
     @discardableResult
     func dispatchHandoff(id: String, bypassEligibility: Bool = false) -> Bool {
-        guard let session = sessions.first(where: { $0.id == id }),
+        // Re-resolve at dispatch time so a handoff command installed or removed
+        // after launch takes effect without restarting the app.
+        let command = Self.resolveHandoffCommand(
+            environment: environment,
+            homeDirectory: homeDirectory
+        )
+        isHandoffAvailable = command != nil
+        guard let command,
+              let session = sessions.first(where: { $0.id == id }),
               (bypassEligibility || session.canDispatchHandoff),
               !pendingHandoffJobs.contains(where: { $0.sessionID == id }) else {
             return false
@@ -2090,11 +2103,10 @@ final class SessionStore: ObservableObject {
 
         pendingHandoffJobs.append(job)
         let environment = self.environment
-        let homeDirectory = self.homeDirectory
-        Task.detached(priority: .utility) { [environment, homeDirectory] in
+        Task.detached(priority: .utility) { [environment, command] in
             let result = runHandoffDispatch(
+                command: command,
                 cwd: job.cwd,
-                homeDirectory: homeDirectory,
                 environment: environment
             )
             await MainActor.run { [weak self] in
@@ -2110,6 +2122,10 @@ final class SessionStore: ObservableObject {
     }
 
     func handleHandoffShortcut() {
+        guard isHandoffAvailable else {
+            handoffNotice = "Handoff is not configured. Install an executable at ~/bin/handoff or set \(SessionHandoffPolicy.commandEnvironmentKey)."
+            return
+        }
         guard let session = selectedSession else {
             handoffNotice = "Select a session before starting handoff."
             return
@@ -2126,6 +2142,17 @@ final class SessionStore: ObservableObject {
 
     func isHandoffPending(for sessionID: String) -> Bool {
         pendingHandoffJobs.contains { $0.sessionID == sessionID }
+    }
+
+    private static func resolveHandoffCommand(
+        environment: [String: String],
+        homeDirectory: String
+    ) -> String? {
+        SessionHandoffPolicy.commandPath(
+            environment: environment,
+            homeDirectory: homeDirectory,
+            isExecutableFile: { FileManager.default.isExecutableFile(atPath: $0) }
+        )
     }
 
     var selectedLinearIssueURL: URL? {
@@ -2990,13 +3017,13 @@ final class SessionStore: ObservableObject {
 }
 
 private func runHandoffDispatch(
+    command: String,
     cwd: String,
-    homeDirectory: String,
     environment: [String: String]
 ) -> Result<Void, HandoffDispatchError> {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["\(homeDirectory)/bin/handoff", "dispatch"]
+    process.arguments = [command, "dispatch"]
     process.currentDirectoryURL = URL(fileURLWithPath: cwd)
     process.environment = AppProcessEnvironment.make(
         base: environment,

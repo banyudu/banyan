@@ -1140,6 +1140,7 @@ struct ContentView: View {
             onRecover: {
                 try? store.recover(id: item.session.id)
             },
+            isHandoffAvailable: store.isHandoffAvailable,
             isHandoffPending: store.isHandoffPending(for: item.session.id),
             onHandoff: {
                 store.dispatchHandoff(id: item.session.id)
@@ -1895,6 +1896,7 @@ private struct SessionRow: View {
     let onRestart: () -> Void
     let onRespawn: () -> Void
     let onRecover: () -> Void
+    let isHandoffAvailable: Bool
     let isHandoffPending: Bool
     let onHandoff: () -> Void
     let onRemove: () -> Void
@@ -1916,7 +1918,7 @@ private struct SessionRow: View {
     /// trailing edge. The hover close button is suppressed there so it can't shift
     /// the handoff button or be clicked by accident in its place.
     private var showsHandoffButton: Bool {
-        session.canDispatchHandoff && !isHandoffPending
+        isHandoffAvailable && session.canDispatchHandoff && !isHandoffPending
     }
 
     var body: some View {
