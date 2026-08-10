@@ -79,7 +79,13 @@ public protocol TerminalDelegate: AnyObject {
     /// Callback - the window was scrolled, new yDisplay passed
     /// The default implementation does nothing.
     func scrolled (source: Terminal, yDisp: Int)
-    
+
+    /// Callback - lines were dropped from the top of the scrollback buffer to make
+    /// room for new content, shifting the buffer-absolute row of every remaining
+    /// line up by `count`.
+    /// The default implementation does nothing.
+    func linesTrimmed (source: Terminal, count: Int)
+
     /// Callback a newline was generated
     /// The default implementation does nothing.
     func linefeed (source: Terminal)
@@ -5265,6 +5271,10 @@ open class Terminal {
                 if userScrolling {
                     buffer.yDisp = max (buffer.yDisp - 1, 0)
                 }
+
+                // Recycling the top line shifted every remaining line up one absolute
+                // row; let listeners (like the selection) follow the moved content.
+                tdel?.linesTrimmed (source: self, count: 1)
             }
         } else {
             // scrollTop is non-zero which means no line will be going to the
@@ -6649,7 +6659,11 @@ public extension TerminalDelegate {
     func scrolled(source: Terminal, yDisp: Int) {
         // nothing
     }
-    
+
+    func linesTrimmed (source: Terminal, count: Int) {
+        // nothing
+    }
+
     func linefeed(source: Terminal) {
         // nothing
     }

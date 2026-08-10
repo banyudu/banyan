@@ -123,7 +123,11 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
     ///
     /// `copy-mode -e` exits automatically once the user scrolls back to the bottom,
     /// which keeps the pane out of a modal state we would otherwise have to unwind.
-    public func scrollHistory(paneID: String, lines: Int, up: Bool) {
+    /// `onScrollPosition` reports the pane's resulting `#{scroll_position}` (0 when
+    /// the pane left copy-mode), so callers can observe how far the view actually
+    /// moved — tmux clamps at the ends of history, making the request no measure of
+    /// the real displacement. Called on the scroll queue.
+    public func scrollHistory(paneID: String, lines: Int, up: Bool, onScrollPosition: (@Sendable (Int) -> Void)? = nil) {
         guard lines > 0 else { return }
         scrollQueue.async { [self] in
             if up {
@@ -135,6 +139,10 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
                 "send-keys", "-t", paneID, "-X", "-N", String(lines),
                 up ? "scroll-up" : "scroll-down"
             ])
+            if let onScrollPosition {
+                let output = (try? run(["display-message", "-p", "-t", paneID, "#{scroll_position}"])) ?? ""
+                onScrollPosition(Int(output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0)
+            }
         }
     }
 

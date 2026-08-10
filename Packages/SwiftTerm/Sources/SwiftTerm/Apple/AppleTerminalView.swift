@@ -2269,6 +2269,27 @@ extension TerminalView {
         return nil
     }
     
+    /// Sets the selection to the range between the two buffer-absolute positions
+    public func setSelection (start: Position, end: Position) {
+        selection.setSelection (start: start, end: end)
+        queuePendingDisplay ()
+    }
+
+    /// Shifts an active selection vertically by `rowDelta` buffer rows. Use this when
+    /// the hosting app knows the pane content moved without the terminal scrolling
+    /// locally (for example, an external scrollback repainted the visible region).
+    public func adjustSelection (byRows rowDelta: Int) {
+        guard selection.active else { return }
+        selection.contentMoved (rowDelta: rowDelta)
+        queuePendingDisplay ()
+    }
+
+    /// TerminalDelegate: lines were dropped from the top of the scrollback, shifting
+    /// the remaining content up; keep the selection glued to the text it covered.
+    public func linesTrimmed (source: Terminal, count: Int) {
+        selection.contentMoved (rowDelta: -count)
+    }
+
     /// Selects the entire buffer
     public func selectAll () {
         selection.selectAll()

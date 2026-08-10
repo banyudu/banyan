@@ -102,8 +102,8 @@ extension BanyanSession {
         }
     }
 
-    func scrollHistory(paneID: String, lines: Int, up: Bool) {
-        tmuxBackend.scrollHistory(paneID: paneID, lines: lines, up: up)
+    func scrollHistory(paneID: String, lines: Int, up: Bool, onScrollPosition: (@Sendable (Int) -> Void)? = nil) {
+        tmuxBackend.scrollHistory(paneID: paneID, lines: lines, up: up, onScrollPosition: onScrollPosition)
     }
 
     func recoverBlankTerminalClientIfNeeded() {

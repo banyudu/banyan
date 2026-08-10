@@ -283,6 +283,43 @@ class SelectionService: CustomDebugStringConvertible {
     }
     
     /**
+     * Shifts the recorded selection vertically after the buffer contents moved by
+     * `rowDelta` rows, keeping the highlight anchored to the text it was covering.
+     * Negative deltas follow lines trimmed off the top of the scrollback; positive
+     * deltas follow content that was repainted further down. Deactivates the
+     * selection once it falls entirely outside the buffer.
+     */
+    public func contentMoved (rowDelta: Int) {
+        guard rowDelta != 0 else { return }
+        if let currentPivot = pivot {
+            pivot = Position(col: currentPivot.col, row: currentPivot.row + rowDelta)
+        }
+        let maxRow = max(0, terminal.displayBuffer.lines.count - 1)
+        let lastCol = max(0, terminal.cols - 1)
+        // A shifted endpoint that leaves the buffer clips to the boundary it crossed:
+        // the text between the boundary and the original endpoint no longer exists.
+        func clip (_ p: Position) -> Position {
+            if p.row < 0 { return Position(col: 0, row: 0) }
+            if p.row > maxRow { return Position(col: lastCol, row: maxRow) }
+            return p
+        }
+        let newStart = Position(col: start.col, row: start.row + rowDelta)
+        let newEnd = Position(col: end.col, row: end.row + rowDelta)
+        guard active else {
+            start = clip(newStart)
+            end = clip(newEnd)
+            return
+        }
+        if max(newStart.row, newEnd.row) < 0 || min(newStart.row, newEnd.row) > maxRow {
+            selectNone()
+            return
+        }
+        start = clip(newStart)
+        end = clip(newEnd)
+        setActiveAndNotify()
+    }
+
+    /**
      * Selects the entire buffer and triggers the selection
      */
     public func selectAll ()

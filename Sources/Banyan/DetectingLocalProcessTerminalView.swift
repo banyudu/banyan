@@ -10,6 +10,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var tmuxSessionName: String?
     var telemetry: PerformanceTelemetry?
     private var preservedScrollbackTopRow: Int?
+    private var tmuxScrollPosition = 0
     private let displayInvalidationLock = NSLock()
     private var displayInvalidationPending = false
     private var accumulatedDirtyRect: NSRect = .zero
@@ -36,6 +37,17 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         DispatchQueue.main.async { [weak self] in
             self?.flushCoalescedDisplayInvalidation()
         }
+    }
+
+    /// tmux scrolls its history by repainting the visible rows in place, so the
+    /// local buffer never moves under an active selection. Given the pane's
+    /// resulting `#{scroll_position}`, shift the selection by the observed
+    /// displacement so the highlight stays on the text it was covering.
+    func noteTmuxScrollPosition(_ position: Int) {
+        let delta = position - tmuxScrollPosition
+        tmuxScrollPosition = position
+        guard delta != 0 else { return }
+        adjustSelection(byRows: delta)
     }
 
     /// Repaint everything, discarding any partial accumulated rect. Used when the

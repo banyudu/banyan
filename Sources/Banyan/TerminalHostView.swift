@@ -507,10 +507,15 @@ final class TerminalContainerView: NSView {
     /// click keep going to SwiftTerm, preserving the native text selection added in
     /// 7f20bcb, including while scrolled back through tmux history.
     private func scrollHistoryViaTmux(lines: Int, up: Bool) -> Bool {
-        guard let paneID = (terminalView as? DetectingLocalProcessTerminalView)?.tmuxSessionName else {
+        guard let detectingView = terminalView as? DetectingLocalProcessTerminalView,
+              let paneID = detectingView.tmuxSessionName else {
             return false
         }
-        session.scrollHistory(paneID: paneID, lines: lines, up: up)
+        session.scrollHistory(paneID: paneID, lines: lines, up: up) { [weak detectingView] position in
+            DispatchQueue.main.async {
+                detectingView?.noteTmuxScrollPosition(position)
+            }
+        }
         return true
     }
 
