@@ -87,14 +87,22 @@ public struct AgentSupervisor: Sendable {
         }
 
         let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: 60)
-        if Self.looksLikeAgentQuestion(visibleText) {
-            return Result(status: .asking, tone: .yellow, provider: provider, currentPath: pane.currentPath)
-        }
+        // A live turn is checked first: its interrupt affordance is scoped to the
+        // visible tail, so it beats an untouched-looking prompt during the moment
+        // a slash command is still running.
         if Self.looksLikeAgentExecuting(visibleText) {
             return Result(status: .executing, tone: .blue, provider: provider, currentPath: pane.currentPath)
         }
+        // An untouched prompt outranks the question scan, which searches the whole
+        // captured window and therefore also sees scrollback from *before* a
+        // `/clear`. A cleared session whose old conversation happened to contain a
+        // phrase like "should I merge…" would otherwise stay pinned to `.asking`
+        // forever; nothing below the banner can be a live question.
         if Self.looksLikeUntouchedAgentPrompt(visibleText) {
             return Result(status: .idle, tone: .neutral, provider: provider, currentPath: pane.currentPath)
+        }
+        if Self.looksLikeAgentQuestion(visibleText) {
+            return Result(status: .asking, tone: .yellow, provider: provider, currentPath: pane.currentPath)
         }
 
         return Result(status: .needInput, tone: .yellow, provider: provider, currentPath: pane.currentPath)
@@ -204,14 +212,6 @@ public struct AgentSupervisor: Sendable {
         }
     }
 
-    /// True only when the visible tail shows the agent is *actively* working —
-    /// not merely that its finished output happens to mention work. Matching bare
-    /// words like `working`/`editing`/`running` pinned idle sessions to
-    /// `.executing` forever, because an agent's completion summary is full of them
-    /// (e.g. Codex prints `Worked for 3m 38s` and bullets like `Ran … before
-    /// editing.` while sitting at an idle prompt). TUI agents instead render a
-    /// live "interrupt" affordance only while a turn is in flight and drop it the
-    /// instant they return to the prompt, so that hint is the reliable signal.
     /// True when the pane shows an agent sitting at a prompt it has never been
     /// asked to do anything with — freshly launched, or reset with `/clear`.
     ///
@@ -243,9 +243,12 @@ public struct AgentSupervisor: Sendable {
             return false
         }
 
-        // Skip the rest of the welcome box — its body rows and closing border.
+        // Skip the rest of the header. Claude renders either a full welcome box
+        // (body rows and a closing border) or, in a plain launch, a compact block
+        // whose logo rows carry the model and cwd text alongside the art — so the
+        // skip has to cover box borders and logo glyphs alike.
         var start = bannerIndex + 1
-        while start < lines.count, isBoxChrome(lines[start]) {
+        while start < lines.count, isBannerChrome(lines[start]) {
             start += 1
         }
 
@@ -254,8 +257,30 @@ public struct AgentSupervisor: Sendable {
         let end = lines[start...].lastIndex(where: isPromptRow) ?? lines.count
         guard start <= end else { return false }
 
-        return lines[start..<end].allSatisfy(isIdlePromptChrome)
+        // A turn nobody asked for leaves output behind without leaving a result to
+        // read. Its transcript is only discounted when the region carries a marker
+        // naming it as machine-triggered *and* the user typed nothing themselves —
+        // an echoed human prompt always counts as work, so a session that did real
+        // work before a heartbeat fired still asks for attention.
+        let region = lines[start..<end]
+        let isBackgroundOnly = region.contains { line in
+            let lowercased = line.lowercased()
+            return Self.backgroundActivityMarkers.contains(where: lowercased.contains)
+        }
+
+        return region.allSatisfy { isIdlePromptChrome($0, discountingAgentOutput: isBackgroundOnly) }
     }
+
+    /// Marks a turn as self-triggered rather than requested by the user. Kept
+    /// narrow on purpose: a `/loop` doing real work must still raise attention, so
+    /// this matches the heartbeat's own sentinel rather than the generic wakeup
+    /// banner every loop prints. Add a marker here to silence another automation.
+    private static let backgroundActivityMarkers = ["__cache-warm-ping__"]
+
+    /// Leading glyphs of the agent's own transcript rows (bullets, tool results,
+    /// spinner summaries) — content, unless the turn that produced them was a
+    /// background heartbeat.
+    private static let agentOutputMarkers = Set("⏺⎿✻✳⧗↳•·")
 
     private static let boxDrawingCharacters = Set("─│╭╮╰╯┌┐└┘├┤┬┴┼━┄┈╌═↯")
 
@@ -263,9 +288,13 @@ public struct AgentSupervisor: Sendable {
         !line.isEmpty && line.allSatisfy { boxDrawingCharacters.contains($0) || $0 == " " }
     }
 
-    private static func isBoxChrome(_ line: String) -> Bool {
+    /// Glyphs the agent logos are drawn from, which lead every row of Claude's
+    /// compact startup header.
+    private static let bannerArtCharacters = Set("▐▛▜▝▘▟▙▖▗▚▞▀▄▌█")
+
+    private static func isBannerChrome(_ line: String) -> Bool {
         guard let first = line.first else { return false }
-        return boxDrawingCharacters.contains(first)
+        return boxDrawingCharacters.contains(first) || bannerArtCharacters.contains(first)
     }
 
     private static func isPromptRow(_ line: String) -> Bool {
@@ -275,11 +304,14 @@ public struct AgentSupervisor: Sendable {
 
     /// Lines that can sit between the welcome box and the input row without
     /// meaning the agent did any work.
-    private static func isIdlePromptChrome(_ line: String) -> Bool {
+    private static func isIdlePromptChrome(_ line: String, discountingAgentOutput: Bool = false) -> Bool {
         if line.isEmpty || isDividerOnly(line) {
             return true
         }
         if line.lowercased().hasPrefix("tip:") {
+            return true
+        }
+        if discountingAgentOutput, let first = line.first, agentOutputMarkers.contains(first) {
             return true
         }
         // An echoed slash command — `❯ /clear`, `❯ /new` — is the very action that
@@ -291,6 +323,14 @@ public struct AgentSupervisor: Sendable {
         return false
     }
 
+    /// True only when the visible tail shows the agent is *actively* working —
+    /// not merely that its finished output happens to mention work. Matching bare
+    /// words like `working`/`editing`/`running` pinned idle sessions to
+    /// `.executing` forever, because an agent's completion summary is full of them
+    /// (e.g. Codex prints `Worked for 3m 38s` and bullets like `Ran … before
+    /// editing.` while sitting at an idle prompt). TUI agents instead render a
+    /// live "interrupt" affordance only while a turn is in flight and drop it the
+    /// instant they return to the prompt, so that hint is the reliable signal.
     private static func looksLikeAgentExecuting(_ text: String) -> Bool {
         let tail = text
             .lowercased()

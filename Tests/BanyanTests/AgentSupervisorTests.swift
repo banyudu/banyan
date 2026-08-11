@@ -628,6 +628,182 @@ import Testing
     #expect(result?.status == .idle)
 }
 
+@Test func supervisorKeepsSessionIdleThroughBackgroundHeartbeatTurn() {
+    // A cache-warm ping fires itself on a timer and answers itself. It leaves a
+    // transcript behind but no result the user is waiting to read, so a session
+    // that was empty must stay empty across one.
+    let heartbeatText = freshClaudePane.replacingOccurrences(
+        of: "─────────────────────────────────────── ↯ ─",
+        with: [
+            "❯ /clear",
+            "",
+            "✻ Claude resuming /loop wakeup (Aug 11 3:39pm)",
+            "",
+            "⏺ CronCreate(21 16 11 8 *: __cache-warm-ping__)",
+            "  ⎿  Scheduled a03428ac (21 16 11 8 *)",
+            "",
+            "⏺ ok",
+            "",
+            "✻ Cogitated for 8s",
+            "",
+            "─────────────────────────────────────── ↯ ─"
+        ].joined(separator: "\n")
+    )
+
+    let result = makeSupervisor(
+        visibleText: heartbeatText,
+        processes: [agentProcess("claude")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .idle)
+}
+
+@Test func supervisorStillReportsUserWorkThatPrecededAHeartbeat() {
+    // The heartbeat discount applies to the agent's own rows, never to a prompt
+    // the user typed — otherwise a real answer would be hidden by the next ping.
+    let mixedText = freshClaudePane.replacingOccurrences(
+        of: "─────────────────────────────────────── ↯ ─",
+        with: [
+            "❯ summarize the failing test",
+            "",
+            "⏺ The fixture path is wrong; fix is a one-liner.",
+            "",
+            "✻ Claude resuming /loop wakeup (Aug 11 3:39pm)",
+            "",
+            "⏺ CronCreate(21 16 11 8 *: __cache-warm-ping__)",
+            "",
+            "─────────────────────────────────────── ↯ ─"
+        ].joined(separator: "\n")
+    )
+
+    let result = makeSupervisor(
+        visibleText: mixedText,
+        processes: [agentProcess("claude")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+}
+
+@Test func supervisorReportsLoopWorkThatIsNotAHeartbeat() {
+    // A `/loop` that does real work is machine-triggered too, but its result is
+    // worth reading — only the heartbeat's own sentinel silences a turn.
+    let loopText = freshClaudePane.replacingOccurrences(
+        of: "─────────────────────────────────────── ↯ ─",
+        with: [
+            "✻ Claude resuming /loop wakeup (Aug 11 3:39pm)",
+            "",
+            "⏺ CI failed on main: 3 tests broken in SessionStore.",
+            "",
+            "─────────────────────────────────────── ↯ ─"
+        ].joined(separator: "\n")
+    )
+
+    let result = makeSupervisor(
+        visibleText: loopText,
+        processes: [agentProcess("claude")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+}
+
+@Test func supervisorClassifiesCompactClaudeHeaderPaneAsIdle() {
+    // A plain `claude` launch prints a compact header instead of the welcome box:
+    // three logo rows that carry the model and cwd text themselves. Those rows are
+    // header chrome, not conversation, even though they hold real words.
+    let compactText = [
+        "➜  ~ claude",
+        " ▐▛███▜▌   Claude Code v2.1.227",
+        "▝▜█████▛▘  Opus 5 (1M context) with medium effort · Claude Max",
+        "  ▘▘ ▝▝    /Users/banyudu",
+        "",
+        "❯ /clear",
+        "",
+        "───────────────────────────────────────────",
+        "❯",
+        "───────────────────────────────────────────",
+        "  Opus 5 (1M context) | ~",
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(
+        visibleText: compactText,
+        processes: [agentProcess("claude")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .idle)
+}
+
+@Test func supervisorTreatsClearedConversationAsIdleDespiteQuestionInOldScrollback() {
+    // `/clear` wipes the screen but not tmux's scrollback, so the captured window
+    // still holds the previous conversation. A question phrase up there must not
+    // outrank the empty prompt below the redrawn banner — this pinned a cleared
+    // session to `.asking` indefinitely.
+    let clearedText = ([
+        "⏺ User answered Claude's questions:",
+        "  ⎿  · Which branch should I merge to main and deploy? → yudu/eng-8936",
+        "",
+        "⏺ Merged as c7395cd. Now the VM:",
+        ""
+    ] + [freshClaudePane]).joined(separator: "\n")
+        .replacingOccurrences(
+            of: "─────────────────────────────────────── ↯ ─",
+            with: "❯ /clear\n\n─────────────────────────────────────── ↯ ─"
+        )
+
+    let result = makeSupervisor(
+        visibleText: clearedText,
+        processes: [agentProcess("claude")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .asking
+    )
+
+    #expect(result?.status == .idle)
+}
+
+@Test func supervisorStillClassifiesLiveQuestionBelowBannerAsAsking() {
+    // The reordering above must not swallow a genuine question asked in a session
+    // whose banner is still on screen.
+    let askingText = freshClaudePane.replacingOccurrences(
+        of: "─────────────────────────────────────── ↯ ─",
+        with: [
+            "❯ ship it",
+            "",
+            "⏺ Do you want me to force-push over the remote branch?",
+            "",
+            "─────────────────────────────────────── ↯ ─"
+        ].joined(separator: "\n")
+    )
+
+    let result = makeSupervisor(
+        visibleText: askingText,
+        processes: [agentProcess("claude")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .asking)
+}
+
 @Test func supervisorKeepsFinishedTurnAsNeedInputWhileBannerLingers() {
     // The welcome box stays inside the captured window for the first few turns,
     // so a banner match alone must never be enough to call a session untouched.
