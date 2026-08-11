@@ -131,13 +131,57 @@ public enum SessionTitleGenerator {
 
         if let firstLine = trimmed.split(whereSeparator: \.isNewline).first {
             let line = String(firstLine).trimmingCharacters(in: .whitespacesAndNewlines)
-            if let sentenceEnd = line.firstIndex(where: { ".!?。！？".contains($0) }) {
+            if let sentenceEnd = findSentenceEnd(in: line) {
                 return String(line[...sentenceEnd])
             }
             return line
         }
 
         return trimmed
+    }
+
+    private static func findSentenceEnd(in line: String) -> String.Index? {
+        var index = line.startIndex
+        while index < line.endIndex {
+            let ch = line[index]
+            if "!?。！？".contains(ch) {
+                return index
+            }
+            if ch == "." {
+                let next = line.index(after: index)
+                let followedBySpaceOrEnd = next >= line.endIndex || line[next].isWhitespace
+                if followedBySpaceOrEnd && !isInsideNonSentenceToken(line, dotAt: index) {
+                    return index
+                }
+            }
+            index = line.index(after: index)
+        }
+        return nil
+    }
+
+    private static func isInsideNonSentenceToken(_ line: String, dotAt: String.Index) -> Bool {
+        let before = line[..<dotAt]
+        let wordStart = before.lastIndex(where: { $0.isWhitespace })
+            .map { line.index(after: $0) } ?? line.startIndex
+        let after = line[line.index(after: dotAt)...]
+        let wordEnd = after.firstIndex(where: { $0.isWhitespace }) ?? line.endIndex
+        let token = String(line[wordStart..<wordEnd])
+
+        if token.contains("://") { return true }
+
+        let dotCount = token.filter { $0 == "." }.count
+        if dotCount >= 2 { return true }
+
+        if token.hasSuffix(".") {
+            let base = String(token.dropLast())
+            let knownExtensions = ["swift", "ts", "js", "py", "go", "rs", "java", "kt",
+                                   "rb", "c", "h", "cpp", "cs", "md", "json", "yaml",
+                                   "yml", "toml", "xml", "html", "css", "sh", "txt"]
+            let ext = base.split(separator: ".").last.map(String.init) ?? ""
+            if knownExtensions.contains(ext.lowercased()) { return true }
+        }
+
+        return false
     }
 
     private static func truncate(_ value: String, limit: Int) -> String {
