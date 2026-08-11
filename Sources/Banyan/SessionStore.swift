@@ -195,6 +195,8 @@ final class SessionStore: ObservableObject {
     @Published private(set) var historyResumeErrors: [String: String] = [:]
     private var latestImportedHistory: [ImportedAgentSession] = []
     private var selectedContextTask: Task<Void, Never>?
+    private var displayContextRetryTask: Task<Void, Never>?
+    private var displayContextRetryAttempts = 0
     private var selectedContextSignature: String?
     private var selectedContextResolvedAt = Date.distantPast
     /// Network/git-derived context keyed by `SessionContextResolver.cacheKey`.
@@ -594,6 +596,53 @@ final class SessionStore: ObservableObject {
         recoverAll(selectRecoveredSession: false)
         refreshSelectedContextInfo(force: true)
         saveSessions()
+        retryDegradedDisplayContexts()
+    }
+
+    /// Re-resolves repository context for sessions whose git lookups failed to
+    /// run (timed out / couldn't launch). The restore pass above spawns git for
+    /// every unique cwd in one burst; lookups that degrade there leave the
+    /// session stuck with a path-based group (worktrees then don't group with
+    /// their repo) because nothing else re-runs the lookup for an idle pane.
+    /// Runs the lookups off the main thread, then applies trustworthy results.
+    func retryDegradedDisplayContexts() {
+        guard displayContextRetryTask == nil else { return }
+        guard displayContextRetryAttempts < 5 else { return }
+        let candidates = sessions.filter { $0.status != .closed && $0.displayContextDegraded }
+        guard !candidates.isEmpty else { return }
+        displayContextRetryAttempts += 1
+        let lookups = Set(candidates.map(\.cwd)).map { cwd in
+            (cwd: cwd, homeDirectory: homeDirectory, environment: environment)
+        }
+        displayContextRetryTask = Task.detached(priority: .utility) { [weak self] in
+            var resolved: [String: SessionProjectContext] = [:]
+            for lookup in lookups {
+                resolved[lookup.cwd] = SessionDisplayLabel.context(
+                    cwd: lookup.cwd,
+                    homeDirectory: lookup.homeDirectory,
+                    environment: lookup.environment
+                )
+            }
+            let contextsByCWD = resolved
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.displayContextRetryTask = nil
+                var stillDegraded = false
+                for session in self.sessions where session.status != .closed && session.displayContextDegraded {
+                    guard let context = contextsByCWD[session.cwd] else { continue }
+                    session.applyProjectContext(context)
+                    stillDegraded = stillDegraded || session.displayContextDegraded
+                }
+                self.saveSessions()
+                if stillDegraded {
+                    // Try again shortly; git may have been transiently overloaded.
+                    Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 15_000_000_000)
+                        self?.retryDegradedDisplayContexts()
+                    }
+                }
+            }
+        }
     }
 
     func refreshImportedHistory(spawnDefaultIfEmpty: Bool = false) {

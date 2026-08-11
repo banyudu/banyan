@@ -192,11 +192,15 @@ public enum SubprocessRunner {
 
         // ── Normal exit ─────────────────────────────────────────────────
         // Close channels cleanly so any remaining buffered data is
-        // delivered, then collect output. The 1 s cap guards against a
-        // detached grandchild that inherited the pipe FDs.
+        // delivered, then collect output. The cap guards against a
+        // detached grandchild that inherited the pipe FDs; it needs to be
+        // generous because under startup load the DispatchIO callbacks can
+        // lag well behind process exit, and giving up early returns a
+        // truncated (often empty) stdout that callers mistake for a real
+        // answer.
         stdoutChannel.close()
         stderrChannel.close()
-        _ = drainDone.wait(timeout: .now() + 1.0)
+        _ = drainDone.wait(timeout: .now() + 3.0)
 
         return Output(
             terminationStatus: process.terminationStatus,
