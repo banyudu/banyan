@@ -197,6 +197,43 @@ import Foundation
     #expect(worktreeContext.gitLookupDegraded == false)
 }
 
+@Test func projectContextGroupsGitWorktreesWithTheirRemoteRepository() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let main = root.appendingPathComponent("repo")
+    let worktree = main.appendingPathComponent(".worktrees").appendingPathComponent("feature-x")
+    try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+    try runGit(["init"], cwd: main)
+    try runGit(["config", "user.email", "test@example.com"], cwd: main)
+    try runGit(["config", "user.name", "Banyan Tests"], cwd: main)
+    try runGit(["remote", "add", "origin", "git@github.com:yudu/banyan.git"], cwd: main)
+    try "test".write(to: main.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    try runGit(["add", "README.md"], cwd: main)
+    try runGit(["commit", "-m", "Initial commit"], cwd: main)
+    try runGit(["worktree", "add", "-b", "feature-x", worktree.path], cwd: main)
+
+    let mainContext = SessionDisplayLabel.context(
+        cwd: main.path,
+        homeDirectory: "/home/test",
+        environment: [:]
+    )
+    let worktreeContext = SessionDisplayLabel.context(
+        cwd: worktree.path,
+        homeDirectory: "/home/test",
+        environment: [:]
+    )
+
+    // The user-visible regression: a worktree session must land in the same
+    // sidebar group as its repository, keyed by the remote address — never in
+    // a path-based group of its own.
+    #expect(mainContext.groupID == "git:github.com/yudu/banyan")
+    #expect(worktreeContext.groupID == mainContext.groupID)
+    #expect(worktreeContext.groupTitle == "yudu/banyan")
+    #expect(worktreeContext.isGitWorktree == true)
+    #expect(worktreeContext.branch == "feature-x")
+    #expect(worktreeContext.gitLookupDegraded == false)
+}
+
 private func temporaryDirectory() throws -> URL {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("BanyanCoreTests-\(UUID().uuidString)")

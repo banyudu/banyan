@@ -33,6 +33,35 @@ import Testing
     #expect(elapsed < .milliseconds(900))
 }
 
+@Test func subprocessRunnerNeverDropsOutputUnderConcurrentLoad() async throws {
+    // Regression guard for the drain race that broke worktree grouping: under
+    // load, the post-exit pipe drain used to give up after its grace period and
+    // return exit 0 with a truncated (often empty) stdout, which callers took
+    // as a real answer. Saturate the runner and require every byte back.
+    let cwd = FileManager.default.currentDirectoryPath
+    let environment = ProcessInfo.processInfo.environment
+    try await withThrowingTaskGroup(of: String.self) { group in
+        for index in 0..<32 {
+            group.addTask {
+                let output = try await SubprocessRunner.runAsync(
+                    arguments: ["printf", "payload-\(index)"],
+                    cwd: cwd,
+                    environment: environment,
+                    timeout: 10
+                )
+                #expect(output.terminationStatus == 0)
+                return String(decoding: output.standardOutput, as: UTF8.self)
+            }
+        }
+        var results: [String] = []
+        for try await result in group {
+            results.append(result)
+        }
+        #expect(results.count == 32)
+        #expect(results.allSatisfy { $0.hasPrefix("payload-") })
+    }
+}
+
 @Test func subprocessRunnerHandlesLargeOutput() throws {
     let byteCount = 256 * 1024
     let output = try SubprocessRunner.run(
