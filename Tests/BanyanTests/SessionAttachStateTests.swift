@@ -239,7 +239,9 @@ import Testing
 }
 
 @Test func codingAgentIdleStatusOnlyIncludesWaitingStates() {
-    let idleStatuses: Set<SessionStatus> = [.needInput, .asking, .review]
+    // `.idle` (an untouched or freshly cleared agent prompt) is idle for the
+    // purposes of handoff and input, even though it raises no attention marker.
+    let idleStatuses: Set<SessionStatus> = [.needInput, .asking, .review, .idle]
 
     for status in SessionStatus.allCases {
         #expect(status.isCodingAgentIdle == idleStatuses.contains(status))
