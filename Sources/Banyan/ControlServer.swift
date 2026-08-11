@@ -368,6 +368,9 @@ final class ControlServer {
             "parent": session.parentSessionID ?? "",
             "isRestored": session.isRestored,
             "isProcessStarted": session.isProcessStarted,
+            "projectGroupID": session.projectGroupID,
+            "projectGroupTitle": session.projectGroupTitle,
+            "displayContextDegraded": session.displayContextDegraded,
             "createdAt": ISO8601DateFormatter().string(from: session.createdAt),
             "updatedAt": ISO8601DateFormatter().string(from: session.updatedAt)
         ]

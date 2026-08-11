@@ -80,7 +80,15 @@ public enum SessionDisplayLabel {
         } ?? (value: false, degraded: false)
         degraded = degraded || defaultBranch.degraded
 
-        let remote = gitRemoteURL(cwd: resolvedCWD, environment: environment)
+        var remote = gitRemoteURL(cwd: resolvedCWD, environment: environment)
+        if remote.value == nil && isGitWorktree {
+            let mainRemote = gitRemoteURL(cwd: mainDirectory.value, environment: environment)
+            if mainRemote.value != nil {
+                remote = mainRemote
+            } else {
+                degraded = degraded || mainRemote.degraded
+            }
+        }
         degraded = degraded || remote.degraded
         if let remoteURL = remote.value {
             let normalizedAddress = normalizedGitAddress(remoteURL)
@@ -222,7 +230,12 @@ public enum SessionDisplayLabel {
         }
         guard !origin.degraded else { return (nil, true) }
 
-        let availableRemotes = gitLookup(["remote"], cwd: cwd, environment: environment)
+        let availableRemotes = gitLookup(
+            ["remote"],
+            cwd: cwd,
+            environment: environment,
+            emptyOutputIsDegraded: false
+        )
         guard let remotes = availableRemotes.value else {
             return (nil, availableRemotes.degraded)
         }
@@ -250,18 +263,47 @@ public enum SessionDisplayLabel {
             cwd: cwd,
             environment: environment
         )
-        guard let commonGitDirectory = common.value else {
-            // On failure we fall back to the worktree's own top level, which makes
-            // `isGitWorktree` read `false`. Flag `degraded` so that false-negative
-            // isn't cached over a good reading.
-            return (standardizedPath(fallbackTopLevel), common.degraded)
+        if let commonGitDirectory = common.value {
+            let url = URL(fileURLWithPath: standardizedPath(commonGitDirectory)).standardizedFileURL
+            if url.lastPathComponent == ".git" {
+                return (url.deletingLastPathComponent().path, false)
+            }
+            return (url.path, false)
         }
 
-        let url = URL(fileURLWithPath: standardizedPath(commonGitDirectory)).standardizedFileURL
-        if url.lastPathComponent == ".git" {
-            return (url.deletingLastPathComponent().path, false)
+        if let mainDir = mainDirectoryFromWorktreeGitFile(topLevel: fallbackTopLevel) {
+            return (mainDir, false)
         }
-        return (url.path, false)
+
+        return (standardizedPath(fallbackTopLevel), common.degraded)
+    }
+
+    private static func mainDirectoryFromWorktreeGitFile(topLevel: String) -> String? {
+        let gitFile = URL(fileURLWithPath: topLevel).appendingPathComponent(".git")
+        guard let contents = try? String(contentsOf: gitFile, encoding: .utf8) else { return nil }
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("gitdir:") else { return nil }
+        let gitdirPath = trimmed.dropFirst("gitdir:".count)
+            .trimmingCharacters(in: .whitespaces)
+        let resolved: String
+        if gitdirPath.hasPrefix("/") {
+            resolved = gitdirPath
+        } else {
+            resolved = URL(fileURLWithPath: topLevel)
+                .appendingPathComponent(gitdirPath).standardizedFileURL.path
+        }
+        let url = URL(fileURLWithPath: standardizedPath(resolved)).standardizedFileURL
+        guard url.path.contains("/worktrees/") else { return nil }
+        var current = url
+        while current.lastPathComponent != "worktrees" && current.path != "/" {
+            current = current.deletingLastPathComponent()
+        }
+        guard current.lastPathComponent == "worktrees" else { return nil }
+        let gitDir = current.deletingLastPathComponent()
+        if gitDir.lastPathComponent == ".git" {
+            return gitDir.deletingLastPathComponent().path
+        }
+        return gitDir.path
     }
 
     private static func isDefaultBranch(
@@ -340,10 +382,17 @@ public enum SessionDisplayLabel {
     /// *degraded* one (the subprocess timed out or failed to launch, so we don't
     /// actually know the answer). `value` is `nil` in both cases; `degraded`
     /// distinguishes them so callers can avoid caching a false-negative.
+    /// - Parameter emptyOutputIsDegraded: Most lookups here (`--show-toplevel`,
+    ///   `remote get-url`, …) never legitimately succeed with empty stdout, so a
+    ///   0-exit with no output means the pipe drain lost the data (it happens
+    ///   under startup load) rather than a real answer. Callers whose command
+    ///   can genuinely print nothing (`git remote` in a remoteless repo) pass
+    ///   `false` to keep treating that as a trustworthy negative.
     private static func gitLookup(
         _ arguments: [String],
         cwd: String,
-        environment: [String: String]
+        environment: [String: String],
+        emptyOutputIsDegraded: Bool = true
     ) -> (value: String?, degraded: Bool) {
         let output: SubprocessRunner.Output
         do {
@@ -361,7 +410,10 @@ public enum SessionDisplayLabel {
         }
         let text = String(decoding: output.standardOutput, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (text.isEmpty ? nil : text, false)
+        if text.isEmpty {
+            return (nil, emptyOutputIsDegraded)
+        }
+        return (text, false)
     }
 
     /// Bound for the local git lookups above. Generous enough for a cold cache /
