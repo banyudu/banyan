@@ -95,6 +95,17 @@ public enum AgentSessionHistoryImporter {
 
         var candidates: [(url: URL, modifiedAt: Date)] = []
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            // Claude stores subagent workflow journals and transcripts beneath
+            // the project directory too. They are implementation artifacts,
+            // not resumable top-level conversations. In particular, every
+            // workflow uses the basename `journal.jsonl`; importing them would
+            // create duplicate history IDs across projects and can make
+            // downstream unique-key dictionaries trap.
+            let relativePath = url.path.replacingOccurrences(of: projectsDirectory.path + "/", with: "")
+            guard !relativePath.split(separator: "/").contains("subagents"),
+                  url.lastPathComponent != "journal.jsonl" else {
+                continue
+            }
             let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
                 ?? Date.distantPast
             candidates.append((url, modifiedAt))
