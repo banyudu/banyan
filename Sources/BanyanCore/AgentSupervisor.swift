@@ -87,11 +87,22 @@ public struct AgentSupervisor: Sendable {
         }
 
         let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: 60)
-        if Self.looksLikeAgentQuestion(visibleText) {
-            return Result(status: .asking, tone: .yellow, provider: provider, currentPath: pane.currentPath)
-        }
+        // A live turn is checked first: its interrupt affordance is scoped to the
+        // visible tail, so it beats an untouched-looking prompt during the moment
+        // a slash command is still running.
         if Self.looksLikeAgentExecuting(visibleText) {
             return Result(status: .executing, tone: .blue, provider: provider, currentPath: pane.currentPath)
+        }
+        // An untouched prompt outranks the question scan, which searches the whole
+        // captured window and therefore also sees scrollback from *before* a
+        // `/clear`. A cleared session whose old conversation happened to contain a
+        // phrase like "should I merge…" would otherwise stay pinned to `.asking`
+        // forever; nothing below the banner can be a live question.
+        if Self.looksLikeUntouchedAgentPrompt(visibleText) {
+            return Result(status: .idle, tone: .neutral, provider: provider, currentPath: pane.currentPath)
+        }
+        if Self.looksLikeAgentQuestion(visibleText) {
+            return Result(status: .asking, tone: .yellow, provider: provider, currentPath: pane.currentPath)
         }
 
         return Result(status: .needInput, tone: .yellow, provider: provider, currentPath: pane.currentPath)
@@ -199,6 +210,117 @@ public struct AgentSupervisor: Sendable {
         return trimmedLines.contains { line in
             line.hasSuffix("?") && line.count >= 8
         }
+    }
+
+    /// True when the pane shows an agent sitting at a prompt it has never been
+    /// asked to do anything with — freshly launched, or reset with `/clear`.
+    ///
+    /// Such a session is idle but carries no result to look at, so it must not be
+    /// reported as `.needInput` alongside sessions that actually finished a turn;
+    /// a rarely-used empty session would otherwise wave for attention forever.
+    ///
+    /// The signal is structural rather than a banner match alone: every agent
+    /// prints its welcome box at startup and re-prints it on `/clear`, but the box
+    /// also lingers in the captured scrollback for the first few turns afterwards.
+    /// So we locate the banner, then require that *nothing but chrome* appears
+    /// between the end of that box and the input row — no agent output, no echoed
+    /// prompt other than a slash command like the `/clear` that produced this
+    /// state. Anything unrecognized counts as content, keeping `.needInput` the
+    /// conservative default: a missed idle marker is cosmetic, a missed result is
+    /// not.
+    static func looksLikeUntouchedAgentPrompt(_ text: String) -> Bool {
+        let lines = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+
+        // Banner titles: Claude renders `╭─── Claude Code v2.x ───╮`, Codex
+        // `│ >_ OpenAI Codex (v0.x) │`.
+        let bannerMarkers = ["claude code v", "openai codex (v", "welcome to claude code"]
+        guard let bannerIndex = lines.lastIndex(where: { line in
+            let lowercased = line.lowercased()
+            return bannerMarkers.contains(where: lowercased.contains)
+        }) else {
+            return false
+        }
+
+        // Skip the rest of the header. Claude renders either a full welcome box
+        // (body rows and a closing border) or, in a plain launch, a compact block
+        // whose logo rows carry the model and cwd text alongside the art — so the
+        // skip has to cover box borders and logo glyphs alike.
+        var start = bannerIndex + 1
+        while start < lines.count, isBannerChrome(lines[start]) {
+            start += 1
+        }
+
+        // The input row is the last prompt marker in the capture; everything below
+        // it is the status footer, which never reflects conversation content.
+        let end = lines[start...].lastIndex(where: isPromptRow) ?? lines.count
+        guard start <= end else { return false }
+
+        // A turn nobody asked for leaves output behind without leaving a result to
+        // read. Its transcript is only discounted when the region carries a marker
+        // naming it as machine-triggered *and* the user typed nothing themselves —
+        // an echoed human prompt always counts as work, so a session that did real
+        // work before a heartbeat fired still asks for attention.
+        let region = lines[start..<end]
+        let isBackgroundOnly = region.contains { line in
+            let lowercased = line.lowercased()
+            return Self.backgroundActivityMarkers.contains(where: lowercased.contains)
+        }
+
+        return region.allSatisfy { isIdlePromptChrome($0, discountingAgentOutput: isBackgroundOnly) }
+    }
+
+    /// Marks a turn as self-triggered rather than requested by the user. Kept
+    /// narrow on purpose: a `/loop` doing real work must still raise attention, so
+    /// this matches the heartbeat's own sentinel rather than the generic wakeup
+    /// banner every loop prints. Add a marker here to silence another automation.
+    private static let backgroundActivityMarkers = ["__cache-warm-ping__"]
+
+    /// Leading glyphs of the agent's own transcript rows (bullets, tool results,
+    /// spinner summaries) — content, unless the turn that produced them was a
+    /// background heartbeat.
+    private static let agentOutputMarkers = Set("⏺⎿✻✳⧗↳•·")
+
+    private static let boxDrawingCharacters = Set("─│╭╮╰╯┌┐└┘├┤┬┴┼━┄┈╌═↯")
+
+    private static func isDividerOnly(_ line: String) -> Bool {
+        !line.isEmpty && line.allSatisfy { boxDrawingCharacters.contains($0) || $0 == " " }
+    }
+
+    /// Glyphs the agent logos are drawn from, which lead every row of Claude's
+    /// compact startup header.
+    private static let bannerArtCharacters = Set("▐▛▜▝▘▟▙▖▗▚▞▀▄▌█")
+
+    private static func isBannerChrome(_ line: String) -> Bool {
+        guard let first = line.first else { return false }
+        return boxDrawingCharacters.contains(first) || bannerArtCharacters.contains(first)
+    }
+
+    private static func isPromptRow(_ line: String) -> Bool {
+        guard let first = line.first else { return false }
+        return first == "❯" || first == "›" || first == "❱"
+    }
+
+    /// Lines that can sit between the welcome box and the input row without
+    /// meaning the agent did any work.
+    private static func isIdlePromptChrome(_ line: String, discountingAgentOutput: Bool = false) -> Bool {
+        if line.isEmpty || isDividerOnly(line) {
+            return true
+        }
+        if line.lowercased().hasPrefix("tip:") {
+            return true
+        }
+        if discountingAgentOutput, let first = line.first, agentOutputMarkers.contains(first) {
+            return true
+        }
+        // An echoed slash command — `❯ /clear`, `❯ /new` — is the very action that
+        // emptied the session, not work left behind in it.
+        if isPromptRow(line) {
+            let typed = line.dropFirst().trimmingCharacters(in: .whitespaces)
+            return typed.isEmpty || typed.hasPrefix("/")
+        }
+        return false
     }
 
     /// True only when the visible tail shows the agent is *actively* working —

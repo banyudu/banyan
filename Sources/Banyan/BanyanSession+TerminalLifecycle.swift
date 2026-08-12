@@ -342,7 +342,7 @@ extension BanyanSession {
     }
 
     fileprivate func terminalEnvironment() -> [String] {
-        var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
+        var environment = Terminal.getEnvironmentVariables(termName: TmuxBackend.attachTermName, trueColor: true)
         let inherited = self.environment
         for key in ["PATH", "SHELL", "TMPDIR", "SSH_AUTH_SOCK"] {
             if let value = inherited[key] {

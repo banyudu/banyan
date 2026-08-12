@@ -8,6 +8,7 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
     case needInput = "need-input"
     case asking
     case review
+    case idle
     case completed
     case failed
     case closed
@@ -16,7 +17,7 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
 
     public var isCodingAgentIdle: Bool {
         switch self {
-        case .needInput, .asking, .review: return true
+        case .needInput, .asking, .review, .idle: return true
         case .running, .executing, .longRunningShell, .subagents, .completed, .failed, .closed: return false
         }
     }
@@ -30,6 +31,7 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
         case .needInput: return "Need Input"
         case .asking: return "Asking"
         case .review: return "Review"
+        case .idle: return "Idle"
         case .completed: return "Completed"
         case .failed: return "Failed"
         case .closed: return "Closed"
@@ -45,6 +47,7 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
         case .needInput: return "✋"
         case .asking: return "❓"
         case .review: return "👀"
+        case .idle: return "💤"
         case .completed: return "✅"
         case .failed: return "❌"
         case .closed: return "📦"
@@ -62,7 +65,8 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
         case .executing: return 6
         case .running: return 7
         case .completed: return 8
-        case .closed: return 9
+        case .idle: return 9
+        case .closed: return 10
         }
     }
 }

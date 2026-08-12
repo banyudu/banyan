@@ -42,7 +42,7 @@ public enum SessionInputPolicy {
               isProcessStarted,
               status != .closed,
               provider != nil,
-              [.running, .longRunningShell, .needInput, .asking].contains(status) else {
+              [.running, .longRunningShell, .needInput, .asking, .idle].contains(status) else {
             return nil
         }
         return .executing

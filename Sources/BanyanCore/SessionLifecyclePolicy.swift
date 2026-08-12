@@ -20,7 +20,7 @@ public enum SessionLifecyclePolicy {
     ) -> Bool {
         !isImportedHistory
             && status != .closed
-            && [.asking, .needInput].contains(status)
+            && [.asking, .needInput, .idle].contains(status)
     }
 
     public static func participatesInSupervisorTick(

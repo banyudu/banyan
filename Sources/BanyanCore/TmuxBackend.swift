@@ -17,6 +17,10 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
 
     public static let socketName = "banyan"
 
+    /// TERM the SwiftTerm-hosted `tmux attach` client runs with. tmux gates several
+    /// capabilities (hyperlinks, RGB) on this name, so both sides must agree.
+    public static let attachTermName = "xterm-256color"
+
     public let executableURL: URL
     private let workingDirectory: String
     private let environment: [String: String]
@@ -226,6 +230,23 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         // behavior whenever we touch their terminal capabilities as well.
         configureServerFocusEvents()
         _ = try? run(["set-option", "-g", "terminal-overrides", "tmux-256color:RGB,xterm-256color:RGB"])
+        configureServerHyperlinks()
+    }
+
+    /// tmux only forwards OSC 8 hyperlinks to clients whose terminal advertises the
+    /// `Hls` terminfo capability. `xterm-256color` — the TERM Banyan attaches with —
+    /// has no `Hls`, so tmux would strip every OSC 8 payload before SwiftTerm sees it.
+    private func configureServerHyperlinks() {
+        let feature = "\(Self.attachTermName):hyperlinks"
+        let current = (try? run(["show-options", "-gv", "terminal-features"]))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // `show-options -gv` prints one entry per line; `-ga` appends unconditionally and
+        // tmux never dedupes, so skip when an existing server already carries the feature.
+        let existing = current
+            .split(whereSeparator: { $0 == "\n" || $0 == "," })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !existing.contains(feature) else { return }
+        _ = try? run(["set-option", "-ga", "terminal-features", ",\(feature)"])
     }
 
     private func configureServerEnvironment() {
@@ -309,7 +330,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         environment.removeValue(forKey: "TMUX")
         environment.removeValue(forKey: "TMUX_PANE")
         environment.removeValue(forKey: "NO_COLOR")
-        environment["TERM"] = "xterm-256color"
+        environment["TERM"] = Self.attachTermName
         environment["COLORTERM"] = "truecolor"
         environment["CLICOLOR"] = "1"
         environment["CLICOLOR_FORCE"] = "1"
