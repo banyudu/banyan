@@ -90,3 +90,42 @@ import Testing
         isDefaultBranch: true
     ))
 }
+
+@Test func handoffFailureNoticeCarriesTheCommandOutput() {
+    let notice = SessionHandoffPolicy.dispatchFailureNotice(
+        exitStatus: 127,
+        output: "handoff: /Users/dev/.agents/bin/handoff not found or not executable\n"
+    )
+    #expect(notice == """
+    Handoff could not be started (exit 127). The session was restored.
+
+    handoff: /Users/dev/.agents/bin/handoff not found or not executable
+    """)
+}
+
+@Test func handoffFailureNoticeKeepsTheTailAndStripsANSI() {
+    let output = (1...20).map { "line \($0)" }.joined(separator: "\n")
+        + "\n\u{001B}[31mError: no PR detected\u{001B}[0m\n"
+    let notice = SessionHandoffPolicy.dispatchFailureNotice(exitStatus: 1, output: output)
+    #expect(notice.hasSuffix("Error: no PR detected"))
+    #expect(!notice.contains("line 14"))
+    #expect(notice.contains("line 16"))
+    #expect(!notice.contains("\u{001B}"))
+}
+
+@Test func handoffFailureNoticeOmitsDetailWhenCommandWasSilent() {
+    let notice = SessionHandoffPolicy.dispatchFailureNotice(exitStatus: 1, output: "   \n\n")
+    #expect(notice == "Handoff could not be started (exit 1). The session was restored.")
+}
+
+@Test func handoffFailureNoticeReportsLaunchErrorsWithoutAnExitStatus() {
+    let notice = SessionHandoffPolicy.dispatchFailureNotice(
+        exitStatus: nil,
+        output: "The file “handoff” doesn’t exist."
+    )
+    #expect(notice == """
+    Handoff could not be started. The session was restored.
+
+    The file “handoff” doesn’t exist.
+    """)
+}

@@ -62,8 +62,17 @@ private struct PendingLinearDescriptionUpdate {
 }
 
 private enum HandoffDispatchError: Error {
-    case commandUnavailable
-    case failed(Int32)
+    case commandUnavailable(String)
+    case failed(Int32, String)
+
+    var notice: String {
+        switch self {
+        case .commandUnavailable(let message):
+            return SessionHandoffPolicy.dispatchFailureNotice(exitStatus: nil, output: message)
+        case .failed(let status, let output):
+            return SessionHandoffPolicy.dispatchFailureNotice(exitStatus: status, output: output)
+        }
+    }
 }
 
 @MainActor
@@ -2147,6 +2156,9 @@ final class SessionStore: ObservableObject {
         do {
             try close(id: id)
         } catch {
+            // The session is still open here, so say that rather than let the
+            // caller's generic "could not be started" imply it was restored.
+            handoffNotice = "Handoff could not be started: \(error.localizedDescription)"
             return false
         }
 
@@ -2161,9 +2173,9 @@ final class SessionStore: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.pendingHandoffJobs.removeAll { $0.id == job.id }
-                if case .failure = result {
+                if case .failure(let error) = result {
                     try? self.respawn(id: job.sessionID)
-                    self.handoffNotice = "Handoff could not be started. The session was restored."
+                    self.handoffNotice = error.notice
                 }
             }
         }
@@ -2184,7 +2196,10 @@ final class SessionStore: ObservableObject {
             return
         }
         guard dispatchHandoff(id: session.id, bypassEligibility: true) else {
-            handoffNotice = "Handoff could not be started."
+            // Keep whatever reason the dispatch already reported.
+            if handoffNotice == nil {
+                handoffNotice = "Handoff could not be started."
+            }
             return
         }
     }
@@ -3078,20 +3093,62 @@ private func runHandoffDispatch(
         base: environment,
         shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment)
     )
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.nullDevice
+    // Both streams share one pipe so the failure reason stays in the order the
+    // command printed it, whichever stream it chose.
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
 
     do {
         try process.run()
     } catch {
-        return .failure(.commandUnavailable)
+        return .failure(.commandUnavailable(error.localizedDescription))
+    }
+
+    // Drain while the command runs: a dispatch can outrun the 64 KiB pipe
+    // buffer, and a full buffer would wedge the child before it ever exits.
+    let collected = HandoffOutputBuffer()
+    let reader = pipe.fileHandleForReading
+    let drained = DispatchSemaphore(value: 0)
+    DispatchQueue.global(qos: .utility).async {
+        while true {
+            let chunk = reader.availableData
+            if chunk.isEmpty { break }
+            collected.append(chunk)
+        }
+        drained.signal()
     }
 
     process.waitUntilExit()
+    drained.wait()
+
     guard process.terminationStatus == 0 else {
-        return .failure(.failed(process.terminationStatus))
+        return .failure(.failed(process.terminationStatus, collected.text()))
     }
     return .success(())
+}
+
+/// Accumulates command output across the reader thread and the caller, keeping
+/// only the tail — the alert shows a handful of lines and the rest is ballast.
+private final class HandoffOutputBuffer {
+    private static let capacity = 8 * 1024
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        data.append(chunk)
+        if data.count > Self.capacity {
+            data.removeFirst(data.count - Self.capacity)
+        }
+    }
+
+    func text() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(decoding: data, as: UTF8.self)
+    }
 }
 
 enum ControlError: LocalizedError {
