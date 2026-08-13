@@ -5,6 +5,12 @@ import QuartzCore
 import SwiftTerm
 final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
+    /// Receives text after AppKit has committed it to the terminal input.
+    /// This is intentionally sourced from NSTextInputClient rather than raw
+    /// key events so paste and IME composition (for example, Chinese input)
+    /// are recorded as the text the user actually submitted.
+    var onCommittedInput: ((String) -> Void)?
+    private(set) var isTextComposing = false
     /// The tmux pane backing this view, so the scroll handler can hand scrollback
     /// off to tmux's copy-mode instead of keeping a duplicate local history.
     var tmuxSessionName: String?
@@ -119,6 +125,27 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         if let preservedTopRow {
             restoreScrollbackPosition(preservedTopRow)
         }
+    }
+
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        if let text = string as? NSString {
+            let committedText = text as String
+            if !committedText.isEmpty {
+                onCommittedInput?(committedText)
+            }
+            isTextComposing = false
+        }
+        super.insertText(string, replacementRange: replacementRange)
+    }
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        isTextComposing = true
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+    }
+
+    override func unmarkText() {
+        isTextComposing = false
+        super.unmarkText()
     }
 
     func noteUserScrollbackPosition() {

@@ -38,7 +38,12 @@ import Testing
 
 @MainActor
 @Test func submittedInputPromotesIdleAgentSessionToExecuting() {
-    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "codex")
+    let session = makeAttachStateSession(
+        isRestored: false,
+        status: .longRunningShell,
+        command: "codex",
+        isProcessStarted: true
+    )
 
     session.noteUserSubmittedInput()
 
@@ -320,9 +325,10 @@ import Testing
 private func makeAttachStateSession(
     isRestored: Bool,
     status: SessionStatus = .running,
-    command: String = ""
+    command: String = "",
+    isProcessStarted: Bool = false
 ) -> BanyanSession {
-    BanyanSession(
+    let session = BanyanSession(
         id: "attach-state",
         title: "/tmp",
         cwd: "/tmp",
@@ -334,6 +340,8 @@ private func makeAttachStateSession(
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
+    session.isProcessStarted = isProcessStarted
+    return session
 }
 
 @MainActor

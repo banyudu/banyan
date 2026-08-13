@@ -4,7 +4,7 @@ import BanyanCore
 
 @Test func defaultDirectoryTitleTracksCurrentDirectory() {
     #expect(SessionInputPolicy.titleTracksCurrentDirectory(
-        "/Users/example/project",
+        "~/project",
         isTitlePinned: false,
         cwd: "/Users/example/project",
         homeDirectory: "/Users/example"

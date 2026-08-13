@@ -120,6 +120,7 @@ final class TerminalContainerView: NSView {
         identifier = NSUserInterfaceItemIdentifier(AccessibilityID.terminal)
         wantsLayer = true
         install(terminalView)
+        installCommittedInputCapture(for: terminalView)
         paintProbe.frame = bounds
         paintProbe.autoresizingMask = [.width, .height]
         addSubview(paintProbe, positioned: .above, relativeTo: terminalView)
@@ -154,6 +155,7 @@ final class TerminalContainerView: NSView {
         ].compactMap { $0 })
         self.terminalView.removeFromSuperview()
         self.terminalView = terminalView
+        installCommittedInputCapture(for: terminalView)
         terminalView.wantsLayer = true
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(terminalView)
@@ -167,6 +169,13 @@ final class TerminalContainerView: NSView {
         bottomConstraint = bottom
         NSLayoutConstraint.activate([leading, trailing, top, bottom])
         return true
+    }
+
+    private func installCommittedInputCapture(for terminalView: LocalProcessTerminalView) {
+        guard let terminalView = terminalView as? DetectingLocalProcessTerminalView else { return }
+        terminalView.onCommittedInput = { [weak self] text in
+            self?.submittedInputBuffer.append(contentsOf: text)
+        }
     }
 
     func apply(theme: TerminalTheme) {
@@ -335,6 +344,9 @@ final class TerminalContainerView: NSView {
                 if self.handlePageScrollShortcut(event) {
                     return nil
                 }
+                if (self.terminalView as? DetectingLocalProcessTerminalView)?.isTextComposing == true {
+                    return self.handleTerminalShortcut(event) ? nil : event
+                }
                 if self.isSubmitKey(event) {
                     self.onUserSubmittedInput?(self.submittedInputBuffer)
                     self.submittedInputBuffer = ""
@@ -407,11 +419,11 @@ final class TerminalContainerView: NSView {
         case 53:
             submittedInputBuffer = ""
         default:
-            guard let characters = event.characters, !characters.isEmpty else { return }
-            guard !characters.contains(where: { character in
-                character.isNewline || character.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 })
-            }) else { return }
-            submittedInputBuffer.append(contentsOf: characters)
+            // Printable text is captured by DetectingLocalProcessTerminalView's
+            // insertText callback. Reading event.characters here would capture
+            // IME phonetic composition keys instead of the committed text, and
+            // would miss paste/autocomplete insertion entirely.
+            return
         }
     }
 

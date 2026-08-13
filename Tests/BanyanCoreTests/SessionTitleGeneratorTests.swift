@@ -51,3 +51,13 @@ import Testing
     #expect(title != nil)
     #expect(title!.contains("192.168.1.1"))
 }
+
+@Test func titleFromPromptPreservesMixedLanguageText() {
+    let title = SessionTitleGenerator.titleFromPrompt("检查 web-search provider 的路由")
+    #expect(title == "检查 web-search provider 的路由")
+}
+
+@Test func titleFromPromptPreservesIssueReferenceInPrompt() {
+    let title = SessionTitleGenerator.titleFromPrompt("work on TASK-123")
+    #expect(title == "work on TASK-123")
+}

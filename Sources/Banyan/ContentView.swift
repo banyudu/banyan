@@ -2096,6 +2096,9 @@ private struct SessionRow: View {
                 .onHover(perform: setIssueLinkHovered)
                 let remainder = linkedTitleRemainder(issueID: titleLinkLabel)
                 if !remainder.isEmpty {
+                    Text("·")
+                        .font(titleFont)
+                        .foregroundStyle(.secondary)
                     Text(remainder)
                         .font(titleFont)
                         .lineLimit(1)
@@ -2116,12 +2119,13 @@ private struct SessionRow: View {
     }
 
     private func linkedTitleRemainder(issueID: String) -> String {
-        let parts = displayTitle.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-        guard let firstToken = parts.first,
-              firstToken.caseInsensitiveCompare(issueID) == .orderedSame else {
-            return displayTitle
-        }
-        return parts.count > 1 ? String(parts[1]) : ""
+        displayTitle
+            .split(whereSeparator: \.isWhitespace)
+            .filter { token in
+                token.trimmingCharacters(in: .punctuationCharacters)
+                    .caseInsensitiveCompare(issueID) != .orderedSame
+            }
+            .joined(separator: " ")
     }
 
     private func setRowHovered(_ isHovered: Bool) {
