@@ -1105,7 +1105,12 @@ final class SessionStore: ObservableObject {
         let groupSessions = visibleSessions.filter {
             $0.projectGroupID == groupID && !$0.isImportedHistory
         }
-        guard let representative = groupSessions.first else { return nil }
+        guard let preferredSessionID = SessionLaunchPolicy.preferredSessionID(
+            for: selectedSessionID,
+            in: groupSessions.map(\.id)
+        ), let representative = groupSessions.first(where: { $0.id == preferredSessionID }) else {
+            return nil
+        }
         rememberProjectLaunch(launch, for: groupID)
         return spawn(cwd: representative.cwd, command: launch.command, parentSessionID: representative.parentSessionID)
     }

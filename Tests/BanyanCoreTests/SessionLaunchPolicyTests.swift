@@ -9,3 +9,13 @@ import Testing
     #expect(SessionLaunchPolicy.siblingRuntimeCommand(for: .gemini).isEmpty)
     #expect(SessionLaunchPolicy.siblingRuntimeCommand(for: nil).isEmpty)
 }
+
+@Test func projectLaunchPrefersActiveSessionInTheGroup() {
+    #expect(SessionLaunchPolicy.preferredSessionID(for: "active", in: ["first", "active"]) == "active")
+}
+
+@Test func projectLaunchFallsBackToFirstSessionOutsideTheGroup() {
+    #expect(SessionLaunchPolicy.preferredSessionID(for: "other", in: ["first", "second"]) == "first")
+    #expect(SessionLaunchPolicy.preferredSessionID(for: nil, in: ["first", "second"]) == "first")
+    #expect(SessionLaunchPolicy.preferredSessionID(for: "other", in: []) == nil)
+}
