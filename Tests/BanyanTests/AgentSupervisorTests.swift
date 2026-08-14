@@ -119,6 +119,33 @@ import Testing
     #expect(result?.provider == .deepseek)
 }
 
+@Test func supervisorTreatsIdleOpenCodeFooterAsNeedInput() {
+    // When an OpenCode turn finishes, the status bar swaps the live
+    // "esc interrupt" hint for the cwd line. The bare-hint match added for
+    // executing detection must not leak into this idle state and pin the
+    // session to `.executing`.
+    let idleText = [
+        "",
+        "",
+        "  > Fixed the agent status detection",
+        "",
+        "  Flash-Med · DeepSeek V4 Flash (2x usage) OpenCode Go",
+        "  /Users/example/dev/repo  135.5K (14%) · $0.02  ctrl+p commands    • OpenCode 1.18.18"
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(
+        visibleText: idleText,
+        processes: [agentProcess("opencode")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "BANYAN_AGENT_PROVIDER=deepseek opencode",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
 @Test func supervisorIgnoresStaleActivityTextOutsideRecentLines() {
     let staleText = (["Thinking"] + Array(repeating: "idle", count: 8)).joined(separator: "\n")
 
