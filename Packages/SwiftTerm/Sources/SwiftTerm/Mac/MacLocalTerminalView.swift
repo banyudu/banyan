@@ -41,6 +41,19 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
      * - Parameter exitCode: the exit code returned by the process, or nil if this was an error caused during the IO reading/writing
      */
     func processTerminated (source: TerminalView, exitCode: Int32?)
+
+    /**
+     * Invoked when the user activates an explicit or detected terminal link.
+     */
+    func requestOpenLink(source: TerminalView, link: String, params: [String:String])
+}
+
+public extension LocalProcessTerminalViewDelegate {
+    func requestOpenLink(source: TerminalView, link: String, params: [String:String]) {
+        if let url = URL(string: link) {
+            NSWorkspace.shared.open(url)
+        }
+    }
 }
 
 /**
@@ -121,6 +134,10 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalPr
 
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         processDelegate?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+
+    public func requestOpenLink(source: TerminalView, link: String, params: [String:String]) {
+        processDelegate?.requestOpenLink(source: source, link: link, params: params)
     }
     
 

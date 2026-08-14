@@ -340,13 +340,30 @@ final class BanyanSession: ObservableObject, Identifiable {
             return
         }
 
-        guard let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              url.host != nil else {
+        guard let url = Self.terminalLinkURL(link) else {
+            return
+        }
+        if url.isFileURL, !FileManager.default.fileExists(atPath: url.path) {
             return
         }
         _ = NSWorkspace.shared.open(url)
+    }
+
+    static func terminalLinkURL(_ link: String) -> URL? {
+        let value = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if value.hasPrefix("/") {
+            return URL(fileURLWithPath: value)
+        }
+
+        guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else {
+            return nil
+        }
+        if ["http", "https"].contains(scheme), url.host != nil {
+            return url
+        }
+        return url.isFileURL ? url : nil
     }
 
     /// Writes to the terminal if one exists, otherwise holds the text until one is
