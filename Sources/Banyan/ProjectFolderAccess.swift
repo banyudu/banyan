@@ -4,9 +4,30 @@ import Foundation
 /// Requests user-granted access before a session starts a process in a folder
 /// protected by macOS privacy controls (for example Documents or Desktop).
 enum ProjectFolderAccess {
+    enum Result: Equatable {
+        case available
+        case missingFolder
+        case permissionDenied
+    }
+
+    static func evaluate(for path: String) -> Result {
+        let target = normalizedURL(for: path)
+        guard FileManager.default.fileExists(atPath: target.path) else {
+            return .missingFolder
+        }
+        return canReadDirectory(target) ? .available : .permissionDenied
+    }
+
     static func requestIfNeeded(for path: String) -> Bool {
         let target = normalizedURL(for: path)
-        guard !canReadDirectory(target) else { return true }
+        switch evaluate(for: path) {
+        case .available:
+            return true
+        case .missingFolder:
+            return false
+        case .permissionDenied:
+            break
+        }
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -35,7 +56,6 @@ enum ProjectFolderAccess {
     }
 
     private static func canReadDirectory(_ url: URL) -> Bool {
-        guard FileManager.default.fileExists(atPath: url.path) else { return false }
         do {
             _ = try FileManager.default.contentsOfDirectory(atPath: url.path)
             return true

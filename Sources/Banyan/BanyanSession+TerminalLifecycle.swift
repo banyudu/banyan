@@ -179,10 +179,7 @@ extension BanyanSession {
     }
 
     private func startBackingSessionInBackground() {
-        guard ProjectFolderAccess.requestIfNeeded(for: cwd) else {
-            failToStart("Banyan needs access to the project folder before it can start this session. Select the folder when prompted and try again.")
-            return
-        }
+        guard ensureProjectFolderAccess() else { return }
         let runtime = sessionRuntime
         let request = launchRequest
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -226,10 +223,7 @@ extension BanyanSession {
         resetBlankRecoveryAttempt: Bool = true,
         backingSessionAlreadyEnsured: Bool = false
     ) {
-        guard ProjectFolderAccess.requestIfNeeded(for: cwd) else {
-            failToStart("Banyan needs access to the project folder before it can start this session. Select the folder when prompted and try again.")
-            return
-        }
+        guard ensureProjectFolderAccess() else { return }
         // Set the server default before creating a new pane. Codex probes OSC
         // 10/11 during startup, before SwiftTerm has necessarily attached.
         tmuxBackend.configureTerminalTheme(style: pendingTheme.tmuxDefaultStyle, for: nil)
@@ -339,6 +333,22 @@ extension BanyanSession {
         feedOrQueue("Banyan could not attach this session.\r\n\r\n\(message)\r\n")
         onStatusSignal?(status)
         touch()
+    }
+
+    private func ensureProjectFolderAccess() -> Bool {
+        switch ProjectFolderAccess.evaluate(for: cwd) {
+        case .available:
+            return true
+        case .missingFolder:
+            failToStart("Project folder no longer exists: \(cwd). Re-create the worktree or close this session.")
+            return false
+        case .permissionDenied:
+            guard ProjectFolderAccess.requestIfNeeded(for: cwd) else {
+                failToStart("Banyan needs access to the project folder before it can start this session. Select the folder when prompted and try again.")
+                return false
+            }
+            return true
+        }
     }
 
     fileprivate func terminalEnvironment() -> [String] {
