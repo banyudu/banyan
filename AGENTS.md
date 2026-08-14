@@ -2,6 +2,21 @@
 
 Guidance for coding agents (and human contributors) working in this repository.
 
+## Project context
+
+Project context lives in `.agents/context.md`. Read it first when you need a
+project-level third-party ID or a per-environment URL — GitHub repo, Linear
+project, or service IDs. It is a short fenced-YAML index, IDs/URLs only; it
+never holds secrets. Schema and maintenance rules, including the self-healing
+rule for stale values:
+`~/.agents/references/project-context-format.md`. Org-level facts (people,
+Slack channels) are not in it — those stay in the `team-context` skill.
+
+`CLAUDE.md` is a symlink to this file, so the import below makes the context
+always-loaded for Claude Code; other agents read the path above.
+
+@.agents/context.md
+
 ## Shareable content only
 
 This repository is shared beyond its original author. Never commit personal or
