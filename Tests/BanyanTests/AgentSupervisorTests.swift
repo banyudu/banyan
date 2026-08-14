@@ -92,6 +92,33 @@ import Testing
     #expect(result?.tone == .blue)
 }
 
+@Test func supervisorClassifiesOpenCodeBareInterruptHintAsExecuting() {
+    // OpenCode renders its live interrupt affordance as "esc interrupt" (no
+    // "to") in the bottom status bar while a turn is in flight, and swaps it
+    // for the cwd line when idle. Without the bare hint the session fell
+    // through to `.needInput` (✋) even while actively working.
+    let workingText = [
+        "",
+        "",
+        "",
+        "  Flash-Med · DeepSeek V4 Flash (2x usage) OpenCode Go",
+        "  ⬝⬝⬝⬝⬝⬝⬝⬝  esc interrupt  32.6K (3%) · $0.00  ctrl+p commands    • OpenCode 1.18.18"
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(
+        visibleText: workingText,
+        processes: [agentProcess("opencode")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "BANYAN_AGENT_PROVIDER=deepseek opencode",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .executing)
+    #expect(result?.tone == .blue)
+    #expect(result?.provider == .deepseek)
+}
+
 @Test func supervisorIgnoresStaleActivityTextOutsideRecentLines() {
     let staleText = (["Thinking"] + Array(repeating: "idle", count: 8)).joined(separator: "\n")
 

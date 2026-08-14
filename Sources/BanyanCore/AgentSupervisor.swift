@@ -339,12 +339,19 @@ public struct AgentSupervisor: Sendable {
             .map { $0.trimmingCharacters(in: .whitespaces) }
 
         // A live interrupt affordance is shown only while a turn is running
-        // (Claude: "esc to interrupt", Codex: "Esc to interrupt", etc.).
+        // (Claude: "esc to interrupt", Codex: "Esc to interrupt", OpenCode:
+        // "esc interrupt" without the "to", etc.). Matching the bare hint as
+        // well as the "to" form keeps OpenCode sessions from falling through to
+        // `.needInput` while a turn is still in flight.
         let interruptHints = [
             "esc to interrupt",
+            "esc interrupt",
             "esc to stop",
+            "esc stop",
             "ctrl-c to interrupt",
-            "ctrl+c to interrupt"
+            "ctrl-c interrupt",
+            "ctrl+c to interrupt",
+            "ctrl+c interrupt"
         ]
         if tail.contains(where: { line in interruptHints.contains(where: line.contains) }) {
             return true
