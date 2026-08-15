@@ -2,10 +2,10 @@
 import AppKit
 import Testing
 
-@Test func jumpIndexMapsDigitsToOneBasedPositions() {
-    #expect(JumpOverlayMonitor.jumpIndex(for: "1") == 1)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "9") == 9)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "0") == 10)
+@Test func jumpIndexMapsDigitsToPositionsStartingAtZero() {
+    #expect(JumpOverlayMonitor.jumpIndex(for: "0") == 1)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "1") == 2)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "9") == 10)
 }
 
 @Test func jumpIndexMapsAllLetters() {
@@ -26,10 +26,10 @@ import Testing
     #expect(JumpOverlayMonitor.jumpIndex(for: "A") == nil)
 }
 
-@Test func jumpLabelMapsPositionsToDisplayKeys() {
-    #expect(JumpOverlayMonitor.jumpLabel(for: 1) == "1")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 9) == "9")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 10) == "0")
+@Test func jumpLabelMapsPositionsToDisplayKeysStartingAtZero() {
+    #expect(JumpOverlayMonitor.jumpLabel(for: 1) == "0")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 9) == "8")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 10) == "9")
     #expect(JumpOverlayMonitor.jumpLabel(for: 11) == "A")
     #expect(JumpOverlayMonitor.jumpLabel(for: 20) == "J")
     #expect(JumpOverlayMonitor.jumpLabel(for: 21) == "K")
@@ -54,8 +54,8 @@ import Testing
 }
 
 @Test func visibleJumpShortcutsActivateWithoutOverlayState() {
-    #expect(JumpOverlayMonitor.shortcutIndex(for: "3", modifiers: .command) == 3)
-    #expect(JumpOverlayMonitor.shortcutIndex(for: "0", modifiers: .command) == 10)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "3", modifiers: .command) == 4)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "0", modifiers: .command) == 1)
     #expect(JumpOverlayMonitor.shortcutIndex(for: "A", modifiers: [.command, .shift]) == 11)
     #expect(JumpOverlayMonitor.shortcutIndex(for: "3", modifiers: []) == nil)
     #expect(JumpOverlayMonitor.shortcutIndex(for: "A", modifiers: .command) == nil)

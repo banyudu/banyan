@@ -312,10 +312,8 @@ struct ContentView: View {
 
         for (index, item) in store.sidebarSessions.enumerated() {
             let shortcut: String?
-            if index < 9 {
-                shortcut = "⌘\(index + 1)"
-            } else if index == 9 {
-                shortcut = "⌘0"
+            if index < 10 {
+                shortcut = "⌘\(index)"
             } else if let label = JumpOverlayMonitor.jumpLabel(for: index + 1) {
                 shortcut = "⌘⇧\(label)"
             } else {

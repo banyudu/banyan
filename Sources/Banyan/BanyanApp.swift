@@ -243,7 +243,7 @@ struct BanyanApp: App {
 
                 ForEach(Array(store.sidebarSessions.prefix(10).enumerated()), id: \.element.id) { index, item in
                     let shortcutIndex = index + 1
-                    let shortcutCharacter = index == 9 ? "0" : String(shortcutIndex)
+                    let shortcutCharacter = String(index)
                     Button("Switch to Terminal \(shortcutIndex): \(item.session.displayTitle)") {
                         store.selectSession(shortcutIndex: shortcutIndex)
                     }
