@@ -18,9 +18,6 @@ public enum AppProcessEnvironment {
     /// expiring it keeps a transient failure from disabling tokens for the whole session.
     private static let shellEnvironmentRetryInterval: TimeInterval = 60
 
-    /// Grace given to a timed-out shell to exit from SIGTERM before it is SIGKILLed.
-    private static let shellTerminationGrace: TimeInterval = 1
-
     private struct ShellEnvironmentCacheEntry {
         let environment: [String: String]
         /// `nil` means the entry never expires; only failed loads are given an expiry.
@@ -67,7 +64,8 @@ public enum AppProcessEnvironment {
             guard shellEnvironmentLoadsInFlight.contains(shell) else { break }
             // Another caller is already spawning this shell; wait for its result rather
             // than piling on. Bounded so a wedged loader cannot park callers forever.
-            let deadline = Date().addingTimeInterval(shellEnvironmentTimeout + shellTerminationGrace * 2)
+            let deadline = Date()
+                .addingTimeInterval(shellEnvironmentTimeout + SubprocessRunner.terminationBudget)
             guard shellEnvironmentCondition.wait(until: deadline) else {
                 shellEnvironmentCondition.unlock()
                 return [:]
@@ -188,62 +186,37 @@ public enum AppProcessEnvironment {
             }
     }
 
+    /// Spawns the login shell through `SubprocessRunner`.
+    ///
+    /// This used to drive `Process` directly with a `FileHandle.readabilityHandler`
+    /// drain per pipe. On Linux each of those handlers is a dispatch source on its
+    /// own private serial queue, so every load left two pool threads behind — the
+    /// leak `timeoutLeavesNoParkedThreadsOrZombies` measures. `SubprocessRunner`
+    /// reads the pipes inline instead: no dispatch source, no extra thread, and the
+    /// SIGTERM-then-SIGKILL escalation this path needs comes with it.
     private static func loadShellEnvironment(shell: String) -> [String: String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: shell)
-        // `-i` is load-bearing: zsh sources ~/.zshrc only for interactive shells, and
-        // that is where most PATH and token exports live. A plain `-lc` would be faster
-        // but would silently drop them.
-        process.arguments = [
-            "-ilc",
-            "printf '\\n\(shellEnvironmentMarker)\\n'; /usr/bin/env -0"
-        ]
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = stdout
-        process.standardError = stderr
-
-        // Both pipes must be drained while the shell runs. A shell that fills the ~64KB
-        // pipe buffer blocks on write and never exits, which would defeat the timeout
-        // below and make the process unkillable by SIGTERM.
-        let outputDrain = PipeDrain(stdout.fileHandleForReading)
-        let errorDrain = PipeDrain(stderr.fileHandleForReading)
-        defer {
-            outputDrain.stop()
-            errorDrain.stop()
-        }
-
-        // terminationHandler fires on a Foundation-internal queue once the child is
-        // reaped. waitUntilExit() would instead park a thread from the global pool for
-        // the child's lifetime, and on the timeout path that thread was never released:
-        // each timed-out load leaked one until libdispatch's 80-thread soft limit was
-        // reached and the whole app starved.
-        let exited = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in exited.signal() }
-
+        let output: SubprocessRunner.Output
         do {
-            try process.run()
+            output = try SubprocessRunner.run(
+                arguments: [
+                    shell,
+                    // `-i` is load-bearing: zsh sources ~/.zshrc only for interactive
+                    // shells, and that is where most PATH and token exports live. A
+                    // plain `-lc` would be faster but would silently drop them.
+                    "-ilc",
+                    "printf '\\n\(shellEnvironmentMarker)\\n'; /usr/bin/env -0"
+                ],
+                cwd: FileManager.default.currentDirectoryPath,
+                environment: ProcessInfo.processInfo.environment,
+                timeout: shellEnvironmentTimeout,
+                standardInput: FileHandle.nullDevice
+            )
         } catch {
             return [:]
         }
 
-        if exited.wait(timeout: .now() + shellEnvironmentTimeout) != .success {
-            process.terminate()
-            if exited.wait(timeout: .now() + shellTerminationGrace) != .success {
-                // A shell that ignores SIGTERM would otherwise linger as a zombie.
-                kill(process.processIdentifier, SIGKILL)
-                _ = exited.wait(timeout: .now() + shellTerminationGrace)
-            }
-            return [:]
-        }
-
-        guard process.terminationStatus == 0 else { return [:] }
-
-        // The child has exited; let the drain observe EOF so no trailing output is lost.
-        outputDrain.waitForEnd(timeout: shellTerminationGrace)
-        return parseEnvironmentOutput(outputDrain.collected)
+        guard output.terminationStatus == 0 else { return [:] }
+        return parseEnvironmentOutput(output.standardOutput)
     }
 
     private static func splitPath(_ value: String?) -> [String] {
@@ -265,59 +238,5 @@ public enum AppProcessEnvironment {
         }
         let separators = CharacterSet(charactersIn: ",: \n\t")
         return Set(value.components(separatedBy: separators).filter { !$0.isEmpty })
-    }
-}
-
-/// Consumes a pipe on Foundation's readability queue so a child process can never block
-/// writing into a full pipe buffer, and reports when the write end closes.
-///
-/// Reading the pipe only after the child exits (the obvious alternative) deadlocks for
-/// any child whose output exceeds the buffer, because the child cannot exit until the
-/// buffer is drained.
-private final class PipeDrain: @unchecked Sendable {
-    private let handle: FileHandle
-    private let lock = NSLock()
-    private var buffer = Data()
-    private var isFinished = false
-    private let ended = DispatchSemaphore(value: 0)
-
-    init(_ handle: FileHandle) {
-        self.handle = handle
-        handle.readabilityHandler = { [self] handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                // Empty read means EOF: the child closed its end.
-                finish()
-                return
-            }
-            lock.lock()
-            buffer.append(chunk)
-            lock.unlock()
-        }
-    }
-
-    var collected: Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return buffer
-    }
-
-    func waitForEnd(timeout: TimeInterval) {
-        _ = ended.wait(timeout: .now() + timeout)
-    }
-
-    /// Idempotent. Also breaks the handle -> handler -> self retain cycle.
-    func stop() {
-        finish()
-    }
-
-    private func finish() {
-        lock.lock()
-        let wasFinished = isFinished
-        isFinished = true
-        lock.unlock()
-        guard !wasFinished else { return }
-        handle.readabilityHandler = nil
-        ended.signal()
     }
 }
