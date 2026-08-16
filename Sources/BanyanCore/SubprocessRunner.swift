@@ -1,17 +1,31 @@
 import Foundation
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(Darwin)
+import Darwin
+#endif
 
 /// Runs short-lived CLI subprocesses (`linear`, `gh`, `git`, …) without leaking
 /// threads.
 ///
-/// Output is captured through in-memory pipes drained by `DispatchIO` (dispatch
-/// sources — no thread is parked). The previous implementation wrote two temp
-/// files per call, adding a mkdir + 2 creat + 2 open + read + 2 unlink + rmdir
-/// per invocation — eliminated here.
+/// Output is captured by reading the child's pipes directly from the calling
+/// thread with `poll(2)`: the same wait observes stdout, stderr, child exit and
+/// task cancellation, so a run needs no worker thread of its own beyond the one
+/// already blocked in `run()`.
 ///
-/// The process-exit wait uses the **full timeout** in a single semaphore call.
-/// Cancellation from `runAsync` is delivered immediately via
-/// `withTaskCancellationHandler` signalling the same semaphore, avoiding the
-/// 100 ms polling loop that used to wake a blocked worker 10×/sec per child.
+/// That single `poll` is what makes the drain exhaustive. The previous
+/// implementation handed the pipes to `DispatchIO` and, after the child exited,
+/// waited a fixed grace for the read callbacks to arrive. On a CPU-bound Linux
+/// runner those callbacks share a thread pool with the callers blocked waiting
+/// for them, so under concurrent load they landed after the grace expired and
+/// `run()` returned exit 0 with truncated (usually empty) stdout — which callers
+/// such as `SessionDisplayLabel.gitRemoteURL` took for a real answer. Reading the
+/// descriptors inline removes the scheduling dependency entirely: once the child
+/// has exited, every byte it wrote is already in the kernel pipe buffer, so
+/// draining to `EAGAIN`/EOF right then is complete by construction rather than
+/// after a timed guess.
 public enum SubprocessRunner {
     public struct Output {
         public let terminationStatus: Int32
@@ -49,22 +63,49 @@ public enum SubprocessRunner {
         return queue
     }()
 
+    /// Grace given to a child to exit on `SIGTERM` before it is `SIGKILL`ed.
+    private static let terminationGrace: TimeInterval = 0.5
+
+    /// How long to wait for a `SIGKILL`ed child to be *reaped*. The kill itself is
+    /// immediate; this covers Foundation's exit monitoring, which on Linux notices
+    /// a dead child on a ~300 ms tick. Returning before the reap would leave a
+    /// zombie behind for every timed-out run, so the bound is several ticks wide.
+    private static let reapGrace: TimeInterval = 2
+
+    /// Worst case a run may overrun its `timeout` by while tearing down a child
+    /// that ignores `SIGTERM`. Callers sizing their own deadline around a run
+    /// should add this rather than guessing at it.
+    public static let terminationBudget: TimeInterval = terminationGrace + reapGrace
+
+    /// Longest a single `poll` may block when the wake pipe is unavailable, so the
+    /// loop still notices exit and cancellation. Unused on the normal path, where
+    /// `poll` waits on the wake pipe itself and returns no later than the deadline.
+    private static let fallbackPollSliceMilliseconds: Int32 = 20
+
     /// Async, non-blocking entry point. Preferred by all callers.
     ///
-    /// Task cancellation signals the wait semaphore directly via
-    /// `withTaskCancellationHandler`, so the blocked `run()` wakes immediately
+    /// Task cancellation writes to the run's wake pipe via
+    /// `withTaskCancellationHandler`, so the blocked `poll` returns immediately
     /// without any polling.
     public static func runAsync(
         arguments: [String],
         cwd: String,
         environment: [String: String],
         timeout: TimeInterval,
-        isCancelled: @escaping @Sendable () -> Bool = { false }
+        isCancelled: @escaping @Sendable () -> Bool = { false },
+        standardInput: FileHandle? = nil
     ) async throws -> Output {
-        let wakeSignal = DispatchSemaphore(value: 0)
+        let signal = RunSignal()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 ioQueue.addOperation {
+                    // Cancelled while queued behind the concurrency cap: return
+                    // without launching anything, so a backlog of cancelled work
+                    // drains at once instead of each entry paying a full run.
+                    if signal.isCancelled {
+                        continuation.resume(throwing: RunError.cancelled)
+                        return
+                    }
                     do {
                         let output = try run(
                             arguments: arguments,
@@ -72,7 +113,8 @@ public enum SubprocessRunner {
                             environment: environment,
                             timeout: timeout,
                             isCancelled: isCancelled,
-                            wakeSignal: wakeSignal
+                            standardInput: standardInput,
+                            signal: signal
                         )
                         continuation.resume(returning: output)
                     } catch {
@@ -81,46 +123,64 @@ public enum SubprocessRunner {
                 }
             }
         } onCancel: {
-            wakeSignal.signal()
+            signal.cancel()
         }
     }
 
     /// Synchronous, leak-free runner. Blocks the calling thread only for bounded
-    /// waits. Prefer `runAsync` from async contexts.
+    /// waits, and uses no other thread. Prefer `runAsync` from async contexts.
     ///
-    /// - Parameter wakeSignal: When non-nil the semaphore is shared with
-    ///   `runAsync`'s cancellation handler so that Task cancellation wakes the
-    ///   wait immediately. Callers of the synchronous API leave this `nil`.
+    /// - Parameter standardInput: Passed through to the child. The default leaves
+    ///   the parent's stdin inherited; pass `FileHandle.nullDevice` for children
+    ///   that must never read from it.
     public static func run(
         arguments: [String],
         cwd: String,
         environment: [String: String],
         timeout: TimeInterval,
         isCancelled: @escaping @Sendable () -> Bool = { false },
-        wakeSignal: DispatchSemaphore? = nil
+        standardInput: FileHandle? = nil
     ) throws -> Output {
-        if isCancelled() { throw RunError.cancelled }
+        try run(
+            arguments: arguments,
+            cwd: cwd,
+            environment: environment,
+            timeout: timeout,
+            isCancelled: isCancelled,
+            standardInput: standardInput,
+            signal: RunSignal()
+        )
+    }
+
+    private static func run(
+        arguments: [String],
+        cwd: String,
+        environment: [String: String],
+        timeout: TimeInterval,
+        isCancelled: @escaping @Sendable () -> Bool,
+        standardInput: FileHandle?,
+        signal: RunSignal
+    ) throws -> Output {
+        // Closing the wake pipe here also disarms the termination and cancellation
+        // handlers, which may still fire after this call returns.
+        defer { signal.invalidate() }
+
+        if isCancelled() || signal.isCancelled { throw RunError.cancelled }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = arguments
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         process.environment = environment
+        if let standardInput {
+            process.standardInput = standardInput
+        }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
-
-        // Share the semaphore with the async cancel path when available,
-        // otherwise create a private one.
-        let exited: DispatchSemaphore
-        if let wakeSignal {
-            exited = wakeSignal
-        } else {
-            exited = DispatchSemaphore(value: 0)
-        }
-        process.terminationHandler = { _ in exited.signal() }
+        process.terminationHandler = { _ in signal.markExited() }
 
         do {
             try process.run()
@@ -133,114 +193,269 @@ public enum SubprocessRunner {
         try? stdoutPipe.fileHandleForWriting.close()
         try? stderrPipe.fileHandleForWriting.close()
 
-        // Drain both pipes concurrently with DispatchIO so the pipe buffer
-        // cannot fill and deadlock the child. DispatchIO uses dispatch
-        // sources internally — no thread is parked.
-        let drainDone = DispatchGroup()
-        let stdoutAccum = _PipeAccumulator()
-        let stderrAccum = _PipeAccumulator()
-        let drainQueue = DispatchQueue.global(qos: .utility)
+        // Both pipes must be drained *while* the child runs: a child that fills the
+        // ~64KB buffer blocks in `write` and never exits, which would defeat the
+        // timeout below.
+        var stdoutReader = PipeReader(fileHandle: stdoutPipe.fileHandleForReading)
+        var stderrReader = PipeReader(fileHandle: stderrPipe.fileHandleForReading)
+        let deadline = Deadline(after: timeout)
 
-        let stdoutChannel = DispatchIO(
-            type: .stream,
-            fileDescriptor: stdoutPipe.fileHandleForReading.fileDescriptor,
-            queue: drainQueue,
-            cleanupHandler: { _ in }
-        )
-        drainDone.enter()
-        stdoutChannel.read(offset: 0, length: .max, queue: drainQueue) { done, data, _ in
-            if let data, !data.isEmpty { stdoutAccum.append(data) }
-            if done { drainDone.leave() }
-        }
+        while !signal.hasExited {
+            if isCancelled() || signal.isCancelled {
+                terminate(process, signal: signal)
+                throw RunError.cancelled
+            }
+            let remaining = deadline.remainingMilliseconds()
+            if remaining == 0 {
+                terminate(process, signal: signal)
+                throw RunError.timedOut
+            }
 
-        let stderrChannel = DispatchIO(
-            type: .stream,
-            fileDescriptor: stderrPipe.fileHandleForReading.fileDescriptor,
-            queue: drainQueue,
-            cleanupHandler: { _ in }
-        )
-        drainDone.enter()
-        stderrChannel.read(offset: 0, length: .max, queue: drainQueue) { done, data, _ in
-            if let data, !data.isEmpty { stderrAccum.append(data) }
-            if done { drainDone.leave() }
-        }
+            var descriptors: [pollfd] = []
+            if let descriptor = stdoutReader.pollDescriptor { descriptors.append(descriptor) }
+            if let descriptor = stderrReader.pollDescriptor { descriptors.append(descriptor) }
+            descriptors.append(signal.pollDescriptor)
 
-        // ── Wait for the process to exit with the full timeout ──────────
-        // One semaphore call replaces the old 100 ms polling loop.
-        // If `runAsync` was cancelled the same semaphore is signalled by the
-        // `onCancel` handler, waking us immediately.
-        let waitResult = exited.wait(timeout: .now() + timeout)
+            let slice = signal.isPollable
+                ? remaining
+                : min(remaining, fallbackPollSliceMilliseconds)
+            if poll(&descriptors, nfds_t(descriptors.count), slice) < 0 {
+                if errno == EINTR { continue }
+                // `poll` cannot make progress on these descriptors; back off so the
+                // deadline above still bounds the run instead of spinning.
+                usleep(useconds_t(fallbackPollSliceMilliseconds) * 1000)
+            }
 
-        if waitResult == .timedOut {
-            terminate(process, exited: exited)
-            stdoutChannel.close(flags: .stop)
-            stderrChannel.close(flags: .stop)
-            _ = drainDone.wait(timeout: .now() + 0.1)
-            throw RunError.timedOut
-        }
-
-        // The semaphore was signalled. If the process is still running the
-        // signal came from the async cancel path, not the termination
-        // handler.
-        if process.isRunning || isCancelled() {
-            terminate(process, exited: exited)
-            stdoutChannel.close(flags: .stop)
-            stderrChannel.close(flags: .stop)
-            _ = drainDone.wait(timeout: .now() + 0.1)
-            throw RunError.cancelled
+            stdoutReader.drainAvailable()
+            stderrReader.drainAvailable()
+            signal.consume()
         }
 
         // ── Normal exit ─────────────────────────────────────────────────
-        // Close channels cleanly so any remaining buffered data is
-        // delivered, then collect output. The cap guards against a
-        // detached grandchild that inherited the pipe FDs; it needs to be
-        // generous because under startup load the DispatchIO callbacks can
-        // lag well behind process exit, and giving up early returns a
-        // truncated (often empty) stdout that callers mistake for a real
-        // answer.
-        stdoutChannel.close()
-        stderrChannel.close()
-        _ = drainDone.wait(timeout: .now() + 3.0)
+        // The child is gone, so everything it wrote is already buffered in the
+        // kernel: this drain reads it all rather than waiting out a grace period.
+        // Anything still holding the write end open is a detached grandchild whose
+        // later output was never ours to wait for.
+        stdoutReader.drainAvailable()
+        stderrReader.drainAvailable()
+
+        // Cancellation that lands in the same instant the child finishes still wins:
+        // the caller asked to stop, so it must not be handed a result to act on.
+        if isCancelled() || signal.isCancelled { throw RunError.cancelled }
 
         return Output(
             terminationStatus: process.terminationStatus,
-            standardOutput: stdoutAccum.data,
-            standardError: stderrAccum.data
+            standardOutput: stdoutReader.data,
+            standardError: stderrReader.data
         )
     }
 
-    private static func terminate(
-        _ process: Process,
-        exited: DispatchSemaphore
-    ) {
-        if process.isRunning {
-            process.terminate()
+    private static func terminate(_ process: Process, signal: RunSignal) {
+        guard process.isRunning else { return }
+        process.terminate()
+        if waitForExit(signal, seconds: terminationGrace) { return }
+        // A child that ignores SIGTERM would otherwise linger as a zombie holding
+        // the pipe write ends open. Re-check `isRunning` first: once Foundation has
+        // reaped the child its pid is free for the OS to hand to someone else, and
+        // signalling that pid would hit an unrelated process.
+        guard process.isRunning else { return }
+        kill(process.processIdentifier, SIGKILL)
+        waitForExit(signal, seconds: reapGrace)
+    }
+
+    @discardableResult
+    private static func waitForExit(_ signal: RunSignal, seconds: TimeInterval) -> Bool {
+        let deadline = Deadline(after: seconds)
+        while !signal.hasExited {
+            let remaining = deadline.remainingMilliseconds()
+            if remaining == 0 { break }
+            var descriptor = signal.pollDescriptor
+            let slice = signal.isPollable
+                ? remaining
+                : min(remaining, fallbackPollSliceMilliseconds)
+            if withUnsafeMutablePointer(to: &descriptor, { poll($0, 1, slice) }) < 0,
+               errno != EINTR {
+                usleep(useconds_t(fallbackPollSliceMilliseconds) * 1000)
+            }
+            signal.consume()
         }
-        _ = exited.wait(timeout: .now() + 0.5)
+        return signal.hasExited
     }
 }
 
-// MARK: - Pipe accumulator
+// MARK: - Deadline
 
-/// Thread-safe buffer that collects `DispatchData` chunks from `DispatchIO`
-/// read callbacks and materialises them as a single `Data`.
-private final class _PipeAccumulator: @unchecked Sendable {
+/// Monotonic deadline, immune to wall-clock changes, expressed in the `poll`
+/// timeout's own units.
+private struct Deadline {
+    private let expiresAt: UInt64
+
+    init(after seconds: TimeInterval) {
+        let bounded = min(max(seconds, 0), 60 * 60 * 24)
+        expiresAt = DispatchTime.now().uptimeNanoseconds
+            &+ UInt64((bounded * 1_000_000_000).rounded())
+    }
+
+    /// Milliseconds left, rounded up so a sub-millisecond remainder still gets one
+    /// more `poll`; `0` once expired.
+    func remainingMilliseconds() -> Int32 {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard expiresAt > now else { return 0 }
+        let milliseconds = (expiresAt - now + 999_999) / 1_000_000
+        return milliseconds > UInt64(Int32.max) ? Int32.max : Int32(milliseconds)
+    }
+}
+
+// MARK: - Wake channel
+
+/// Wake channel shared by the `poll` loop, `Process.terminationHandler` and
+/// `runAsync`'s cancellation handler.
+///
+/// A pipe rather than a semaphore, so "the child exited" and "the task was
+/// cancelled" can be awaited in the *same* `poll` as the child's output. Waiting
+/// on a semaphore instead would mean a second wait that no longer drains the
+/// pipes — the shape that used to lose output.
+private final class RunSignal: @unchecked Sendable {
     private let lock = NSLock()
-    private var chunks: [DispatchData] = []
+    private var readFD: Int32 = -1
+    private var writeFD: Int32 = -1
+    private var exited = false
+    private var cancelled = false
 
-    func append(_ chunk: DispatchData) {
+    init() {
+        var ends: [Int32] = [-1, -1]
+        guard pipe(&ends) == 0 else { return }
+        readFD = ends[0]
+        writeFD = ends[1]
+        // Non-blocking on both ends: draining must never block the poll loop, and
+        // signalling must never block a termination handler on a full pipe.
+        for end in ends {
+            let flags = fcntl(end, F_GETFL, 0)
+            if flags >= 0 { _ = fcntl(end, F_SETFL, flags | O_NONBLOCK) }
+        }
+    }
+
+    deinit { invalidate() }
+
+    var hasExited: Bool {
         lock.lock()
-        chunks.append(chunk)
+        defer { lock.unlock() }
+        return exited
+    }
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    /// `false` only if the pipe could not be created, in which case callers fall
+    /// back to short `poll` slices.
+    var isPollable: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return readFD >= 0
+    }
+
+    var pollDescriptor: pollfd {
+        lock.lock()
+        defer { lock.unlock() }
+        // A negative fd is ignored by `poll`, which then simply waits out its
+        // timeout — the fallback slice keeps that responsive.
+        return pollfd(fd: readFD, events: Int16(POLLIN), revents: 0)
+    }
+
+    func markExited() {
+        lock.lock()
+        exited = true
+        wakeLocked()
         lock.unlock()
     }
 
-    var data: Data {
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        wakeLocked()
+        lock.unlock()
+    }
+
+    /// Clears pending wake bytes so the next `poll` blocks again.
+    func consume() {
         lock.lock()
         defer { lock.unlock() }
-        var result = Data()
-        for chunk in chunks {
-            result.append(contentsOf: chunk)
+        guard readFD >= 0 else { return }
+        var scratch = [UInt8](repeating: 0, count: 64)
+        while read(readFD, &scratch, scratch.count) > 0 {}
+    }
+
+    /// Closes the pipe. Later signals become no-ops rather than writing into a
+    /// descriptor number the process has since recycled.
+    func invalidate() {
+        lock.lock()
+        let ends = (read: readFD, write: writeFD)
+        readFD = -1
+        writeFD = -1
+        lock.unlock()
+
+        if ends.read >= 0 { close(ends.read) }
+        if ends.write >= 0 { close(ends.write) }
+    }
+
+    private func wakeLocked() {
+        guard writeFD >= 0 else { return }
+        var byte: UInt8 = 1
+        _ = write(writeFD, &byte, 1)
+    }
+}
+
+// MARK: - Pipe reader
+
+/// Non-blocking reader over one end of a `Pipe`, accumulating everything the
+/// child writes.
+private struct PipeReader {
+    /// Held so the pipe's descriptor stays open for the lifetime of the read.
+    private let handle: FileHandle
+    private let descriptor: Int32
+    private(set) var data = Data()
+    private var isAtEnd = false
+
+    init(fileHandle: FileHandle) {
+        handle = fileHandle
+        descriptor = fileHandle.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL, 0)
+        if flags >= 0 { _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) }
+    }
+
+    /// `nil` once the write end has closed, so a finished pipe stops waking `poll`.
+    var pollDescriptor: pollfd? {
+        isAtEnd ? nil : pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+    }
+
+    /// Reads everything the kernel currently holds, without blocking.
+    ///
+    /// Called after the child exits this is exhaustive, not best-effort: a
+    /// completed `write` has already deposited its bytes in the pipe buffer, so
+    /// reading to `EAGAIN`/EOF cannot truncate the child's output.
+    mutating func drainAvailable() {
+        guard !isAtEnd else { return }
+        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = chunk.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
+            if count > 0 {
+                chunk.withUnsafeBufferPointer { buffer in
+                    if let base = buffer.baseAddress { data.append(base, count: count) }
+                }
+                continue
+            }
+            if count == 0 {
+                isAtEnd = true
+                return
+            }
+            if errno == EINTR { continue }
+            if errno == EAGAIN || errno == EWOULDBLOCK { return }
+            // Any other error is unrecoverable for this descriptor.
+            isAtEnd = true
+            return
         }
-        return result
     }
 }
