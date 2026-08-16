@@ -113,6 +113,25 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         detect(in: command) != nil
     }
 
+    /// Maps an OpenCode model selection to Banyan's provider icon vocabulary.
+    /// Model IDs are preferred because OpenCode's routing provider can be a
+    /// gateway such as `opencode-go`, rather than the model vendor.
+    public static func runtimeProvider(modelID: String, providerID: String?) -> CodingAgentProvider? {
+        let candidates = [modelID, providerID ?? ""]
+            .map { $0.lowercased() }
+            .filter { !$0.isEmpty }
+        for candidate in candidates {
+            if candidate.contains("deepseek") { return .deepseek }
+            if candidate.contains("anthropic") || candidate.contains("claude") { return .claude }
+            if candidate.contains("openai") || candidate.contains("gpt") || candidate.contains("o1") || candidate.contains("o3") || candidate.contains("o4") { return .codex }
+            if candidate.contains("google") || candidate.contains("gemini") { return .gemini }
+            if candidate.contains("minimax") || candidate.contains("mini-max") { return .minimax }
+            if candidate.contains("xiaomi") || candidate.contains("mimo") { return .xiaomiMiMo }
+            if candidate.contains("zhipu") || candidate.contains("z.ai") || candidate.contains("zai") || candidate.contains("glm") { return .zai }
+        }
+        return nil
+    }
+
     public static func promptCandidate(in command: String, provider expectedProvider: CodingAgentProvider? = nil) -> String? {
         let tokens = shellTokens(command)
         guard let providerIndex = tokens.firstIndex(where: { token in

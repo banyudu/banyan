@@ -32,6 +32,12 @@ extension BanyanSession {
         touch()
     }
 
+    func markDetectedAgentModel(_ modelID: String?, isExact: Bool) {
+        guard detectedAgentModelID != modelID || detectedAgentModelIDIsExact != isExact else { return }
+        detectedAgentModelID = modelID
+        detectedAgentModelIDIsExact = isExact
+    }
+
     func markAgentSessionID(_ sessionID: String?) {
         guard let sessionID, !sessionID.isEmpty, agentSessionID != sessionID else { return }
         agentSessionID = sessionID

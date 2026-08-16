@@ -2617,7 +2617,10 @@ final class SessionStore: ObservableObject {
                 tmuxSessionName: session.tmuxSessionName,
                 command: session.command,
                 status: session.status,
-                isAwaitingAttach: !session.isProcessStarted
+                isAwaitingAttach: !session.isProcessStarted,
+                cwd: session.cwd,
+                createdAt: session.createdAt,
+                environment: session.environment
             )
         }
         guard !inputs.isEmpty else { return }
@@ -2923,6 +2926,7 @@ final class SessionStore: ObservableObject {
                       currentStatus: session.status,
                       currentTone: session.tone,
                       currentProvider: session.detectedAgentProvider,
+                      currentModelID: session.detectedAgentModelID,
                       currentPath: session.cwd,
                       observation: result
                   ) else {
@@ -2932,6 +2936,9 @@ final class SessionStore: ObservableObject {
                 session.markDetectedAgentProvider(result.provider)
                 didUpdateProvider = true
                 didChangePersistentState = true
+            }
+            if reconciliation.modelChanged {
+                session.markDetectedAgentModel(result.modelID, isExact: result.modelIDIsExact)
             }
             if reconciliation.currentPathChanged, let currentPath = result.currentPath {
                 session.updateCurrentDirectory(currentPath)

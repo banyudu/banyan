@@ -6,19 +6,28 @@ public struct SessionStatusObservationInput: Sendable {
     public let command: String
     public let status: SessionStatus
     public let isAwaitingAttach: Bool
+    public let cwd: String
+    public let createdAt: Date
+    public let environment: [String: String]
 
     public init(
         id: String,
         tmuxSessionName: String,
         command: String,
         status: SessionStatus,
-        isAwaitingAttach: Bool
+        isAwaitingAttach: Bool,
+        cwd: String = "",
+        createdAt: Date = .distantPast,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.id = id
         self.tmuxSessionName = tmuxSessionName
         self.command = command
         self.status = status
         self.isAwaitingAttach = isAwaitingAttach
+        self.cwd = cwd
+        self.createdAt = createdAt
+        self.environment = environment
     }
 }
 
@@ -27,6 +36,8 @@ public struct SessionStatusObservation: Sendable, Equatable {
     public let status: SessionStatus
     public let tone: SessionTone
     public let provider: CodingAgentProvider?
+    public let modelID: String?
+    public let modelIDIsExact: Bool
     public let currentPath: String?
 
     public init(
@@ -34,12 +45,16 @@ public struct SessionStatusObservation: Sendable, Equatable {
         status: SessionStatus,
         tone: SessionTone,
         provider: CodingAgentProvider?,
+        modelID: String? = nil,
+        modelIDIsExact: Bool = false,
         currentPath: String?
     ) {
         self.id = id
         self.status = status
         self.tone = tone
         self.provider = provider
+        self.modelID = modelID
+        self.modelIDIsExact = modelIDIsExact
         self.currentPath = currentPath
     }
 }
@@ -74,7 +89,10 @@ public struct SessionStatusSynchronizer: Sendable {
             guard let result = supervisor.inspect(
                 tmuxSessionName: input.tmuxSessionName,
                 launchCommand: input.command,
-                currentStatus: input.status
+                currentStatus: input.status,
+                cwd: input.cwd,
+                sessionStartedAt: input.createdAt,
+                environment: input.environment
             ) else {
                 return
             }
@@ -89,6 +107,8 @@ public struct SessionStatusSynchronizer: Sendable {
                 status: result.status,
                 tone: result.tone,
                 provider: result.provider,
+                modelID: result.modelID,
+                modelIDIsExact: result.modelIDIsExact,
                 currentPath: result.currentPath
             ))
         }

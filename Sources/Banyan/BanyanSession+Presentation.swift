@@ -113,6 +113,16 @@ extension BanyanSession {
         return value
     }
 
+    var agentRuntimeIdentityLabel: String {
+        guard let modelID = detectedAgentModelID,
+              displayAgentProvider != nil
+        else {
+            return displayAgentProvider?.displayName ?? "Terminal"
+        }
+        let qualifier = detectedAgentModelIDIsExact ? "model" : "detected model"
+        return "\(displayAgentProvider?.displayName ?? "OpenCode") · \(qualifier): \(modelID)"
+    }
+
     var needsManualAttach: Bool {
         SessionRestorationPolicy.needsManualAttach(
             isRestored: isRestored,

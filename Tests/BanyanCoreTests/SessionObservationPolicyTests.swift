@@ -6,6 +6,7 @@ private func observation(
     status: SessionStatus = .running,
     tone: SessionTone = .blue,
     provider: CodingAgentProvider? = .codex,
+    modelID: String? = nil,
     currentPath: String? = "/tmp"
 ) -> SessionStatusObservation {
     SessionStatusObservation(
@@ -13,8 +14,28 @@ private func observation(
         status: status,
         tone: tone,
         provider: provider,
+        modelID: modelID,
         currentPath: currentPath
     )
+}
+
+@Test func observationPolicyIdentifiesRuntimeModelChanges() {
+    let reconciliation = SessionObservationPolicy.reconcile(
+        currentStatus: .needInput,
+        currentTone: .yellow,
+        currentProvider: .deepseek,
+        currentModelID: "deepseek-v4-flash",
+        currentPath: "/tmp",
+        observation: observation(
+            status: .needInput,
+            tone: .yellow,
+            provider: .deepseek,
+            modelID: "deepseek-v4"
+        )
+    )
+
+    #expect(reconciliation?.modelChanged == true)
+    #expect(reconciliation?.providerChanged == false)
 }
 
 @Test func observationPolicyRejectsClosedAndUnchangedSessions() {
