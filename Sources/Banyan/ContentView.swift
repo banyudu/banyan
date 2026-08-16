@@ -1714,6 +1714,7 @@ private struct WindowTitleConfigurator: NSViewRepresentable {
 
     fileprivate static func configure(window: NSWindow?) {
         guard let window else { return }
+        WindowRestorationPolicy.configure(window)
         window.title = " "
         window.titleVisibility = .visible
     }
