@@ -167,6 +167,14 @@ final class SessionStore: ObservableObject {
             applyAppearance()
         }
     }
+    /// Applies only to newly launched or explicitly resumed Codex sessions.
+    /// Existing sessions keep their persisted launch command so switching this
+    /// setting cannot steal or release a live thread writer.
+    @Published var enableCodexAppServerMode = false {
+        didSet {
+            saveWorkspace()
+        }
+    }
     @Published private var pendingCloseSessionID: String?
     /// Per-project last-used "new session" kind, keyed by project group ID. Drives
     /// the project header's split "+" button so it reopens whatever was launched
@@ -295,7 +303,8 @@ final class SessionStore: ObservableObject {
                 sortMode: .manual,
                 terminalTheme: defaultTheme,
                 terminalFontFamily: defaultFontFamily,
-                terminalFontSize: defaultFontSize
+                terminalFontSize: defaultFontSize,
+                enableCodexAppServerMode: false
             )
         )
         selectedSessionID = workspace.selectedSessionID
@@ -303,6 +312,7 @@ final class SessionStore: ObservableObject {
         terminalTheme = workspace.terminalTheme
         terminalFontFamily = workspace.terminalFontFamily
         terminalFontSize = workspace.terminalFontSize
+        enableCodexAppServerMode = workspace.enableCodexAppServerMode
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
             projectLaunchByGroup = stored.compactMapValues(NewSessionLaunch.init(rawValue:))
         }
@@ -1082,7 +1092,12 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func spawnSiblingSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? homeDirectory
-        let command = SessionLaunchPolicy.siblingRuntimeCommand(for: selectedSession?.agentProvider)
+        let command: String
+        if selectedSession?.agentProvider == .codex, enableCodexAppServerMode {
+            command = CodexAppServerLaunch.command()
+        } else {
+            command = SessionLaunchPolicy.siblingRuntimeCommand(for: selectedSession?.agentProvider)
+        }
         return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
     }
 
@@ -1112,7 +1127,11 @@ final class SessionStore: ObservableObject {
             return nil
         }
         rememberProjectLaunch(launch, for: groupID)
-        return spawn(cwd: representative.cwd, command: launch.command, parentSessionID: representative.parentSessionID)
+        return spawn(
+            cwd: representative.cwd,
+            command: launch.command(codexLaunchMode: codexLaunchMode),
+            parentSessionID: representative.parentSessionID
+        )
     }
 
     private func rememberProjectLaunch(_ launch: NewSessionLaunch, for groupID: String) {
@@ -1223,12 +1242,18 @@ final class SessionStore: ObservableObject {
         tone: SessionTone = .blue,
         select: Bool = true
     ) -> BanyanSession {
+        let command: String?
+        if enableCodexAppServerMode, let proposedCommand {
+            command = CodexAppServerLaunch.upgradedDirectCommand(proposedCommand) ?? proposedCommand
+        } else {
+            command = proposedCommand
+        }
         let plan = SessionCreationPolicy.plan(
             proposedID: proposedID,
             proposedTitle: proposedTitle,
             proposedTitleURL: proposedTitleURL,
             proposedCWD: proposedCWD,
-            proposedCommand: proposedCommand,
+            proposedCommand: command,
             proposedParentSessionID: proposedParentSessionID,
             currentDirectory: currentDirectory,
             homeDirectory: homeDirectory
@@ -1300,12 +1325,17 @@ final class SessionStore: ObservableObject {
                   [.codex, .claude].contains(provider) else {
                 return nil
             }
-            return historyBackend.resumeCommand(
+            let directCommand = historyBackend.resumeCommand(
                 provider: provider,
                 sourceID: agentSessionID,
                 cwd: session.cwd,
                 prompt: nil
             )
+            if provider == .codex,
+               CodexAppServerLaunch.isAppServerCommand(session.command) {
+                return CodexAppServerLaunch.resumeCommand(sourceID: agentSessionID, cwd: session.cwd)
+            }
+            return directCommand
         }
 
         session.recoverFromMissingBackingSessionInBackground(command: recoveryCommand)
@@ -1369,7 +1399,14 @@ final class SessionStore: ObservableObject {
                     try? self.respawn(id: id)
                     return
                 }
-                session.command = plan.command
+                session.command = preferredResumeCommand(
+                    provider: provider,
+                    sourceID: plan.sourceID,
+                    cwd: cwd,
+                    prompt: nil,
+                    directCommand: plan.command,
+                    previousCommand: session.command
+                )
                 session.markAgentSessionID(plan.sourceID)
                 session.reattachTerminalClient()
                 self.selectedSessionID = id
@@ -1461,8 +1498,18 @@ final class SessionStore: ObservableObject {
             agentSessionID: session.agentSessionID,
             cwd: session.cwd,
             history: historyBackend
-        ), session.command != resumePlan.command {
-            session.command = resumePlan.command
+        ) {
+            let command = preferredResumeCommand(
+                provider: session.agentProvider,
+                sourceID: resumePlan.sourceID,
+                cwd: session.cwd,
+                prompt: nil,
+                directCommand: resumePlan.command,
+                previousCommand: session.command
+            )
+            if session.command != command {
+                session.command = command
+            }
         }
         session.reattachTerminalClient()
         selectedSessionID = id
@@ -1965,7 +2012,13 @@ final class SessionStore: ObservableObject {
             id: SessionResumePolicy.sessionIDPrefix(provider: provider, sourceID: plan.sourceID),
             title: history.displayTitle,
             cwd: history.cwd,
-            command: plan.command,
+            command: preferredResumeCommand(
+                provider: provider,
+                sourceID: plan.sourceID,
+                cwd: history.cwd,
+                prompt: prompt,
+                directCommand: plan.command
+            ),
             tone: .blue
         )
     }
@@ -2008,7 +2061,13 @@ final class SessionStore: ObservableObject {
                     ),
                     title: title,
                     cwd: cwd,
-                    command: plan.command,
+                    command: self.preferredResumeCommand(
+                        provider: provider,
+                        sourceID: plan.sourceID,
+                        cwd: cwd,
+                        prompt: prompt,
+                        directCommand: plan.command
+                    ),
                     tone: .blue
                 )
             }
@@ -2497,8 +2556,28 @@ final class SessionStore: ObservableObject {
             sortMode: sortMode,
             terminalTheme: terminalTheme,
             terminalFontFamily: terminalFontFamily,
-            terminalFontSize: terminalFontSize
+            terminalFontSize: terminalFontSize,
+            enableCodexAppServerMode: enableCodexAppServerMode
         )
+    }
+
+    private var codexLaunchMode: CodexLaunchMode {
+        enableCodexAppServerMode ? .appServer : .direct
+    }
+
+    private func preferredResumeCommand(
+        provider: CodingAgentProvider?,
+        sourceID: String,
+        cwd: String,
+        prompt: String?,
+        directCommand: String,
+        previousCommand: String? = nil
+    ) -> String {
+        guard provider == .codex,
+              enableCodexAppServerMode || previousCommand.map(CodexAppServerLaunch.isAppServerCommand) == true else {
+            return directCommand
+        }
+        return CodexAppServerLaunch.resumeCommand(sourceID: sourceID, cwd: cwd, prompt: prompt)
     }
 
     private func runHistoryImport(spawnDefaultIfEmpty: Bool = false) {

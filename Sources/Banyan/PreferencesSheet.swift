@@ -46,10 +46,28 @@ struct PreferencesSheet: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Codex")
+                    .font(.headline)
+
+                Toggle("Enable Codex app-server mode", isOn: $store.enableCodexAppServerMode)
+
+                Text(codexConnectionDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 440, height: 260)
+        .frame(width: 440, height: 340)
         .accessibilityIdentifier(AccessibilityID.preferencesSheet)
+    }
+
+    private var codexConnectionDescription: String {
+        if store.enableCodexAppServerMode {
+            return "For new Codex sessions, Banyan starts the local remote-control daemon and connects the interactive TUI to it. Existing sessions keep their current connection."
+        }
+        return "Direct mode gives Banyan's interactive TUI exclusive ownership of its Codex threads. Enable app-server mode before creating a session you want to continue from ChatGPT Remote."
     }
 }

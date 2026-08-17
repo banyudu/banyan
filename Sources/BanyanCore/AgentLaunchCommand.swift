@@ -4,8 +4,12 @@ public enum AgentLaunchCommand {
     public static func command(
         provider: CodingAgentProvider,
         prompt: String? = nil,
-        executableName: String? = nil
+        executableName: String? = nil,
+        codexLaunchMode: CodexLaunchMode = .direct
     ) -> String {
+        if provider == .codex, codexLaunchMode == .appServer {
+            return CodexAppServerLaunch.command(prompt: prompt)
+        }
         var arguments = [executableName.flatMap(clean) ?? provider.defaultExecutableName]
         if let prompt = clean(prompt) {
             arguments.append(prompt)
