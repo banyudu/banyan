@@ -16,9 +16,19 @@ enum NewSessionLaunch: String, CaseIterable, Identifiable, Codable {
 
     /// Command handed to `SessionStore.spawn`; empty means the default login shell.
     var command: String {
+        command(codexLaunchMode: .direct)
+    }
+
+    /// Command handed to `SessionStore.spawn` for a selected Codex connection mode.
+    func command(codexLaunchMode: CodexLaunchMode = .direct) -> String {
         switch self {
         case .zsh: return ""
-        case .claude, .codex: return rawValue
+        case .claude: return rawValue
+        case .codex:
+            return AgentLaunchCommand.command(
+                provider: .codex,
+                codexLaunchMode: codexLaunchMode
+            )
         case .deepseek: return "BANYAN_AGENT_PROVIDER=deepseek opencode"
         }
     }

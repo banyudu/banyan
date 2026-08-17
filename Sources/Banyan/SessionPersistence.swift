@@ -7,6 +7,7 @@ struct WorkspaceSnapshot {
     let terminalTheme: TerminalTheme
     let terminalFontFamily: String
     let terminalFontSize: Double
+    let enableCodexAppServerMode: Bool
 }
 
 struct LinearIssueListCacheSnapshot: Codable {
@@ -52,7 +53,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             sortMode: state["sortMode"].flatMap(SortMode.init(rawValue:)) ?? defaults.sortMode,
             terminalTheme: TerminalTheme.fromPersistedRawValue(state["terminalTheme"]) ?? defaults.terminalTheme,
             terminalFontFamily: state["terminalFontFamily"] ?? defaults.terminalFontFamily,
-            terminalFontSize: state["terminalFontSize"].flatMap(Double.init) ?? defaults.terminalFontSize
+            terminalFontSize: state["terminalFontSize"].flatMap(Double.init) ?? defaults.terminalFontSize,
+            enableCodexAppServerMode: state["enableCodexAppServerMode"].flatMap(Bool.init) ?? defaults.enableCodexAppServerMode
         )
     }
 
@@ -62,7 +64,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             "sortMode": workspace.sortMode.rawValue,
             "terminalTheme": workspace.terminalTheme.rawValue,
             "terminalFontFamily": workspace.terminalFontFamily,
-            "terminalFontSize": String(workspace.terminalFontSize)
+            "terminalFontSize": String(workspace.terminalFontSize),
+            "enableCodexAppServerMode": String(workspace.enableCodexAppServerMode)
         ]
         sessionDatabase.saveState(values)
     }
