@@ -146,6 +146,43 @@ import Testing
     #expect(result?.tone == .yellow)
 }
 
+@Test func supervisorClassifiesFreshlyLaunchedOpenCodePaneAsIdle() {
+    // Fresh OpenCode has no text banner. Its logo is followed by the empty
+    // input's `Ask anything...` placeholder, which disappears after a turn.
+    let result = makeSupervisor(
+        visibleText: freshOpenCodePane,
+        processes: [agentProcess("opencode")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "opencode",
+        currentStatus: .running
+    )
+
+    #expect(result?.status == .idle)
+    #expect(result?.tone == .neutral)
+}
+
+@Test func supervisorClassifiesClearedOpenCodePaneAsIdle() {
+    // tmux retains old scrollback after `/clear`; the freshly painted OpenCode
+    // logo and empty-input placeholder must still win over an old question.
+    let clearedText = ([
+        "Do you want to apply the previous patch?",
+        ""
+    ] + [freshOpenCodePane]).joined(separator: "\n")
+
+    let result = makeSupervisor(
+        visibleText: clearedText,
+        processes: [agentProcess("opencode")]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "opencode",
+        currentStatus: .asking
+    )
+
+    #expect(result?.status == .idle)
+    #expect(result?.tone == .neutral)
+}
+
 @Test func supervisorIgnoresStaleActivityTextOutsideRecentLines() {
     let staleText = (["Thinking"] + Array(repeating: "idle", count: 8)).joined(separator: "\n")
 
@@ -925,6 +962,19 @@ private let freshClaudePane = [
     "───────────────────────────────────────────",
     "  Opus 5 (1M context) | ~/dev/yudu/banyan | main",
     "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
+].joined(separator: "\n")
+
+private let freshOpenCodePane = [
+    "█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█",
+    "█  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀",
+    "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
+    "┃",
+    "┃  Ask anything... \"Fix a TODO in the codebase\"",
+    "┃",
+    "┃  Flash-Med · DeepSeek V4 Flash (2x usage) OpenCode Go",
+    "╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "tab agents  ctrl+p commands",
+    "/tmp                                                                                                 1.18.18"
 ].joined(separator: "\n")
 
 @Test func supportedAgentCommandParsingAcceptsPathsAndRejectsNearMatches() {

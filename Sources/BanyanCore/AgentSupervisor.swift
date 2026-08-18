@@ -233,6 +233,10 @@ public struct AgentSupervisor: Sendable {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
 
+        if looksLikeUntouchedOpenCodePrompt(lines) {
+            return true
+        }
+
         // Banner titles: Claude renders `╭─── Claude Code v2.x ───╮`, Codex
         // `│ >_ OpenAI Codex (v0.x) │`.
         let bannerMarkers = ["claude code v", "openai codex (v", "welcome to claude code"]
@@ -271,6 +275,31 @@ public struct AgentSupervisor: Sendable {
         return region.allSatisfy { isIdlePromptChrome($0, discountingAgentOutput: isBackgroundOnly) }
     }
 
+    /// OpenCode has no textual startup banner. Its empty input instead renders
+    /// the `Ask anything...` placeholder beneath the logo, with only logo and
+    /// input-frame chrome in between. The placeholder disappears as soon as a
+    /// user begins a turn, so this distinguishes a fresh or `/clear`-ed session
+    /// from OpenCode's used-but-idle footer, which must remain `.needInput`.
+    private static func looksLikeUntouchedOpenCodePrompt(_ lines: [String]) -> Bool {
+        guard let placeholderIndex = lines.lastIndex(where: {
+            $0.lowercased().contains("ask anything...")
+        }) else {
+            return false
+        }
+        guard let logoIndex = lines[..<placeholderIndex].lastIndex(where: isOpenCodeLogoRow) else {
+            return false
+        }
+
+        return lines[logoIndex..<placeholderIndex].allSatisfy { line in
+            line.isEmpty || isBannerChrome(line)
+        }
+    }
+
+    private static func isOpenCodeLogoRow(_ line: String) -> Bool {
+        guard let first = line.first else { return false }
+        return bannerArtCharacters.contains(first) && line.contains("█")
+    }
+
     /// Marks a turn as self-triggered rather than requested by the user. Kept
     /// narrow on purpose: a `/loop` doing real work must still raise attention, so
     /// this matches the heartbeat's own sentinel rather than the generic wakeup
@@ -282,7 +311,7 @@ public struct AgentSupervisor: Sendable {
     /// background heartbeat.
     private static let agentOutputMarkers = Set("⏺⎿✻✳⧗↳•·")
 
-    private static let boxDrawingCharacters = Set("─│╭╮╰╯┌┐└┘├┤┬┴┼━┄┈╌═↯")
+    private static let boxDrawingCharacters = Set("─│╭╮╰╯┌┐└┘├┤┬┴┼━┄┈╌═↯┃╹")
 
     private static func isDividerOnly(_ line: String) -> Bool {
         !line.isEmpty && line.allSatisfy { boxDrawingCharacters.contains($0) || $0 == " " }
