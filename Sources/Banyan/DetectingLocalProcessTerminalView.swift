@@ -89,7 +89,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         let start = CACurrentMediaTime()
         super.draw(dirtyRect)
         let elapsed = (CACurrentMediaTime() - start) * 1000.0
-        telemetry?.recordDuration("terminal.draw", durationMS: elapsed)
+        telemetry?.recordDurationIfSlow("terminal.draw", durationMS: elapsed)
     }
 
     var hasVisibleText: Bool {

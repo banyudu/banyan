@@ -1018,6 +1018,12 @@ final class SessionStore: ObservableObject {
         let startedSessions = sessions.reduce(into: 0) { count, session in
             if session.status != .closed && session.isProcessStarted { count += 1 }
         }
+        let activeSessions = sessions.reduce(into: 0) { count, session in
+            guard session.status != .closed, session.isProcessStarted else { return }
+            if !session.status.isCodingAgentIdle && ![.completed, .failed].contains(session.status) {
+                count += 1
+            }
+        }
         let thermalState: SupervisorThermalState
         switch ProcessInfo.processInfo.thermalState {
         case .fair:
@@ -1032,6 +1038,7 @@ final class SessionStore: ObservableObject {
         return SessionSupervisorCadencePolicy.interval(
             isForeground: NSApp.isActive,
             startedSessionCount: startedSessions,
+            activeSessionCount: activeSessions,
             isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
             thermalState: thermalState
         )
@@ -2725,6 +2732,10 @@ final class SessionStore: ObservableObject {
         isSupervisorTickRunning = true
         let backend = tmuxBackend
         let processTableProvider = processTable
+        let activeSessionCount = inputs.filter {
+            !$0.status.isCodingAgentIdle && ![.completed, .failed].contains($0.status)
+        }.count
+        let cadence = supervisorInterval
 
         let telemetry = self.telemetry
         Task.detached(priority: .utility) { [weak self, telemetry] in
@@ -2733,12 +2744,18 @@ final class SessionStore: ObservableObject {
                 backend: backend,
                 processTable: processTableProvider.snapshot()
             )
-            let results = synchronizer.observe(inputs)
+            let results = synchronizer.observe(inputs) { sessionID, durationMS in
+                telemetry.recordDurationIfSlow(
+                    "supervisor.session",
+                    durationMS: durationMS,
+                    sessionID: sessionID
+                )
+            }
 
             telemetry.recordDuration(
                 "supervisor.tick",
                 durationMS: PerformanceTelemetry.elapsedMS(since: tickStartedAt),
-                detail: "sessions=\(inputs.count)"
+                detail: "sessions=\(inputs.count) active=\(activeSessionCount) idle=\(inputs.count - activeSessionCount) cadence_s=\(Int(cadence.rounded()))"
             )
 
             await MainActor.run { [weak self] in

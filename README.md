@@ -250,6 +250,9 @@ dist/bin/banyanctl perf report --since 7d --json
 
 Important metrics include `session_switch.total`, `session_switch.to_terminal_ready`, `session_switch.to_first_output`, `terminal.ready_wait`, `terminal.start_client`, `terminal.reattach_client`, `tmux.refresh_clients`, and `selected_context.resolve`.
 
+For Energy Impact attribution, including the tmux and agent-process limitations,
+see [docs/energy-impact.md](docs/energy-impact.md).
+
 To turn the collected report into a targeted agent task:
 
 ```sh
