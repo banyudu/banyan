@@ -7,7 +7,25 @@ public struct AgentSupervisor: Sendable {
         public let status: SessionStatus
         public let tone: SessionTone
         public let provider: CodingAgentProvider?
+        public let modelID: String?
+        public let modelIDIsExact: Bool
         public let currentPath: String?
+
+        public init(
+            status: SessionStatus,
+            tone: SessionTone,
+            provider: CodingAgentProvider?,
+            modelID: String? = nil,
+            modelIDIsExact: Bool = false,
+            currentPath: String?
+        ) {
+            self.status = status
+            self.tone = tone
+            self.provider = provider
+            self.modelID = modelID
+            self.modelIDIsExact = modelIDIsExact
+            self.currentPath = currentPath
+        }
     }
 
     private let backend: any AgentSupervisorBackend
@@ -21,10 +39,19 @@ public struct AgentSupervisor: Sendable {
         self.processTable = processTable
     }
 
-    public func inspect(tmuxSessionName: String, launchCommand: String, currentStatus: SessionStatus) -> Result? {
+    public func inspect(
+        tmuxSessionName: String,
+        launchCommand: String,
+        currentStatus: SessionStatus,
+        cwd: String = "",
+        sessionStartedAt: Date = .distantPast,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Result? {
         guard currentStatus != .closed else { return nil }
         guard let pane = backend.primaryPaneSnapshot(named: tmuxSessionName) else {
-            return backend.hasSession(named: tmuxSessionName) ? nil : Result(status: .closed, tone: .neutral, provider: nil, currentPath: nil)
+            return backend.hasSession(named: tmuxSessionName)
+                ? nil
+                : Result(status: .closed, tone: .neutral, provider: nil, currentPath: nil)
         }
         guard !pane.isDead else {
             return Result(status: .closed, tone: .neutral, provider: nil, currentPath: pane.currentPath)
@@ -41,7 +68,7 @@ public struct AgentSupervisor: Sendable {
         // the pane's own command is an unreliable signal), so the descendant
         // process tree is the truth for liveness. `launchCommand` is still used to
         // *name* the provider once a live agent is present.
-        let provider = Self.hasLiveAgentProcess(paneCommand: pane.currentCommand, descendants: descendants)
+        let baseProvider = Self.hasLiveAgentProcess(paneCommand: pane.currentCommand, descendants: descendants)
             ? Self.detectProvider(
                 launchCommand: launchCommand,
                 paneCommand: pane.currentCommand,
@@ -49,9 +76,21 @@ public struct AgentSupervisor: Sendable {
             )
             : nil
 
-        guard let provider else {
+        guard let baseProvider else {
             return Result(status: .running, tone: .blue, provider: nil, currentPath: pane.currentPath)
         }
+
+        let hasLiveOpenCode = Self.hasLiveOpenCodeProcess(paneCommand: pane.currentCommand, descendants: descendants)
+        var modelIdentity: OpenCodeRuntimeIdentity? = if hasLiveOpenCode {
+            OpenCodeSessionModelDetector().resolve(
+                directory: pane.currentPath.isEmpty ? cwd : pane.currentPath,
+                sessionStartedAt: sessionStartedAt,
+                environment: environment
+            )
+        } else {
+            nil
+        }
+        var provider = modelIdentity?.provider ?? baseProvider
 
         // tmux reports the foreground command separately from the process
         // table. When the pane is backed by a login shell, both can describe
@@ -68,7 +107,12 @@ public struct AgentSupervisor: Sendable {
         }
         let agentProcessCount = Self.logicalAgentProcessCount(in: descendants)
         if rootAgentProcessCount + agentProcessCount > 1 {
-            return Result(status: .subagents, tone: .purple, provider: provider, currentPath: pane.currentPath)
+            if modelIdentity == nil, hasLiveOpenCode {
+                let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: 60)
+                modelIdentity = OpenCodeSessionModelDetector.statusBarIdentity(in: visibleText)
+                provider = modelIdentity?.provider ?? baseProvider
+            }
+            return result(.subagents, .purple)
         }
 
         let helperPIDs = Self.agentHelperPIDs(in: descendants)
@@ -83,15 +127,19 @@ public struct AgentSupervisor: Sendable {
         }
 
         if !externalProcesses.isEmpty {
-            return Result(status: .executing, tone: .blue, provider: provider, currentPath: pane.currentPath)
+            return result(.executing, .blue)
         }
 
         let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: 60)
+        if modelIdentity == nil, hasLiveOpenCode {
+            modelIdentity = OpenCodeSessionModelDetector.statusBarIdentity(in: visibleText)
+            provider = modelIdentity?.provider ?? baseProvider
+        }
         // A live turn is checked first: its interrupt affordance is scoped to the
         // visible tail, so it beats an untouched-looking prompt during the moment
         // a slash command is still running.
         if Self.looksLikeAgentExecuting(visibleText) {
-            return Result(status: .executing, tone: .blue, provider: provider, currentPath: pane.currentPath)
+            return result(.executing, .blue)
         }
         // An untouched prompt outranks the question scan, which searches the whole
         // captured window and therefore also sees scrollback from *before* a
@@ -99,13 +147,24 @@ public struct AgentSupervisor: Sendable {
         // phrase like "should I merge…" would otherwise stay pinned to `.asking`
         // forever; nothing below the banner can be a live question.
         if Self.looksLikeUntouchedAgentPrompt(visibleText) {
-            return Result(status: .idle, tone: .neutral, provider: provider, currentPath: pane.currentPath)
+            return result(.idle, .neutral)
         }
         if Self.looksLikeAgentQuestion(visibleText) {
-            return Result(status: .asking, tone: .yellow, provider: provider, currentPath: pane.currentPath)
+            return result(.asking, .yellow)
         }
 
-        return Result(status: .needInput, tone: .yellow, provider: provider, currentPath: pane.currentPath)
+        return result(.needInput, .yellow)
+
+        func result(_ status: SessionStatus, _ tone: SessionTone) -> Result {
+            Result(
+                status: status,
+                tone: tone,
+                provider: provider,
+                modelID: modelIdentity?.modelID,
+                modelIDIsExact: modelIdentity?.isExactModelID ?? false,
+                currentPath: pane.currentPath
+            )
+        }
     }
 
     public static func isSupportedAgentCommand(_ command: String) -> Bool {
@@ -118,6 +177,11 @@ public struct AgentSupervisor: Sendable {
     /// live agent session from one whose agent has exited back to a bare shell.
     static func hasLiveAgentProcess(paneCommand: String, descendants: [ProcessInfoRow]) -> Bool {
         isSupportedAgentCommand(paneCommand) || descendants.contains(where: \.isSupportedAgent)
+    }
+
+    static func hasLiveOpenCodeProcess(paneCommand: String, descendants: [ProcessInfoRow]) -> Bool {
+        CodingAgentProvider.detect(in: paneCommand) == .opencode
+            || descendants.contains { $0.supportedAgentProvider == .opencode }
     }
 
     static func detectProvider(

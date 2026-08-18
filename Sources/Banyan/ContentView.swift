@@ -1924,7 +1924,7 @@ private struct SessionRow: View {
             JumpKeyBadge(label: jumpKeyLabel, provider: session.displayAgentProvider)
 
             if let provider = session.displayAgentProvider {
-                AgentProviderIcon(provider: provider)
+                AgentProviderIcon(provider: provider, helpText: session.agentRuntimeIdentityLabel)
                     .accessibilityLabel(provider.displayName)
             } else if !session.isImportedHistory {
                 ShellSessionIcon()
@@ -2277,6 +2277,7 @@ private struct NewSessionLaunchIcon: View {
 private struct AgentProviderIcon: View {
     let provider: CodingAgentProvider
     var size: CGFloat = 20
+    var helpText: String? = nil
 
     var body: some View {
         Group {
@@ -2309,7 +2310,7 @@ private struct AgentProviderIcon: View {
             }
         }
         .frame(width: size, height: size)
-        .help(provider.displayName)
+        .help(helpText ?? provider.displayName)
     }
 
     private var modelIcon: NSImage? {

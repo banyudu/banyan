@@ -57,6 +57,10 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var reportedTitle: String?
     @Published var generatedTitle: String?
     @Published var detectedAgentProvider: CodingAgentProvider?
+    /// Runtime-only OpenCode model identity. It is deliberately not persisted:
+    /// when the process exits, the next supervisor observation clears it.
+    @Published var detectedAgentModelID: String?
+    @Published var detectedAgentModelIDIsExact = false
     @Published var isTitlePinned: Bool
     @Published var cwd: String
     @Published var command: String
@@ -228,6 +232,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         // has had a chance to inspect its process tree; leaving this nil makes the
         // sidebar render every agent as a plain terminal during that window.
         self.detectedAgentProvider = CodingAgentProvider.detect(in: command)
+        self.detectedAgentModelID = nil
         self.isTitlePinned = isTitlePinned
         self.cwd = cwd
         self.command = command
