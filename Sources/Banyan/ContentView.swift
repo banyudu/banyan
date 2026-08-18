@@ -2001,6 +2001,7 @@ private struct SessionRow: View {
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
         .padding(.vertical, 2)
         .padding(.leading, CGFloat(depth) * 18)
+        .padding(.leading, 4)
         .padding(.trailing, 4)
         .background(rowBackground)
         .contentShape(Rectangle())
