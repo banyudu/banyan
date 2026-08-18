@@ -90,6 +90,13 @@ import Testing
     #expect(drawSummary?.maxMS == 25)
 }
 
+@Test func slowOnlyTelemetrySkipsFastSamples() {
+    #expect(!PerformanceTelemetry.shouldRecordDuration("terminal.draw", durationMS: 15.9))
+    #expect(PerformanceTelemetry.shouldRecordDuration("terminal.draw", durationMS: 16))
+    #expect(!PerformanceTelemetry.shouldRecordDuration("supervisor.session", durationMS: 149.9))
+    #expect(PerformanceTelemetry.shouldRecordDuration("supervisor.session", durationMS: 150))
+}
+
 @Test func switchCapAcceptsRealSwitchesAndRejectsIdleSpans() {
     // Real switches (sub-cap) are recorded; idle/abandoned spans past the cap are
     // discarded so they can't inflate the switch-latency percentiles.

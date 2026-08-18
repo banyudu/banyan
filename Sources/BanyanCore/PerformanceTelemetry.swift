@@ -258,6 +258,7 @@ public struct PerformanceEventStore {
         case "tmux.refresh_clients": return 250
         case "selected_context.resolve": return 500
         case "supervisor.tick": return 150
+        case "supervisor.session": return 150
         default: return 500
         }
     }
@@ -488,6 +489,30 @@ public final class PerformanceTelemetry: @unchecked Sendable {
                 detail: detail
             )
         }
+    }
+
+    /// High-frequency spans such as terminal draws should not turn diagnostics
+    /// into a steady stream of SQLite writes. Retain only the samples that need
+    /// investigation; aggregate timing remains available from the slower spans.
+    public func recordDurationIfSlow(
+        _ name: String,
+        durationMS: Double,
+        sessionID: String? = nil,
+        correlationID: String? = nil,
+        detail: String? = nil
+    ) {
+        guard Self.shouldRecordDuration(name, durationMS: durationMS) else { return }
+        recordDuration(
+            name,
+            durationMS: durationMS,
+            sessionID: sessionID,
+            correlationID: correlationID,
+            detail: detail
+        )
+    }
+
+    public static func shouldRecordDuration(_ name: String, durationMS: Double) -> Bool {
+        durationMS >= PerformanceEventStore.thresholdMS(for: name)
     }
 
     public func beginSessionSwitch(

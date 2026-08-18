@@ -13,10 +13,20 @@ public enum SessionSupervisorCadencePolicy {
     public static func interval(
         isForeground: Bool,
         startedSessionCount: Int,
+        activeSessionCount: Int,
         isLowPowerModeEnabled: Bool,
         thermalState: SupervisorThermalState
     ) -> TimeInterval {
-        var interval: TimeInterval = isForeground ? 2.0 : 6.0
+        // A tick shells out to tmux for every started session. Once every session
+        // is idle, no user-visible state needs a two-second refresh; terminal
+        // output still updates an attached session immediately. Keep the faster
+        // cadence only while the last observation found active work.
+        var interval: TimeInterval
+        if isForeground {
+            interval = activeSessionCount > 0 ? 2.0 : 6.0
+        } else {
+            interval = activeSessionCount > 0 ? 6.0 : 15.0
+        }
 
         if startedSessionCount > 8 {
             interval *= min(3.0, Double(startedSessionCount) / 8.0)

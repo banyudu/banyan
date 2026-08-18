@@ -76,7 +76,10 @@ public struct SessionStatusSynchronizer: Sendable {
     /// Inspects sessions concurrently because each observation may invoke several
     /// timeout-bounded tmux subprocesses. Missing backing sessions are retained for
     /// restored rows that have not been attached yet.
-    public func observe(_ inputs: [SessionStatusObservationInput]) -> [SessionStatusObservation] {
+    public func observe(
+        _ inputs: [SessionStatusObservationInput],
+        onSessionObserved: @Sendable (String, Double) -> Void = { _, _ in }
+    ) -> [SessionStatusObservation] {
         guard !inputs.isEmpty else { return [] }
 
         let supervisor = AgentSupervisor(
@@ -86,6 +89,10 @@ public struct SessionStatusSynchronizer: Sendable {
         let collector = ObservationCollector()
         DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
             let input = inputs[index]
+            let startedAt = DispatchTime.now()
+            defer {
+                onSessionObserved(input.id, PerformanceTelemetry.elapsedMS(since: startedAt))
+            }
             guard let result = supervisor.inspect(
                 tmuxSessionName: input.tmuxSessionName,
                 launchCommand: input.command,
