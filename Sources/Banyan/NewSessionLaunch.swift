@@ -56,6 +56,25 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
         return AgentLaunchCommand.command(provider: .codex, codexLaunchMode: codexLaunchMode)
     }
 
+    /// Resolve the command for Cmd+N from the selected session's full launch
+    /// profile, while retaining the provider-based fallback for sessions that
+    /// were not created from a configured profile.
+    static func siblingCommand(
+        sessionCommand: String?,
+        provider: CodingAgentProvider?,
+        profiles: [NewSessionLaunch],
+        codexLaunchMode: CodexLaunchMode
+    ) -> String {
+        if let sessionCommand,
+           let profile = profiles.first(where: { $0.command == sessionCommand }) {
+            return profile.resolvedCommand(codexLaunchMode: codexLaunchMode)
+        }
+        if provider == .codex, codexLaunchMode == .appServer {
+            return CodexAppServerLaunch.command()
+        }
+        return SessionLaunchPolicy.siblingRuntimeCommand(for: provider)
+    }
+
     /// A leaf `Image` for a native menu item, which renders only plain images.
     var menuIconImage: Image {
         if let customIconImage {

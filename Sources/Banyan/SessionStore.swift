@@ -1106,12 +1106,12 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func spawnSiblingSession() -> BanyanSession {
         let cwd = selectedSession?.cwd ?? homeDirectory
-        let command: String
-        if selectedSession?.agentProvider == .codex, enableCodexAppServerMode {
-            command = CodexAppServerLaunch.command()
-        } else {
-            command = SessionLaunchPolicy.siblingRuntimeCommand(for: selectedSession?.agentProvider)
-        }
+        let command = NewSessionLaunch.siblingCommand(
+            sessionCommand: selectedSession?.command,
+            provider: selectedSession?.agentProvider,
+            profiles: sessionLaunchProfiles,
+            codexLaunchMode: codexLaunchMode
+        )
         return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
     }
 
