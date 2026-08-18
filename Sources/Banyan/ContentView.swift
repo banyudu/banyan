@@ -2236,7 +2236,7 @@ private struct ProjectNewSessionButton: View {
     var body: some View {
         let current = store.projectLaunch(for: groupID)
         Menu {
-            ForEach(NewSessionLaunch.allCases) { launch in
+            ForEach(store.sessionLaunchProfiles) { launch in
                 Button {
                     store.spawnSession(inProjectGroup: groupID, launch: launch)
                 } label: {
@@ -2265,7 +2265,12 @@ private struct NewSessionLaunchIcon: View {
     let launch: NewSessionLaunch
 
     var body: some View {
-        if let provider = launch.provider {
+        if let customIconImage = launch.customIconImage {
+            Image(nsImage: customIconImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 14, height: 14)
+        } else if let provider = launch.provider, launch.usesProviderIcon {
             AgentProviderIcon(provider: provider, size: 14)
         } else {
             Image(systemName: launch.systemImage)

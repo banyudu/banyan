@@ -179,7 +179,9 @@ final class SessionStore: ObservableObject {
     /// Per-project last-used "new session" kind, keyed by project group ID. Drives
     /// the project header's split "+" button so it reopens whatever was launched
     /// last for that project. Persisted in `UserDefaults`.
-    @Published private var projectLaunchByGroup: [String: NewSessionLaunch] = [:]
+    @Published private var projectLaunchByGroup: [String: String] = [:]
+    @Published private(set) var sessionLaunchProfiles = NewSessionLaunch.builtInDefaults
+    @Published private(set) var sessionLaunchConfigurationDiagnostic: String?
     private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
 
     private var controlServer: ControlServer?
@@ -314,8 +316,13 @@ final class SessionStore: ObservableObject {
         terminalFontSize = workspace.terminalFontSize
         enableCodexAppServerMode = workspace.enableCodexAppServerMode
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
-            projectLaunchByGroup = stored.compactMapValues(NewSessionLaunch.init(rawValue:))
+            projectLaunchByGroup = stored
         }
+        let launchConfiguration = SessionLaunchProfileLoader.load(
+            at: SessionLaunchProfileLoader.configURL(homeDirectory: host.homeDirectory)
+        )
+        sessionLaunchProfiles = launchConfiguration.profiles
+        sessionLaunchConfigurationDiagnostic = launchConfiguration.diagnostic
         isHandoffAvailable = Self.resolveHandoffCommand(
             environment: host.environment,
             homeDirectory: host.homeDirectory.path
@@ -1112,7 +1119,11 @@ final class SessionStore: ObservableObject {
     /// The kind the project header's split "+" button spawns by default —
     /// whatever was last launched for this project, defaulting to a plain shell.
     func projectLaunch(for groupID: String) -> NewSessionLaunch {
-        projectLaunchByGroup[groupID] ?? .zsh
+        guard let id = projectLaunchByGroup[groupID],
+              let launch = sessionLaunchProfiles.first(where: { $0.id == id }) else {
+            return sessionLaunchProfiles.first(where: { $0.id == "zsh" }) ?? sessionLaunchProfiles[0]
+        }
+        return launch
     }
 
     @discardableResult
@@ -1129,16 +1140,16 @@ final class SessionStore: ObservableObject {
         rememberProjectLaunch(launch, for: groupID)
         return spawn(
             cwd: representative.cwd,
-            command: launch.command(codexLaunchMode: codexLaunchMode),
+            command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
             parentSessionID: representative.parentSessionID
         )
     }
 
     private func rememberProjectLaunch(_ launch: NewSessionLaunch, for groupID: String) {
-        guard projectLaunchByGroup[groupID] != launch else { return }
-        projectLaunchByGroup[groupID] = launch
+        guard projectLaunchByGroup[groupID] != launch.id else { return }
+        projectLaunchByGroup[groupID] = launch.id
         UserDefaults.standard.set(
-            projectLaunchByGroup.mapValues(\.rawValue),
+            projectLaunchByGroup,
             forKey: Self.projectLaunchDefaultsKey
         )
     }

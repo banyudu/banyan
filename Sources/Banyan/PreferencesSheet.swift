@@ -57,10 +57,20 @@ struct PreferencesSheet: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let diagnostic = store.sessionLaunchConfigurationDiagnostic {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Session launch profiles")
+                        .font(.headline)
+                    Text(diagnostic)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 440, height: 340)
+        .frame(width: 440, height: 400)
         .accessibilityIdentifier(AccessibilityID.preferencesSheet)
     }
 
