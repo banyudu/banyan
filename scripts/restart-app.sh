@@ -4,9 +4,11 @@
 # Why this exists: a naive kill+relaunch caused two failures we hit in practice —
 #   1) relaunching before the old instance released control port 7842, so the new
 #      listener never bound (now also mitigated by ControlServer bind-retry), and
-#   2) SIGKILL (`kill -9`) leaving corrupt window-restoration state, which then
+#   2) SIGKILL (`kill -9`) leaving incomplete window-restoration state, which then
 #      crashed the next launch inside AppKit's NSWindow.restoreStateWithCoder path
 #      and left the app running windowless (so onAppear/the control server never ran).
+#      Banyan disables AppKit's image snapshots, but retains ordinary restoration,
+#      so the forced-restart cleanup remains a precaution.
 #
 # This script quits gracefully (never SIGKILL unless --force), waits for both the
 # process to exit and the port to free, then relaunches.
@@ -76,9 +78,9 @@ if running; then
   # Wait up to ~10s for a clean exit.
   for _ in $(seq 1 50); do running || break; sleep 0.2; done
 
-  # Escalate to SIGTERM (still lets the app run its termination). SIGKILL corrupts
-  # restorable window state and crashes the next launch, so it stays behind --force
-  # for the "dev build is hung" rescue case.
+  # Escalate to SIGTERM (still lets the app run its termination). SIGKILL can leave
+  # restorable state incomplete and crash the next launch, so it stays behind
+  # --force for the "dev build is hung" rescue case.
   if running; then
     echo "Still running; sending SIGTERM…"
     signal_all TERM
@@ -90,7 +92,7 @@ if running; then
       echo "Still running; --force set, sending SIGKILL…"
       signal_all KILL
       for _ in $(seq 1 25); do running || break; sleep 0.2; done
-      # SIGKILL can leave corrupt window-restoration state that crashes the next
+      # A forced kill can leave incomplete restoration state that crashes the next
       # launch inside NSWindow.restoreStateWithCoder — clear it so launch succeeds.
       rm -rf "$HOME/Library/Saved Application State/$BUNDLE_ID.savedState" 2>/dev/null || true
     else

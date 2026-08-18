@@ -1185,6 +1185,7 @@ final class SessionStore: ObservableObject {
             defer: false
         )
         window.identifier = Self.scratchWindowIdentifier
+        WindowRestorationPolicy.configure(window)
         window.title = scratchWindowTitle(for: session)
         window.contentViewController = NSHostingController(rootView: rootView)
         window.isReleasedWhenClosed = false
