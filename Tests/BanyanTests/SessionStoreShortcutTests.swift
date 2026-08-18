@@ -7,10 +7,11 @@ import BanyanCore
     #expect(SessionLaunchPolicy.siblingRuntimeCommand(for: .codex) == "codex")
 }
 
-@Test func deepSeekNewSessionLaunchUsesOpenCodeAndDeepSeekIdentity() {
-    #expect(NewSessionLaunch.deepseek.command == "BANYAN_AGENT_PROVIDER=deepseek opencode")
-    #expect(NewSessionLaunch.deepseek.provider == .deepseek)
-    #expect(NewSessionLaunch.deepseek.label == "DeepSeek")
+@Test func deepSeekDefaultLaunchUsesOpenCodeAndDeepSeekIdentity() {
+    let launch = NewSessionLaunch.builtInDefaults.first { $0.id == "deepseek" }!
+    #expect(launch.command == "BANYAN_AGENT_PROVIDER=deepseek opencode")
+    #expect(launch.provider == .deepseek)
+    #expect(launch.label == "DeepSeek")
 }
 
 @Test func siblingShortcutFallsBackToTerminalForOtherRuntimes() {

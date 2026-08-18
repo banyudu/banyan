@@ -1120,6 +1120,7 @@ struct ContentView: View {
         SessionRow(
             session: item.session,
             selection: selection,
+            launchProfile: store.sessionLaunchProfile(for: item.session),
             depth: item.depth,
             titleOverride: item.titleOverride,
             jumpKeyLabel: jumpKeyLabel,
@@ -1887,6 +1888,7 @@ private struct SelectionAwareTerminalSwitcher: View {
 private struct SessionRow: View {
     @ObservedObject var session: BanyanSession
     @ObservedObject var selection: SessionSelection
+    let launchProfile: NewSessionLaunch?
     let depth: Int
     let titleOverride: String?
     let jumpKeyLabel: String
@@ -1924,8 +1926,11 @@ private struct SessionRow: View {
         HStack(spacing: 6) {
             JumpKeyBadge(label: jumpKeyLabel, provider: session.displayAgentProvider)
 
-            if let provider = session.displayAgentProvider {
-                AgentProviderIcon(provider: provider, helpText: session.agentRuntimeIdentityLabel)
+            if let launchProfile, session.displayAgentProvider != nil {
+                NewSessionLaunchIcon(launch: launchProfile, size: 18)
+                    .accessibilityLabel(launchProfile.label)
+            } else if let provider = session.displayAgentProvider {
+                AgentProviderIcon(provider: provider, size: 18, helpText: session.agentRuntimeIdentityLabel)
                     .accessibilityLabel(provider.displayName)
             } else if !session.isImportedHistory {
                 ShellSessionIcon()
@@ -1996,6 +2001,7 @@ private struct SessionRow: View {
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
         .padding(.vertical, 2)
         .padding(.leading, CGFloat(depth) * 18)
+        .padding(.leading, 4)
         .padding(.trailing, 4)
         .background(rowBackground)
         .contentShape(Rectangle())
@@ -2214,11 +2220,9 @@ private struct SessionRow: View {
 private struct ShellSessionIcon: View {
     var body: some View {
         Image(systemName: "terminal")
-            .resizable()
-            .aspectRatio(contentMode: .fit)
+            .font(.system(size: 13, weight: .medium))
             .foregroundStyle(.secondary)
-            .frame(width: 15, height: 15)
-            .frame(width: 20, height: 20)
+            .frame(width: 18, height: 18)
             .help("Shell")
             .accessibilityLabel("Shell")
     }
@@ -2236,7 +2240,7 @@ private struct ProjectNewSessionButton: View {
     var body: some View {
         let current = store.projectLaunch(for: groupID)
         Menu {
-            ForEach(NewSessionLaunch.allCases) { launch in
+            ForEach(store.sessionLaunchProfiles) { launch in
                 Button {
                     store.spawnSession(inProjectGroup: groupID, launch: launch)
                 } label: {
@@ -2263,14 +2267,20 @@ private struct ProjectNewSessionButton: View {
 
 private struct NewSessionLaunchIcon: View {
     let launch: NewSessionLaunch
+    var size: CGFloat = 14
 
     var body: some View {
-        if let provider = launch.provider {
-            AgentProviderIcon(provider: provider, size: 14)
+        if let customIconImage = launch.customIconImage {
+            Image(nsImage: customIconImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+        } else if let provider = launch.provider, launch.usesProviderIcon {
+            AgentProviderIcon(provider: provider, size: size)
         } else {
             Image(systemName: launch.systemImage)
                 .font(.caption)
-                .frame(width: 14, height: 14)
+                .frame(width: size, height: size)
         }
     }
 }

@@ -148,6 +148,46 @@ On first launch after upgrading, Banyan migrates legacy session metadata from `s
 
 Persisted state currently includes session metadata, tmux session names, generated titles, sidebar order, selected session, sort mode, terminal theme, and terminal font settings.
 
+## Session launch profiles
+
+The project-group `+` menu reads optional launch profiles from
+`~/.banyan/config.yml` when Banyan starts. Each profile has a stable `id`; the
+last profile selected for each project group is remembered by that ID. This
+makes it safe to rename a label or define several variants of the same agent.
+
+```yaml
+session_launches:
+  - id: codex
+    label: Codex
+    provider: codex
+    command: codex
+  - id: codex-fast
+    label: Codex Fast
+    provider: codex
+    # Optional SF Symbol or local PNG/JPEG/ICNS image path.
+    icon: ~/.banyan/icons/codex-fast.png
+    command: codex --profile fast
+  - id: claude-opus
+    label: Claude Opus
+    provider: claude
+    command: claude --model opus
+```
+
+`id`, `label`, and `command` are required strings. `provider` is optional and
+selects a known provider icon (`claude`, `codex`, `deepseek`, `gemini`, and the
+other Banyan providers); unknown providers use a generic icon. `icon` is an
+optional SF Symbol name (for example, `bolt.fill`) or local image path. Image
+paths can be absolute, start with `~`, or use a `file://` URL, and override
+provider branding. Commands are passed to the session shell unchanged, so
+quote YAML values when needed.
+
+When this file is absent, Banyan preserves the previous built-in menu:
+`zsh`, Claude, Codex, and DeepSeek. If the file cannot be read or is invalid
+(including duplicate IDs or no profiles), Banyan starts with those defaults and
+shows the parsing diagnostic in Preferences. An old remembered profile ID that
+is no longer configured falls back to the `zsh` profile, or the first profile
+when no `zsh` profile is configured.
+
 ## Dev / Stable Builds
 
 Two channels, never running at the same time (they share control port 7842 and `state.sqlite`):
