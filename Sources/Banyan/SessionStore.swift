@@ -1126,6 +1126,12 @@ final class SessionStore: ObservableObject {
         return launch
     }
 
+    /// Finds the configured profile that launched a session so sidebar rows can
+    /// retain a profile-specific label icon (for example, Luna vs. standard Codex).
+    func sessionLaunchProfile(for session: BanyanSession) -> NewSessionLaunch? {
+        sessionLaunchProfiles.first { $0.command == session.command }
+    }
+
     @discardableResult
     func spawnSession(inProjectGroup groupID: String, launch: NewSessionLaunch) -> BanyanSession? {
         let groupSessions = visibleSessions.filter {
