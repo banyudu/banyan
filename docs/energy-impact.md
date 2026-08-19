@@ -20,10 +20,12 @@ particular:
   are deliberately not written to SQLite so telemetry cannot create persistent
   background I/O during output-heavy sessions.
 
-The supervisor invokes `ps` once and tmux inspection commands per started
-session. Active sessions retain a 2-second foreground cadence. When all started
-sessions are idle, the cadence becomes 6 seconds in the foreground and 15
-seconds in the background, before existing session-count, low-power, and
+The supervisor invokes `ps` once and batches pane metadata for all started
+sessions into one tmux command per tick. It still captures visible text only for
+sessions with a live coding agent, because that text is needed for status
+detection. Active sessions retain a 2-second foreground cadence. When all
+started sessions are idle, the cadence becomes 6 seconds in the foreground and
+15 seconds in the background, before existing session-count, low-power, and
 thermal backoff is applied.
 
 ## Reproduction and attribution

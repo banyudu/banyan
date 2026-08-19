@@ -87,6 +87,9 @@ public struct SessionStatusSynchronizer: Sendable {
             processTable: processTable
         )
         let collector = ObservationCollector()
+        let paneSnapshots = backend.primaryPaneSnapshots(
+            named: Set(inputs.map(\.tmuxSessionName))
+        )
         DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
             let input = inputs[index]
             let startedAt = DispatchTime.now()
@@ -99,7 +102,8 @@ public struct SessionStatusSynchronizer: Sendable {
                 currentStatus: input.status,
                 cwd: input.cwd,
                 sessionStartedAt: input.createdAt,
-                environment: input.environment
+                environment: input.environment,
+                paneSnapshot: paneSnapshots[input.tmuxSessionName]
             ) else {
                 return
             }
@@ -127,15 +131,18 @@ public struct SessionStatusSynchronizer: Sendable {
             backend: backend,
             processTable: processTable
         )
+        let paneSnapshots = backend.primaryPaneSnapshots(
+            named: Set(snapshots.map { $0.launchRequest.sessionName })
+        )
 
         return snapshots.map { session in
             let tmuxSessionName = session.launchRequest.sessionName
             guard session.status != .closed,
-                  backend.hasSession(named: tmuxSessionName),
                   let result = supervisor.inspect(
                       tmuxSessionName: tmuxSessionName,
                       launchCommand: session.command,
-                      currentStatus: session.status
+                      currentStatus: session.status,
+                      paneSnapshot: paneSnapshots[tmuxSessionName]
                   ),
                   result.status != .closed,
                   result.status != session.status || result.tone != session.tone else {

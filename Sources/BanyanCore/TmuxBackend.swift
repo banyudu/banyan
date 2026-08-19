@@ -107,6 +107,50 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         )
     }
 
+    public func primaryPaneSnapshots(named names: Set<String>) -> [String: TmuxPaneSnapshot] {
+        guard !names.isEmpty else { return [:] }
+
+        let format = [
+            "#{session_name}",
+            "#{pane_id}",
+            "#{pane_pid}",
+            "#{pane_current_command}",
+            "#{pane_current_path}",
+            "#{pane_dead}",
+            "#{pane_in_mode}"
+        ].joined(separator: "\t")
+
+        guard let output = try? run(["list-panes", "-a", "-F", format]) else {
+            // Preserve the scalar lookup's missing-session semantics if the
+            // batched command cannot run (for example, during server startup).
+            return names.reduce(into: [:]) { snapshots, name in
+                if let snapshot = primaryPaneSnapshot(named: name) {
+                    snapshots[name] = snapshot
+                }
+            }
+        }
+
+        var snapshots: [String: TmuxPaneSnapshot] = [:]
+        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            let parts = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 7,
+                  names.contains(parts[0]),
+                  snapshots[parts[0]] == nil,
+                  let rootPID = Int(parts[2]) else {
+                continue
+            }
+            snapshots[parts[0]] = TmuxPaneSnapshot(
+                paneID: parts[1],
+                rootPID: rootPID,
+                currentCommand: parts[3],
+                currentPath: parts[4],
+                isDead: parts[5] == "1",
+                isInMode: parts[6] == "1"
+            )
+        }
+        return snapshots
+    }
+
     public func captureVisibleText(paneID: String, lineLimit: Int = 80) -> String {
         let start = "-\(max(1, lineLimit))"
         return (try? run(["capture-pane", "-p", "-J", "-t", paneID, "-S", start])) ?? ""

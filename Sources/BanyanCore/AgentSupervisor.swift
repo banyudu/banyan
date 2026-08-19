@@ -47,8 +47,31 @@ public struct AgentSupervisor: Sendable {
         sessionStartedAt: Date = .distantPast,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Result? {
+        inspect(
+            tmuxSessionName: tmuxSessionName,
+            launchCommand: launchCommand,
+            currentStatus: currentStatus,
+            cwd: cwd,
+            sessionStartedAt: sessionStartedAt,
+            environment: environment,
+            paneSnapshot: backend.primaryPaneSnapshot(named: tmuxSessionName)
+        )
+    }
+
+    /// Inspects a session using pane metadata fetched by a batch lookup. Keeping
+    /// the pane snapshot separate avoids one `tmux list-panes` subprocess per
+    /// session during a supervisor tick.
+    public func inspect(
+        tmuxSessionName: String,
+        launchCommand: String,
+        currentStatus: SessionStatus,
+        cwd: String = "",
+        sessionStartedAt: Date = .distantPast,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        paneSnapshot: TmuxPaneSnapshot?
+    ) -> Result? {
         guard currentStatus != .closed else { return nil }
-        guard let pane = backend.primaryPaneSnapshot(named: tmuxSessionName) else {
+        guard let pane = paneSnapshot else {
             return backend.hasSession(named: tmuxSessionName)
                 ? nil
                 : Result(status: .closed, tone: .neutral, provider: nil, currentPath: nil)

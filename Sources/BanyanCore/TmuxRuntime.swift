@@ -36,7 +36,21 @@ public protocol TmuxSessionLookupBackend: Sendable {
 
 public protocol TmuxSessionBackend: TmuxSessionLookupBackend {
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot?
+    /// Returns the primary pane for each requested session in one backend call
+    /// when the implementation can batch the lookup. The default keeps small
+    /// test and alternate backends source-compatible.
+    func primaryPaneSnapshots(named names: Set<String>) -> [String: TmuxPaneSnapshot]
     func captureVisibleText(paneID: String, lineLimit: Int) -> String
+}
+
+public extension TmuxSessionBackend {
+    func primaryPaneSnapshots(named names: Set<String>) -> [String: TmuxPaneSnapshot] {
+        names.reduce(into: [:]) { snapshots, name in
+            if let snapshot = primaryPaneSnapshot(named: name) {
+                snapshots[name] = snapshot
+            }
+        }
+    }
 }
 
 public protocol TmuxSessionLifecycleBackend: TmuxSessionLookupBackend {
