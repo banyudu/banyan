@@ -13,7 +13,8 @@ app, tmux server, and agent processes separately.
 particular:
 
 - `supervisor.tick` identifies the periodic session-inspection batch. Its detail
-  includes total, active, and idle session counts plus the selected cadence.
+  includes total, frequently observed, and deferred session counts plus the
+  selected cadence.
 - `supervisor.session` is retained only when one tmux/process inspection takes
   at least 150 ms; it includes the Banyan session ID to identify a slow pane.
 - `terminal.draw` is retained only when a draw takes at least 16 ms. Fast draws
@@ -27,6 +28,12 @@ detection. Active sessions retain a 2-second foreground cadence. When all
 started sessions are idle, the cadence becomes 6 seconds in the foreground and
 15 seconds in the background, before existing session-count, low-power, and
 thermal backoff is applied.
+
+Each session also backs off independently after repeated identical
+observations. Quiet sessions progress from the normal cadence to 2x, 4x, 8x,
+and longer intervals, capped at one hour. If every session is backed off, the
+supervisor timer sleeps until the next session is due. A user status signal or
+selecting a session resets that session's backoff.
 
 ## Reproduction and attribution
 

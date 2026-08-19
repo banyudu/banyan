@@ -61,6 +61,12 @@ private struct PendingLinearDescriptionUpdate {
     let newDescription: String
 }
 
+private struct SupervisorObservationState {
+    let lastObservation: SessionStatusObservation?
+    let stableObservations: Int
+    let nextDueAt: Date
+}
+
 private enum HandoffDispatchError: Error {
     case commandUnavailable(String)
     case failed(Int32, String)
@@ -140,6 +146,10 @@ final class SessionStore: ObservableObject {
             saveWorkspaceSoon()
             requestTerminalFocus()
             refreshSelectedContextInfo(force: true)
+            if oldValue != selectedSessionID, let selectedSessionID {
+                resetSupervisorObservationBackoff(for: selectedSessionID)
+                runSupervisorTick(sessionID: selectedSessionID)
+            }
         }
     }
     @Published var sortMode: SortMode = .manual {
@@ -204,6 +214,10 @@ final class SessionStore: ObservableObject {
     /// Effective cadence the live `supervisorTimer` was installed with, so we can
     /// skip re-installing the timer when the adaptive interval is unchanged.
     private var currentSupervisorInterval: TimeInterval = 0
+    /// Per-session observation state. Quiet sessions back off independently so
+    /// one active agent does not force every stale session through tmux on each
+    /// global timer fire.
+    private var supervisorObservationStates: [String: SupervisorObservationState] = [:]
     /// App-lifecycle / thermal / power observers that re-evaluate the supervisor
     /// cadence. Installed once; retained so they outlive `addObserver`.
     private var supervisorLifecycleObservers: [NSObjectProtocol] = []
@@ -1008,13 +1022,13 @@ final class SessionStore: ObservableObject {
         rescheduleSupervisor(runImmediately: true)
     }
 
-    /// Adaptive cadence for the supervisor poll. Each tick spawns `/bin/ps` plus a
-    /// `tmux list-panes`/`capture-pane` per started session, so a fixed 2s timer
-    /// burned energy continuously even when backgrounded or idle. Per AGENTS.md the
-    /// interval is adaptive to foreground/background, battery, thermal state, and
-    /// session count. The supervisor still runs in the background (it drives the
-    /// "agent needs input" notification) — just far less often.
-    private var supervisorInterval: TimeInterval {
+    /// Adaptive cadence for the supervisor poll. Each tick spawns `/bin/ps`, one
+    /// batched `tmux list-panes`, and captures text only for live coding agents.
+    /// Stable sessions are deferred independently, and when every session is
+    /// deferred the timer sleeps until the next one is due. The base interval is
+    /// still adaptive to foreground/background, battery, thermal state, and
+    /// session count so active work remains responsive.
+    private var supervisorBaseInterval: TimeInterval {
         let startedSessions = sessions.reduce(into: 0) { count, session in
             if session.status != .closed && session.isProcessStarted { count += 1 }
         }
@@ -1044,12 +1058,45 @@ final class SessionStore: ObservableObject {
         )
     }
 
+    private var supervisorInterval: TimeInterval {
+        let baseInterval = supervisorBaseInterval
+        let participatingSessions = sessions.filter {
+            $0.status != .closed
+                && SessionLifecyclePolicy.participatesInSupervisorTick(
+                    isProcessStarted: $0.isProcessStarted,
+                    isRestored: $0.isRestored
+                )
+        }
+        guard !participatingSessions.isEmpty else { return baseInterval }
+
+        let requiresFrequentObservation = participatingSessions.contains { session in
+            guard let state = supervisorObservationStates[session.id],
+                  state.lastObservation != nil else {
+                return true
+            }
+            return SessionSupervisorBackoffPolicy.requiresFrequentObservation(
+                status: session.status,
+                stableObservations: state.stableObservations
+            )
+        }
+        guard !requiresFrequentObservation else { return baseInterval }
+
+        let now = Date()
+        guard let nextDueAt = participatingSessions
+            .compactMap({ supervisorObservationStates[$0.id]?.nextDueAt })
+            .min()
+        else {
+            return baseInterval
+        }
+        return max(1, nextDueAt.timeIntervalSince(now))
+    }
+
     /// Re-evaluate the adaptive cadence and reinstall the timer only when it
     /// actually changed. `runImmediately` fires a tick now (used on launch and when
     /// the app regains focus, so the sidebar refreshes without waiting a full cycle).
     private func rescheduleSupervisor(runImmediately: Bool = false) {
         if runImmediately {
-            runSupervisorTick()
+            runSupervisorTick(force: true)
         }
 
         let interval = supervisorInterval
@@ -1565,7 +1612,7 @@ final class SessionStore: ObservableObject {
             }
             runSupervisorTick(sessionID: id)
         } else {
-            runSupervisorTick()
+            runSupervisorTick(force: true)
         }
         saveSessions()
     }
@@ -2450,8 +2497,9 @@ final class SessionStore: ObservableObject {
             telemetry.noteSessionFirstOutput(sessionID: session.id)
             self.detectAttention(in: text, for: session)
         }
-        session.onStatusSignal = { [weak session] status in
-            guard let session else { return }
+        session.onStatusSignal = { [weak self, weak session] status in
+            guard let self, let session else { return }
+            self.resetSupervisorObservationBackoff(for: session.id)
             self.attentionNotifier.notifyIfNeeded(session: session, status: status)
         }
         session.onProjectContextObserved = { [weak self, weak session] cwd, context in
@@ -2704,8 +2752,9 @@ final class SessionStore: ObservableObject {
         session.mark(status: result.status, tone: result.tone)
     }
 
-    private func runSupervisorTick(sessionID: String? = nil) {
+    private func runSupervisorTick(sessionID: String? = nil, force: Bool = false) {
         guard !isSupervisorTickRunning else { return }
+        let now = Date()
         let inputs = sessions.compactMap { session -> SessionStatusObservationInput? in
             guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
                 return nil
@@ -2714,6 +2763,9 @@ final class SessionStore: ObservableObject {
                 isProcessStarted: session.isProcessStarted,
                 isRestored: session.isRestored
             ) else {
+                return nil
+            }
+            guard force || sessionID != nil || isSupervisorObservationDue(for: session, at: now) else {
                 return nil
             }
             return SessionStatusObservationInput(
@@ -2732,8 +2784,15 @@ final class SessionStore: ObservableObject {
         isSupervisorTickRunning = true
         let backend = tmuxBackend
         let processTableProvider = processTable
-        let activeSessionCount = inputs.filter {
-            !$0.status.isCodingAgentIdle && ![.completed, .failed].contains($0.status)
+        let frequentSessionCount = inputs.filter {
+            guard let state = supervisorObservationStates[$0.id],
+                  state.lastObservation != nil else {
+                return true
+            }
+            return SessionSupervisorBackoffPolicy.requiresFrequentObservation(
+                status: $0.status,
+                stableObservations: state.stableObservations
+            )
         }.count
         let cadence = supervisorInterval
 
@@ -2755,19 +2814,96 @@ final class SessionStore: ObservableObject {
             telemetry.recordDuration(
                 "supervisor.tick",
                 durationMS: PerformanceTelemetry.elapsedMS(since: tickStartedAt),
-                detail: "sessions=\(inputs.count) active=\(activeSessionCount) idle=\(inputs.count - activeSessionCount) cadence_s=\(Int(cadence.rounded()))"
+                detail: "sessions=\(inputs.count) frequent=\(frequentSessionCount) deferred=\(inputs.count - frequentSessionCount) cadence_s=\(Int(cadence.rounded()))"
             )
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 let didChangePersistentState = self.applySupervisorResults(results)
+                self.updateSupervisorObservationStates(
+                    for: inputs,
+                    results: results,
+                    observedAt: Date()
+                )
                 self.isSupervisorTickRunning = false
                 if didChangePersistentState {
                     self.saveSessions()
                 }
                 self.refreshSelectedContextInfoIfStale()
+                self.rescheduleSupervisor()
             }
         }
+    }
+
+    private func isSupervisorObservationDue(for session: BanyanSession, at now: Date) -> Bool {
+        guard let state = supervisorObservationStates[session.id] else { return true }
+        if state.lastObservation == nil {
+            return state.nextDueAt <= now
+        }
+        if SessionSupervisorBackoffPolicy.requiresFrequentObservation(
+            status: session.status,
+            stableObservations: state.stableObservations
+        ) {
+            return true
+        }
+        return state.nextDueAt <= now
+    }
+
+    private func resetSupervisorObservationBackoff(for sessionID: String) {
+        guard let state = supervisorObservationStates[sessionID] else { return }
+        supervisorObservationStates[sessionID] = SupervisorObservationState(
+            lastObservation: nil,
+            stableObservations: 0,
+            nextDueAt: Date()
+        )
+        if supervisorTimer != nil, state.nextDueAt > Date() {
+            rescheduleSupervisor()
+        }
+    }
+
+    private func updateSupervisorObservationStates(
+        for inputs: [SessionStatusObservationInput],
+        results: [SessionStatusObservation],
+        observedAt: Date
+    ) {
+        let baseInterval = supervisorBaseInterval
+        let resultsByID = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
+        for input in inputs {
+            guard let session = sessions.first(where: { $0.id == input.id }),
+                  session.status != .closed else {
+                continue
+            }
+
+            guard let result = resultsByID[input.id] else {
+                supervisorObservationStates[input.id] = SupervisorObservationState(
+                    lastObservation: nil,
+                    stableObservations: 0,
+                    nextDueAt: observedAt.addingTimeInterval(baseInterval)
+                )
+                continue
+            }
+
+            let previous = supervisorObservationStates[input.id]
+            let stableObservations: Int
+            if previous?.lastObservation == result {
+                stableObservations = (previous?.stableObservations ?? 0) + 1
+            } else {
+                stableObservations = 0
+            }
+            let interval = SessionSupervisorBackoffPolicy.interval(
+                baseInterval: baseInterval,
+                status: result.status,
+                stableObservations: stableObservations
+            )
+            supervisorObservationStates[input.id] = SupervisorObservationState(
+                lastObservation: result,
+                stableObservations: stableObservations,
+                nextDueAt: observedAt.addingTimeInterval(interval)
+            )
+        }
+
+        let liveIDs = Set(sessions.filter { $0.status != .closed }.map(\.id))
+        supervisorObservationStates = supervisorObservationStates.filter { liveIDs.contains($0.key) }
     }
 
     /// Returns a non-expired cached context for `input`, reidentified to the current
