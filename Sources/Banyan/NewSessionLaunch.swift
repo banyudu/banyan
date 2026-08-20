@@ -159,7 +159,14 @@ enum SessionLaunchProfileLoader {
         }
         do {
             let contents = try String(contentsOf: url, encoding: .utf8)
-            let profiles = try parse(contents)
+            var profiles = try parse(contents)
+            // Merge any new built-in profiles that the user's config doesn't yet
+            // contain, so additions like hunyuan/muse appear without manual edits.
+            // Existing entries keep their order and customization; new ones append.
+            let existingIDs = Set(profiles.map(\.id))
+            for builtIn in NewSessionLaunch.builtInDefaults where !existingIDs.contains(builtIn.id) {
+                profiles.append(builtIn)
+            }
             return SessionLaunchProfileLoadResult(profiles: profiles, diagnostic: nil)
         } catch {
             return SessionLaunchProfileLoadResult(
