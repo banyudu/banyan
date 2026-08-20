@@ -47,7 +47,7 @@ public enum SessionLifecyclePolicy {
         status: SessionStatus,
         provider: CodingAgentProvider?
     ) -> Bool {
-        guard [.codex, .claude, .deepseek, .opencode].contains(provider) else { return false }
+        guard [.codex, .claude, .deepseek, .opencode, .hunyuan, .muse, .xiaomiMiMo, .minimax, .zai].contains(provider) else { return false }
         return ![.completed, .failed, .closed].contains(status)
     }
 }
