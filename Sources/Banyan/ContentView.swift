@@ -2346,11 +2346,11 @@ private struct AgentProviderIcon: View {
         case .gemini:
             return "GeminiLogo"
         case .hunyuan:
-            return nil
+            return "HunyuanLogo"
         case .minimax:
             return "MiniMaxLogo"
         case .muse:
-            return nil
+            return "MuseLogo"
         case .opencode:
             return nil
         case .xiaomiMiMo:
