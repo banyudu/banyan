@@ -22,8 +22,12 @@ public enum SessionLaunchPolicy {
         switch provider {
         case .claude, .codex:
             return provider?.defaultExecutableName ?? ""
-        case .opencode, .hunyuan, .muse:
+        case .opencode:
             return "opencode"
+        case .hunyuan:
+            return "opencode --agent hy3"
+        case .muse:
+            return "opencode --agent muse-spark"
         case .deepseek:
             // DeepSeek sessions currently run through OpenCode. Preserve the
             // marker so the new session keeps the same provider identity.

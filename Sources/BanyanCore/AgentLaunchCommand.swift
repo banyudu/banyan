@@ -11,6 +11,16 @@ public enum AgentLaunchCommand {
             return CodexAppServerLaunch.command(prompt: prompt)
         }
         var arguments = [executableName.flatMap(clean) ?? provider.defaultExecutableName]
+        switch provider {
+        case .hunyuan:
+            arguments.append("--agent")
+            arguments.append("hy3")
+        case .muse:
+            arguments.append("--agent")
+            arguments.append("muse-spark")
+        default:
+            break
+        }
         if let prompt = clean(prompt) {
             arguments.append(prompt)
         }
