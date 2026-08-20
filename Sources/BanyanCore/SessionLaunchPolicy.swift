@@ -22,7 +22,7 @@ public enum SessionLaunchPolicy {
         switch provider {
         case .claude, .codex:
             return provider?.defaultExecutableName ?? ""
-        case .opencode:
+        case .opencode, .hunyuan, .muse:
             return "opencode"
         case .deepseek:
             // DeepSeek sessions currently run through OpenCode. Preserve the

@@ -108,7 +108,9 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
         case .codex: return "ChatGPTLogo"
         case .deepseek: return "DeepSeekLogo"
         case .gemini: return "GeminiLogo"
+        case .hunyuan: return nil
         case .minimax: return "MiniMaxLogo"
+        case .muse: return nil
         case .xiaomiMiMo: return "XiaomiMiMoLogo"
         case .zai: return "ZAILogo"
         case .opencode: return nil

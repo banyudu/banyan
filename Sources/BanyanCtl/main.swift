@@ -442,7 +442,7 @@ struct BanyanCtl {
         Usage:
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue] [--focus|--background]
           banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue] [--focus|--background]
-          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|mimo|minimax|opencode [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
+          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|hunyuan|mimo|minimax|muse|opencode [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
 
         Spawns open in the background by default (they do not steal focus from the
         current session). Pass --focus to select the new session, or --background
