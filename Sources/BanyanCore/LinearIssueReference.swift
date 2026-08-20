@@ -14,7 +14,23 @@ public struct LinearIssueReference: Equatable {
         cwd: String,
         environment: [String: String]
     ) -> LinearIssueReference? {
-        guard let id = issueID(in: branch) ?? issueID(in: cwd) else {
+        if let branch, !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let id = issueID(in: branch) {
+                return LinearIssueReference(id: id, url: issueURL(for: id, environment: environment))
+            }
+            // Detached HEAD yields a short SHA (e.g. "a1b2c3d") – fall back to cwd
+            // so a worktree directory like ".../yudu-ENG-1234" still resolves.
+            // A real branch name like "main" or "feature/x" with no issue is an
+            // explicit "no issue" signal and should not fall back to a stale cwd.
+            let trimmed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isSHA = trimmed.range(of: "^[0-9a-f]{7,40}$", options: [.regularExpression, .caseInsensitive]) != nil
+            if isSHA {
+                guard let id = issueID(in: cwd) else { return nil }
+                return LinearIssueReference(id: id, url: issueURL(for: id, environment: environment))
+            }
+            return nil
+        }
+        guard let id = issueID(in: cwd) else {
             return nil
         }
         return LinearIssueReference(id: id, url: issueURL(for: id, environment: environment))

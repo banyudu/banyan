@@ -8,6 +8,7 @@ public struct SessionContextLookupInput: Equatable, Sendable {
     public let title: String
     public let titleURL: String?
     public let displayTitle: String
+    public let branch: String?
 
     public init(
         sessionID: String,
@@ -16,7 +17,8 @@ public struct SessionContextLookupInput: Equatable, Sendable {
         environment: [String: String],
         title: String,
         titleURL: String?,
-        displayTitle: String
+        displayTitle: String,
+        branch: String? = nil
     ) {
         self.sessionID = sessionID
         self.cwd = cwd
@@ -25,6 +27,7 @@ public struct SessionContextLookupInput: Equatable, Sendable {
         self.title = title
         self.titleURL = titleURL
         self.displayTitle = displayTitle
+        self.branch = branch
     }
 
     public var signature: String {
@@ -36,7 +39,8 @@ public struct SessionContextLookupInput: Equatable, Sendable {
             environment["BANYAN_LINEAR_ORG"] ?? "",
             title,
             titleURL ?? "",
-            displayTitle
+            displayTitle,
+            branch ?? ""
         ].joined(separator: "\u{1f}")
     }
 }
@@ -236,7 +240,7 @@ public enum SessionContextResolver {
     /// network/git result — the working directory and any issue/PR tokens embedded
     /// in the title — so free-text title churn no longer forces a re-resolve.
     public static func cacheKey(for input: SessionContextLookupInput) -> String {
-        [input.cwd, titleIssueID(input) ?? "", titleGitHubIssueURL(input) ?? "", titlePullRequestURL(input) ?? ""]
+        [input.cwd, input.branch ?? "", titleIssueID(input) ?? "", titleGitHubIssueURL(input) ?? "", titlePullRequestURL(input) ?? ""]
             .joined(separator: "\u{1f}")
     }
 

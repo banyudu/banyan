@@ -258,6 +258,10 @@ final class SessionStore: ObservableObject {
     private var linearIssueListRefreshTimer: Timer?
     private static let linearIssueListRefreshInterval: TimeInterval = 30 * 60
     private static let linearIssueListLoadTimeout: TimeInterval = 45
+    private var branchRefreshTimer: Timer?
+    private var branchRefreshTask: Task<Void, Never>?
+    private var lastBranchRefreshByCWD: [String: Date] = [:]
+    private static let branchRefreshInterval: TimeInterval = 15
     private var selectedLinearListIssueTask: Task<Void, Never>?
     private var pendingSelectedLinearListDescriptionUpdate: PendingLinearDescriptionUpdate?
     /// Recently loaded issue details stay available while the user moves
@@ -685,6 +689,74 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Periodically refresh the branch-derived issue binding even when the
+    /// pane's current directory hasn't changed. `git checkout main` in the same
+    /// directory doesn't trigger `onDirectoryChange`/`currentPath` observation, so
+    /// without polling the chip would keep showing the previous ENG until the next
+    /// full cwd change. Throttled per-cwd and shared across sessions in the same
+    /// directory to keep git load low.
+    func refreshBranchContextsIfNeeded(force: Bool = false) {
+        guard branchRefreshTask == nil else { return }
+        let now = Date()
+        let candidates = sessions.filter { $0.status != .closed }
+        guard !candidates.isEmpty else { return }
+        // Group by cwd so one git lookup covers all sessions in that directory.
+        var cwds: Set<String> = []
+        for session in candidates {
+            let last = lastBranchRefreshByCWD[session.cwd]
+            if force || last == nil || now.timeIntervalSince(last!) >= Self.branchRefreshInterval {
+                cwds.insert(session.cwd)
+            }
+        }
+        guard !cwds.isEmpty else { return }
+        for cwd in cwds {
+            lastBranchRefreshByCWD[cwd] = now
+        }
+        // Cap total git work per cycle so a large workspace doesn't spike.
+        let limited = Array(cwds.prefix(20))
+        let home = homeDirectory
+        let env = environment
+        branchRefreshTask = Task.detached(priority: .utility) { [weak self] in
+            var contexts: [String: SessionProjectContext] = [:]
+            for cwd in limited {
+                contexts[cwd] = SessionDisplayLabel.context(cwd: cwd, homeDirectory: home, environment: env)
+            }
+            let resolved = contexts
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.branchRefreshTask = nil
+                var didUpdate = false
+                for session in self.sessions where session.status != .closed {
+                    guard let context = resolved[session.cwd] else { continue }
+                    // Only apply if the lookup was trustworthy; degraded results
+                    // must not clobber the last good branch (handled by
+                    // updateDisplayContext's degraded guard).
+                    if context.gitLookupDegraded { continue }
+                    let before = session.displayBranch
+                    let beforeURL = session.titleURL
+                    session.applyProjectContext(context)
+                    if session.displayBranch != before || session.titleURL != beforeURL {
+                        didUpdate = true
+                    }
+                }
+                if didUpdate {
+                    self.saveSessions()
+                    self.refreshSelectedContextInfo(force: true)
+                }
+            }
+        }
+    }
+
+    private func installBranchRefreshTimerIfNeeded() {
+        guard branchRefreshTimer == nil else { return }
+        let timer = Timer(timeInterval: Self.branchRefreshInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshBranchContextsIfNeeded() }
+        }
+        timer.tolerance = 5
+        RunLoop.main.add(timer, forMode: .common)
+        branchRefreshTimer = timer
+    }
+
     func refreshImportedHistory(spawnDefaultIfEmpty: Bool = false) {
         runHistoryImport(spawnDefaultIfEmpty: spawnDefaultIfEmpty)
     }
@@ -1018,6 +1090,7 @@ final class SessionStore: ObservableObject {
 
     func startSupervisor() {
         installSupervisorLifecycleObserversIfNeeded()
+        installBranchRefreshTimerIfNeeded()
         guard supervisorTimer == nil else { return }
         rescheduleSupervisor(runImmediately: true)
     }
@@ -1119,6 +1192,7 @@ final class SessionStore: ObservableObject {
 
     private func supervisorTimerFired() {
         runSupervisorTick()
+        refreshBranchContextsIfNeeded()
         // Focus, thermal, power, or session count may have changed since the timer
         // was installed; adopt the new cadence for the next fire.
         rescheduleSupervisor()
@@ -1130,7 +1204,10 @@ final class SessionStore: ObservableObject {
         let onActive = center.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.rescheduleSupervisor(runImmediately: true) }
+            Task { @MainActor in
+                self?.rescheduleSupervisor(runImmediately: true)
+                self?.refreshBranchContextsIfNeeded(force: true)
+            }
         }
         let onResign = center.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
@@ -3157,7 +3234,8 @@ final class SessionStore: ObservableObject {
             environment: environment,
             title: session.title,
             titleURL: session.titleURL,
-            displayTitle: session.displayTitle
+            displayTitle: session.displayTitle,
+            branch: session.displayBranch
         )
     }
 
