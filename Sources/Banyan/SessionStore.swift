@@ -634,10 +634,11 @@ final class SessionStore: ObservableObject {
         } else {
             selectedSessionID = visibleSessions.first?.id
         }
-        // A machine restart kills the dedicated tmux server, but not this
-        // persisted metadata. Recreate all missing sessions automatically so
-        // agents resume in the background as soon as Banyan launches.
-        recoverAll(selectRecoveredSession: false)
+        // Keep startup non-modal. Recovery may need a macOS security-scoped
+        // folder grant, and presenting NSOpenPanel while SwiftUI is restoring
+        // its window can deadlock or crash the system renderer. The recovery
+        // banner calls recoverAll after the main window and control server are
+        // ready, so one parent-folder grant can be reused for all sessions.
         refreshSelectedContextInfo(force: true)
         saveSessions()
         retryDegradedDisplayContexts()
