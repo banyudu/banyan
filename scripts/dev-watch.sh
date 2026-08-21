@@ -52,7 +52,7 @@ package_dev_app() {
   <key>CFBundleIdentifier</key><string>dev.banyudu.banyan</string>
   <key>CFBundleName</key><string>Banyan</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.2.4</string>
+  <key>CFBundleShortVersionString</key><string>0.2.5</string>
   <key>CFBundleVersion</key><string>dev</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
