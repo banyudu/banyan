@@ -49,6 +49,9 @@ struct ContentView: View {
     @State private var linearIssueSortOption: LinearIssueSortOption = .defaultOrder
     @FocusState private var linearFocusTarget: LinearFocusTarget?
 
+    @State private var isSidebarSearchVisible = false
+    @FocusState private var isSidebarSearchFocused: Bool
+
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -369,19 +372,11 @@ struct ContentView: View {
     }
 
     private var sessionsSidebar: some View {
-        let sessionGroups = store.sessionSidebarGroups
-        let historyGroup = store.historySidebarGroup
-        let jumpKeyLabels = makeJumpKeyLabels(
-            sessionGroups: sessionGroups,
-            historyGroup: historyGroup
-        )
+        let groups = store.unifiedSidebarGroups
+        let jumpKeyLabels = makeJumpKeyLabels(groups: groups)
         return VStack(spacing: 0) {
             List {
-                sidebarSections(
-                    sessionGroups,
-                    allowsMove: true,
-                    jumpKeyLabels: jumpKeyLabels
-                )
+                sidebarSections(groups, jumpKeyLabels: jumpKeyLabels)
             }
             .listStyle(.sidebar)
             .accessibilityIdentifier(AccessibilityID.sidebarList)
@@ -398,34 +393,9 @@ struct ContentView: View {
                 Divider()
             }
 
-            if store.hasLocalHistorySessions {
-                Divider()
-                historySearchField
-                    .padding(.horizontal, 10)
-                    .padding(.top, 8)
-                    .padding(.bottom, 2)
+            Divider()
 
-                if let historyGroup {
-                    List {
-                        sidebarSections(
-                            [historyGroup],
-                            allowsMove: false,
-                            jumpKeyLabels: jumpKeyLabels
-                        )
-                    }
-                    .listStyle(.sidebar)
-                    .frame(height: historyListHeight(itemCount: historyGroup.items.count))
-                    .accessibilityIdentifier(AccessibilityID.sidebarHistoryList)
-                } else {
-                    Text("No matching sessions")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .accessibilityIdentifier(AccessibilityID.sidebarHistoryEmptyLabel)
-                }
-            }
+            sidebarSearchField
 
             HStack {
                 Button {
@@ -528,31 +498,60 @@ struct ContentView: View {
         }
     }
 
-    private var historySearchField: some View {
+    private var sidebarSearchField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            TextField("Search history", text: $store.historyFilterText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .accessibilityIdentifier(AccessibilityID.sidebarHistorySearchField)
-
-            if !store.historyFilterText.isEmpty {
-                Button {
-                    store.historyFilterText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+            Button {
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isSidebarSearchVisible.toggle()
                 }
-                .buttonStyle(.banyanPlain)
-                .help("Clear search")
+                if isSidebarSearchVisible {
+                    isSidebarSearchFocused = true
+                } else {
+                    isSidebarSearchFocused = false
+                    store.historyFilterText = ""
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .buttonStyle(.banyanBorderless)
+            .help(isSidebarSearchVisible ? "Hide search" : "Search sessions")
+
+            if isSidebarSearchVisible {
+                TextField("Search sessions", text: $store.historyFilterText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($isSidebarSearchFocused)
+                    .accessibilityIdentifier(AccessibilityID.sidebarSearchField)
+                    .onSubmit { isSidebarSearchFocused = false }
+
+                if !store.historyFilterText.isEmpty {
+                    Button {
+                        store.historyFilterText = ""
+                        isSidebarSearchFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.banyanPlain)
+                    .help("Clear search")
+                }
             }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(isSidebarSearchVisible ? 0.08 : 0))
+        )
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .onChange(of: isSidebarSearchFocused) { _, focused in
+            if !focused, isSidebarSearchVisible {
+                isSidebarSearchVisible = false
+                store.historyFilterText = ""
+            }
+        }
     }
 
     private var linearIssueFilterHeader: some View {
@@ -1038,42 +1037,46 @@ struct ContentView: View {
     @ViewBuilder
     private func sidebarSections(
         _ groups: [SidebarSessionGroup],
-        allowsMove: Bool,
         jumpKeyLabels: [String: String]
     ) -> some View {
         let firstGroupID = groups.first?.id
         ForEach(groups) { group in
+            // The history and search groups are not user-reorderable and render
+            // their rows dimmed, as a visual separator above the active sessions.
+            let isStatic = group.id == "history" || group.id == "search"
             Section {
-                if allowsMove {
+                if isStatic {
                     ForEach(group.items) { item in
                         sidebarRow(
                             item,
                             groupID: group.id,
-                            allowsDragSort: true,
+                            allowsDragSort: false,
+                            isHistory: item.isHistory,
                             jumpKeyLabel: jumpKeyLabels[item.id] ?? ""
                         )
-                    }
-                    .onMove { source, destination in
-                        store.moveSidebarSessions(in: group.id, from: source, to: destination)
                     }
                 } else {
                     ForEach(group.items) { item in
                         sidebarRow(
                             item,
                             groupID: group.id,
-                            allowsDragSort: false,
+                            allowsDragSort: true,
+                            isHistory: false,
                             jumpKeyLabel: jumpKeyLabels[item.id] ?? ""
                         )
+                    }
+                    .onMove { source, destination in
+                        store.moveSidebarSessions(in: group.id, from: source, to: destination)
                     }
                 }
             } header: {
                 HStack(spacing: 4) {
                     Text(group.title)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isStatic ? .tertiary : .secondary)
                         .lineLimit(1)
 
-                    if allowsMove {
+                    if !isStatic {
                         Spacer(minLength: 4)
 
                         ProjectNewSessionButton(groupID: group.id, groupTitle: group.title)
@@ -1081,23 +1084,20 @@ struct ContentView: View {
                 }
                 // Only the first project gets extra top breathing room under the
                 // mode-picker divider; adding it to every header widened the gaps
-                // between projects.
-                .padding(.top, group.id == firstGroupID ? 4 : 0)
+                // between projects. The history/search header gets a touch more
+                // space so it reads as a separator above the active rows.
+                .padding(.top, group.id == firstGroupID ? 4 : (isStatic ? 8 : 0))
             }
+            .listSectionSeparator(isStatic ? .visible : .hidden, edges: .top)
         }
     }
 
     private func makeJumpKeyLabels(
-        sessionGroups: [SidebarSessionGroup],
-        historyGroup: SidebarSessionGroup?
+        groups: [SidebarSessionGroup]
     ) -> [String: String] {
         // Use the projections already produced for this render. Looking labels up
         // through SessionStore for every row rebuilt and resorted the full history
         // backlog once per displayed session.
-        var groups = sessionGroups
-        if let historyGroup {
-            groups.append(historyGroup)
-        }
         var labels: [String: String] = [:]
         var position = 1
         for group in groups {
@@ -1115,6 +1115,7 @@ struct ContentView: View {
         _ item: SidebarSessionItem,
         groupID: String,
         allowsDragSort: Bool,
+        isHistory: Bool,
         jumpKeyLabel: String
     ) -> some View {
         SessionRow(
@@ -1123,6 +1124,7 @@ struct ContentView: View {
             launchProfile: store.sessionLaunchProfile(for: item.session),
             depth: item.depth,
             titleOverride: item.titleOverride,
+            isHistory: isHistory,
             jumpKeyLabel: jumpKeyLabel,
             onSelect: {
                 selection.selectedSessionID = item.session.id
@@ -1160,10 +1162,6 @@ struct ContentView: View {
             draggingSessionID: $draggingSidebarSessionID,
             onMove: store.moveSidebarSession
         ))
-    }
-
-    private func historyListHeight(itemCount: Int) -> CGFloat {
-        min(CGFloat(itemCount) * 31 + 36, 320)
     }
 
     private var addSessionDraftBinding: Binding<AddSessionDraft?> {
@@ -1891,6 +1889,7 @@ private struct SessionRow: View {
     let launchProfile: NewSessionLaunch?
     let depth: Int
     let titleOverride: String?
+    let isHistory: Bool
     let jumpKeyLabel: String
     let onSelect: () -> Void
     let onClose: () -> Void
@@ -2004,6 +2003,7 @@ private struct SessionRow: View {
         .padding(.leading, 4)
         .padding(.trailing, 4)
         .background(rowBackground)
+        .opacity(isHistory && !isSelected ? 0.55 : 1)
         .contentShape(Rectangle())
         .onHover(perform: setRowHovered)
         .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
