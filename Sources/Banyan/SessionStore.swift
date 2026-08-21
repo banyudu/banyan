@@ -7,11 +7,13 @@ struct SidebarSessionItem: Identifiable {
     let session: BanyanSession
     let depth: Int
     let titleOverride: String?
+    let isHistory: Bool
 
-    init(session: BanyanSession, depth: Int, titleOverride: String? = nil) {
+    init(session: BanyanSession, depth: Int, titleOverride: String? = nil, isHistory: Bool = false) {
         self.session = session
         self.depth = depth
         self.titleOverride = titleOverride
+        self.isHistory = isHistory
     }
 
     var id: String {
@@ -448,6 +450,55 @@ final class SessionStore: ObservableObject {
         return groups
     }
 
+    /// Combined active + history groups for the unified sessions sidebar.
+    ///
+    /// With no search query this is the project-grouped active sessions followed
+    /// by the history group, so the whole list scrolls together and active rows
+    /// sit above history. With a query it returns a single filtered group of every
+    /// matching session (active and history) for a full-text title search.
+    var unifiedSidebarGroups: [SidebarSessionGroup] {
+        let query = historyFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            var groups = sessionSidebarGroups
+            if let history = historySidebarGroup {
+                groups.append(history)
+            }
+            return groups
+        }
+        let matches = searchSidebarItems(query: query)
+        guard !matches.isEmpty else { return [] }
+        return [SidebarSessionGroup(id: "search", title: "Search", items: matches)]
+    }
+
+    private func searchSidebarItems(query: String) -> [SidebarSessionItem] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return [] }
+        var ranked: [(item: SidebarSessionItem, updatedAt: Date)] = []
+        for session in sessions {
+            let isHistory = SessionHistoryPolicy.isLocalHistorySession(
+                status: session.status,
+                isImportedHistory: session.isImportedHistory,
+                provider: session.agentProvider,
+                hasIssueLink: session.titleLinkLabel != nil
+            ) || session.isImportedHistory
+            let composed = SessionHistoryPresentation.sidebarTitle(
+                projectName: session.projectName,
+                displayTitle: session.displayTitle,
+                issueID: session.titleLinkLabel
+            )
+            guard SessionHistoryPresentation.matchesFilter(title: composed, query: normalized) else { continue }
+            let item = SidebarSessionItem(
+                session: session,
+                depth: 0,
+                titleOverride: isHistory ? composed : nil,
+                isHistory: isHistory
+            )
+            ranked.append((item, session.updatedAt))
+        }
+        ranked.sort { $0.updatedAt > $1.updatedAt }
+        return ranked.map { $0.item }
+    }
+
     var sidebarSessions: [SidebarSessionItem] {
         sidebarGroups.flatMap(\.items)
     }
@@ -525,7 +576,7 @@ final class SessionStore: ObservableObject {
             query: historyFilterText
         ).compactMap { entry in
             guard let session = sessionsByID[entry.id] else { return nil }
-            return SidebarSessionItem(session: session, depth: 0, titleOverride: entry.title)
+            return SidebarSessionItem(session: session, depth: 0, titleOverride: entry.title, isHistory: true)
         }
         sidebarHistoryItemsCacheHash = hash
         cachedSidebarHistoryItems = result
