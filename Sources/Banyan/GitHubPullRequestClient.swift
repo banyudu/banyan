@@ -45,26 +45,48 @@ enum GitHubPullRequestLoadState: Equatable {
 }
 
 enum GitHubPullRequestClient {
+    static var axiomExporter: AxiomExporter?
+
     static func pullRequestURL(
         number: Int,
         cwd: String,
         environment: [String: String],
         homeDirectory: String
     ) async throws -> URL {
-        let output = try await Task.detached(priority: .utility) {
-            try runCommand(
+        let start = DispatchTime.now()
+        do {
+            let output = try await runCommand(
                 ["gh", "pr", "view", String(number), "--json", "url"],
                 cwd: cwd,
                 timeout: 12,
                 environment: environment,
                 homeDirectory: homeDirectory
             )
-        }.value
-        let payload = try JSONDecoder().decode(GitHubPullRequestReferencePayload.self, from: Data(output.utf8))
-        guard let rawURL = payload.url, let url = URL(string: rawURL) else {
-            throw GitHubPullRequestClientError.requestFailed("No URL found for pull request #\(number)")
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            axiomExporter?.sendHTTPRequest(
+                service: "github",
+                method: "CLI",
+                url: "github-cli://gh/pr/view#url",
+                statusCode: 200,
+                durationMS: duration
+            )
+            let payload = try JSONDecoder().decode(GitHubPullRequestReferencePayload.self, from: Data(output.utf8))
+            guard let rawURL = payload.url, let url = URL(string: rawURL) else {
+                throw GitHubPullRequestClientError.requestFailed("No URL found for pull request #\(number)")
+            }
+            return url
+        } catch {
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            axiomExporter?.sendHTTPRequest(
+                service: "github",
+                method: "CLI",
+                url: "github-cli://gh/pr/view#url",
+                statusCode: error is GitHubPullRequestClientError ? 500 : 0,
+                durationMS: duration,
+                error: error.localizedDescription
+            )
+            throw error
         }
-        return url
     }
 
     static func fetchPullRequest(
@@ -135,9 +157,30 @@ enum GitHubPullRequestClient {
         }
         arguments += ["--json", fields]
 
-        return try await Task.detached(priority: .utility) {
-            try runCommand(arguments, cwd: cwd, timeout: 12, environment: environment, homeDirectory: homeDirectory)
-        }.value
+        let start = DispatchTime.now()
+        do {
+            let output = try await runCommand(arguments, cwd: cwd, timeout: 12, environment: environment, homeDirectory: homeDirectory)
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            axiomExporter?.sendHTTPRequest(
+                service: "github",
+                method: "CLI",
+                url: url == nil ? "github-cli://gh/pr/view#current" : "github-cli://gh/pr/view",
+                statusCode: 200,
+                durationMS: duration
+            )
+            return output
+        } catch {
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            axiomExporter?.sendHTTPRequest(
+                service: "github",
+                method: "CLI",
+                url: url == nil ? "github-cli://gh/pr/view#current" : "github-cli://gh/pr/view",
+                statusCode: 0,
+                durationMS: duration,
+                error: error.localizedDescription
+            )
+            throw error
+        }
     }
 
     private static func resolvePullRequestURL(
@@ -145,15 +188,14 @@ enum GitHubPullRequestClient {
         environment: [String: String],
         homeDirectory: String
     ) async throws -> URL {
-        let branch = try await Task.detached(priority: .utility) {
-            try currentBranch(cwd: cwd, environment: environment, homeDirectory: homeDirectory)
-        }.value
-        guard !isDefaultBranch(branch, cwd: cwd, environment: environment, homeDirectory: homeDirectory) else {
+        let branch = try await currentBranch(cwd: cwd, environment: environment, homeDirectory: homeDirectory)
+        guard await !isDefaultBranch(branch, cwd: cwd, environment: environment, homeDirectory: homeDirectory) else {
             throw GitHubPullRequestClientError.requestFailed("No GitHub pull request found for branch \(branch)")
         }
 
-        let output = try await Task.detached(priority: .utility) {
-            try runCommand(
+        let start = DispatchTime.now()
+        do {
+            let output = try await runCommand(
                 [
                     "gh",
                     "pr",
@@ -172,27 +214,58 @@ enum GitHubPullRequestClient {
                 environment: environment,
                 homeDirectory: homeDirectory
             )
-        }.value
-        let payload = try JSONDecoder().decode([GitHubPullRequestReferencePayload].self, from: Data(output.utf8))
-        guard let rawURL = payload.first?.url,
-              let url = URL(string: rawURL) else {
-            throw GitHubPullRequestClientError.requestFailed("No GitHub pull request found for branch \(branch)")
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            axiomExporter?.sendHTTPRequest(
+                service: "github",
+                method: "CLI",
+                url: "github-cli://gh/pr/list",
+                statusCode: 200,
+                durationMS: duration
+            )
+            let payload = try JSONDecoder().decode([GitHubPullRequestReferencePayload].self, from: Data(output.utf8))
+            guard let rawURL = payload.first?.url,
+                  let url = URL(string: rawURL) else {
+                throw GitHubPullRequestClientError.requestFailed("No GitHub pull request found for branch \(branch)")
+            }
+            return url
+        } catch {
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            // Only emit if not already a GitHubPullRequestClientError with dedicated handling above; but this catch includes decode failures too
+            if (error as? GitHubPullRequestClientError) == nil {
+                axiomExporter?.sendHTTPRequest(
+                    service: "github",
+                    method: "CLI",
+                    url: "github-cli://gh/pr/list",
+                    statusCode: 0,
+                    durationMS: duration,
+                    error: error.localizedDescription
+                )
+            } else {
+                axiomExporter?.sendHTTPRequest(
+                    service: "github",
+                    method: "CLI",
+                    url: "github-cli://gh/pr/list",
+                    statusCode: 500,
+                    durationMS: duration,
+                    error: error.localizedDescription
+                )
+            }
+            throw error
         }
-        return url
     }
 
     private static func currentBranch(
         cwd: String,
         environment: [String: String],
         homeDirectory: String
-    ) throws -> String {
-        if let branch = try? runCommand(["git", "branch", "--show-current"], cwd: cwd, timeout: 4, environment: environment, homeDirectory: homeDirectory)
+    ) async throws -> String {
+        if let branch = try? await runCommand(["git", "branch", "--show-current"], cwd: cwd, timeout: 4, environment: environment, homeDirectory: homeDirectory)
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !branch.isEmpty {
             return branch
         }
 
-        let fallback = try runCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd: cwd, timeout: 4, environment: environment, homeDirectory: homeDirectory)
+        let fallback = try await runCommand(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd: cwd, timeout: 4, environment: environment, homeDirectory: homeDirectory)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fallback.isEmpty, fallback != "HEAD" else {
             throw GitHubPullRequestClientError.requestFailed("No current git branch found")
@@ -205,12 +278,12 @@ enum GitHubPullRequestClient {
         cwd: String,
         environment: [String: String],
         homeDirectory: String
-    ) -> Bool {
+    ) async -> Bool {
         if branch == "main" || branch == "master" {
             return true
         }
 
-        guard let remoteHead = try? runCommand(
+        guard let remoteHead = try? await runCommand(
             ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
             cwd: cwd,
             timeout: 4,
@@ -231,55 +304,46 @@ enum GitHubPullRequestClient {
         timeout: TimeInterval,
         environment: [String: String],
         homeDirectory: String
-    ) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.environment = processEnvironment(
-            base: environment,
-            homeDirectory: homeDirectory,
-            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment)
-        )
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
+    ) async throws -> String {
+        let output: SubprocessRunner.Output
         do {
-            try process.run()
-        } catch {
+            output = try await SubprocessRunner.runAsync(
+                arguments: arguments,
+                cwd: cwd,
+                environment: processEnvironment(
+                    base: environment,
+                    homeDirectory: homeDirectory,
+                    shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment)
+                ),
+                timeout: timeout
+            )
+        } catch SubprocessRunner.RunError.launchFailed(_) {
             throw GitHubPullRequestClientError.commandUnavailable
-        }
-
-        let semaphore = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            process.waitUntilExit()
-            semaphore.signal()
-        }
-
-        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
-            _ = semaphore.wait(timeout: .now() + 0.5)
+        } catch SubprocessRunner.RunError.timedOut {
             throw GitHubPullRequestClientError.timedOut
+        } catch SubprocessRunner.RunError.cancelled {
+            throw GitHubPullRequestClientError.requestFailed("cancelled")
+        } catch {
+            throw GitHubPullRequestClientError.requestFailed(error.localizedDescription)
         }
 
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0 else {
-            let message = String(data: errorData, encoding: .utf8)?
+        guard output.terminationStatus == 0 else {
+            let message = String(data: output.standardError, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw GitHubPullRequestClientError.requestFailed(message)
+            // Also try stdout for gh error messages
+            let stdoutMessage = String(data: output.standardOutput, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let combined = [message, stdoutMessage].compactMap { $0 }.first { !$0.isEmpty }
+            throw GitHubPullRequestClientError.requestFailed(combined)
         }
 
-        guard let output = String(data: data, encoding: .utf8)?
+        guard let raw = String(data: output.standardOutput, encoding: .utf8)?
             .cleanedGitHubCLIOutput()
             .trimmingCharacters(in: .whitespacesAndNewlines),
-            !output.isEmpty else {
+            !raw.isEmpty else {
             throw GitHubPullRequestClientError.requestFailed(nil)
         }
-        return output
+        return raw
     }
 
     private static func processEnvironment(

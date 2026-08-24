@@ -27,6 +27,8 @@ struct GitHubIssueComment: Equatable, Identifiable {
 enum GitHubIssueLoadState: Equatable { case idle, loading, loaded, failed(String) }
 
 enum GitHubIssueClient {
+    static var axiomExporter: AxiomExporter?
+
     static func decodeDetails(_ data: Data) throws -> GitHubIssueDetails {
         try JSONDecoder().decode(Payload.self, from: data).details
     }
@@ -38,16 +40,50 @@ enum GitHubIssueClient {
         homeDirectory: String
     ) async throws -> GitHubIssueDetails {
         let fields = "author,body,comments,createdAt,labels,assignees,milestone,number,state,title,updatedAt,url"
-        let output = try await SubprocessRunner.runAsync(
-            arguments: ["gh", "issue", "view", url.absoluteString, "--json", fields],
-            cwd: cwd,
-            environment: processEnvironment(base: environment, homeDirectory: homeDirectory),
-            timeout: 12
-        )
-        guard output.terminationStatus == 0 else {
-            throw GitHubIssueClientError.requestFailed
+        let start = DispatchTime.now()
+        do {
+            let output = try await SubprocessRunner.runAsync(
+                arguments: ["gh", "issue", "view", url.absoluteString, "--json", fields],
+                cwd: cwd,
+                environment: processEnvironment(base: environment, homeDirectory: homeDirectory),
+                timeout: 12
+            )
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            if output.terminationStatus == 0 {
+                axiomExporter?.sendHTTPRequest(
+                    service: "github",
+                    method: "CLI",
+                    url: "github-cli://gh/issue/view",
+                    statusCode: 200,
+                    durationMS: duration
+                )
+                return try decodeDetails(output.standardOutput)
+            } else {
+                axiomExporter?.sendHTTPRequest(
+                    service: "github",
+                    method: "CLI",
+                    url: "github-cli://gh/issue/view",
+                    statusCode: Int(output.terminationStatus),
+                    durationMS: duration,
+                    error: "exit \(output.terminationStatus)"
+                )
+                throw GitHubIssueClientError.requestFailed
+            }
+        } catch {
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            // SubprocessRunner already emits subprocess.run; add http.request for unified service query.
+            if (error as? GitHubIssueClientError) == nil {
+                axiomExporter?.sendHTTPRequest(
+                    service: "github",
+                    method: "CLI",
+                    url: "github-cli://gh/issue/view",
+                    statusCode: 0,
+                    durationMS: duration,
+                    error: error.localizedDescription
+                )
+            }
+            throw error
         }
-        return try decodeDetails(output.standardOutput)
     }
 
     static func message(for error: Error) -> String {

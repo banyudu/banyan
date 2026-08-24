@@ -24,6 +24,9 @@ struct BanyanApp: App {
         let exporter = AxiomExporter(config: config, appVersion: version)
         SubprocessRunner.axiomExporter = exporter
         LinearIssueClient.axiomExporter = exporter
+        GitHubIssueClient.axiomExporter = exporter
+        GitHubPullRequestClient.axiomExporter = exporter
+        SessionContextResolver.axiomExporter = exporter
         exporter.sendAppLifecycle("app.launch")
         return exporter
     }()

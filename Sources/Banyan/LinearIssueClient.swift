@@ -194,19 +194,40 @@ enum LinearIssueClient {
                 variables: GraphQLIssueListPageVariables(after: after)
             )
             let variables = String(decoding: try JSONEncoder().encode(request.variables), as: UTF8.self)
-            let output = try await runCommand(
-                [
-                    "linear",
-                    "api",
-                    request.query,
-                    "--variables-json",
-                    variables
-                ],
-                cwd: cwd,
-                timeout: try requestTimeout(maximum: 15, deadline: deadline),
-                environment: environment,
-                homeDirectory: homeDirectory
-            )
+            let start = DispatchTime.now()
+            let output: String
+            do {
+                output = try await runCommand(
+                    [
+                        "linear",
+                        "api",
+                        request.query,
+                        "--variables-json",
+                        variables
+                    ],
+                    cwd: cwd,
+                    timeout: try requestTimeout(maximum: 15, deadline: deadline),
+                    environment: environment,
+                    homeDirectory: homeDirectory
+                )
+                axiomExporter?.sendHTTPRequest(
+                    service: "linear",
+                    method: "CLI",
+                    url: "linear.app/graphql#fetchIssueList:cli",
+                    statusCode: 200,
+                    durationMS: PerformanceTelemetry.elapsedMS(since: start)
+                )
+            } catch {
+                axiomExporter?.sendHTTPRequest(
+                    service: "linear",
+                    method: "CLI",
+                    url: "linear.app/graphql#fetchIssueList:cli",
+                    statusCode: 0,
+                    durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                    error: error.localizedDescription
+                )
+                throw error
+            }
             let pageResult = try decodeIssueListPageResponse(output)
             issues.append(contentsOf: pageResult.issues)
             linearDebugLog("issue list page decoded page=\(page) pageCount=\(pageResult.issues.count) totalCount=\(issues.count) hasNext=\(pageResult.hasNextPage) states=[\(linearIssueStateCountSummary(pageResult.issues))]")
@@ -231,18 +252,38 @@ enum LinearIssueClient {
         environment: [String: String],
         homeDirectory: String
     ) async throws -> [LinearWorkflowState] {
-        let output = try await runCommand(
-            [
-                "linear",
-                "api",
-                workflowStatesQuery
-            ],
-            cwd: cwd,
-            timeout: try requestTimeout(maximum: 12, deadline: deadline),
-            environment: environment,
-            homeDirectory: homeDirectory
-        )
-        return try decodeWorkflowStatesResponse(output)
+        let start = DispatchTime.now()
+        do {
+            let output = try await runCommand(
+                [
+                    "linear",
+                    "api",
+                    workflowStatesQuery
+                ],
+                cwd: cwd,
+                timeout: try requestTimeout(maximum: 12, deadline: deadline),
+                environment: environment,
+                homeDirectory: homeDirectory
+            )
+            axiomExporter?.sendHTTPRequest(
+                service: "linear",
+                method: "CLI",
+                url: "linear.app/graphql#fetchWorkflowStates:cli",
+                statusCode: 200,
+                durationMS: PerformanceTelemetry.elapsedMS(since: start)
+            )
+            return try decodeWorkflowStatesResponse(output)
+        } catch {
+            axiomExporter?.sendHTTPRequest(
+                service: "linear",
+                method: "CLI",
+                url: "linear.app/graphql#fetchWorkflowStates:cli",
+                statusCode: 0,
+                durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                error: error.localizedDescription
+            )
+            throw error
+        }
     }
 
     static func fetchIssue(
@@ -287,13 +328,33 @@ enum LinearIssueClient {
         homeDirectory: String
     ) async throws {
         do {
-            _ = try await runCommand(
-                ["linear", "issue", "update", identifier, "--state", state.name],
-                cwd: cwd,
-                timeout: 12,
-                environment: environment,
-                homeDirectory: homeDirectory
-            )
+            let start = DispatchTime.now()
+            do {
+                _ = try await runCommand(
+                    ["linear", "issue", "update", identifier, "--state", state.name],
+                    cwd: cwd,
+                    timeout: 12,
+                    environment: environment,
+                    homeDirectory: homeDirectory
+                )
+                axiomExporter?.sendHTTPRequest(
+                    service: "linear",
+                    method: "CLI",
+                    url: "linear.app/graphql#updateIssueState:cli",
+                    statusCode: 200,
+                    durationMS: PerformanceTelemetry.elapsedMS(since: start)
+                )
+            } catch {
+                axiomExporter?.sendHTTPRequest(
+                    service: "linear",
+                    method: "CLI",
+                    url: "linear.app/graphql#updateIssueState:cli",
+                    statusCode: 0,
+                    durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                    error: error.localizedDescription
+                )
+                throw error
+            }
         } catch {
             try await updateIssueStateWithAPIKey(identifier: identifier, stateID: state.id, environment: environment)
         }
@@ -308,13 +369,33 @@ enum LinearIssueClient {
     ) async throws {
         let variables = String(decoding: try JSONEncoder().encode(["id": identifier, "description": description]), as: UTF8.self)
         do {
-            _ = try await runCommand(
-                ["linear", "api", updateDescriptionMutation, "--variables-json", variables],
-                cwd: cwd,
-                timeout: 12,
-                environment: environment,
-                homeDirectory: homeDirectory
-            )
+            let start = DispatchTime.now()
+            do {
+                _ = try await runCommand(
+                    ["linear", "api", updateDescriptionMutation, "--variables-json", variables],
+                    cwd: cwd,
+                    timeout: 12,
+                    environment: environment,
+                    homeDirectory: homeDirectory
+                )
+                axiomExporter?.sendHTTPRequest(
+                    service: "linear",
+                    method: "CLI",
+                    url: "linear.app/graphql#updateDescription:cli",
+                    statusCode: 200,
+                    durationMS: PerformanceTelemetry.elapsedMS(since: start)
+                )
+            } catch {
+                axiomExporter?.sendHTTPRequest(
+                    service: "linear",
+                    method: "CLI",
+                    url: "linear.app/graphql#updateDescription:cli",
+                    statusCode: 0,
+                    durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                    error: error.localizedDescription
+                )
+                throw error
+            }
         } catch {
             try await updateIssueDescriptionWithAPIKey(identifier: identifier, description: description, environment: environment)
         }
@@ -326,20 +407,40 @@ enum LinearIssueClient {
         environment: [String: String],
         homeDirectory: String
     ) async throws -> LinearIssueDetails {
-        let output = try await runCommand(
-            [
-                "linear",
-                "api",
-                issueQuery,
-                "--variables-json",
-                "{\"id\":\"\(identifier)\"}"
-            ],
-            cwd: cwd,
-            timeout: 12,
-            environment: environment,
-            homeDirectory: homeDirectory
-        )
-        return try decodeIssueResponse(output)
+        let start = DispatchTime.now()
+        do {
+            let output = try await runCommand(
+                [
+                    "linear",
+                    "api",
+                    issueQuery,
+                    "--variables-json",
+                    "{\"id\":\"\(identifier)\"}"
+                ],
+                cwd: cwd,
+                timeout: 12,
+                environment: environment,
+                homeDirectory: homeDirectory
+            )
+            axiomExporter?.sendHTTPRequest(
+                service: "linear",
+                method: "CLI",
+                url: "linear.app/graphql#fetchIssue:cli",
+                statusCode: 200,
+                durationMS: PerformanceTelemetry.elapsedMS(since: start)
+            )
+            return try decodeIssueResponse(output)
+        } catch {
+            axiomExporter?.sendHTTPRequest(
+                service: "linear",
+                method: "CLI",
+                url: "linear.app/graphql#fetchIssue:cli",
+                statusCode: 0,
+                durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                error: error.localizedDescription
+            )
+            throw error
+        }
     }
 
     private static func fetchIssueStatusWithLinearCLI(
@@ -348,20 +449,40 @@ enum LinearIssueClient {
         environment: [String: String],
         homeDirectory: String
     ) async throws -> LinearIssueStatusSnapshot {
-        let output = try await runCommand(
-            [
-                "linear",
-                "api",
-                issueStatusQuery,
-                "--variables-json",
-                "{\"id\":\"\(identifier)\"}"
-            ],
-            cwd: cwd,
-            timeout: 8,
-            environment: environment,
-            homeDirectory: homeDirectory
-        )
-        return try decodeIssueStatusResponse(output)
+        let start = DispatchTime.now()
+        do {
+            let output = try await runCommand(
+                [
+                    "linear",
+                    "api",
+                    issueStatusQuery,
+                    "--variables-json",
+                    "{\"id\":\"\(identifier)\"}"
+                ],
+                cwd: cwd,
+                timeout: 8,
+                environment: environment,
+                homeDirectory: homeDirectory
+            )
+            axiomExporter?.sendHTTPRequest(
+                service: "linear",
+                method: "CLI",
+                url: "linear.app/graphql#fetchIssueStatus:cli",
+                statusCode: 200,
+                durationMS: PerformanceTelemetry.elapsedMS(since: start)
+            )
+            return try decodeIssueStatusResponse(output)
+        } catch {
+            axiomExporter?.sendHTTPRequest(
+                service: "linear",
+                method: "CLI",
+                url: "linear.app/graphql#fetchIssueStatus:cli",
+                statusCode: 0,
+                durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                error: error.localizedDescription
+            )
+            throw error
+        }
     }
 
     private static func fetchIssueWithAPIKey(

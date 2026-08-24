@@ -105,6 +105,8 @@ public struct SessionContextInfo: Equatable, Sendable {
 }
 
 public enum SessionContextResolver {
+    public static var axiomExporter: AxiomExporter?
+
     public static func resolve(
         input: SessionContextLookupInput,
         isCancelled: @escaping @Sendable () -> Bool = { false }
@@ -318,15 +320,52 @@ public enum SessionContextResolver {
         timeout: TimeInterval = 4,
         isCancelled: @escaping @Sendable () -> Bool = { false }
     ) async -> String? {
+        let start = DispatchTime.now()
+        let isLinear = arguments.first == "linear"
+        let isGH = arguments.first == "gh"
+        let service: String? = isLinear ? "linear" : (isGH ? "github" : nil)
+        let url: String? = {
+            guard service != nil else { return nil }
+            if isLinear {
+                // linear issue title ENG-123
+                if arguments.contains("issue") { return "linear-cli://linear/issue/title" }
+                return "linear-cli://linear/\(arguments.dropFirst().joined(separator: "/"))"
+            } else {
+                // gh issue view / gh pr view
+                return "github-cli://gh/\(arguments.dropFirst().prefix(2).joined(separator: "/"))"
+            }
+        }()
         guard let output = try? await SubprocessRunner.runAsync(
             arguments: arguments,
             cwd: cwd,
             environment: environment,
             timeout: timeout,
             isCancelled: isCancelled
-        ), output.terminationStatus == 0 else {
+        ) else {
+            if let service, let url {
+                axiomExporter?.sendHTTPRequest(
+                    service: service,
+                    method: "CLI",
+                    url: url,
+                    statusCode: 0,
+                    durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                    error: "run failed"
+                )
+            }
             return nil
         }
+        let success = output.terminationStatus == 0
+        if let service, let url {
+            axiomExporter?.sendHTTPRequest(
+                service: service,
+                method: "CLI",
+                url: url,
+                statusCode: success ? 200 : Int(output.terminationStatus),
+                durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                error: success ? nil : "exit \(output.terminationStatus)"
+            )
+        }
+        guard success else { return nil }
         let text = CommandOutputText.strippingANSIEscapes(String(decoding: output.standardOutput, as: UTF8.self))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
