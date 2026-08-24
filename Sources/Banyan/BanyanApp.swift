@@ -14,10 +14,24 @@ struct BanyanApp: App {
         environment: Self.host.environment,
         workingDirectory: Self.host.homeDirectory.path
     )
+    private static let telemetryConfig = TelemetryConfig.load(
+        homeDirectory: Self.host.homeDirectory
+    )
+    private static let axiomExporter: AxiomExporter? = {
+        let config = telemetryConfig
+        guard config.isActive else { return nil }
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let exporter = AxiomExporter(config: config, appVersion: version)
+        SubprocessRunner.axiomExporter = exporter
+        LinearIssueClient.axiomExporter = exporter
+        exporter.sendAppLifecycle("app.launch")
+        return exporter
+    }()
     private static let telemetry = PerformanceTelemetry(
         store: PerformanceEventStore(
             databaseURL: PerformanceEventStore.defaultDatabaseURL(host: Self.host)
-        )
+        ),
+        axiomExporter: Self.axiomExporter
     )
     static let attentionNotifier = AttentionNotifier()
     private static let jumpOverlayMonitor = JumpOverlayMonitor()
@@ -60,6 +74,7 @@ struct BanyanApp: App {
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
+                    updater.axiomExporter = Self.axiomExporter
                     updater.checkForUpdates()
                     Self.commandWTerminalCloseMonitor.action = { window in
                         store.handleCloseCommand(in: window)

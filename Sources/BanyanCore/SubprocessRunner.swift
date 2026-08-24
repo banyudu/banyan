@@ -27,6 +27,8 @@ import Darwin
 /// draining to `EAGAIN`/EOF right then is complete by construction rather than
 /// after a timed guess.
 public enum SubprocessRunner {
+    public static var axiomExporter: AxiomExporter?
+
     public struct Output {
         public let terminationStatus: Int32
         public let standardOutput: Data
@@ -95,36 +97,53 @@ public enum SubprocessRunner {
         isCancelled: @escaping @Sendable () -> Bool = { false },
         standardInput: FileHandle? = nil
     ) async throws -> Output {
+        let start = DispatchTime.now()
         let signal = RunSignal()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                ioQueue.addOperation {
-                    // Cancelled while queued behind the concurrency cap: return
-                    // without launching anything, so a backlog of cancelled work
-                    // drains at once instead of each entry paying a full run.
-                    if signal.isCancelled {
-                        continuation.resume(throwing: RunError.cancelled)
-                        return
-                    }
-                    do {
-                        let output = try run(
-                            arguments: arguments,
-                            cwd: cwd,
-                            environment: environment,
-                            timeout: timeout,
-                            isCancelled: isCancelled,
-                            standardInput: standardInput,
-                            signal: signal
-                        )
-                        continuation.resume(returning: output)
-                    } catch {
-                        continuation.resume(throwing: error)
+        let result: Output
+        do {
+            result = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    ioQueue.addOperation {
+                        if signal.isCancelled {
+                            continuation.resume(throwing: RunError.cancelled)
+                            return
+                        }
+                        do {
+                            let output = try run(
+                                arguments: arguments,
+                                cwd: cwd,
+                                environment: environment,
+                                timeout: timeout,
+                                isCancelled: isCancelled,
+                                standardInput: standardInput,
+                                signal: signal
+                            )
+                            continuation.resume(returning: output)
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
                     }
                 }
+            } onCancel: {
+                signal.cancel()
             }
-        } onCancel: {
-            signal.cancel()
+        } catch {
+            let command = arguments.first ?? "unknown"
+            axiomExporter?.sendSubprocess(
+                command: command,
+                exitCode: -1,
+                durationMS: PerformanceTelemetry.elapsedMS(since: start),
+                error: error.localizedDescription
+            )
+            throw error
         }
+        let command = arguments.first ?? "unknown"
+        axiomExporter?.sendSubprocess(
+            command: command,
+            exitCode: result.terminationStatus,
+            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        )
+        return result
     }
 
     /// Synchronous, leak-free runner. Blocks the calling thread only for bounded

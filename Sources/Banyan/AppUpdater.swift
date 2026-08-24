@@ -1,4 +1,5 @@
 import AppKit
+import BanyanCore
 import Combine
 import Foundation
 
@@ -129,6 +130,7 @@ final class AppUpdater: ObservableObject {
     private let currentVersion: AppVersion
     private let bundleURL: URL
     private var hasCheckedAutomatically = false
+    var axiomExporter: AxiomExporter?
 
     init(
         session: URLSession = .shared,
@@ -202,8 +204,18 @@ final class AppUpdater: ObservableObject {
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/banyudu/banyan/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Banyan/\(currentVersion.major).\(currentVersion.minor).\(currentVersion.patch)", forHTTPHeaderField: "User-Agent")
+        let start = DispatchTime.now()
         let (data, response) = try await session.data(for: request)
-        guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? 0
+        axiomExporter?.sendHTTPRequest(
+            service: "github",
+            method: "GET",
+            url: "api.github.com/repos/releases/latest",
+            statusCode: statusCode,
+            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        )
+        guard (200..<300).contains(statusCode) else {
             throw UpdateError.invalidResponse
         }
         return try JSONDecoder().decode(AppUpdateRelease.self, from: data)

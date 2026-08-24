@@ -314,14 +314,7 @@ struct ContentView: View {
         ]
 
         for (index, item) in store.sidebarSessions.enumerated() {
-            let shortcut: String?
-            if index < 10 {
-                shortcut = "⌘\(index)"
-            } else if let label = JumpOverlayMonitor.jumpLabel(for: index + 1) {
-                shortcut = "⌘⇧\(label)"
-            } else {
-                shortcut = nil
-            }
+            let shortcut = JumpOverlayMonitor.shortcutDisplay(for: index + 1)
             items.append(CommandPaletteItem(
                 id: "session.switch.\(item.id)",
                 category: "Session",
@@ -2725,7 +2718,7 @@ private struct JumpKeyBadge: View {
         Text(label)
             .font(.system(size: 10, weight: .semibold, design: .monospaced))
             .foregroundStyle(tint)
-            .frame(width: 18, height: 16)
+            .frame(width: Self.badgeWidth(for: label), height: 16)
             .background(
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(tint.opacity(0.14))
@@ -2734,5 +2727,9 @@ private struct JumpKeyBadge: View {
                             .strokeBorder(tint.opacity(0.32), lineWidth: 0.5)
                     )
             )
+    }
+
+    private static func badgeWidth(for label: String) -> CGFloat {
+        CGFloat(12 + 6 * max(label.count, 1))
     }
 }

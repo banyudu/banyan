@@ -158,6 +158,8 @@ enum LinearIssueLoadState: Equatable {
 }
 
 enum LinearIssueClient {
+    static var axiomExporter: AxiomExporter?
+
     static func message(for error: Error, action: String = "load") -> String {
         if let error = error as? LinearIssueClientError {
             switch error {
@@ -377,9 +379,18 @@ enum LinearIssueClient {
         request.setValue(apiKey, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(GraphQLRequest(query: issueQuery, variables: ["id": identifier]))
 
+        let start = DispatchTime.now()
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode) else {
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? 0
+        axiomExporter?.sendHTTPRequest(
+            service: "linear",
+            method: "POST",
+            url: "linear.app/graphql#fetchIssue",
+            statusCode: statusCode,
+            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        )
+        guard (200..<300).contains(statusCode) else {
             throw LinearIssueClientError.requestFailed
         }
         return try decodeIssueResponse(String(decoding: data, as: UTF8.self))
@@ -400,9 +411,18 @@ enum LinearIssueClient {
         request.setValue(apiKey, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(GraphQLRequest(query: issueStatusQuery, variables: ["id": identifier]))
 
+        let start = DispatchTime.now()
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode) else {
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? 0
+        axiomExporter?.sendHTTPRequest(
+            service: "linear",
+            method: "POST",
+            url: "linear.app/graphql#fetchIssueStatus",
+            statusCode: statusCode,
+            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        )
+        guard (200..<300).contains(statusCode) else {
             throw LinearIssueClientError.requestFailed
         }
         return try decodeIssueStatusResponse(String(decoding: data, as: UTF8.self))
@@ -432,9 +452,18 @@ enum LinearIssueClient {
             )
         )
 
+        let start = DispatchTime.now()
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode) else {
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? 0
+        axiomExporter?.sendHTTPRequest(
+            service: "linear",
+            method: "POST",
+            url: "linear.app/graphql#updateIssueState",
+            statusCode: statusCode,
+            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        )
+        guard (200..<300).contains(statusCode) else {
             throw LinearIssueClientError.requestFailed
         }
         let payload = try JSONDecoder().decode(GraphQLMutationResponse.self, from: data)
@@ -456,8 +485,18 @@ enum LinearIssueClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(GraphQLRequest(query: updateDescriptionMutation, variables: ["id": identifier, "description": description]))
+        let start = DispatchTime.now()
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else { throw LinearIssueClientError.requestFailed }
+        let httpResponse = response as? HTTPURLResponse
+        let statusCode = httpResponse?.statusCode ?? 0
+        axiomExporter?.sendHTTPRequest(
+            service: "linear",
+            method: "POST",
+            url: "linear.app/graphql#updateDescription",
+            statusCode: statusCode,
+            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        )
+        guard (200..<300).contains(statusCode) else { throw LinearIssueClientError.requestFailed }
         let payload = try JSONDecoder().decode(GraphQLMutationResponse.self, from: data)
         if payload.errors?.isEmpty == false || payload.data?.issueUpdate?.success != true { throw LinearIssueClientError.requestFailed }
     }

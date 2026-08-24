@@ -434,9 +434,11 @@ public final class PerformanceTelemetry: @unchecked Sendable {
     private let queue = DispatchQueue(label: "app.banyan.performance-telemetry", qos: .utility)
     private var activeSpans: [String: ActiveSpan] = [:]
     private var activeSwitches: [String: ActiveSessionSwitch] = [:]
+    public var axiomExporter: AxiomExporter?
 
-    public init(store: PerformanceEventStore) {
+    public init(store: PerformanceEventStore, axiomExporter: AxiomExporter? = nil) {
         self.store = store
+        self.axiomExporter = axiomExporter
     }
 
     @discardableResult
@@ -611,13 +613,15 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         durationMS: Double,
         detail: String?
     ) {
-        store.record(PerformanceEvent(
+        let event = PerformanceEvent(
             name: name,
             sessionID: sessionID,
             correlationID: correlationID,
             durationMS: durationMS,
             detail: detail
-        ))
+        )
+        store.record(event)
+        axiomExporter?.sendPerformanceEvent(event)
     }
 
     /// A session switch that hasn't reached terminal-ready / first-output within
