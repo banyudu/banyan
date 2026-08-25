@@ -388,9 +388,7 @@ struct ContentView: View {
 
             Divider()
 
-            sidebarSearchField
-
-            HStack {
+            HStack(spacing: 8) {
                 Button {
                     store.spawnSiblingSession()
                 } label: {
@@ -420,6 +418,43 @@ struct ContentView: View {
                 .accessibilityIdentifier(AccessibilityID.sidebarOptions)
                 .help("Sidebar options")
 
+                Button {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        isSidebarSearchVisible.toggle()
+                    }
+                    if isSidebarSearchVisible {
+                        isSidebarSearchFocused = true
+                    } else {
+                        isSidebarSearchFocused = false
+                        store.historyFilterText = ""
+                    }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .help(isSidebarSearchVisible ? "Hide search" : "Search sessions")
+
+                if isSidebarSearchVisible {
+                    TextField("Search sessions", text: $store.historyFilterText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .focused($isSidebarSearchFocused)
+                        .accessibilityIdentifier(AccessibilityID.sidebarSearchField)
+                        .onSubmit { isSidebarSearchFocused = false }
+
+                    if !store.historyFilterText.isEmpty {
+                        Button {
+                            store.historyFilterText = ""
+                            isSidebarSearchFocused = true
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.banyanPlain)
+                        .help("Clear search")
+                    }
+                }
+
                 Spacer()
 
                 if let selected = store.selectedSession, selected.status != .closed {
@@ -435,6 +470,12 @@ struct ContentView: View {
             .buttonStyle(.banyanBorderless)
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
+            .onChange(of: isSidebarSearchFocused) { _, focused in
+                if !focused, isSidebarSearchVisible {
+                    isSidebarSearchVisible = false
+                    store.historyFilterText = ""
+                }
+            }
         }
     }
 
@@ -488,62 +529,6 @@ struct ContentView: View {
         }
         .onChange(of: filteredLinearIssueIDs) { _, ids in
             store.updateLinearIssueNavigationIDs(ids)
-        }
-    }
-
-    private var sidebarSearchField: some View {
-        HStack(spacing: 6) {
-            Button {
-                withAnimation(.easeOut(duration: 0.12)) {
-                    isSidebarSearchVisible.toggle()
-                }
-                if isSidebarSearchVisible {
-                    isSidebarSearchFocused = true
-                } else {
-                    isSidebarSearchFocused = false
-                    store.historyFilterText = ""
-                }
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .buttonStyle(.banyanBorderless)
-            .help(isSidebarSearchVisible ? "Hide search" : "Search sessions")
-
-            if isSidebarSearchVisible {
-                TextField("Search sessions", text: $store.historyFilterText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .focused($isSidebarSearchFocused)
-                    .accessibilityIdentifier(AccessibilityID.sidebarSearchField)
-                    .onSubmit { isSidebarSearchFocused = false }
-
-                if !store.historyFilterText.isEmpty {
-                    Button {
-                        store.historyFilterText = ""
-                        isSidebarSearchFocused = true
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.banyanPlain)
-                    .help("Clear search")
-                }
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isSidebarSearchVisible ? 0.08 : 0))
-        )
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .onChange(of: isSidebarSearchFocused) { _, focused in
-            if !focused, isSidebarSearchVisible {
-                isSidebarSearchVisible = false
-                store.historyFilterText = ""
-            }
         }
     }
 
