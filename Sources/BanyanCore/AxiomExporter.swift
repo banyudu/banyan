@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct TelemetryEvent: Sendable {
     public let name: String
@@ -62,9 +65,10 @@ public final class AxiomExporter: @unchecked Sendable {
         for (key, value) in event.attributes {
             payload[key] = value
         }
-        queue.async { [weak self] in
+        let payloadCopy = payload
+        queue.async { [weak self, payloadCopy] in
             guard let self else { return }
-            self.buffer.append(payload)
+            self.buffer.append(payloadCopy)
             if self.buffer.count >= Self.maxBufferSize {
                 self.flushLocked()
             }
