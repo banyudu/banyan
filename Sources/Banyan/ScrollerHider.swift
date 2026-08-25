@@ -2,20 +2,20 @@ import SwiftUI
 import AppKit
 
 extension View {
-    func overlayVerticalScroller() -> some View {
-        background(ScrollerStyleFixer())
+    func hidesVerticalScroller() -> some View {
+        background(ScrollerHider())
     }
 }
 
-private struct ScrollerStyleFixer: NSViewRepresentable {
-    func makeNSView(context: Context) -> ScrollerStyleFixingView {
-        ScrollerStyleFixingView()
+private struct ScrollerHider: NSViewRepresentable {
+    func makeNSView(context: Context) -> ScrollerHidingView {
+        ScrollerHidingView()
     }
 
-    func updateNSView(_ nsView: ScrollerStyleFixingView, context: Context) {}
+    func updateNSView(_ nsView: ScrollerHidingView, context: Context) {}
 }
 
-private final class ScrollerStyleFixingView: NSView {
+private final class ScrollerHidingView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
@@ -24,7 +24,8 @@ private final class ScrollerStyleFixingView: NSView {
             var current: NSView? = self
             while let view = current {
                 if let scrollView = view as? NSScrollView {
-                    scrollView.scrollerStyle = .overlay
+                    scrollView.hasVerticalScroller = false
+                    scrollView.verticalScroller?.isHidden = true
                     return
                 }
                 current = view.superview

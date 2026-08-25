@@ -373,7 +373,7 @@ struct ContentView: View {
             }
             .listStyle(.sidebar)
             .scrollIndicators(.hidden)
-            .overlayVerticalScroller()
+                .hidesVerticalScroller()
             .accessibilityIdentifier(AccessibilityID.sidebarList)
 
             Spacer(minLength: 0)
@@ -788,7 +788,7 @@ struct ContentView: View {
                     .padding(.vertical, 2)
                 }
                 .scrollIndicators(.hidden)
-                .overlayVerticalScroller()
+            .hidesVerticalScroller()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .clipped()
                 .focusable()
