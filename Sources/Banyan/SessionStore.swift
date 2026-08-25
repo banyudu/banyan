@@ -2940,7 +2940,7 @@ final class SessionStore: ObservableObject {
                 )
             }
 
-            telemetry.recordDuration(
+            telemetry.recordDurationLocalIfSlow(
                 "supervisor.tick",
                 durationMS: PerformanceTelemetry.elapsedMS(since: tickStartedAt),
                 detail: "sessions=\(inputs.count) frequent=\(frequentSessionCount) deferred=\(inputs.count - frequentSessionCount) cadence_s=\(Int(cadence.rounded()))"

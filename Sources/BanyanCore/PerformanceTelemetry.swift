@@ -513,6 +513,28 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         )
     }
 
+    /// Local-only variant for high-frequency supervisor ticks. Keeps SQLite
+    /// `banyanctl perf report` useful but avoids per-tick Axiom log ingestion.
+    public func recordDurationLocalIfSlow(
+        _ name: String,
+        durationMS: Double,
+        sessionID: String? = nil,
+        correlationID: String? = nil,
+        detail: String? = nil
+    ) {
+        guard Self.shouldRecordDuration(name, durationMS: durationMS) else { return }
+        queue.async { [weak self] in
+            self?.recordLocked(
+                name: name,
+                sessionID: sessionID,
+                correlationID: correlationID,
+                durationMS: durationMS,
+                detail: detail,
+                sendToAxiom: false
+            )
+        }
+    }
+
     public static func shouldRecordDuration(_ name: String, durationMS: Double) -> Bool {
         durationMS >= PerformanceEventStore.thresholdMS(for: name)
     }
@@ -611,7 +633,8 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         sessionID: String?,
         correlationID: String?,
         durationMS: Double,
-        detail: String?
+        detail: String?,
+        sendToAxiom: Bool = true
     ) {
         let event = PerformanceEvent(
             name: name,
@@ -621,7 +644,12 @@ public final class PerformanceTelemetry: @unchecked Sendable {
             detail: detail
         )
         store.record(event)
-        axiomExporter?.sendPerformanceEvent(event)
+        // supervisor.* is high-frequency; keep in local SQLite for `banyanctl perf`
+        // but don't pay per-tick Axiom log ingestion. Switch to metrics if needed.
+        let isSupervisor = name.hasPrefix("supervisor.")
+        if sendToAxiom && !isSupervisor {
+            axiomExporter?.sendPerformanceEvent(event)
+        }
     }
 
     /// A session switch that hasn't reached terminal-ready / first-output within
