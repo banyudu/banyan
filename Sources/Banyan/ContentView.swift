@@ -372,6 +372,7 @@ struct ContentView: View {
                 sidebarSections(groups, jumpKeyLabels: jumpKeyLabels)
             }
             .listStyle(.sidebar)
+            .scrollIndicators(.hidden)
             .accessibilityIdentifier(AccessibilityID.sidebarList)
 
             Spacer(minLength: 0)
@@ -785,7 +786,7 @@ struct ContentView: View {
                     }
                     .padding(.vertical, 2)
                 }
-                .scrollIndicators(.visible)
+                .scrollIndicators(.hidden)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .clipped()
                 .focusable()
