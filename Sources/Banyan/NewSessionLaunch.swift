@@ -16,10 +16,7 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
     static let builtInDefaults = [
         NewSessionLaunch(id: "zsh", label: "zsh", providerName: nil, iconName: nil, command: ""),
         NewSessionLaunch(id: "claude", label: "Claude", providerName: "claude", iconName: nil, command: "claude"),
-        NewSessionLaunch(id: "codex", label: "Codex", providerName: "codex", iconName: nil, command: "codex"),
-        NewSessionLaunch(id: "deepseek", label: "DeepSeek", providerName: "deepseek", iconName: nil, command: "BANYAN_AGENT_PROVIDER=deepseek opencode"),
-        NewSessionLaunch(id: "hunyuan", label: "Hunyuan", providerName: "hunyuan", iconName: nil, command: "opencode --agent hy3"),
-        NewSessionLaunch(id: "muse", label: "Muse Spark", providerName: "muse", iconName: nil, command: "opencode --agent muse-spark")
+        NewSessionLaunch(id: "codex", label: "Codex", providerName: "codex", iconName: nil, command: "codex")
     ]
 
     var provider: CodingAgentProvider? {

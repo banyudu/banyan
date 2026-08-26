@@ -7,11 +7,8 @@ import BanyanCore
     #expect(SessionLaunchPolicy.siblingRuntimeCommand(for: .codex) == "codex")
 }
 
-@Test func deepSeekDefaultLaunchUsesOpenCodeAndDeepSeekIdentity() {
-    let launch = NewSessionLaunch.builtInDefaults.first { $0.id == "deepseek" }!
-    #expect(launch.command == "BANYAN_AGENT_PROVIDER=deepseek opencode")
-    #expect(launch.provider == .deepseek)
-    #expect(launch.label == "DeepSeek")
+@Test func builtInDefaultsContainOnlyZshClaudeAndCodex() {
+    #expect(NewSessionLaunch.builtInDefaults.map(\.id) == ["zsh", "claude", "codex"])
 }
 
 @Test func siblingShortcutFallsBackToTerminalForOtherRuntimes() {
