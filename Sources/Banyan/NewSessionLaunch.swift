@@ -4,8 +4,11 @@ import SwiftUI
 
 /// A user-selectable command for creating a session in a project group.
 ///
-/// Profiles live in `~/.banyan/config.yml`. Their IDs, rather than array
-/// positions or labels, are persisted per project group.
+/// Profiles live in `~/.banyan/config.yml` (`session_launches:`) with a
+/// fallback to the shared `~/.agents/agents.yml` registry (banyan-tagged
+/// entries) when that section is omitted, so `workit sync` is optional.
+/// Their IDs, rather than array positions or labels, are persisted per
+/// project group.
 struct NewSessionLaunch: Identifiable, Hashable, Codable {
     let id: String
     let label: String
@@ -147,10 +150,85 @@ enum SessionLaunchProfileLoader {
         homeDirectory.appendingPathComponent(".banyan/config.yml")
     }
 
+    static func agentsURL(homeDirectory: URL) -> URL {
+        homeDirectory.appendingPathComponent(".agents/agents.yml")
+    }
+
+    /// Preferred load path that honours the shared `~/.agents/agents.yml` registry.
+    /// If `~/.banyan/config.yml` contains a `session_launches:` section it is used
+    /// verbatim (with built-in merge). Otherwise the loader falls back to the
+    /// registry's `banyan`-tagged agents so `workit sync` is no longer required
+    /// for the picker.
+    static func load(
+        homeDirectory: URL,
+        fileManager: FileManager = .default
+    ) -> SessionLaunchProfileLoadResult {
+        let configURL = configURL(homeDirectory: homeDirectory)
+        let agentsURL = agentsURL(homeDirectory: homeDirectory)
+
+        // 1. Try the explicit Banyan config if it defines session_launches.
+        if fileManager.fileExists(atPath: configURL.path),
+           let contents = try? String(contentsOf: configURL, encoding: .utf8),
+           contents.contains("session_launches:") {
+            do {
+                var profiles = try parse(contents)
+                let existingIDs = Set(profiles.map(\.id))
+                for builtIn in NewSessionLaunch.builtInDefaults where !existingIDs.contains(builtIn.id) {
+                    profiles.append(builtIn)
+                }
+                return SessionLaunchProfileLoadResult(profiles: profiles, diagnostic: nil)
+            } catch {
+                return SessionLaunchProfileLoadResult(
+                    profiles: NewSessionLaunch.builtInDefaults,
+                    diagnostic: "Could not load session launch profiles from \(configURL.path): \(error.localizedDescription). Using built-in defaults."
+                )
+            }
+        }
+
+        // 2. Config missing or without session_launches: try the shared registry.
+        if fileManager.fileExists(atPath: agentsURL.path) {
+            do {
+                let contents = try String(contentsOf: agentsURL, encoding: .utf8)
+                var profiles = try parseAgents(contents)
+                // Merge built-ins that the registry doesn't list (e.g. a fresh home).
+                let existingIDs = Set(profiles.map(\.id))
+                for builtIn in NewSessionLaunch.builtInDefaults where !existingIDs.contains(builtIn.id) {
+                    profiles.append(builtIn)
+                }
+                if !profiles.isEmpty {
+                    return SessionLaunchProfileLoadResult(profiles: profiles, diagnostic: nil)
+                }
+            } catch {
+                return SessionLaunchProfileLoadResult(
+                    profiles: NewSessionLaunch.builtInDefaults,
+                    diagnostic: "Could not load session launch profiles from \(agentsURL.path): \(error.localizedDescription). Using built-in defaults."
+                )
+            }
+        }
+
+        // 3. Config without session_launches and no usable registry: if config
+        //    exists but had no session_launches, that was an intentional omission
+        //    — don't surface a diagnostic, just use built-ins. Otherwise the
+        //    file was missing entirely, also use built-ins quietly.
+        if fileManager.fileExists(atPath: configURL.path) {
+            // Valid config file without session_launches and no registry: use built-ins.
+            // If the file was present but empty/invalid without the key, don't treat as error.
+            if let contents = try? String(contentsOf: configURL, encoding: .utf8),
+               !contents.contains("session_launches:") {
+                return SessionLaunchProfileLoadResult(profiles: NewSessionLaunch.builtInDefaults, diagnostic: nil)
+            }
+        }
+
+        return SessionLaunchProfileLoadResult(profiles: NewSessionLaunch.builtInDefaults, diagnostic: nil)
+    }
+
     static func load(
         at url: URL,
         fileManager: FileManager = .default
     ) -> SessionLaunchProfileLoadResult {
+        // Direct URL load retains the old strict contract for tests and callers
+        // that manage their own path. No agents fallback here to keep those
+        // isolates deterministic.
         guard fileManager.fileExists(atPath: url.path) else {
             return SessionLaunchProfileLoadResult(profiles: NewSessionLaunch.builtInDefaults, diagnostic: nil)
         }
@@ -252,6 +330,159 @@ enum SessionLaunchProfileLoader {
             return String(value.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'")
         }
         return value
+    }
+
+    /// Parse the shared `~/.agents/agents.yml` registry into picker profiles.
+    /// Mirrors `workit`'s `banyanProfiles()` selection: only `banyan`-tagged
+    /// entries with `picker !== false` and a defined `command` are surfaced, in
+    /// registry order, using `banyanCommand` when present.
+    static func parseAgents(_ yaml: String) throws -> [NewSessionLaunch] {
+        var profiles: [NewSessionLaunch] = []
+        var inAgentsSection = false
+        var currentID: String?
+        var currentLabel: String?
+        var currentProvider: String?
+        var currentIcon: String?
+        var currentCommand: String?
+        var currentBanyanCommand: String?
+        var currentTags: [String]?
+        var currentPickerIsFalse = false
+        var skippingOpencodeDepth: Int?
+        var foundAgentsSection = false
+
+        func flushCurrent() {
+            guard let id = currentID else { return }
+            // Replicate workit filtering
+            let tags = currentTags ?? []
+            let isBanyan = tags.contains("banyan")
+            let hasCommand = currentCommand != nil || currentBanyanCommand != nil
+            if !isBanyan || currentPickerIsFalse || !hasCommand {
+                return
+            }
+            let command = currentBanyanCommand ?? currentCommand ?? ""
+            let label = (currentLabel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? currentLabel! : id
+            profiles.append(NewSessionLaunch(
+                id: id,
+                label: label,
+                providerName: currentProvider,
+                iconName: currentIcon,
+                command: command
+            ))
+        }
+
+        for rawLine in yaml.split(whereSeparator: \.isNewline) {
+            let raw = String(rawLine)
+            let uncommented = stripComment(raw)
+            let trimmed = uncommented.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            let indent = raw.prefix(while: { $0 == " " }).count
+            let isTopLevel = indent == 0
+
+            if isTopLevel {
+                if trimmed == "agents:" {
+                    // leaving previous top-level, flush any pending agent
+                    if inAgentsSection { flushCurrent(); currentID = nil }
+                    inAgentsSection = true
+                    foundAgentsSection = true
+                    currentID = nil
+                    currentLabel = nil
+                    currentProvider = nil
+                    currentIcon = nil
+                    currentCommand = nil
+                    currentBanyanCommand = nil
+                    currentTags = nil
+                    currentPickerIsFalse = false
+                    skippingOpencodeDepth = nil
+                    continue
+                }
+                if trimmed.contains(":") {
+                    if inAgentsSection {
+                        flushCurrent()
+                        currentID = nil
+                        inAgentsSection = false
+                        skippingOpencodeDepth = nil
+                    }
+                    continue
+                }
+            }
+
+            guard inAgentsSection else { continue }
+
+            if let depth = skippingOpencodeDepth {
+                if indent > depth {
+                    continue
+                } else {
+                    skippingOpencodeDepth = nil
+                }
+            }
+
+            if indent == 2 {
+                // New agent entry: `  name:`
+                flushCurrent()
+                // Parse id — must end with colon
+                guard trimmed.hasSuffix(":") else { continue }
+                let idPart = String(trimmed.dropLast()).trimmingCharacters(in: .whitespaces)
+                // Strip quotes if any
+                let id: String
+                if (idPart.hasPrefix("\"") && idPart.hasSuffix("\"")) || (idPart.hasPrefix("'") && idPart.hasSuffix("'")) {
+                    id = String(idPart.dropFirst().dropLast())
+                } else {
+                    id = idPart
+                }
+                guard !id.isEmpty else { continue }
+                currentID = id
+                currentLabel = nil
+                currentProvider = nil
+                currentIcon = nil
+                currentCommand = nil
+                currentBanyanCommand = nil
+                currentTags = nil
+                currentPickerIsFalse = false
+                continue
+            }
+
+            guard currentID != nil, indent == 4 else { continue }
+            guard let colon = trimmed.firstIndex(of: ":") else { continue }
+            let key = String(trimmed[..<colon]).trimmingCharacters(in: .whitespaces)
+            let rawValue = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+
+            switch key {
+            case "label":
+                currentLabel = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
+            case "provider":
+                currentProvider = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
+            case "icon":
+                currentIcon = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
+            case "command":
+                currentCommand = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
+            case "banyanCommand":
+                currentBanyanCommand = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
+            case "tags":
+                // Expected form: [banyan, coding] — extract inside brackets
+                if let start = rawValue.firstIndex(of: "["), let end = rawValue.firstIndex(of: "]") {
+                    let inner = String(rawValue[rawValue.index(after: start)..<end])
+                    let tags = inner.split(separator: ",").map { part in
+                        part.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    }.filter { !$0.isEmpty }
+                    currentTags = tags
+                } else if rawValue.isEmpty {
+                    currentTags = []
+                } else {
+                    currentTags = []
+                }
+            case "picker":
+                let v = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
+                currentPickerIsFalse = v.lowercased() == "false"
+            case "opencode":
+                skippingOpencodeDepth = 4
+            default:
+                continue
+            }
+        }
+        flushCurrent()
+        guard foundAgentsSection else { throw ParseError(1, "missing agents section") }
+        return profiles
     }
 
     private static func stripComment(_ line: String) -> String {

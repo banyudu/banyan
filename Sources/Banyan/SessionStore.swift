@@ -339,7 +339,7 @@ final class SessionStore: ObservableObject {
             projectLaunchByGroup = stored
         }
         let launchConfiguration = SessionLaunchProfileLoader.load(
-            at: SessionLaunchProfileLoader.configURL(homeDirectory: host.homeDirectory)
+            homeDirectory: host.homeDirectory
         )
         sessionLaunchProfiles = launchConfiguration.profiles
         sessionLaunchConfigurationDiagnostic = launchConfiguration.diagnostic

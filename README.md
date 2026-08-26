@@ -181,12 +181,16 @@ paths can be absolute, start with `~`, or use a `file://` URL, and override
 provider branding. Commands are passed to the session shell unchanged, so
 quote YAML values when needed.
 
-When this file is absent, Banyan preserves the previous built-in menu:
-`zsh`, Claude, Codex, and DeepSeek. If the file cannot be read or is invalid
-(including duplicate IDs or no profiles), Banyan starts with those defaults and
-shows the parsing diagnostic in Preferences. An old remembered profile ID that
-is no longer configured falls back to the `zsh` profile, or the first profile
-when no `zsh` profile is configured.
+When this file is absent or omits `session_launches:`, Banyan falls back to
+the shared registry at `~/.agents/agents.yml` (entries with `tags: [banyan]`,
+respecting `picker: false` and `banyanCommand`), so `workit sync` is no longer
+required for the picker — you can omit the `session_launches` section
+entirely. If neither source is available, Banyan uses the built-ins `zsh`,
+Claude, and Codex. If the file cannot be read or is invalid (including
+duplicate IDs or no profiles), Banyan starts with those built-ins and shows
+the parsing diagnostic in Preferences. An old remembered profile ID that is no
+longer configured falls back to the `zsh` profile, or the first profile when
+no `zsh` profile is configured.
 
 ## Dev / Stable Builds
 
