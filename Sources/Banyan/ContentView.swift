@@ -2334,6 +2334,8 @@ private struct AgentProviderIcon: View {
             return "MuseLogo"
         case .opencode:
             return nil
+        case .qwen:
+            return "QwenLogo"
         case .xiaomiMiMo:
             return "XiaomiMiMoLogo"
         case .zai:
@@ -2427,7 +2429,7 @@ private struct AgentProviderIcon: View {
                 "/Applications/DeepSeek.app",
                 "\(home)/Applications/DeepSeek.app"
             ]
-        case .gemini, .hunyuan, .minimax, .muse, .xiaomiMiMo, .zai:
+        case .gemini, .hunyuan, .minimax, .muse, .qwen, .xiaomiMiMo, .zai:
             return []
         case .opencode:
             return [
@@ -2697,7 +2699,7 @@ private struct JumpKeyBadge: View {
             return .orange
         case .codex:
             return .cyan
-        case .none, .deepseek, .gemini, .hunyuan, .minimax, .muse, .opencode, .xiaomiMiMo, .zai:
+        case .none, .deepseek, .gemini, .hunyuan, .minimax, .muse, .opencode, .qwen, .xiaomiMiMo, .zai:
             return .secondary
         }
     }

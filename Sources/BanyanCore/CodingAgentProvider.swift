@@ -9,6 +9,7 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
     case minimax
     case muse
     case opencode
+    case qwen
     case xiaomiMiMo
     case zai
 
@@ -34,6 +35,8 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             return "Muse Spark"
         case .opencode:
             return "OpenCode"
+        case .qwen:
+            return "Qwen"
         case .xiaomiMiMo:
             return "MiMo"
         case .zai:
@@ -59,6 +62,8 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             return "Ms"
         case .opencode:
             return "Oc"
+        case .qwen:
+            return "Qw"
         case .xiaomiMiMo:
             return "Mi"
         case .zai:
@@ -84,6 +89,8 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             return "opencode"
         case .opencode:
             return "opencode"
+        case .qwen:
+            return "opencode"
         case .xiaomiMiMo:
             return "mimo"
         case .zai:
@@ -99,7 +106,7 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             return
         }
         switch normalized {
-        case "claude-code":
+        case "claude-code", "opus":
             self = .claude
         case "chatgpt", "openai":
             self = .codex
@@ -113,6 +120,8 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             self = .zai
         case "muse", "muse-spark", "muse spark", "meta-muse", "muse-spark-1.2":
             self = .muse
+        case "qwen", "qwen3", "qwen-3", "tongyi", "qianwen":
+            self = .qwen
         default:
             return nil
         }
@@ -140,12 +149,13 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             .filter { !$0.isEmpty }
         for candidate in candidates {
             if candidate.contains("deepseek") { return .deepseek }
-            if candidate.contains("anthropic") || candidate.contains("claude") { return .claude }
+            if candidate.contains("anthropic") || candidate.contains("claude") || candidate.contains("opus") { return .claude }
             if candidate.contains("openai") || candidate.contains("gpt") || candidate.contains("o1") || candidate.contains("o3") || candidate.contains("o4") { return .codex }
             if candidate.contains("google") || candidate.contains("gemini") { return .gemini }
             if candidate.contains("hunyuan") || candidate.contains("hy3") || candidate == "hy" || candidate.contains("tencent") { return .hunyuan }
             if candidate.contains("muse") && candidate.contains("spark") { return .muse }
             if candidate == "muse" || candidate.contains("muse-spark") { return .muse }
+            if candidate.contains("qwen") || candidate.contains("qw3") { return .qwen }
             if candidate.contains("minimax") || candidate.contains("mini-max") { return .minimax }
             if candidate.contains("xiaomi") || candidate.contains("mimo") { return .xiaomiMiMo }
             if candidate.contains("zhipu") || candidate.contains("z.ai") || candidate.contains("zai") || candidate.contains("glm") { return .zai }
@@ -205,7 +215,7 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             }
         }
         switch executable {
-        case "claude":
+        case "claude", "opus":
             return .claude
         case "codex":
             return .codex
@@ -223,6 +233,8 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             return .minimax
         case "muse", "muse-spark", "meta-muse":
             return .muse
+        case "qwen":
+            return .qwen
         case "opencode":
             return .opencode
         default:

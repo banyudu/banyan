@@ -113,6 +113,7 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
         case .hunyuan: return "HunyuanLogo"
         case .minimax: return "MiniMaxLogo"
         case .muse: return "MuseLogo"
+        case .qwen: return "QwenLogo"
         case .xiaomiMiMo: return "XiaomiMiMoLogo"
         case .zai: return "ZAILogo"
         case .opencode: return nil
