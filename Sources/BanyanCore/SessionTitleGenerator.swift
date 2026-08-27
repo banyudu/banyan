@@ -85,7 +85,8 @@ public enum SessionTitleGenerator {
     }
 
     public static func titleFromPrompt(_ prompt: String) -> String? {
-        var title = sanitizeTitle(firstSentence(in: prompt)) ?? ""
+        let normalized = normalizePromptForTitle(prompt)
+        var title = sanitizeTitle(firstSentence(in: normalized)) ?? ""
         for prefix in ["please ", "can you ", "could you ", "i want to ", "help me "] {
             if title.lowercased().hasPrefix(prefix) {
                 title = String(title.dropFirst(prefix.count))
@@ -182,6 +183,101 @@ public enum SessionTitleGenerator {
         }
 
         return false
+    }
+
+    private static func normalizePromptForTitle(_ prompt: String) -> String {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return prompt }
+        if isSingleURLPrompt(trimmed) || isSingleImagePrompt(trimmed) {
+            return prompt
+        }
+        var result = prompt
+        result = replacingURLs(in: result, with: "<url>")
+        result = replacingImagePlaceholders(in: result, with: "<img>")
+        return result
+    }
+
+    private static func isSingleURLPrompt(_ prompt: String) -> Bool {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = "^https?://\\S+$"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return false }
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        return regex.firstMatch(in: trimmed, options: [], range: range) != nil
+    }
+
+    private static func isSingleImagePrompt(_ prompt: String) -> Bool {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let imagePattern = "^\\[Image[^\\]]*\\]$"
+        if let regex = try? NSRegularExpression(pattern: imagePattern, options: .caseInsensitive),
+           regex.firstMatch(in: trimmed, options: [], range: NSRange(trimmed.startIndex..., in: trimmed)) != nil {
+            return true
+        }
+        let markdownPattern = "^!\\[.*?\\]\\(.*?\\)$"
+        if let regex = try? NSRegularExpression(pattern: markdownPattern, options: []),
+           regex.firstMatch(in: trimmed, options: [], range: NSRange(trimmed.startIndex..., in: trimmed)) != nil {
+            return true
+        }
+        return false
+    }
+
+    private static func replacingURLs(in text: String, with placeholder: String) -> String {
+        let pattern = "https?://[^\\s]+"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return text }
+        let nsText = text as NSString
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsText.length))
+        guard !matches.isEmpty else { return text }
+        var result = text
+        for match in matches.reversed() {
+            guard let range = Range(match.range, in: result) else { continue }
+            let matched = String(result[range])
+            let trailingPunctuation = CharacterSet(charactersIn: ".,;:!?)]}\"'")
+            var urlPart = matched
+            var suffix = ""
+            while let last = urlPart.last, String(last).unicodeScalars.allSatisfy({ trailingPunctuation.contains($0) }) {
+                suffix = String(last) + suffix
+                urlPart.removeLast()
+                if urlPart.isEmpty { break }
+            }
+            if urlPart.isEmpty { continue }
+            // Preserve Linear issue IDs that are embedded in the URL so the title
+            // still shows the meaningful identifier instead of a generic placeholder.
+            let replacement: String
+            if let issueID = LinearIssueReference.issueID(in: urlPart) {
+                replacement = issueID + suffix
+            } else if let githubID = GitHubIssueReference.detect(in: urlPart)?.url {
+                // For GitHub URLs keep a short hint – the full URL is rarely
+                // useful in a 56-char title. Fall back to generic placeholder.
+                _ = githubID
+                replacement = placeholder + suffix
+            } else {
+                replacement = placeholder + suffix
+            }
+            result.replaceSubrange(range, with: replacement)
+        }
+        return result
+    }
+
+    private static func replacingImagePlaceholders(in text: String, with placeholder: String) -> String {
+        var result = text
+        let bracketPattern = "\\[Image[^\\]]*\\]"
+        if let regex = try? NSRegularExpression(pattern: bracketPattern, options: .caseInsensitive) {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, options: [], range: NSRange(location: 0, length: ns.length))
+            for match in matches.reversed() {
+                guard let range = Range(match.range, in: result) else { continue }
+                result.replaceSubrange(range, with: placeholder)
+            }
+        }
+        let markdownPattern = "!\\[.*?\\]\\(.*?\\)"
+        if let regex = try? NSRegularExpression(pattern: markdownPattern, options: []) {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, options: [], range: NSRange(location: 0, length: ns.length))
+            for match in matches.reversed() {
+                guard let range = Range(match.range, in: result) else { continue }
+                result.replaceSubrange(range, with: placeholder)
+            }
+        }
+        return result
     }
 
     private static func truncate(_ value: String, limit: Int) -> String {
