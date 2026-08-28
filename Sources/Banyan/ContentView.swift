@@ -1132,6 +1132,13 @@ struct ContentView: View {
             },
             onFocusTerminal: {
                 store.focusSelectedTerminal()
+            },
+            onReopenHistory: {
+                if item.session.isImportedHistory {
+                    _ = try? store.resumeImportedHistory(id: item.session.id)
+                } else {
+                    try? store.respawn(id: item.session.id)
+                }
             }
         )
         .tag(item.session.id)
@@ -1882,6 +1889,7 @@ private struct SessionRow: View {
     let onHandoff: () -> Void
     let onRemove: () -> Void
     let onFocusTerminal: () -> Void
+    let onReopenHistory: () -> Void
 
     @State private var isRenaming = false
     @State private var renameDraft = ""
@@ -2185,7 +2193,11 @@ private struct SessionRow: View {
 
     private var doubleClickRenameGesture: some Gesture {
         TapGesture(count: 2).onEnded {
-            beginRename()
+            if isHistory {
+                onReopenHistory()
+            } else {
+                beginRename()
+            }
         }
     }
 
