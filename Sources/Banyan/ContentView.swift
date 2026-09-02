@@ -3,8 +3,7 @@ import BanyanCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-private let sidebarTitlebarHeaderHeight: CGFloat = 78
-private let sidebarTitlebarHeaderTopPadding: CGFloat = 30
+private let sidebarTitlebarHeaderHeight: CGFloat = 44
 
 private enum LinearFocusTarget: Hashable {
     case filter
@@ -346,22 +345,24 @@ struct ContentView: View {
 
     private var sidebarModeHeader: some View {
         VStack(spacing: 0) {
-            Picker("Sidebar", selection: $store.sidebarMode) {
-                ForEach(SidebarMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .padding(.top, sidebarTitlebarHeaderTopPadding)
-            .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
-
+            Spacer(minLength: 0)
             Divider()
         }
         .frame(height: sidebarTitlebarHeaderHeight, alignment: .bottom)
         .background(.regularMaterial)
+    }
+
+    private var sidebarModeSwitcher: some View {
+        Picker("Sidebar", selection: $store.sidebarMode) {
+            ForEach(SidebarMode.allCases) { mode in
+                Text(mode.label).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.mini)
+        .fixedSize()
+        .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
     }
 
     private var sessionsSidebar: some View {
@@ -468,6 +469,8 @@ struct ContentView: View {
                     .accessibilityIdentifier(AccessibilityID.sidebarCloseSelected)
                     .help("Close selected session")
                 }
+
+                sidebarModeSwitcher
             }
             .buttonStyle(.banyanBorderless)
             .padding(12)
@@ -517,6 +520,8 @@ struct ContentView: View {
                 .accessibilityIdentifier(AccessibilityID.linearIssueStartButton)
                 .disabled(store.selectedLinearListIssueID == nil || store.linearIssueListLoadState.isStarting)
                 .help("Start Banyan session for selected issue")
+
+                sidebarModeSwitcher
             }
             .buttonStyle(.banyanBorderless)
             .padding(12)

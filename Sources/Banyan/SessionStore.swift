@@ -36,7 +36,7 @@ enum SidebarMode: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .sessions: return "Sessions"
-        case .linear: return "Linear"
+        case .linear: return "Issues"
         }
     }
 }
