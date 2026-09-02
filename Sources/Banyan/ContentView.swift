@@ -358,9 +358,9 @@ struct ContentView: View {
                 Text(mode.label).tag(mode)
             }
         }
-        .pickerStyle(.segmented)
+        .pickerStyle(.menu)
         .labelsHidden()
-        .controlSize(.mini)
+        .controlSize(.small)
         .fixedSize()
         .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
     }
