@@ -25,6 +25,12 @@ private func selectSecondVisibleLine(of view: DetectingLocalProcessTerminalView)
 }
 
 @MainActor
+private func receive(_ text: String, in view: DetectingLocalProcessTerminalView) {
+    let bytes = Array(text.utf8)
+    view.dataReceived(slice: bytes[...])
+}
+
+@MainActor
 @Test func selectionFollowsTextWhenFullScrollbackTrims() {
     // 200 lines overflows the 50-line scrollback, so the buffer is full and
     // every further line trims the top.
@@ -78,4 +84,71 @@ private func selectSecondVisibleLine(of view: DetectingLocalProcessTerminalView)
     // Leaving copy-mode (position 0) restores the original placement.
     view.noteTmuxScrollPosition(0)
     #expect(view.getSelection() == selectedText)
+}
+
+/// Restoring the pre-output viewport is synchronous. A delayed retry would
+/// override a user who has already returned to the live bottom.
+@MainActor
+@Test func terminalDoesNotApplyDelayedScrollbackRestoreAfterOutput() async {
+    let view = makeStreamedTerminal(lines: 200)
+    view.scrollUp(lines: 12)
+    view.noteUserScrollbackPosition()
+    let scrolledBackRow = view.terminal.buffer.yDisp
+
+    receive("live output\\r\\n", in: view)
+    #expect(view.terminal.buffer.yDisp == scrolledBackRow)
+
+    view.scrollDown(lines: 10_000)
+    #expect(view.scrollPosition == 1)
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(view.scrollPosition == 1)
+}
+
+/// A temporary local viewport while a terminal is hidden is produced by tmux
+/// replay, not by a user scroll gesture. Returning to that terminal must follow
+/// live output instead of restoring the stale top row first.
+@MainActor
+@Test func terminalDoesNotRestoreAnUnclaimedHiddenViewport() {
+    let view = makeStreamedTerminal(lines: 200)
+    view.scrollUp(lines: 12)
+    #expect(view.scrollPosition < 1)
+
+    view.isHidden = true
+    receive("live output\\r\\n", in: view)
+
+    #expect(view.scrollPosition == 1)
+}
+
+/// Explicit local scrollback survives visible output, but the same state is
+/// released when the terminal is hidden and output continues in the background.
+@MainActor
+@Test func terminalReleasesUserScrollbackWhenOutputArrivesWhileHidden() {
+    let view = makeStreamedTerminal(lines: 200)
+    view.scrollUp(lines: 12)
+    view.noteUserScrollbackPosition()
+    #expect(view.scrollPosition < 1)
+
+    view.isHidden = true
+    receive("live output\\r\\n", in: view)
+
+    #expect(view.scrollPosition == 1)
+}
+
+/// tmux redraws an attached pane over several PTY chunks. The intermediate
+/// screen must stay transparent so the user sees the final screen in one paint.
+@MainActor
+@Test func terminalRevealsOnlyAfterInitialScreenOutputSettles() async {
+    let view = DetectingLocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
+    view.beginInitialScreenSynchronization()
+    #expect(view.alphaValue == 0)
+
+    receive("first chunk\\r\\n", in: view)
+    try? await Task.sleep(for: .milliseconds(40))
+    receive("last chunk\\r\\n", in: view)
+    #expect(view.alphaValue == 0)
+
+    try? await Task.sleep(for: .milliseconds(120))
+    #expect(view.alphaValue == 1)
+    #expect(view.hasVisibleText)
 }

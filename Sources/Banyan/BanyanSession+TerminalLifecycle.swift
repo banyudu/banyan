@@ -132,7 +132,6 @@ extension BanyanSession {
         guard !isImportedHistory else { return }
         let startedAt = DispatchTime.now()
         terminalRefreshTask?.cancel()
-        terminalView.preserveScrollPosition()
         if terminalView.process.running {
             isDetachingTerminalClient = true
             terminalView.terminate()
@@ -140,7 +139,11 @@ extension BanyanSession {
         isDetachingTerminalClient = false
         isProcessStarted = false
         isRestored = false
-        terminalView.resetForNewProcess(preserveScrollPosition: true)
+        // A reattached client rebuilds its local buffer from the live tmux pane.
+        // An old SwiftTerm row no longer identifies the same content and would
+        // visibly pull the viewport into stale history before it follows live
+        // output again.
+        terminalView.resetForNewProcess()
         startTerminalClient(resetBlankRecoveryAttempt: resetBlankRecoveryAttempt)
         telemetry.recordDuration(
             "terminal.reattach_client",
@@ -242,6 +245,9 @@ extension BanyanSession {
             attemptedBlankTerminalRecovery = false
         }
         status = .running
+        // A reattach may spend time ensuring tmux first; begin the quiet window
+        // at the actual client launch so it only covers the pane redraw.
+        terminalView.beginInitialScreenSynchronization(restarting: true)
         terminalView.startProcess(
             executable: "/usr/bin/env",
             args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path] + tmuxBackend.attachArguments(for: tmuxSessionName),

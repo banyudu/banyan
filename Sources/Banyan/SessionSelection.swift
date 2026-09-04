@@ -27,14 +27,21 @@ final class SessionSelection: ObservableObject {
                         sessionID: selectedSessionID
                     )
                 }
-                switcher?.switchImmediately(
+                let forwardToStore = isSyncing ? nil : storeSelectionForwarder(for: selectedSessionID)
+                let waitsForProjectLayout = switcher?.switchImmediately(
                     to: selectedSessionID,
                     selectionChangedAt: changedAt,
                     clickAt: clickAt,
-                    afterPaint: isSyncing ? nil : storeSelectionForwarder(for: selectedSessionID)
-                )
-                if switcher == nil, !isSyncing {
-                    storeSelectionForwarder(for: selectedSessionID)()
+                    afterPaint: forwardToStore
+                ) ?? false
+                if switcher == nil {
+                    forwardToStore?()
+                } else if waitsForProjectLayout {
+                    // The selected context controls whether the right issue panel
+                    // reserves terminal width. Commit it before revealing a
+                    // cross-project terminal so tmux receives its final geometry
+                    // while the target is still hidden.
+                    forwardToStore?()
                 }
                 pendingClickAt = nil
             }

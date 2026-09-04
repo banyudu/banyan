@@ -61,6 +61,16 @@ struct TerminalSwitcherView: NSViewRepresentable {
 }
 
 final class TerminalSwitcherContainer: NSView {
+    private struct DeferredProjectSwitch {
+        let token = UUID()
+        let sourceID: String
+        let targetID: String
+        let sourceAutoresizingMask: NSView.AutoresizingMask
+        let selectionChangedAt: DispatchTime?
+        let clickAt: DispatchTime?
+        var isPrepared = false
+    }
+
     private var containers: [String: TerminalContainerView] = [:]
     private var initializedSessions: Set<String> = []
     private var telemetry: PerformanceTelemetry?
@@ -68,6 +78,8 @@ final class TerminalSwitcherContainer: NSView {
     private var lastFocusRequestID: UUID?
     private var pendingAfterPaint: (sessionID: String, action: () -> Void)?
     private var windowLifecycleObservers: [NSObjectProtocol] = []
+    private var projectGroupBySessionID: [String: String] = [:]
+    private var deferredProjectSwitch: DeferredProjectSwitch?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -82,13 +94,45 @@ final class TerminalSwitcherContainer: NSView {
 
     /// Called directly from `SessionSelection.didSet` to swap cached views
     /// without waiting for SwiftUI's view update pipeline.
+    @discardableResult
     func switchImmediately(
         to newID: String?,
         selectionChangedAt: DispatchTime?,
         clickAt: DispatchTime?,
         afterPaint: (() -> Void)? = nil
-    ) {
-        guard activeSessionID != newID else { return }
+    ) -> Bool {
+        if let deferred = deferredProjectSwitch {
+            if deferred.targetID == newID {
+                return true
+            }
+            cancelDeferredProjectSwitch()
+            if deferred.sourceID == newID {
+                return true
+            }
+        }
+        guard activeSessionID != newID else { return false }
+        let oldID = activeSessionID
+        let sourceGroup = oldID.flatMap { projectGroupBySessionID[$0] }
+        let targetGroup = newID.flatMap { projectGroupBySessionID[$0] }
+        let crossesProjectBoundary = sourceGroup != nil && targetGroup != nil && sourceGroup != targetGroup
+        if crossesProjectBoundary,
+           let oldID,
+           let newID,
+           let sourceContainer = containers[oldID] {
+            // Commit the selection's contextual panel before the target becomes
+            // visible. Keep the current container at its existing geometry until
+            // the hidden target has finished tmux's resize redraw.
+            let sourceAutoresizingMask = sourceContainer.autoresizingMask
+            sourceContainer.autoresizingMask = []
+            deferredProjectSwitch = DeferredProjectSwitch(
+                sourceID: oldID,
+                targetID: newID,
+                sourceAutoresizingMask: sourceAutoresizingMask,
+                selectionChangedAt: selectionChangedAt,
+                clickAt: clickAt
+            )
+            return true
+        }
         if let newID, let afterPaint {
             pendingAfterPaint = (newID, afterPaint)
         } else if newID == nil {
@@ -107,7 +151,7 @@ final class TerminalSwitcherContainer: NSView {
 
         // A first visit has no cached terminal to reveal yet. Leave the current
         // terminal attached until SwiftUI supplies the selected session below.
-        guard newID == nil || isRevisit else { return }
+        guard newID == nil || isRevisit else { return false }
 
         let synchronousWorkStartedAt = DispatchTime.now()
         hideActiveContainer()
@@ -152,6 +196,7 @@ final class TerminalSwitcherContainer: NSView {
                 )
             }
         }
+        return false
     }
 
     required init?(coder: NSCoder) {
@@ -172,6 +217,10 @@ final class TerminalSwitcherContainer: NSView {
         onTerminalReady: @escaping (BanyanSession) -> Void
     ) {
         let liveSessions = sessions.filter { !$0.isImportedHistory && $0.status != .closed }
+        projectGroupBySessionID = Dictionary(
+            liveSessions.map { ($0.id, $0.projectGroupID) },
+            uniquingKeysWith: { first, _ in first }
+        )
         if let selectedSessionID,
            let selectedSession = liveSessions.first(where: { $0.id == selectedSessionID }) {
             telemetry = selectedSession.telemetry
@@ -214,6 +263,36 @@ final class TerminalSwitcherContainer: NSView {
             container.apply(theme: theme)
             container.onUserSubmittedInput = { onUserSubmittedInput(session, $0) }
             session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
+        }
+
+        if let deferred = deferredProjectSwitch {
+            guard deferred.targetID == selectedSessionID,
+                  let targetSession = selectedSession,
+                  let targetContainer = containers[deferred.targetID] else {
+                cancelDeferredProjectSwitch()
+                // Fall through to the regular path so a rapid selection change
+                // cannot leave a frozen source container on screen.
+                return update(
+                    switchRequestedAt: switchRequestedAt,
+                    selectionChangedAt: selectionChangedAt,
+                    clickAt: clickAt,
+                    sessions: sessions,
+                    selectedSessionID: selectedSessionID,
+                    theme: theme,
+                    fontFamily: fontFamily,
+                    fontSize: fontSize,
+                    focusRequestID: focusRequestID,
+                    onUserSubmittedInput: onUserSubmittedInput,
+                    onTerminalReady: onTerminalReady
+                )
+            }
+            prepareDeferredProjectSwitch(
+                deferred,
+                targetContainer: targetContainer,
+                targetSession: targetSession,
+                onTerminalReady: onTerminalReady
+            )
+            return
         }
 
         // Switch visibility
@@ -291,9 +370,112 @@ final class TerminalSwitcherContainer: NSView {
         }
     }
 
+    /// Move a target into the current (already-reserved) terminal frame while it
+    /// is hidden. The source stays frozen until tmux has completed the resize
+    /// redraw, so a contextual issue panel never makes an on-screen terminal
+    /// briefly render at two different widths.
+    private func prepareDeferredProjectSwitch(
+        _ deferred: DeferredProjectSwitch,
+        targetContainer: TerminalContainerView,
+        targetSession: BanyanSession,
+        onTerminalReady: @escaping (BanyanSession) -> Void
+    ) {
+        guard !deferred.isPrepared else { return }
+        var prepared = deferred
+        prepared.isPrepared = true
+        deferredProjectSwitch = prepared
+
+        let terminal = targetContainer.terminalView as? DetectingLocalProcessTerminalView
+        terminal?.synchronizeForProjectSwitch { [weak self] in
+            self?.completeDeferredProjectSwitch(token: deferred.token)
+        }
+
+        attachHidden(targetContainer)
+        targetContainer.needsLayout = true
+        targetContainer.layoutSubtreeIfNeeded()
+        targetContainer.syncTerminalFrameIfNeeded(markNeedsDisplay: true)
+
+        if !initializedSessions.contains(deferred.targetID) {
+            initializedSessions.insert(deferred.targetID)
+            targetContainer.performWhenTerminalReady(for: targetSession.terminalView) {
+                onTerminalReady(targetSession)
+            }
+        }
+
+        // Every Banyan terminal currently uses DetectingLocalProcessTerminalView,
+        // but retain a safe completion path if a future terminal implementation
+        // does not need the synchronization hook.
+        if terminal == nil {
+            DispatchQueue.main.async { [weak self] in
+                self?.completeDeferredProjectSwitch(token: deferred.token)
+            }
+        }
+    }
+
+    private func completeDeferredProjectSwitch(token: UUID) {
+        guard let deferred = deferredProjectSwitch,
+              deferred.token == token,
+              let targetContainer = containers[deferred.targetID] else {
+            return
+        }
+
+        deferredProjectSwitch = nil
+        hideFrozenSource(for: deferred)
+        activeSessionID = deferred.targetID
+
+        if let startedAt = deferred.clickAt ?? deferred.selectionChangedAt {
+            targetContainer.measureNextSwitchPaint(
+                startedAt: startedAt,
+                sessionID: deferred.targetID,
+                telemetry: telemetry
+            )
+            telemetry?.recordDuration(
+                "switcher.project_layout_wait",
+                durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                sessionID: deferred.targetID
+            )
+        }
+
+        attach(targetContainer)
+        window?.makeFirstResponder(targetContainer.terminalView)
+    }
+
+    private func cancelDeferredProjectSwitch() {
+        guard let deferred = deferredProjectSwitch else { return }
+        deferredProjectSwitch = nil
+        (containers[deferred.targetID]?.terminalView as? DetectingLocalProcessTerminalView)?
+            .cancelInitialScreenSynchronization()
+
+        if let sourceContainer = containers[deferred.sourceID] {
+            sourceContainer.autoresizingMask = deferred.sourceAutoresizingMask
+            sourceContainer.needsLayout = true
+        }
+    }
+
+    private func hideFrozenSource(for deferred: DeferredProjectSwitch) {
+        guard let sourceContainer = containers[deferred.sourceID] else { return }
+        sourceContainer.isHidden = true
+        sourceContainer.autoresizingMask = deferred.sourceAutoresizingMask
+        sourceContainer.needsLayout = true
+    }
+
+    private func attachHidden(_ container: TerminalContainerView) {
+        if container.superview !== self {
+            container.translatesAutoresizingMaskIntoConstraints = true
+            container.autoresizingMask = [.width, .height]
+            container.frame = bounds
+            container.isHidden = true
+            addSubview(container)
+        } else {
+            container.autoresizingMask = [.width, .height]
+            container.frame = bounds
+            container.isHidden = true
+        }
+        container.needsLayout = true
+    }
+
     private func hideActiveContainer() {
         guard let activeSessionID, let activeContainer = containers[activeSessionID] else { return }
-        (activeContainer.terminalView as? DetectingLocalProcessTerminalView)?.preserveScrollPosition()
         activeContainer.isHidden = true
     }
 

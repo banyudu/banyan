@@ -65,6 +65,44 @@ import Testing
     #expect(visibleContainers.isEmpty)
 }
 
+/// A terminal retains its own live viewport while hidden. Returning to a
+/// terminal that is already at the live bottom must not restore an old
+/// scrollback row when its next output arrives.
+@MainActor
+@Test func terminalSwitcherDoesNotRestoreStaleScrollbackAfterReturningToBottom() async {
+    let first = makeSwitcherSession(id: "first")
+    let second = makeSwitcherSession(id: "second")
+    let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    let focusRequestID = UUID()
+
+    update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
+    switcher.layoutSubtreeIfNeeded()
+    let terminal = first.terminalView
+    terminal.setFrameSize(NSSize(width: 800, height: 600))
+    terminal.resizeSubviews(withOldSize: .zero)
+    terminal.resize(cols: 80, rows: 25)
+    terminal.changeScrollback(50)
+    for index in 0..<200 {
+        terminal.feed(text: "line-\(index)\\r\\n")
+    }
+    #expect(terminal.canScroll)
+    terminal.scrollUp(lines: 12)
+    #expect(terminal.scrollPosition < 1)
+
+    update(switcher, sessions: [first, second], selectedID: second.id, focusRequestID: focusRequestID)
+    update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
+    terminal.scrollDown(lines: 10_000)
+    #expect(terminal.scrollPosition == 1)
+
+    update(switcher, sessions: [first, second], selectedID: second.id, focusRequestID: focusRequestID)
+    update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
+    let bytes = Array("live output\\r\\n".utf8)
+    terminal.dataReceived(slice: bytes[...])
+    try? await Task.sleep(for: .milliseconds(30))
+
+    #expect(terminal.scrollPosition == 1)
+}
+
 @Test func terminalEditingShortcutsDoNotCaptureShiftedJumpChords() {
     #expect(TerminalContainerView.isPlainCommandTerminalShortcut(.command))
     #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .shift]))
