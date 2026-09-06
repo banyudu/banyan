@@ -259,6 +259,162 @@ import Testing
     #expect(result?.tone == .blue)
 }
 
+@Test func supervisorClassifiesLiveElapsedCounterAsExecuting() {
+    // Claude prints no interrupt hint. A turn in flight is visible only as a
+    // spinner line with a live elapsed counter, whose gerund is randomized per
+    // turn and whose ellipsis sits mid-line — so neither the verb list nor a
+    // trailing-ellipsis test can see it, and the session used to fall through to
+    // `.needInput` and offer handoff while the agent was still working.
+    let workingText = [
+        "⏺ Bash(rg -n 'claimedByAnotherCollector' src/telemetry.ts)",
+        "  ⎿  … +27 lines (ctrl+o to expand)",
+        "",
+        "✳ Whirlpooling… (5m 55s · ↓ 21.2k tokens)",
+        "",
+        "──────────────────────────────────────────────",
+        "❯ ",
+        "──────────────────────────────────────────────",
+        "  Opus 5 (1M context) | 14% ctx | …/repo | TASK-123 | wk 2%",
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(visibleText: workingText, processes: [agentProcess("claude")]).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .needInput
+    )
+
+    #expect(result?.status == .executing)
+    #expect(result?.tone == .blue)
+}
+
+@Test func supervisorClassifiesElapsedCounterWithRotatingHintAsExecuting() {
+    // The counter's trailing segment rotates through hints instead of a fixed
+    // interrupt affordance, so the elapsed token is the only stable part.
+    let workingText = [
+        "✻ Whirlpooling… (3m 16s · ↓ 9.0k tokens · thinking more with max effort)",
+        "❯ "
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(visibleText: workingText, processes: [agentProcess("claude")]).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .needInput
+    )
+
+    #expect(result?.status == .executing)
+}
+
+@Test func supervisorDoesNotReadIdleStatusFooterAsLiveCounter() {
+    // The status footer ends in a parenthetical and carries an elided path, but
+    // `(1M context)` names a model window, not elapsed seconds.
+    let idleText = [
+        "⏺ Fixed the agent status detection.",
+        "",
+        "──────────────────────────────────────────────",
+        "❯ ",
+        "──────────────────────────────────────────────",
+        "  …/repo | TASK-123 | Opus 5 (1M context)"
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(visibleText: idleText, processes: [agentProcess("claude")]).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
+@Test func supervisorDoesNotReadElidedToolCallAsLiveCounter() {
+    // A finished tool call can end in `)` and mention a duration, but its
+    // ellipsis marks elided arguments *inside* the group, not a spinner.
+    let idleText = [
+        "⏺ Bash(for host in a b c; do curl --max-time 30s \"$host\" …)",
+        "  ⎿  … +12 lines (ctrl+o to expand)",
+        "",
+        "❯ "
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(visibleText: idleText, processes: [agentProcess("claude")]).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+}
+
+@Test func supervisorKeepsPerTurnSleepAssertionAsExecuting() {
+    // Claude holds a sleep assertion only while a turn is in flight, as a
+    // `caffeinate -i -t 300` child it re-leases every five minutes and drops when
+    // the turn ends. It looks like persistent plumbing — it is not, so it must not
+    // be filtered out the way an MCP server is. The ~1s gap between leases is
+    // covered by the live-counter scan, not by counting caffeinate as idle.
+    let result = makeSupervisor(
+        pane: pane(rootPID: 100, currentCommand: "claude"),
+        processes: [
+            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
+            process(
+                pid: 101,
+                parentPID: 100,
+                commandName: "/usr/bin/caffeinate",
+                arguments: "caffeinate -i -t 300",
+                elapsed: 140
+            )
+        ]
+    ).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .needInput
+    )
+
+    #expect(result?.status == .executing)
+    #expect(result?.tone == .blue)
+}
+
+@Test func supervisorReadsFinishedTurnSummaryAsIdle() {
+    // Claude replaces the spinner with a past-tense summary carrying the same
+    // duration (`✻ Sautéed for 35m 26s · done 10:15 AM`) and drops its sleep
+    // assertion. Neither the duration nor the elided cwd may keep it executing.
+    let idleText = [
+        "✻ Sautéed for 35m 26s · done 10:15 AM",
+        "",
+        "──────────────────────────────────────────────",
+        "❯ ",
+        "──────────────────────────────────────────────",
+        "  Opus 5 (1M context) | 15% ctx | …/repo | TASK-123"
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(visibleText: idleText, processes: [agentProcess("claude")]).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+    #expect(result?.tone == .yellow)
+}
+
+@Test func supervisorDoesNotReadScheduledTaskHeaderAsLiveCounter() {
+    // `✻ Running scheduled task (Sep 6 10:02am)` ends in a parenthetical on a line
+    // whose verb is in the progress list, but it is a header, not a live counter.
+    let idleText = [
+        "✻ Running scheduled task (Sep 6 10:02am)",
+        "✻ Churned for 6s · done 10:02 AM",
+        "❯ "
+    ].joined(separator: "\n")
+
+    let result = makeSupervisor(visibleText: idleText, processes: [agentProcess("claude")]).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .needInput)
+}
+
 @Test func supervisorClassifiesExternalProcessAsExecuting() {
     let result = makeSupervisor(processes: [
         agentProcess("codex"),

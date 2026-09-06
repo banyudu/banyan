@@ -448,11 +448,19 @@ public struct AgentSupervisor: Sendable {
     /// live "interrupt" affordance only while a turn is in flight and drop it the
     /// instant they return to the prompt, so that hint is the reliable signal.
     private static func looksLikeAgentExecuting(_ text: String) -> Bool {
-        let tail = text
+        let lines = text
             .lowercased()
             .split(separator: "\n")
-            .suffix(8)
             .map { $0.trimmingCharacters(in: .whitespaces) }
+        let tail = lines.suffix(8)
+
+        // Claude no longer prints an interrupt hint at all, so the live elapsed
+        // counter is the only in-band signal that a turn is still running. It sits
+        // above the prompt box and the (user-configurable, multi-line) status
+        // footer, so it needs more headroom than the hint scans below.
+        if lines.suffix(14).contains(where: looksLikeLiveProgressCounter) {
+            return true
+        }
 
         // A live interrupt affordance is shown only while a turn is running
         // (Claude: "esc to interrupt", Codex: "Esc to interrupt", OpenCode:
@@ -485,6 +493,39 @@ public struct AgentSupervisor: Sendable {
             guard line.hasSuffix("…") || line.hasSuffix("...") else { return false }
             return progressVerbs.contains(where: line.contains)
         }
+    }
+
+    /// True for a spinner line whose trailing parenthetical is a *live* counter,
+    /// e.g. Claude's `✳ Whirlpooling… (5m 55s · ↓ 21.2k tokens)`. The gerund is
+    /// randomized per turn and the line does not end in the ellipsis, so neither
+    /// the verb list nor a trailing-ellipsis test can see it.
+    ///
+    /// Three conditions together keep finished output from matching: the line ends
+    /// in `)`, the ellipsis appears *before* that group (so an elided tool call
+    /// like `bash(… sleep 30s)` does not qualify), and the group carries an
+    /// elapsed-seconds token — which `(1m context)` in a status footer and
+    /// `(ctrl+o to expand)` under a collapsed result both lack.
+    static func looksLikeLiveProgressCounter(_ line: String) -> Bool {
+        guard line.hasSuffix(")"), let open = line.lastIndex(of: "(") else { return false }
+        let head = line[line.startIndex..<open]
+        guard head.contains("…") || head.contains("...") else { return false }
+        return containsElapsedSeconds(line[line.index(after: open)..<line.index(before: line.endIndex)])
+    }
+
+    /// True when the text carries a duration token whose unit is seconds (`12s`,
+    /// the `55s` of `5m 55s`). Requiring the seconds unit — rather than any
+    /// `<number><unit>` pair — is what keeps `Opus 5 (1M context)` out.
+    private static func containsElapsedSeconds(_ text: Substring) -> Bool {
+        let characters = Array(text)
+        for index in characters.indices where characters[index] == "s" {
+            guard index > 0, characters[index - 1].isNumber else { continue }
+            let next = index + 1
+            guard next == characters.count || !characters[next].isLetter && !characters[next].isNumber else {
+                continue
+            }
+            return true
+        }
+        return false
     }
 }
 
