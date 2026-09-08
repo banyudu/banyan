@@ -460,16 +460,6 @@ struct ContentView: View {
 
                 Spacer()
 
-                if let selected = store.selectedSession, selected.status != .closed {
-                    Button {
-                        store.requestClose(id: selected.id)
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                    .accessibilityIdentifier(AccessibilityID.sidebarCloseSelected)
-                    .help("Close selected session")
-                }
-
                 sidebarModeSwitcher
             }
             .buttonStyle(.banyanBorderless)

@@ -29,7 +29,6 @@ enum AccessibilityID {
     static let pullRequestPreviewCloseButton = "banyan.github-pr.close"
     static let sidebarAddSession = "banyan.sidebar.add-session"
     static let sidebarOptions = "banyan.sidebar.options"
-    static let sidebarCloseSelected = "banyan.sidebar.close-selected"
     static let sidebarPendingHandoffJobs = "banyan.sidebar.pending-handoff-jobs"
     static let sidebarModePicker = "banyan.sidebar.mode"
     static let linearIssueList = "banyan.sidebar.linear-list"
