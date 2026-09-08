@@ -332,6 +332,26 @@ import Testing
 }
 
 @MainActor
+@Test func submittedTerminalInputNotifiesTheSessionActivityHook() {
+    let session = BanyanSession(
+        id: "shell-session",
+        title: "Shell",
+        cwd: "/tmp/banyan",
+        command: "",
+        theme: .system,
+        tmuxBackend: banyanTestTmuxBackend,
+        telemetry: banyanTestTelemetry,
+        host: banyanTestHost
+    )
+    var submittedInput: String?
+    session.onUserSubmittedInput = { submittedInput = $0 }
+
+    session.noteUserSubmittedInput("opencode")
+
+    #expect(submittedInput == "opencode")
+}
+
+@MainActor
 @Test func localHistoryIncludesClosedClaudeSessionsWithLinearIssueIDs() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
     let session = BanyanSession(

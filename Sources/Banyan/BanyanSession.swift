@@ -140,6 +140,9 @@ final class BanyanSession: ObservableObject, Identifiable {
     }
     var onDidChange: (() -> Void)?
     var onOutput: ((String) -> Void)?
+    /// Called after the user submits terminal input. SessionStore uses this to
+    /// wake supervision for commands launched from an initially plain shell.
+    var onUserSubmittedInput: ((String?) -> Void)?
     var onStatusSignal: ((SessionStatus) -> Void)?
     var onProcessExit: ((Int32?) -> Void)?
     var onProjectContextObserved: ((String, SessionProjectContext) -> Void)?

@@ -2626,6 +2626,14 @@ final class SessionStore: ObservableObject {
             telemetry.noteSessionFirstOutput(sessionID: session.id)
             self.detectAttention(in: text, for: session)
         }
+        session.onUserSubmittedInput = { [weak self, weak session] _ in
+            guard let self, let session else { return }
+            // A plain shell can become a coding-agent session without a picker
+            // launch command. Its status/provider do not change until the next
+            // supervisor observation, so user input must invalidate any quiet
+            // session backoff that was built while the shell was idle.
+            self.resetSupervisorObservationBackoff(for: session.id)
+        }
         session.onStatusSignal = { [weak self, weak session] status in
             guard let self, let session else { return }
             self.resetSupervisorObservationBackoff(for: session.id)

@@ -64,6 +64,7 @@ extension BanyanSession {
         ) {
             mark(status: nextStatus, tone: .blue)
         }
+        onUserSubmittedInput?(submittedInput)
     }
 
     /// Drop a stale title when the agent transcript shows the current segment
