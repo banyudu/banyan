@@ -349,7 +349,7 @@ struct ContentView: View {
             Divider()
         }
         .frame(height: sidebarTitlebarHeaderHeight, alignment: .bottom)
-        .background(.regularMaterial)
+        .background(.ultraThickMaterial)
     }
 
     private var sidebarModeSwitcher: some View {
@@ -1244,7 +1244,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var sessionDetail: some View {
-        ZStack(alignment: .trailing) {
+        HStack(spacing: 0) {
             ZStack {
                 SelectionAwareTerminalSwitcher(
                     selection: selection,
@@ -1279,13 +1279,17 @@ struct ContentView: View {
                     .accessibilityIdentifier(AccessibilityID.emptyDetail)
                 }
             }
-            .padding(.trailing, issuePreviewReservedWidth == 0 ? 0 : issuePreviewReservedWidth + 12)
+            // SwiftTerm owns a Metal-backed surface. During restoration SwiftUI
+            // can briefly propose the panel's fixed width before it proposes the
+            // remaining detail width; never collapse that surface to a sliver.
+            .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(1)
 
             if let session = store.selectedSession {
                 if store.isPullRequestPreviewPresented,
                    let context = store.selectedPullRequestPreviewContext,
                    session.status != .closed {
-                    issuePreviewOverlay {
+                    issuePreviewPanel {
                         PullRequestPreviewPanel(
                             context: context,
                             details: store.selectedPullRequestDetails,
@@ -1300,7 +1304,7 @@ struct ContentView: View {
                 } else if let context = store.selectedContextInfo,
                           context.githubIssueURL?.isEmpty == false,
                           session.status != .closed {
-                    issuePreviewOverlay {
+                    issuePreviewPanel {
                         GitHubIssuePanel(
                             context: context,
                             issue: store.selectedGitHubIssueDetails,
@@ -1313,7 +1317,7 @@ struct ContentView: View {
                 } else if let context = store.selectedContextInfo,
                           context.linearIssueID?.isEmpty == false,
                           session.status != .closed {
-                    issuePreviewOverlay {
+                    issuePreviewPanel {
                         LinearIssuePanel(
                             context: context,
                             issue: store.selectedLinearIssueDetails,
@@ -1337,7 +1341,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func issuePreviewOverlay<Content: View>(
+    private func issuePreviewPanel<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
         HStack(spacing: 0) {
@@ -1357,17 +1361,6 @@ struct ContentView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(.background)
-    }
-
-    private var issuePreviewReservedWidth: CGFloat {
-        guard let session = store.selectedSession, session.status != .closed else { return 0 }
-        if store.isPullRequestPreviewPresented || store.selectedContextInfo?.githubIssueURL?.isEmpty == false {
-            return 400 // 380-point panel plus the overlay's horizontal insets.
-        }
-        if store.selectedContextInfo?.linearIssueID?.isEmpty == false {
-            return 380 // 360-point panel plus the overlay's horizontal insets.
-        }
-        return 0
     }
 
     @ViewBuilder
