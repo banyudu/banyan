@@ -48,7 +48,6 @@ struct ContentView: View {
     @State private var linearIssueSortOption: LinearIssueSortOption = .defaultOrder
     @FocusState private var linearFocusTarget: LinearFocusTarget?
 
-    @State private var isSidebarSearchVisible = false
     @FocusState private var isSidebarSearchFocused: Bool
 
     var body: some View {
@@ -421,29 +420,19 @@ struct ContentView: View {
                 .accessibilityIdentifier(AccessibilityID.sidebarOptions)
                 .help("Sidebar options")
 
-                Button {
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        isSidebarSearchVisible.toggle()
-                    }
-                    if isSidebarSearchVisible {
-                        isSidebarSearchFocused = true
-                    } else {
-                        isSidebarSearchFocused = false
-                        store.historyFilterText = ""
-                    }
-                } label: {
+                HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 13, weight: .medium))
-                }
-                .help(isSidebarSearchVisible ? "Hide search" : "Search sessions")
 
-                if isSidebarSearchVisible {
                     TextField("Search sessions", text: $store.historyFilterText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .focused($isSidebarSearchFocused)
                         .accessibilityIdentifier(AccessibilityID.sidebarSearchField)
-                        .onSubmit { isSidebarSearchFocused = false }
+                        .onSubmit {
+                            isSidebarSearchFocused = false
+                            openFirstSearchMatch()
+                        }
 
                     if !store.historyFilterText.isEmpty {
                         Button {
@@ -457,6 +446,10 @@ struct ContentView: View {
                         .help("Clear search")
                     }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                .layoutPriority(1)
 
                 Spacer()
 
@@ -465,12 +458,6 @@ struct ContentView: View {
             .buttonStyle(.banyanBorderless)
             .padding(12)
             .accessibilityIdentifier(AccessibilityID.sidebarFooter)
-            .onChange(of: isSidebarSearchFocused) { _, focused in
-                if !focused, isSidebarSearchVisible {
-                    isSidebarSearchVisible = false
-                    store.historyFilterText = ""
-                }
-            }
         }
     }
 
@@ -1129,11 +1116,7 @@ struct ContentView: View {
                 store.focusSelectedTerminal()
             },
             onReopenHistory: {
-                if item.session.isImportedHistory {
-                    _ = try? store.resumeImportedHistory(id: item.session.id)
-                } else {
-                    try? store.respawn(id: item.session.id)
-                }
+                reopenHistory(item)
             }
         )
         .tag(item.session.id)
@@ -1145,6 +1128,27 @@ struct ContentView: View {
             draggingSessionID: $draggingSidebarSessionID,
             onMove: store.moveSidebarSession
         ))
+    }
+
+    private func openFirstSearchMatch() {
+        guard !store.historyFilterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let item = store.unifiedSidebarGroups.flatMap(\.items).first else {
+            return
+        }
+
+        if item.isHistory {
+            reopenHistory(item)
+        } else {
+            selection.selectedSessionID = item.session.id
+        }
+    }
+
+    private func reopenHistory(_ item: SidebarSessionItem) {
+        if item.session.isImportedHistory {
+            _ = try? store.resumeImportedHistory(id: item.session.id)
+        } else {
+            try? store.respawn(id: item.session.id)
+        }
     }
 
     private var addSessionDraftBinding: Binding<AddSessionDraft?> {
