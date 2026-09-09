@@ -127,6 +127,7 @@ public enum SessionContextResolver {
             ?? LinearIssueReference.detect(
                 branch: projectContext.branch,
                 cwd: input.cwd,
+                isGitWorktree: projectContext.isGitWorktree,
                 environment: input.environment
             )?.id)
         let resolvedIssueID = detectedIssueID

@@ -166,21 +166,31 @@ import Testing
 @Test func sameDirectoryBranchSwitchRefreshesDetectedIssueBinding() throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
-    let repo = root.appendingPathComponent("clawly")
-    try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
-    try runGit(["init", "-b", "main"], cwd: repo)
-    try runGit(["config", "user.email", "test@example.com"], cwd: repo)
-    try runGit(["config", "user.name", "Banyan Tests"], cwd: repo)
-    try "initial".write(to: repo.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
-    try runGit(["add", "README.md"], cwd: repo)
-    try runGit(["commit", "-m", "initial"], cwd: repo)
+    let repo = try makeIssueBindingRepository(in: root)
+    let worktree = root.appendingPathComponent("wt")
+    try runGit(["worktree", "add", "-b", "yudu/ENG-7944-fix", worktree.path], cwd: repo)
+
+    let session = makeIssueBindingSession(cwd: worktree.path)
+    #expect(session.titleLinkLabel == "ENG-7944")
+
+    try runGit(["checkout", "-B", "yudu/spike", "main"], cwd: worktree)
+    session.updateCurrentDirectory(worktree.path)
+
+    #expect(session.titleURL == nil)
+    #expect(session.titleLinkLabel == nil)
+}
+
+@MainActor
+@Test func mainCheckoutBranchNeverBindsTheSessionToAnIssue() throws {
+    // Every session opened in the project root shares one branch, so a throwaway
+    // `git checkout` to look at someone else's work used to stamp that issue onto
+    // all of them at once. Only a worktree's branch names the session's own work.
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = try makeIssueBindingRepository(in: root)
     try runGit(["checkout", "-b", "yudu/ENG-7944-fix"], cwd: repo)
 
     let session = makeIssueBindingSession(cwd: repo.path)
-    #expect(session.titleLinkLabel == "ENG-7944")
-
-    try runGit(["checkout", "main"], cwd: repo)
-    session.updateCurrentDirectory(repo.path)
 
     #expect(session.titleURL == nil)
     #expect(session.titleLinkLabel == nil)
@@ -342,6 +352,18 @@ private func makeAttachStateSession(
     )
     session.isProcessStarted = isProcessStarted
     return session
+}
+
+private func makeIssueBindingRepository(in root: URL) throws -> URL {
+    let repo = root.appendingPathComponent("clawly")
+    try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+    try runGit(["init", "-b", "main"], cwd: repo)
+    try runGit(["config", "user.email", "test@example.com"], cwd: repo)
+    try runGit(["config", "user.name", "Banyan Tests"], cwd: repo)
+    try "initial".write(to: repo.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    try runGit(["add", "README.md"], cwd: repo)
+    try runGit(["commit", "-m", "initial"], cwd: repo)
+    return repo
 }
 
 @MainActor

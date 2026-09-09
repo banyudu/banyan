@@ -112,6 +112,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         let titleURL: String?
         let title: String
         let displayBranch: String?
+        let displayIsGitWorktree: Bool
         let cwd: String
     }
 
@@ -207,6 +208,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         let detectedReference = LinearIssueReference.detect(
             branch: resolvedDisplayContext.branch,
             cwd: cwd,
+            isGitWorktree: resolvedDisplayContext.isGitWorktree,
             environment: environment
         )
         if let normalizedTitleURL = SessionInputPolicy.normalizedTitleURL(titleURL) {

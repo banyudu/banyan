@@ -227,6 +227,7 @@ extension BanyanSession {
         guard let detectedReference = LinearIssueReference.detect(
             branch: displayBranch,
             cwd: cwd,
+            isGitWorktree: displayIsGitWorktree,
             environment: environment
         ) else {
             if titleURLWasAutoDetected {

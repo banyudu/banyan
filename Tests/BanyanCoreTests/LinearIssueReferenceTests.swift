@@ -1,10 +1,11 @@
 import BanyanCore
 import Testing
 
-@Test func linearIssueReferenceDetectsBranchPattern() {
+@Test func linearIssueReferenceDetectsBranchPatternInAWorktree() {
     let reference = LinearIssueReference.detect(
         branch: "yudu/eng-6772-fix-scroll",
-        cwd: "/Users/example/dev/yudu/banyan",
+        cwd: "/Users/example/dev/yudu/.worktrees/scroll",
+        isGitWorktree: true,
         environment: [:]
     )
 
@@ -12,14 +13,58 @@ import Testing
     #expect(reference?.url == "https://linear.app/2en/issue/ENG-6772")
 }
 
-@Test func linearIssueReferenceFallsBackToWorkingDirectory() {
+@Test func linearIssueReferenceIgnoresTheBranchOfTheMainCheckout() {
+    // The main checkout is shared by every session opened in the project, so a
+    // throwaway `git checkout` there must not bind them all to that issue.
+    #expect(LinearIssueReference.detect(
+        branch: "yudu/eng-6772-fix-scroll",
+        cwd: "/Users/example/dev/yudu/banyan",
+        isGitWorktree: false,
+        environment: [:]
+    ) == nil)
+}
+
+@Test func linearIssueReferenceStillReadsTheMainCheckoutDirectory() {
+    // A directory name is per-session and cannot drift under other panes.
     let reference = LinearIssueReference.detect(
-        branch: nil,
-        cwd: "/Users/example/dev/yudu/.worktrees/yudu-eng-1234",
+        branch: "main",
+        cwd: "/Users/example/dev/yudu/eng-1234-spike",
+        isGitWorktree: false,
         environment: [:]
     )
 
     #expect(reference?.id == "ENG-1234")
+}
+
+@Test func linearIssueReferenceFallsBackToWorkingDirectory() {
+    let reference = LinearIssueReference.detect(
+        branch: nil,
+        cwd: "/Users/example/dev/yudu/.worktrees/yudu-eng-1234",
+        isGitWorktree: true,
+        environment: [:]
+    )
+
+    #expect(reference?.id == "ENG-1234")
+}
+
+@Test func linearIssueReferenceFallsBackToWorktreeDirectoryOnDetachedHEAD() {
+    let reference = LinearIssueReference.detect(
+        branch: "a1b2c3d",
+        cwd: "/Users/example/dev/yudu/.worktrees/yudu-eng-1234",
+        isGitWorktree: true,
+        environment: [:]
+    )
+
+    #expect(reference?.id == "ENG-1234")
+}
+
+@Test func linearIssueReferenceTreatsAWorktreeBranchWithoutAnIssueAsNoIssue() {
+    #expect(LinearIssueReference.detect(
+        branch: "yudu/spike",
+        cwd: "/Users/example/dev/yudu/.worktrees/yudu-eng-1234",
+        isGitWorktree: true,
+        environment: [:]
+    ) == nil)
 }
 
 @Test func linearIssueReferencePrefersExplicitURLThenTitleThenContext() {
@@ -28,6 +73,7 @@ import Testing
         title: "ENG-8 task",
         branch: "eng-7-task",
         cwd: "/tmp/ENG-6",
+        isGitWorktree: true,
         environment: [:]
     ) == "ENG-9")
     #expect(LinearIssueReference.preferredID(
@@ -35,6 +81,7 @@ import Testing
         title: "ENG-8 task",
         branch: "eng-7-task",
         cwd: "/tmp/ENG-6",
+        isGitWorktree: true,
         environment: [:]
     ) == "ENG-8")
     #expect(LinearIssueReference.preferredID(
@@ -42,6 +89,7 @@ import Testing
         title: nil,
         branch: "eng-7-task",
         cwd: "/tmp/ENG-6",
+        isGitWorktree: true,
         environment: [:]
     ) == "ENG-7")
 }

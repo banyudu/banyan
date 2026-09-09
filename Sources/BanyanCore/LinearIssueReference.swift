@@ -9,31 +9,42 @@ public struct LinearIssueReference: Equatable {
         self.url = url
     }
 
+    /// Derives the issue this checkout is working on.
+    ///
+    /// `isGitWorktree` gates the *branch* signal. The main checkout is shared by
+    /// every session opened in the project, and its branch moves under all of them
+    /// at once: a quick `git checkout` to review someone else's work would
+    /// otherwise stamp that issue onto every unrelated session sitting in the
+    /// repository root. Only a linked worktree's branch describes work that belongs
+    /// to the session looking at it. A directory name is per-session and cannot
+    /// drift like that, so the path signal stays live in both.
     public static func detect(
         branch: String?,
         cwd: String,
+        isGitWorktree: Bool,
         environment: [String: String]
     ) -> LinearIssueReference? {
-        if let branch, !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if let id = issueID(in: branch) {
-                return LinearIssueReference(id: id, url: issueURL(for: id, environment: environment))
-            }
-            // Detached HEAD yields a short SHA (e.g. "a1b2c3d") – fall back to cwd
-            // so a worktree directory like ".../yudu-ENG-1234" still resolves.
-            // A real branch name like "main" or "feature/x" with no issue is an
-            // explicit "no issue" signal and should not fall back to a stale cwd.
-            let trimmed = branch.trimmingCharacters(in: .whitespacesAndNewlines)
-            let isSHA = trimmed.range(of: "^[0-9a-f]{7,40}$", options: [.regularExpression, .caseInsensitive]) != nil
-            if isSHA {
-                guard let id = issueID(in: cwd) else { return nil }
-                return LinearIssueReference(id: id, url: issueURL(for: id, environment: environment))
-            }
-            return nil
-        }
-        guard let id = issueID(in: cwd) else {
+        guard let id = detectedID(branch: branch, cwd: cwd, isGitWorktree: isGitWorktree) else {
             return nil
         }
         return LinearIssueReference(id: id, url: issueURL(for: id, environment: environment))
+    }
+
+    private static func detectedID(branch: String?, cwd: String, isGitWorktree: Bool) -> String? {
+        let trimmed = branch?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty, isGitWorktree else {
+            return issueID(in: cwd)
+        }
+        if let id = issueID(in: trimmed) {
+            return id
+        }
+        // Detached HEAD yields a short SHA (e.g. "a1b2c3d") – fall back to cwd
+        // so a worktree directory like ".../yudu-ENG-1234" still resolves.
+        // A real branch name like "main" or "feature/x" with no issue is an
+        // explicit "no issue" signal and should not fall back to a stale cwd.
+        let isSHA = trimmed.range(of: "^[0-9a-f]{7,40}$", options: [.regularExpression, .caseInsensitive]) != nil
+        guard isSHA else { return nil }
+        return issueID(in: cwd)
     }
 
     /// Resolves the issue label shown for a session, preserving explicit
@@ -43,11 +54,12 @@ public struct LinearIssueReference: Equatable {
         title: String?,
         branch: String?,
         cwd: String,
+        isGitWorktree: Bool,
         environment: [String: String]
     ) -> String? {
         issueID(in: titleURL)
             ?? issueID(in: title)
-            ?? detect(branch: branch, cwd: cwd, environment: environment)?.id
+            ?? detect(branch: branch, cwd: cwd, isGitWorktree: isGitWorktree, environment: environment)?.id
     }
 
     /// Compiled once: `issueID(in:)` runs up to four times per session row via

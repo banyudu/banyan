@@ -89,6 +89,9 @@ private func makeMemoSession() -> BanyanSession {
     let session = makeMemoSession()
     session.titleURL = nil
     session.title = "no issue here"
+    // Only a worktree's branch names an issue, so this is the case where the branch
+    // reaches the label at all.
+    session.displayIsGitWorktree = true
     session.displayBranch = "yudu/task-5555-something"
     #expect(session.titleLinkLabel == "TASK-5555")
 
@@ -96,6 +99,10 @@ private func makeMemoSession() -> BanyanSession {
     // stale reading here — the key must cover it.
     session.displayBranch = "yudu/task-6666-something"
     #expect(session.titleLinkLabel == "TASK-6666")
+
+    // Same for the worktree flag: dropping it must drop the branch-derived label.
+    session.displayIsGitWorktree = false
+    #expect(session.titleLinkLabel == nil)
 }
 
 @MainActor

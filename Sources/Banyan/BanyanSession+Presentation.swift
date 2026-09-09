@@ -58,6 +58,7 @@ extension BanyanSession {
             titleURL: titleURL,
             title: title,
             displayBranch: displayBranch,
+            displayIsGitWorktree: displayIsGitWorktree,
             cwd: cwd
         )
         if let cached = titleLinkLabelCache, cached.key == key {
@@ -68,6 +69,7 @@ extension BanyanSession {
             title: title,
             branch: displayBranch,
             cwd: cwd,
+            isGitWorktree: displayIsGitWorktree,
             environment: environment
         )
         titleLinkLabelCache = (key, value)
