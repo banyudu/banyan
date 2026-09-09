@@ -408,8 +408,13 @@ private func makeHandoffSession(
 }
 
 private func temporaryDirectory() throws -> URL {
+    // Hyphens are dropped from the UUID because these tests read an issue ID out
+    // of the path: a UUID group of hex letters followed by an all-digit group
+    // (`.../fcbd-4389-...`) reads as one, and `issueID(in:)` takes the first
+    // match in the path — so roughly one run in 200 bound the wrong issue.
+    let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
     let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("BanyanTests-\(UUID().uuidString)")
+        .appendingPathComponent("BanyanTests-\(token)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory
 }
