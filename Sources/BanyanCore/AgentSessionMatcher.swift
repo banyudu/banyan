@@ -35,13 +35,13 @@ public enum AgentSessionMatcher {
         return [.claude, .codex].contains(provider)
     }
 
-    public static func bestPromptTitleMatch(
+    public static func bestPromptTitleMatch<Candidate: AgentResumeMatchable>(
         sessionCWD: String,
         sessionCreatedAt: Date,
         sessionResetAt: Date?,
         provider: CodingAgentProvider?,
-        in candidates: [ImportedAgentSession]
-    ) -> ImportedAgentSession? {
+        in candidates: [Candidate]
+    ) -> Candidate? {
         let normalizedCWD = PathDisplayName.canonicalPath(sessionCWD)
         let matchWindow: TimeInterval = 5 * 60
         let resetWindow: TimeInterval = 30
@@ -64,14 +64,14 @@ public enum AgentSessionMatcher {
             }
     }
 
-    public static func bestHistoryResumeMatch(
+    public static func bestHistoryResumeMatch<Candidate: AgentResumeMatchable>(
         sessionCWD: String,
         sessionCreatedAt: Date,
         sessionUpdatedAt: Date,
         sessionResetAt: Date?,
         provider: CodingAgentProvider?,
-        in candidates: [ImportedAgentSession]
-    ) -> ImportedAgentSession? {
+        in candidates: [Candidate]
+    ) -> Candidate? {
         if let strictMatch = bestPromptTitleMatch(
             sessionCWD: sessionCWD,
             sessionCreatedAt: sessionCreatedAt,

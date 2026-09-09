@@ -267,6 +267,11 @@ final class SessionStore: ObservableObject {
     private var branchRefreshTask: Task<Void, Never>?
     private var lastBranchRefreshByCWD: [String: Date] = [:]
     private static let branchRefreshInterval: TimeInterval = 15
+    /// Ceiling on transcripts inspected when resolving a closed row's agent
+    /// session. Each one costs a short head read, and files are visited
+    /// newest-first, so this only ever gives up on the oldest conversations —
+    /// while keeping the worst case bounded as local history keeps growing.
+    nonisolated private static let resumeRecoveryFileScanLimit = 20_000
     private var selectedLinearListIssueTask: Task<Void, Never>?
     private var pendingSelectedLinearListDescriptionUpdate: PendingLinearDescriptionUpdate?
     /// Recently loaded issue details stay available while the user moves
@@ -1656,6 +1661,11 @@ final class SessionStore: ObservableObject {
     /// Search beyond the bounded sidebar import before declaring a resume-capable
     /// history row unavailable. The scan stays off the main actor because old
     /// searchable rows may be much deeper than the recent shelf.
+    ///
+    /// It asks for resume candidates rather than a full import: matching needs
+    /// only provider, cwd and timestamps, and a titled import of the whole
+    /// corpus read gigabytes of transcript bodies to produce prompt titles this
+    /// path throws away — long enough that Reopen looked like it did nothing.
     private func recoverAgentSessionIDAndRespawn(id: String) {
         guard pendingRespawnRecoveryIDs.insert(id).inserted,
               let session = sessions.first(where: { $0.id == id }) else {
@@ -1669,14 +1679,18 @@ final class SessionStore: ObservableObject {
         let historyBackend = historyBackend
 
         Task.detached(priority: .userInitiated) { [weak self] in
-            let imported = historyBackend.load(maxPerProvider: .max)
+            let candidates = historyBackend.resumeCandidates(
+                cwd: cwd,
+                provider: provider,
+                maxFilesScanned: Self.resumeRecoveryFileScanLimit
+            )
             let match = AgentSessionMatcher.bestHistoryResumeMatch(
                 sessionCWD: cwd,
                 sessionCreatedAt: createdAt,
                 sessionUpdatedAt: updatedAt,
                 sessionResetAt: resetAt,
                 provider: provider,
-                in: imported
+                in: candidates
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }

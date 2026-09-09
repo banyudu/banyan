@@ -24,6 +24,212 @@ public enum AgentSessionHistoryImporter {
         }
     }
 
+    /// Conversations recorded for `cwd`, found without reading transcript bodies.
+    ///
+    /// `load` reads up to 2 MB of head and 4 MB of tail from every transcript to
+    /// derive titles. Resume matching needs none of that — only the provider,
+    /// working directory and timestamps — so a reopen that fell back to a
+    /// full-corpus `load` spent minutes parsing prompt text it then discarded.
+    /// Codex records `cwd` in the `session_meta` object on line 1, and Claude
+    /// both encodes it in the project directory name and repeats it on the first
+    /// few lines, so each provider can be narrowed before any body is touched.
+    ///
+    /// `maxFilesScanned` bounds the worst case as local history keeps growing;
+    /// files are visited newest-first, so the cap only ever drops the oldest
+    /// conversations.
+    public static func resumeCandidates(
+        homeDirectory: URL,
+        cwd: String,
+        provider: CodingAgentProvider?,
+        maxFilesScanned: Int = 20_000,
+        fileManager: FileManager = .default
+    ) -> [AgentResumeCandidate] {
+        let normalizedCWD = PathDisplayName.canonicalPath(cwd)
+        var candidates: [AgentResumeCandidate] = []
+        if provider == nil || provider == .codex {
+            candidates += codexResumeCandidates(
+                homeDirectory: homeDirectory,
+                normalizedCWD: normalizedCWD,
+                maxFilesScanned: maxFilesScanned,
+                fileManager: fileManager
+            )
+        }
+        if provider == nil || provider == .claude {
+            candidates += claudeResumeCandidates(
+                homeDirectory: homeDirectory,
+                cwd: cwd,
+                normalizedCWD: normalizedCWD,
+                maxFilesScanned: maxFilesScanned,
+                fileManager: fileManager
+            )
+        }
+        return candidates
+    }
+
+    private static func codexResumeCandidates(
+        homeDirectory: URL,
+        normalizedCWD: String,
+        maxFilesScanned: Int,
+        fileManager: FileManager
+    ) -> [AgentResumeCandidate] {
+        let codexDirectory = homeDirectory.appendingPathComponent(".codex")
+        let files = recentCodexSessionFiles(
+            in: codexDirectory.appendingPathComponent("sessions"),
+            maxSessions: maxFilesScanned,
+            fileManager: fileManager
+        )
+        guard !files.isEmpty else { return [] }
+        // The index is one small file and carries the thread's last activity,
+        // which tracks the conversation more closely than the rollout's mtime.
+        let indexUpdatedAt = codexIndexUpdatedAt(homeDirectory: homeDirectory)
+        return files.compactMap { file in
+            guard let meta = codexSessionMeta(from: file.url),
+                  PathDisplayName.canonicalPath(meta.cwd) == normalizedCWD else {
+                return nil
+            }
+            return AgentResumeCandidate(
+                provider: .codex,
+                sourceID: file.id,
+                cwd: meta.cwd,
+                createdAt: meta.createdAt ?? file.modifiedAt,
+                updatedAt: indexUpdatedAt[file.id] ?? file.modifiedAt
+            )
+        }
+    }
+
+    private static func claudeResumeCandidates(
+        homeDirectory: URL,
+        cwd: String,
+        normalizedCWD: String,
+        maxFilesScanned: Int,
+        fileManager: FileManager
+    ) -> [AgentResumeCandidate] {
+        let projectsDirectory = homeDirectory.appendingPathComponent(".claude/projects")
+        let files = claudeTranscriptFiles(
+            in: projectsDirectory,
+            matching: cwd,
+            maxFilesScanned: maxFilesScanned,
+            fileManager: fileManager
+        )
+        return files.compactMap { file in
+            guard let meta = claudeSessionMeta(from: file.url) else { return nil }
+            let resolvedCWD = meta.cwd
+                ?? decodedClaudeProjectPath(from: file.url, homeDirectory: homeDirectory)
+            guard PathDisplayName.canonicalPath(resolvedCWD) == normalizedCWD else { return nil }
+            return AgentResumeCandidate(
+                provider: .claude,
+                sourceID: file.url.deletingPathExtension().lastPathComponent,
+                cwd: resolvedCWD,
+                createdAt: meta.createdAt ?? file.modifiedAt,
+                updatedAt: file.modifiedAt
+            )
+        }
+    }
+
+    /// Claude names each project directory after the working directory with every
+    /// non-alphanumeric character replaced by `-`, so the directory list narrows
+    /// the search without opening a single transcript. The encoding is lossy and
+    /// undocumented, so a miss falls back to walking every project — still only
+    /// head reads, and still bounded.
+    private static func claudeTranscriptFiles(
+        in projectsDirectory: URL,
+        matching cwd: String,
+        maxFilesScanned: Int,
+        fileManager: FileManager
+    ) -> [(url: URL, modifiedAt: Date)] {
+        let directories = (try? fileManager.contentsOfDirectory(
+            at: projectsDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        // Claude encodes whatever path it was launched in, which need not be the
+        // symlink-resolved one — `/tmp/x` and `/private/tmp/x` name the same
+        // directory but encode differently — so try both spellings.
+        let encodedNames: Set<String> = [
+            encodedClaudeProjectName(for: cwd),
+            encodedClaudeProjectName(for: PathDisplayName.canonicalPath(cwd))
+        ]
+        let scoped = directories.filter { encodedNames.contains($0.lastPathComponent) }
+        let searchRoots = scoped.isEmpty ? [projectsDirectory] : scoped
+
+        var files: [(url: URL, modifiedAt: Date)] = []
+        for root in searchRoots {
+            guard let enumerator = fileManager.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+            for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+                // Subagent journals are implementation artifacts, not resumable
+                // top-level conversations. `load` skips them for the same reason.
+                let relativePath = url.path.replacingOccurrences(of: root.path + "/", with: "")
+                guard !relativePath.split(separator: "/").contains("subagents"),
+                      url.lastPathComponent != "journal.jsonl" else {
+                    continue
+                }
+                let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                    ?? Date.distantPast
+                files.append((url, modifiedAt))
+            }
+        }
+        return Array(files.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(maxFilesScanned))
+    }
+
+    private static func encodedClaudeProjectName(for cwd: String) -> String {
+        String(cwd.map { character in
+            character.isLetter || character.isNumber ? character : "-"
+        })
+    }
+
+    /// Codex writes `session_meta` as the very first line of a rollout, so the
+    /// working directory and start time cost one read of the file's head.
+    private static func codexSessionMeta(from url: URL) -> (cwd: String, createdAt: Date?)? {
+        guard let line = readFirstLine(from: url, maxBytes: 1_000_000),
+              let object = jsonObject(from: line),
+              object["type"] as? String == "session_meta",
+              let payload = object["payload"] as? [String: Any],
+              let cwd = payload["cwd"] as? String,
+              !cwd.isEmpty else {
+            return nil
+        }
+        let createdAt = parseDate(payload["timestamp"] as? String)
+            ?? parseDate(object["timestamp"] as? String)
+        return (cwd, createdAt)
+    }
+
+    /// Claude opens a transcript with a few settings rows before the first row
+    /// that carries `cwd`, so this reads a short head rather than one line.
+    private static func claudeSessionMeta(from url: URL) -> (cwd: String?, createdAt: Date?)? {
+        var cwd: String?
+        var createdAt: Date?
+        for line in readLinePrefix(from: url, maxLines: 40, maxBytes: 512_000) {
+            guard let object = jsonObject(from: line) else { continue }
+            if cwd == nil, let value = object["cwd"] as? String, !value.isEmpty {
+                cwd = value
+            }
+            if createdAt == nil {
+                createdAt = parseDate(object["timestamp"] as? String)
+            }
+            if cwd != nil, createdAt != nil { break }
+        }
+        guard cwd != nil || createdAt != nil else { return nil }
+        return (cwd, createdAt)
+    }
+
+    private static func codexIndexUpdatedAt(homeDirectory: URL) -> [String: Date] {
+        let url = CodexSessionTitleIndex.indexURL(homeDirectory: homeDirectory)
+        guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+        var result: [String: Date] = [:]
+        for line in contents.split(whereSeparator: \.isNewline) {
+            guard let row = parseCodexIndexLine(String(line)) else { continue }
+            if let existing = result[row.id], existing >= row.updatedAt { continue }
+            result[row.id] = row.updatedAt
+        }
+        return result
+    }
+
     private static func loadCodexHistory(
         homeDirectory: URL,
         maxSessions: Int,
@@ -484,6 +690,22 @@ public enum AgentSessionHistoryImporter {
             .split(whereSeparator: \.isNewline)
             .prefix(maxLines)
             .map(String.init)
+    }
+
+    private static func readFirstLine(from url: URL, maxBytes: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+
+        var data = Data()
+        while data.count < maxBytes {
+            let chunk = handle.readData(ofLength: min(64 * 1024, maxBytes - data.count))
+            if chunk.isEmpty { break }
+            data.append(chunk)
+            if let newline = data.firstIndex(of: 0x0A) {
+                return String(data: data[..<newline], encoding: .utf8)
+            }
+        }
+        return data.isEmpty ? nil : String(data: data, encoding: .utf8)
     }
 
     private static func readLinePrefixAndSuffix(from url: URL) -> [String] {

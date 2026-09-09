@@ -5,6 +5,14 @@ import Foundation
 /// keeping session creation and tmux lifecycle behavior shared.
 public protocol SessionHistoryBackend: Sendable {
     func load(maxPerProvider limit: Int) -> [ImportedAgentSession]
+    /// Conversations recorded for `cwd`, for picking a resume target. Separate
+    /// from `load` because resume matching reads only provider/cwd/timestamps,
+    /// which a backend can answer far more cheaply than a titled import.
+    func resumeCandidates(
+        cwd: String,
+        provider: CodingAgentProvider?,
+        maxFilesScanned: Int
+    ) -> [AgentResumeCandidate]
     func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String?
     func resumeCommand(
         provider: CodingAgentProvider,
@@ -33,6 +41,15 @@ public extension SessionHistoryBackend {
     ) -> String {
         "No readable transcript preview is available for this history file."
     }
+
+    /// Backends without a cheap cwd-scoped lookup fall back to a bounded import.
+    func resumeCandidates(
+        cwd: String,
+        provider: CodingAgentProvider?,
+        maxFilesScanned: Int
+    ) -> [AgentResumeCandidate] {
+        load(maxPerProvider: maxFilesScanned).map(AgentResumeCandidate.init(imported:))
+    }
 }
 
 public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
@@ -46,6 +63,19 @@ public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
         AgentSessionHistoryImporter.load(
             homeDirectory: homeDirectory,
             maxPerProvider: limit
+        )
+    }
+
+    public func resumeCandidates(
+        cwd: String,
+        provider: CodingAgentProvider?,
+        maxFilesScanned: Int
+    ) -> [AgentResumeCandidate] {
+        AgentSessionHistoryImporter.resumeCandidates(
+            homeDirectory: homeDirectory,
+            cwd: cwd,
+            provider: provider,
+            maxFilesScanned: maxFilesScanned
         )
     }
 
