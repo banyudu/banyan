@@ -10,6 +10,9 @@ public struct ImportedAgentSession: Identifiable, Equatable, Sendable {
     public let segmentPromptTitle: String?
     /// Whether the latest reset has not yet received a new prompt.
     public let segmentWasCleared: Bool
+    /// Title the coding agent generated for this conversation itself, when it
+    /// publishes one. Outranks any title Banyan derives from the first prompt.
+    public let agentGeneratedTitle: String?
     public let cwd: String
     public let transcriptURL: URL
     public let createdAt: Date
@@ -22,6 +25,7 @@ public struct ImportedAgentSession: Identifiable, Equatable, Sendable {
         title: String,
         segmentPromptTitle: String? = nil,
         segmentWasCleared: Bool = false,
+        agentGeneratedTitle: String? = nil,
         cwd: String,
         transcriptURL: URL,
         createdAt: Date,
@@ -33,6 +37,7 @@ public struct ImportedAgentSession: Identifiable, Equatable, Sendable {
         self.title = title
         self.segmentPromptTitle = segmentPromptTitle
         self.segmentWasCleared = segmentWasCleared
+        self.agentGeneratedTitle = agentGeneratedTitle
         self.cwd = cwd
         self.transcriptURL = transcriptURL
         self.createdAt = createdAt

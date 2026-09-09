@@ -54,3 +54,62 @@ import Testing
     #expect(imported.first?.id == "history-claude-session-a")
     #expect(imported.first?.title == "Keep this session")
 }
+
+@Test func sharedHistoryImporterPrefersTheCodexGeneratedThreadName() throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-history-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let sessionDirectory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+    let id = "019efe8d-0514-72a2-ad62-daea0b976dcf"
+    let transcript = sessionDirectory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    try [
+        #"{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"cwd":"/tmp/banyan-codex"}}"#,
+        #"{"timestamp":"2026-07-01T10:00:10.000Z","type":"event_msg","payload":{"type":"user_message","message":"I want you to rework the history importer"}}"#
+    ].joined(separator: "\n").write(to: transcript, atomically: true, encoding: .utf8)
+
+    try [
+        #"{"id":"\#(id)","thread_name":"I want you to rework the history i","updated_at":"2026-07-01T10:00:10.000Z"}"#,
+        #"{"id":"\#(id)","thread_name":"Rework history importer","updated_at":"2026-07-01T10:00:16.000Z"}"#
+    ].joined(separator: "\n").write(
+        to: home.appendingPathComponent(".codex/session_index.jsonl"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let session = try #require(AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10).first)
+
+    #expect(session.agentGeneratedTitle == "Rework history importer")
+    #expect(session.title == "Rework history importer")
+    // The prompt-derived title stays available for the post-/clear fallback.
+    #expect(session.segmentPromptTitle == "I want you to rework the history importer")
+}
+
+@Test func sharedHistoryImporterFallsBackToThePromptBeforeCodexNamesTheThread() throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-history-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let sessionDirectory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+    let id = "019efe8d-0514-72a2-ad62-daea0b976dcf"
+    let transcript = sessionDirectory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    try [
+        #"{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"cwd":"/tmp/banyan-codex"}}"#,
+        #"{"timestamp":"2026-07-01T10:00:10.000Z","type":"event_msg","payload":{"type":"user_message","message":"Rework the history importer"}}"#
+    ].joined(separator: "\n").write(to: transcript, atomically: true, encoding: .utf8)
+
+    // Only the placeholder row exists so far.
+    try #"{"id":"\#(id)","thread_name":"Rework the history importer","updated_at":"2026-07-01T10:00:10.000Z"}"#
+        .write(
+            to: home.appendingPathComponent(".codex/session_index.jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+    let session = try #require(AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10).first)
+
+    #expect(session.agentGeneratedTitle == nil)
+    #expect(session.title == "Rework the history importer")
+}

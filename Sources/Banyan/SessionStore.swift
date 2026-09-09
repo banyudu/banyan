@@ -224,6 +224,9 @@ final class SessionStore: ObservableObject {
     /// cadence. Installed once; retained so they outlive `addObserver`.
     private var supervisorLifecycleObservers: [NSObjectProtocol] = []
     private var isSupervisorTickRunning = false
+    /// Watches Codex's session index so a thread renamed mid-conversation
+    /// reaches the sidebar without waiting for the next launch.
+    private var codexTitleWatcher: CodexSessionIndexWatcher?
     private var isHistoryImportRunning = false
     private var isHistoryImportPending = false
     @Published private(set) var pendingRespawnRecoveryIDs = Set<String>()
@@ -799,6 +802,17 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func installCodexTitleWatcherIfNeeded() {
+        guard codexTitleWatcher == nil else { return }
+        let watcher = CodexSessionIndexWatcher(
+            url: CodexSessionTitleIndex.indexURL(homeDirectory: host.homeDirectory)
+        ) { [weak self] in
+            self?.runHistoryImport()
+        }
+        watcher.start()
+        codexTitleWatcher = watcher
+    }
+
     private func installBranchRefreshTimerIfNeeded() {
         guard branchRefreshTimer == nil else { return }
         let timer = Timer(timeInterval: Self.branchRefreshInterval, repeats: true) { [weak self] _ in
@@ -1143,6 +1157,7 @@ final class SessionStore: ObservableObject {
     func startSupervisor() {
         installSupervisorLifecycleObserversIfNeeded()
         installBranchRefreshTimerIfNeeded()
+        installCodexTitleWatcherIfNeeded()
         guard supervisorTimer == nil else { return }
         rescheduleSupervisor(runImmediately: true)
     }
@@ -2860,6 +2875,14 @@ final class SessionStore: ObservableObject {
                 session.markDetectedAgentProvider(match.provider)
             }
             session.markAgentSessionID(match.sourceID)
+            // The agent's own name for the conversation wins when it has one.
+            // A reset makes it stale — it still describes the pre-/clear
+            // conversation — so fall back to the segment title after a clear.
+            if let agentTitle = match.agentGeneratedTitle,
+               session.lastConversationResetAt == nil {
+                session.markAgentGeneratedTitle(agentTitle)
+                continue
+            }
             // Use the current-segment title so a freshly cleared conversation
             // (segment title nil until the next prompt) does not get its
             // pre-/clear first-prompt title resurrected onto the live session.

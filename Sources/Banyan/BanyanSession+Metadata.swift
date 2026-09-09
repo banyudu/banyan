@@ -91,6 +91,21 @@ extension BanyanSession {
         touch()
     }
 
+    /// Adopt the title the coding agent generated for the conversation itself.
+    /// Codex publishes one a few seconds after the first prompt, and it reads
+    /// better than anything derived from the prompt text, so it replaces the
+    /// prompt title in place — a rename the sidebar shows mid-conversation.
+    func markAgentGeneratedTitle(_ title: String) {
+        guard !hasUsefulPinnedTitle else { return }
+        guard let provider = agentProvider, [.claude, .codex].contains(provider) else { return }
+        guard let agentTitle = SessionTitleGenerator.sanitizeTitle(title),
+              SessionTitleGenerator.isUsefulTitle(agentTitle) else { return }
+        guard reportedTitle != agentTitle else { return }
+        reportedTitle = agentTitle
+        refreshGeneratedTitle()
+        touch()
+    }
+
     private func markSubmittedPromptTitle(_ submittedInput: String?) {
         guard !hasUsefulPinnedTitle, usefulAgentTitle == nil, agentProvider != nil else { return }
         guard let promptTitle = SessionInputPolicy.submittedPromptTitle(from: submittedInput) else { return }

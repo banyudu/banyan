@@ -32,6 +32,7 @@ public enum AgentSessionHistoryImporter {
         let codexDirectory = homeDirectory.appendingPathComponent(".codex")
         let indexURL = codexDirectory.appendingPathComponent("session_index.jsonl")
         let indexContents = (try? String(contentsOf: indexURL, encoding: .utf8)) ?? ""
+        let generatedTitles = CodexSessionTitleIndex.generatedTitles(indexContents: indexContents)
 
         let sessionFiles = recentCodexSessionFiles(
             in: codexDirectory.appendingPathComponent("sessions"),
@@ -64,13 +65,21 @@ public enum AgentSessionHistoryImporter {
         return candidates.compactMap { candidate in
             let metadata = parseCodexMetadata(from: candidate.transcriptURL)
             let cwd = metadata.cwd ?? homeDirectory.path
+            // Codex names its own threads a few seconds after the first prompt.
+            // That name beats anything derived from the prompt text, so prefer
+            // it once it exists and fall back to the prompt until then.
+            let generatedTitle = metadata.segmentWasCleared ? nil : generatedTitles[candidate.id]
             return ImportedAgentSession(
                 id: importedID(provider: .codex, sourceID: candidate.id),
                 provider: .codex,
                 sourceID: candidate.id,
-                title: metadata.promptTitle ?? sanitizedTitle(candidate.threadName) ?? "Codex \(candidate.id.prefix(8))",
+                title: generatedTitle
+                    ?? metadata.promptTitle
+                    ?? sanitizedTitle(candidate.threadName)
+                    ?? "Codex \(candidate.id.prefix(8))",
                 segmentPromptTitle: metadata.segmentTitle,
                 segmentWasCleared: metadata.segmentWasCleared,
+                agentGeneratedTitle: generatedTitle,
                 cwd: cwd,
                 transcriptURL: candidate.transcriptURL,
                 createdAt: metadata.createdAt ?? candidate.updatedAt,
