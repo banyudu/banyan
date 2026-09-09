@@ -103,6 +103,61 @@ import Testing
     #expect(terminal.scrollPosition == 1)
 }
 
+/// A cross-project switch freezes the outgoing container's geometry so tmux can
+/// reflow the incoming terminal off screen. Every resize during that freeze — the
+/// contextual issue panel appearing or disappearing — must still be applied to the
+/// frozen container before it is revealed again, or it stays permanently narrower
+/// than the switcher and paints an empty strip beside the terminal.
+@MainActor
+@Test func terminalSwitcherRestoresFrozenContainerGeometryAfterProjectSwitch() async {
+    let first = makeSwitcherSession(id: "first", projectGroupID: "project-a")
+    let second = makeSwitcherSession(id: "second", projectGroupID: "project-b")
+    let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 1200, height: 600))
+    let focusRequestID = UUID()
+
+    update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
+    switcher.layoutSubtreeIfNeeded()
+    let firstContainer = switcher.subviews.compactMap { $0 as? TerminalContainerView }.first
+    #expect(firstContainer?.frame.width == 1200)
+
+    switcher.switchImmediately(to: second.id, selectionChangedAt: nil, clickAt: nil)
+    update(switcher, sessions: [first, second], selectedID: second.id, focusRequestID: focusRequestID)
+
+    // The issue panel for the incoming project claims part of the detail column.
+    switcher.setFrameSize(NSSize(width: 820, height: 600))
+    switcher.layoutSubtreeIfNeeded()
+
+    let deadline = Date().addingTimeInterval(3)
+    while firstContainer?.isHidden == false, Date() < deadline {
+        try? await Task.sleep(for: .milliseconds(50))
+    }
+
+    #expect(firstContainer?.isHidden == true)
+    #expect(firstContainer?.frame == switcher.bounds)
+}
+
+/// Revealing a cached container re-asserts its geometry, so a container that
+/// drifted while it was hidden never paints at a stale width.
+@MainActor
+@Test func terminalSwitcherResizesDriftedContainerBeforeRevealingIt() {
+    let first = makeSwitcherSession(id: "first")
+    let second = makeSwitcherSession(id: "second")
+    let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 1200, height: 600))
+    let focusRequestID = UUID()
+
+    update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
+    update(switcher, sessions: [first, second], selectedID: second.id, focusRequestID: focusRequestID)
+    switcher.layoutSubtreeIfNeeded()
+
+    let firstContainer = switcher.subviews.compactMap { $0 as? TerminalContainerView }.first
+    firstContainer?.frame = NSRect(x: 0, y: 0, width: 440, height: 600)
+
+    switcher.switchImmediately(to: first.id, selectionChangedAt: nil, clickAt: nil)
+
+    #expect(firstContainer?.isHidden == false)
+    #expect(firstContainer?.frame == switcher.bounds)
+}
+
 @Test func terminalEditingShortcutsDoNotCaptureShiftedJumpChords() {
     #expect(TerminalContainerView.isPlainCommandTerminalShortcut(.command))
     #expect(!TerminalContainerView.isPlainCommandTerminalShortcut([.command, .shift]))
@@ -140,8 +195,8 @@ private func update(
 }
 
 @MainActor
-private func makeSwitcherSession(id: String) -> BanyanSession {
-    BanyanSession(
+private func makeSwitcherSession(id: String, projectGroupID: String? = nil) -> BanyanSession {
+    let session = BanyanSession(
         id: id,
         title: id,
         cwd: NSTemporaryDirectory(),
@@ -152,4 +207,8 @@ private func makeSwitcherSession(id: String) -> BanyanSession {
         telemetry: banyanTestTelemetry,
         host: banyanTestHost
     )
+    if let projectGroupID {
+        session.projectGroupID = projectGroupID
+    }
+    return session
 }

@@ -413,9 +413,12 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     private func completeDeferredProjectSwitch(token: UUID) {
-        guard let deferred = deferredProjectSwitch,
-              deferred.token == token,
-              let targetContainer = containers[deferred.targetID] else {
+        guard let deferred = deferredProjectSwitch, deferred.token == token else { return }
+        // The target's session can be closed while tmux is still redrawing it.
+        // Unwind rather than returning, or the source stays frozen forever and
+        // every later switch is measured against a stale deferred switch.
+        guard let targetContainer = containers[deferred.targetID] else {
+            cancelDeferredProjectSwitch()
             return
         }
 
@@ -448,7 +451,7 @@ final class TerminalSwitcherContainer: NSView {
 
         if let sourceContainer = containers[deferred.sourceID] {
             sourceContainer.autoresizingMask = deferred.sourceAutoresizingMask
-            sourceContainer.needsLayout = true
+            resizeContainerToBounds(sourceContainer)
         }
     }
 
@@ -456,7 +459,43 @@ final class TerminalSwitcherContainer: NSView {
         guard let sourceContainer = containers[deferred.sourceID] else { return }
         sourceContainer.isHidden = true
         sourceContainer.autoresizingMask = deferred.sourceAutoresizingMask
-        sourceContainer.needsLayout = true
+        // Restoring the mask alone only re-enables *future* autoresizing: every
+        // resize that happened while the source was frozen — the contextual issue
+        // panel appearing or disappearing for the target — is lost permanently,
+        // and the container would be revealed that much narrower than the switcher
+        // with dead space beside it. Catch it up while it is still hidden.
+        resizeContainerToBounds(sourceContainer)
+    }
+
+    override func layout() {
+        super.layout()
+        syncContainerFrames()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        syncContainerFrames()
+    }
+
+    /// Every attached container is exactly the switcher's bounds. Autoresizing
+    /// masks normally maintain that, but they only track resizes a container was
+    /// present and unfrozen for, so re-assert it as an invariant here — a
+    /// container that missed one is otherwise narrower than the switcher for the
+    /// rest of its life, leaving an empty strip beside the terminal.
+    private func syncContainerFrames() {
+        let frozenSourceID = deferredProjectSwitch?.sourceID
+        for (id, container) in containers where id != frozenSourceID {
+            guard container.superview === self, !container.frame.equalTo(bounds) else { continue }
+            resizeContainerToBounds(container)
+        }
+    }
+
+    private func resizeContainerToBounds(_ container: TerminalContainerView) {
+        guard !container.frame.equalTo(bounds) else { return }
+        container.frame = bounds
+        container.needsLayout = true
+        container.layoutSubtreeIfNeeded()
+        container.syncTerminalFrameIfNeeded(markNeedsDisplay: !container.isHidden)
     }
 
     private func attachHidden(_ container: TerminalContainerView) {
@@ -517,6 +556,11 @@ final class TerminalSwitcherContainer: NSView {
             container.isHidden = true
             addSubview(container)
             container.needsLayout = true
+        } else {
+            // A revisited container is revealed synchronously, before the next
+            // layout pass. Re-assert the geometry here so it can never paint one
+            // frame at a stale width.
+            resizeContainerToBounds(container)
         }
         let wasHidden = container.isHidden
         container.isHidden = false
