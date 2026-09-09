@@ -71,15 +71,16 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
 
     /// Color for URLs that Banyan highlights automatically in terminal output.
     ///
-    /// Both values are the theme's own ANSI yellow, which is already tuned for
-    /// contrast against the theme background: a light background needs the darker
-    /// amber, not the yellow that reads well on the dark one.
+    /// Blue is the conventional link color, and neither value collides with the cyan
+    /// shells use for path segments. Both are the theme's own ANSI blue, already tuned
+    /// for contrast against that theme's background: the light one has to be much
+    /// darker to stay readable on near-white.
     var linkColor: NSColor {
         switch resolvedTheme {
         case .dark:
-            return NSColor(red: 1.0, green: 0.831, blue: 0.231, alpha: 1)
+            return NSColor(red: 0.302, green: 0.671, blue: 0.969, alpha: 1)
         case .light, .system:
-            return NSColor(red: 0.522, green: 0.302, blue: 0.055, alpha: 1)
+            return NSColor(red: 0.114, green: 0.306, blue: 0.847, alpha: 1)
         }
     }
 
