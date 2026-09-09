@@ -224,6 +224,47 @@ extension TerminalView {
         return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
     
+    /// The view's default foreground as 8-bit sRGB, or nil if it cannot be resolved.
+    var defaultForegroundRGB: (red: Int, green: Int, blue: Int)?
+    {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        #if os(macOS)
+        guard let color = nativeForegroundColor.usingColorSpace(.sRGB) else {
+            return nil
+        }
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        #else
+        guard nativeForegroundColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+        #endif
+        return (Int((red * 255).rounded()), Int((green * 255).rounded()), Int((blue * 255).rounded()))
+    }
+
+    /// A cell counts as using the default foreground when it says so, or when the
+    /// program painted it the same color the view already treats as its default.
+    /// tmux does exactly that for every cell of a styled pane (`window-style fg=...`),
+    /// so without this a tmux-hosted terminal never reports a default foreground and
+    /// link recoloring would never fire.
+    func usesDefaultForeground(_ color: Attribute.Color) -> Bool
+    {
+        switch color {
+        case .defaultColor:
+            return true
+        case .trueColor(let red, let green, let blue):
+            guard let base = defaultForegroundRGB else {
+                return false
+            }
+            // One step of tolerance absorbs the rounding between the color handed to
+            // the pane and the bytes the program echoes back.
+            return abs (Int (red) - base.red) <= 1
+                && abs (Int (green) - base.green) <= 1
+                && abs (Int (blue) - base.blue) <= 1
+        default:
+            return false
+        }
+    }
+
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
     {
         switch color {
@@ -481,7 +522,7 @@ extension TerminalView {
             var linkFg = fgColor
             // Only recolor text that uses the default foreground: programs that color
             // their own URLs (gh, git, agent TUIs) keep the color they chose.
-            if let linkColor, fg == .defaultColor {
+            if let linkColor, usesDefaultForeground(fg) {
                 linkFg = flags.contains (.dim) ? linkColor.dimmedColor (towards: bgColor) : linkColor
                 nsattr [.foregroundColor] = linkFg
             }

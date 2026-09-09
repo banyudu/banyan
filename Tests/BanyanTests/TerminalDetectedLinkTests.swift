@@ -101,3 +101,21 @@ private func renderedRuns(of view: DetectingLocalProcessTerminalView) -> [(text:
     #expect(link?.color != TerminalTheme.dark.linkColor)
     #expect(link?.underlined == true)
 }
+
+/// Banyan styles its tmux panes with an explicit foreground (`window-style fg=...`),
+/// so output arrives painted in the theme's own foreground rather than reporting the
+/// default color. That still counts as untouched text and must be recolored.
+@MainActor
+@Test func urlPaintedInTheThemeForegroundStillGetsTheLinkColor() {
+    let view = makeTerminalView()
+    TerminalTheme.dark.apply(to: view)
+    guard let base = view.defaultForegroundRGB else {
+        Issue.record("no resolvable default foreground")
+        return
+    }
+    view.feed(text: "\u{1b}[38;2;\(base.red);\(base.green);\(base.blue)mhttps://example.com/path\u{1b}[0m")
+
+    let link = renderedRuns(of: view).first { $0.text == "https://example.com/path" }
+    #expect(link?.color == TerminalTheme.dark.linkColor)
+    #expect(link?.underlined == true)
+}
