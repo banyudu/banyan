@@ -478,8 +478,15 @@ extension TerminalView {
         }
 
         if withUrl {
+            var linkFg = fgColor
+            // Only recolor text that uses the default foreground: programs that color
+            // their own URLs (gh, git, agent TUIs) keep the color they chose.
+            if let linkColor, fg == .defaultColor {
+                linkFg = flags.contains (.dim) ? linkColor.dimmedColor (towards: bgColor) : linkColor
+                nsattr [.foregroundColor] = linkFg
+            }
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
-            nsattr [.underlineColor] = fgColor
+            nsattr [.underlineColor] = linkFg
             nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
             
             // Add to cache
@@ -585,6 +592,12 @@ extension TerminalView {
     {
         var segments: [ViewLineSegment] = []
         let selectionColumns = selectedColumnsRange(row: row, cols: cols)
+        // Implicitly detected URLs on this row, when always-on highlighting is enabled.
+        // Resolved once per rebuild and cached alongside the line in `lineInfoCache`,
+        // so steady-state output only pays for the rows that actually changed.
+        let detectedLinks: [Range<Int>] = highlightDetectedLinks && linkReporting == .implicit
+            ? terminal.implicitLinkRowRanges(row: row, in: terminal.displayBuffer)
+            : []
         var col = 0
         var builder: ViewLineSegmentBuilder?
         var kittyPlaceholders: [KittyPlaceholderCell] = []
@@ -611,7 +624,7 @@ extension TerminalView {
             let ch: CharData = line[col]
             let width = max(1, Int(ch.width))
             let attr = ch.attribute
-            let hasUrl = shouldUnderlineLink(row: row, column: col, width: width, cell: ch)
+            let hasUrl = shouldUnderlineLink(row: row, column: col, width: width, cell: ch, detectedLinks: detectedLinks)
             guard let attributes = getAttributes(attr, withUrl: hasUrl) else {
                 flushPending()
                 if let finished = builder?.buildIfNeeded() {
@@ -716,8 +729,14 @@ extension TerminalView {
                             boxDrawings: boxDrawings)
     }
 
-    func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData) -> Bool
+    func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: CharData, detectedLinks: [Range<Int>] = []) -> Bool
     {
+        if !detectedLinks.isEmpty {
+            let cellRange = column..<(column + width)
+            if detectedLinks.contains(where: { $0.overlaps(cellRange) }) {
+                return true
+            }
+        }
         switch linkHighlightMode {
         case .always:
             return cell.hasPayload

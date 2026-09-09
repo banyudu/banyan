@@ -6066,6 +6066,90 @@ open class Terminal {
         return nil
     }
 
+    /// Returns the column ranges on the display buffer's `row` that are covered by
+    /// implicitly detected links: URLs printed as plain text, with no OSC 8 payload.
+    public func implicitLinkRowRanges(row: Int) -> [Range<Int>]
+    {
+        implicitLinkRowRanges(row: row, in: displayBuffer)
+    }
+
+    /// Returns the column ranges on `row` that are covered by implicitly detected
+    /// links: URLs printed as plain text, with no OSC 8 payload.
+    ///
+    /// Ranges are resolved against the wrapped-line group containing `row`, so a URL
+    /// split across two rows highlights on both. Rows are scanned independently and
+    /// their results are cached with the rendered line, so a URL whose meaning only
+    /// changes once a later row arrives repaints when that row is next rebuilt.
+    func implicitLinkRowRanges(row: Int, in buffer: Buffer) -> [Range<Int>]
+    {
+        guard let regex = Self.ghosttyImplicitLinkRegex,
+              rowMayContainImplicitLink(row, in: buffer),
+              let lineMap = buildGhosttyImplicitLineMap(row: row, targetCol: nil, in: buffer)
+        else {
+            return []
+        }
+
+        var ranges: [Range<Int>] = []
+        let searchRange = NSRange(lineMap.text.startIndex..<lineMap.text.endIndex, in: lineMap.text)
+        for match in regex.matches(in: lineMap.text, options: [], range: searchRange) {
+            guard match.range.length > 0,
+                  let textRange = Range(match.range, in: lineMap.text)
+            else {
+                continue
+            }
+            if suppressGhosttyLikeMatch(textRange, in: lineMap.text) {
+                continue
+            }
+
+            let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
+            let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
+            guard startOffset < lineMap.cells.count else {
+                continue
+            }
+            let boundedEndOffset = min(endOffset, lineMap.cells.count)
+            guard boundedEndOffset > startOffset else {
+                continue
+            }
+
+            var start: Int?
+            var end: Int?
+            for idx in startOffset..<boundedEndOffset {
+                let cell = lineMap.cells[idx]
+                guard cell.row == row else {
+                    continue
+                }
+                let cellEnd = cell.col + max(1, cell.width)
+                start = min(start ?? cell.col, cell.col)
+                end = max(end ?? cellEnd, cellEnd)
+            }
+            if let start, let end, start < end {
+                ranges.append(start..<end)
+            }
+        }
+        return ranges
+    }
+
+    /// Cheap rejection for the common case. Every scheme the implicit matcher knows
+    /// about contains a colon, so a row whose group cannot contain one is skipped
+    /// before paying for the line map and the regex.
+    private func rowMayContainImplicitLink(_ row: Int, in buffer: Buffer) -> Bool
+    {
+        for candidate in (row - 1)...(row + 1) {
+            guard candidate >= 0, candidate < buffer.lines.count else {
+                continue
+            }
+            let line = buffer.lines[candidate]
+            let limit = min(min(cols, line.count), line.getTrimmedLength())
+            guard limit > 0 else {
+                continue
+            }
+            for col in 0..<limit where line[col].code == 58 {
+                return true
+            }
+        }
+        return false
+    }
+
     private func payloadCode(at position: Position, in buffer: Buffer) -> UInt16?
     {
         guard position.row >= 0 && position.row < buffer.lines.count else {
@@ -6170,20 +6254,32 @@ open class Terminal {
 
     private func buildGhosttyImplicitLineMap(at position: Position, in buffer: Buffer) -> GhosttyImplicitLineMap?
     {
-        guard position.row >= 0 && position.row < buffer.lines.count else {
+        buildGhosttyImplicitLineMap(row: position.row, targetCol: position.col, in: buffer)
+    }
+
+    /// Builds the joined text for the wrapped-line group that contains `targetRow`.
+    ///
+    /// Passing a nil `requestedCol` builds the map for the row as a whole instead of
+    /// for one hit position, which is what always-on link highlighting needs: it wants
+    /// every match on the row, not just the one under the pointer.
+    private func buildGhosttyImplicitLineMap(row targetRow: Int, targetCol requestedCol: Int?, in buffer: Buffer) -> GhosttyImplicitLineMap?
+    {
+        guard targetRow >= 0 && targetRow < buffer.lines.count else {
             return nil
         }
 
-        let targetRow = position.row
         let targetLine = buffer.lines[targetRow]
         let targetRawLimit = min(cols, targetLine.count)
         guard targetRawLimit > 0 else {
             return nil
         }
 
-        var targetCol = max(0, min(position.col, targetRawLimit - 1))
-        if targetCol > 0 && targetLine[targetCol].code == 0 && targetLine[targetCol - 1].width == 2 {
-            targetCol -= 1
+        var targetCol = -1
+        if let requestedCol {
+            targetCol = max(0, min(requestedCol, targetRawLimit - 1))
+            if targetCol > 0 && targetLine[targetCol].code == 0 && targetLine[targetCol - 1].width == 2 {
+                targetCol -= 1
+            }
         }
 
         var startRow = targetRow
@@ -6245,7 +6341,7 @@ open class Terminal {
             }
         }
 
-        guard !text.isEmpty, !cells.isEmpty, targetIsInsideTrimmedContent else {
+        guard !text.isEmpty, !cells.isEmpty, targetIsInsideTrimmedContent || requestedCol == nil else {
             return nil
         }
 

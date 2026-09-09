@@ -310,6 +310,9 @@ final class BanyanSession: ObservableObject, Identifiable {
         // its modifier-aware mode previews/opens them on Cmd-click. Keep plain
         // clicks available for normal terminal selection and input.
         view.linkHighlightMode = .hoverWithModifier
+        // Detected URLs stay colored and underlined without hovering; opening one
+        // still needs Cmd-click, so a stray click cannot launch a browser.
+        view.highlightDetectedLinks = true
         pendingTheme.apply(to: view, fontFamily: pendingFontFamily, fontSize: pendingFontSize)
         appliedTheme = pendingTheme
         appliedFontFamily = pendingFontFamily

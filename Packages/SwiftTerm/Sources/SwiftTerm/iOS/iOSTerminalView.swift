@@ -146,6 +146,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
 
+    /// When true, URLs detected in plain output (with no OSC 8 payload) stay
+    /// highlighted at all times instead of only while hovered. Requires
+    /// `linkReporting` to be `.implicit`. Whether a link can be clicked open is
+    /// still governed by `linkHighlightMode`.
+    public var highlightDetectedLinks: Bool = false {
+        didSet {
+            lineInfoCache = [:]
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    /// Color used for highlighted links whose cells carry the default foreground
+    /// color. Text the running program colored itself keeps its own color. When
+    /// nil, links are underlined but not recolored.
+    public var linkColor: UIColor? = nil {
+        didSet {
+            guard linkColor != oldValue else { return }
+            lineInfoCache = [:]
+            colorsChanged()
+        }
+    }
+
     /// Controls link highlighting and link activation behavior.
     public var linkHighlightMode: LinkHighlightMode = .hover {
         didSet {

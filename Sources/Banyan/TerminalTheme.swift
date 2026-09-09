@@ -69,6 +69,20 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Color for URLs that Banyan highlights automatically in terminal output.
+    ///
+    /// Both values are the theme's own ANSI yellow, which is already tuned for
+    /// contrast against the theme background: a light background needs the darker
+    /// amber, not the yellow that reads well on the dark one.
+    var linkColor: NSColor {
+        switch resolvedTheme {
+        case .dark:
+            return NSColor(red: 1.0, green: 0.831, blue: 0.231, alpha: 1)
+        case .light, .system:
+            return NSColor(red: 0.522, green: 0.302, blue: 0.055, alpha: 1)
+        }
+    }
+
     /// The default colors exposed through tmux to applications running in the pane.
     ///
     /// Codex queries OSC 10/11 to choose its adaptive styles. Keeping tmux's pane
@@ -109,6 +123,7 @@ enum TerminalTheme: String, CaseIterable, Identifiable {
             terminalView.nativeForegroundColor = foregroundColor
         }
         terminalView.installColors(effectiveTheme.ansiPalette)
+        terminalView.linkColor = effectiveTheme.linkColor
     }
 
     /// System follows the app's effective macOS appearance. Resolving this once
