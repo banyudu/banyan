@@ -16,6 +16,7 @@ enum AccessibilityID {
     static let terminal = "banyan.terminal"
     static let terminalReconnectBanner = "banyan.terminal.reconnect-banner"
     static let terminalAttachButton = "banyan.terminal.reconnect-banner.attach"
+    static let terminalRecoveryFailureMessage = "banyan.terminal.reconnect-banner.recovery-failure"
     static let toolbarAddSession = "banyan.toolbar.add-session"
     static let toolbarPreferences = "banyan.toolbar.preferences"
     static let toolbarLogo = "banyan.toolbar.logo"

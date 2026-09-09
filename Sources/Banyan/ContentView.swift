@@ -2665,29 +2665,61 @@ private struct TerminalReconnectBanner: View {
     @ObservedObject var session: BanyanSession
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.clockwise.circle")
-                .foregroundStyle(Color(nsColor: session.tone.nsColor))
-            Text(session.needsRecovery ? "Session needs recovery after restart" : "Session is detached")
-                .font(.callout)
-            Spacer()
-            Button {
-                if session.needsRecovery {
-                    try? store.recover(id: session.id)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.clockwise.circle")
+                    .foregroundStyle(Color(nsColor: session.tone.nsColor))
+                Text(statusText)
+                    .font(.callout)
+                Spacer()
+                if store.isRecoveringWorktree(id: session.id) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .help("Recreating this session's worktree")
                 } else {
-                    try? store.respawn(id: session.id)
+                    Button {
+                        if session.needsRecovery {
+                            try? store.recover(id: session.id)
+                        } else {
+                            try? store.respawn(id: session.id)
+                        }
+                    } label: {
+                        Label(session.needsRecovery ? "Recover" : "Attach", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.banyanBorderedProminent)
+                    .controlSize(.small)
+                    .accessibilityIdentifier(AccessibilityID.terminalAttachButton)
                 }
-            } label: {
-                Label(session.needsRecovery ? "Recover" : "Attach", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.banyanBorderedProminent)
-            .controlSize(.small)
-            .accessibilityIdentifier(AccessibilityID.terminalAttachButton)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            // Attach cannot succeed while the folder is missing, so say why
+            // rather than leaving a button that only ever re-fails.
+            if let failure = store.worktreeRecoveryError(id: session.id) {
+                Text(failure.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier(AccessibilityID.terminalRecoveryFailureMessage)
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
         .background(.bar)
         .accessibilityIdentifier(AccessibilityID.terminalReconnectBanner)
+    }
+
+    private var statusText: String {
+        if store.isRecoveringWorktree(id: session.id) {
+            return "Recreating this session's worktree…"
+        }
+        if session.needsRecovery {
+            return "Session needs recovery after restart"
+        }
+        return "Session is detached"
     }
 }
 

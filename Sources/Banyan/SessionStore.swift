@@ -230,6 +230,9 @@ final class SessionStore: ObservableObject {
     private var isHistoryImportRunning = false
     private var isHistoryImportPending = false
     @Published private(set) var pendingRespawnRecoveryIDs = Set<String>()
+    /// Sessions whose deleted worktree is being recreated before their attach.
+    @Published private(set) var pendingWorktreeRecoveryIDs = Set<String>()
+    @Published private(set) var worktreeRecoveryErrors: [String: WorktreeRecovery.Failure] = [:]
     @Published private(set) var historyResumeErrors: [String: String] = [:]
     private var latestImportedHistory: [ImportedAgentSession] = []
     private var selectedContextTask: Task<Void, Never>?
@@ -1517,6 +1520,13 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
         historyResumeErrors.removeValue(forKey: id)
+        // A worktree deleted after its branch merged leaves the session pointing
+        // at nothing, and every attach re-runs the launch command in a directory
+        // that is gone. Restore the worktree first and continue the attach from
+        // the callback, so asking to attach is all the user has to do.
+        if recoverWorktreeThenRespawn(id: id, session: session) {
+            return
+        }
         // A closed session had its tmux backing killed, so reattaching would
         // rerun the original launch command from scratch. For codex/claude
         // sessions whose underlying agent session we resolved, rebuild the
@@ -1539,6 +1549,11 @@ final class SessionStore: ObservableObject {
     func recover(id: String, select: Bool = true) throws {
         guard let session = sessions.first(where: { $0.id == id && $0.needsRecovery }) else {
             throw ControlError.notFound(id)
+        }
+        if recoverWorktreeThenRespawn(id: id, session: session, continuation: { store in
+            try? store.recover(id: id, select: select)
+        }) {
+            return
         }
 
         let recoveryCommand: String? = session.agentProvider.flatMap { provider in
@@ -1656,6 +1671,68 @@ final class SessionStore: ObservableObject {
         session.markDetectedAgentProvider(match.provider)
         session.markAgentSessionID(match.sourceID)
         return true
+    }
+
+    /// Restores a session's deleted worktree, then resumes the attach it
+    /// interrupted. Returns true when recovery started and the caller should
+    /// stand down; the continuation re-enters the original path once the
+    /// directory exists.
+    ///
+    /// Git work runs off the main actor: `worktree add` on a large repository
+    /// takes seconds, and blocking here would freeze the window mid-click.
+    @discardableResult
+    private func recoverWorktreeThenRespawn(
+        id: String,
+        session: BanyanSession,
+        continuation: (@MainActor (SessionStore) -> Void)? = nil
+    ) -> Bool {
+        guard WorktreeRecovery.isRecoverable(cwd: session.cwd) else { return false }
+        guard pendingWorktreeRecoveryIDs.insert(id).inserted else {
+            // Already restoring for an earlier click; that run finishes the attach.
+            return true
+        }
+        worktreeRecoveryErrors.removeValue(forKey: id)
+        let cwd = session.cwd
+        // `displayBranch` is resolved from the cwd, so it is nil once the folder
+        // is gone; it only helps for a session that went missing while running.
+        let recordedBranch = session.displayBranch
+        let environment = self.environment
+
+        Task { [weak self] in
+            let result = await WorktreeRecovery.recover(
+                cwd: cwd,
+                recordedBranch: recordedBranch,
+                environment: environment
+            )
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.pendingWorktreeRecoveryIDs.remove(id)
+                guard let session = self.sessions.first(where: { $0.id == id }) else { return }
+                switch result {
+                case .success(let recovered):
+                    // Name the branch in the session's own terminal: an inferred
+                    // recovery can land on a real but different branch, and this
+                    // is where that becomes visible instead of silent.
+                    session.feedOrQueue("\r\n\(recovered.message)\r\n")
+                    if let continuation {
+                        continuation(self)
+                    } else {
+                        try? self.respawn(id: id)
+                    }
+                case .failure(let failure):
+                    self.worktreeRecoveryErrors[id] = failure
+                }
+            }
+        }
+        return true
+    }
+
+    func isRecoveringWorktree(id: String) -> Bool {
+        pendingWorktreeRecoveryIDs.contains(id)
+    }
+
+    func worktreeRecoveryError(id: String) -> WorktreeRecovery.Failure? {
+        worktreeRecoveryErrors[id]
     }
 
     /// Search beyond the bounded sidebar import before declaring a resume-capable
