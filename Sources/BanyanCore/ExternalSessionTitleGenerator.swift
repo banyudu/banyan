@@ -21,7 +21,11 @@ public enum ExternalSessionTitleGenerator {
         let stdout = Pipe()
         process.standardInput = stdin
         process.standardOutput = stdout
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+        defer {
+            stdin.closeBothEnds()
+            stdout.closeBothEnds()
+        }
 
         do {
             try process.run()

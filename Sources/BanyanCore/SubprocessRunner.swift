@@ -201,6 +201,15 @@ public enum SubprocessRunner {
         process.standardError = stderrPipe
         process.terminationHandler = { _ in signal.markExited() }
 
+        // Foundation keeps a launched `Process` — and with it the pipes it was handed —
+        // alive past this scope, so the read ends have to be closed by hand or every run
+        // costs the app two descriptors permanently. Covers the launch-failure path too,
+        // where the write ends below are never reached.
+        defer {
+            stdoutPipe.closeBothEnds()
+            stderrPipe.closeBothEnds()
+        }
+
         do {
             try process.run()
         } catch {

@@ -647,7 +647,10 @@ public struct ProcessInfoRow: Sendable {
 
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        // Nothing reads this child's stderr. A pipe would leak a descriptor per tick and
+        // could wedge the child once its buffer filled; the null device does neither.
+        process.standardError = FileHandle.nullDevice
+        defer { pipe.closeBothEnds() }
 
         do {
             try process.run()

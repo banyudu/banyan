@@ -131,3 +131,71 @@ import Testing
         }
     }
 }
+
+/// Runs per descriptor-leak check, and the budget those runs may grow the table by.
+///
+/// The count these guard is process-wide, so tests running in parallel add noise to it —
+/// tens of descriptors, opened and closed on their own schedule, which no amount of
+/// settling makes deterministic. The separation comes from the run count instead: the
+/// regression stranded two descriptors per run and four on the launch-failure path, so at
+/// this many runs a live leak lands in the hundreds while the parallel-test noise floor
+/// stays where it was. The budget sits between the two, far from each.
+private let runsPerLeakCheck = 150
+private let leakBudget = 120
+
+/// Counts the descriptors this process currently holds open.
+///
+/// `fcntl(F_GETFD)` succeeds only for a live descriptor, so probing the low range is
+/// enough: the leak this guards against grows monotonically from the first run.
+private func openDescriptorCount(limit: Int32 = 4096) -> Int {
+    var count = 0
+    for descriptor in Int32(0)..<limit where fcntl(descriptor, F_GETFD) != -1 {
+        count += 1
+    }
+    return count
+}
+
+@Test func subprocessRunnerReturnsItsDescriptors() throws {
+    // Warm up first: the initial run pulls in lazily-opened resources (dyld images,
+    // the operation queue's own machinery) whose descriptors are kept on purpose.
+    for _ in 0..<3 {
+        _ = try SubprocessRunner.run(
+            arguments: ["printf", "warmup"],
+            cwd: FileManager.default.currentDirectoryPath,
+            environment: ProcessInfo.processInfo.environment,
+            timeout: 5
+        )
+    }
+
+    let before = openDescriptorCount()
+    for _ in 0..<runsPerLeakCheck {
+        _ = try SubprocessRunner.run(
+            arguments: ["printf", "x"],
+            cwd: FileManager.default.currentDirectoryPath,
+            environment: ProcessInfo.processInfo.environment,
+            timeout: 5
+        )
+    }
+    let leaked = openDescriptorCount() - before
+
+    #expect(leaked < leakBudget, "leaked \(leaked) descriptors across \(runsPerLeakCheck) runs")
+}
+
+@Test func subprocessRunnerReturnsItsDescriptorsWhenLaunchFails() throws {
+    let before = openDescriptorCount()
+    for _ in 0..<runsPerLeakCheck {
+        #expect(throws: SubprocessRunner.RunError.self) {
+            _ = try SubprocessRunner.run(
+                arguments: ["printf", "x"],
+                cwd: "/nonexistent-directory-for-launch-failure",
+                environment: ProcessInfo.processInfo.environment,
+                timeout: 5
+            )
+        }
+    }
+    let leaked = openDescriptorCount() - before
+
+    // A failed launch never reaches the explicit write-end closes, so the `defer` is the
+    // only thing returning these descriptors — this path leaked the hardest of all.
+    #expect(leaked < leakBudget, "leaked \(leaked) descriptors across \(runsPerLeakCheck) failed launches")
+}

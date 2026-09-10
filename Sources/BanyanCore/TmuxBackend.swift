@@ -345,7 +345,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         process.environment = environment
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+        defer { pipe.closeBothEnds() }
         do {
             try process.run()
             process.waitUntilExit()

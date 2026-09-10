@@ -3531,8 +3531,9 @@ final class SessionStore: ObservableObject {
         ])
 
         let stderr = Pipe()
-        process.standardOutput = Pipe()
+        process.standardOutput = FileHandle.nullDevice
         process.standardError = stderr
+        defer { stderr.closeBothEnds() }
 
         do {
             try process.run()
@@ -3612,6 +3613,7 @@ private func runHandoffDispatch(
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = pipe
+    defer { pipe.closeBothEnds() }
 
     do {
         try process.run()
