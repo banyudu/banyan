@@ -141,6 +141,7 @@ public struct AgentSupervisor: Sendable {
         let helperPIDs = Self.agentHelperPIDs(in: descendants)
         let externalProcesses = descendants.filter { process in
             process.pid != pane.rootPID
+                && !process.isExited
                 && !process.isSupportedAgent
                 && !process.isShellOrWrapper
                 && !process.isTmuxPlumbing
@@ -542,32 +543,47 @@ public struct LiveProcessTableProvider: Sendable, ProcessTableProvider {
 }
 
 public struct ProcessTable: Sendable {
-    private let childrenByParent: [Int: [ProcessInfoRow]]
-    private let rowByPID: [Int: ProcessInfoRow]
+    private let childrenByParent: [Int: [ProcessTableRow]]
+    private let rowByPID: [Int: ProcessTableRow]
 
     public init(rows: [ProcessInfoRow]) {
+        self.init(tableRows: rows.map(\.tableRow))
+    }
+
+    init(tableRows rows: [ProcessTableRow]) {
         self.childrenByParent = Dictionary(grouping: rows, by: \.parentPID)
-        // `ps` output is external input; never crash on a duplicate pid row.
+        // The process table is external input; never crash on a duplicate pid row.
         self.rowByPID = Dictionary(rows.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     public static func snapshot() -> ProcessTable {
-        ProcessTable(rows: ProcessInfoRow.load())
+        ProcessTable(tableRows: ProcessTableSource.rows())
     }
 
+    /// The process subtree rooted at `rootPID`, classified.
+    ///
+    /// Reading argv and deciding what a process *is* both cost real work — a
+    /// syscall and a scan of the command line — and a tick only ever asks about
+    /// the few dozen processes below a pane, so both are deferred to here rather
+    /// than paid for all ~900 processes on the machine when the snapshot is taken.
     public func descendants(of rootPID: Int) -> [ProcessInfoRow] {
-        var descendants: [ProcessInfoRow] = rowByPID[rootPID].map { [$0] } ?? []
+        var rows: [ProcessTableRow] = rowByPID[rootPID].map { [$0] } ?? []
         var queue = childrenByParent[rootPID] ?? []
-        var visited = Set(descendants.map(\.pid))
+        var visited = Set(rows.map(\.pid))
 
         while let process = queue.popLast() {
             guard !visited.contains(process.pid) else { continue }
             visited.insert(process.pid)
-            descendants.append(process)
+            rows.append(process)
             queue.append(contentsOf: childrenByParent[process.pid] ?? [])
         }
 
-        return descendants
+        let commandLines = ProcessTableSource.commandLines(
+            forPIDs: rows.filter { $0.resolvedCommand == nil }.map(\.pid)
+        )
+        return rows.map { row in
+            ProcessInfoRow(row: row, command: row.resolvedCommand ?? commandLines[row.pid])
+        }
     }
 }
 
@@ -580,6 +596,7 @@ public struct ProcessInfoRow: Sendable {
     public let arguments: String
 
     let supportedAgentProvider: CodingAgentProvider?
+    let isExited: Bool
     let isSupportedAgent: Bool
     let isShellOrWrapper: Bool
     let isBanyanAgentLogProcess: Bool
@@ -603,110 +620,99 @@ public struct ProcessInfoRow: Sendable {
         self.commandName = commandName
         self.arguments = arguments
 
-        let lastComponent = URL(fileURLWithPath: commandName).lastPathComponent.lowercased()
-        let lowercasedArguments = arguments.lowercased()
-        let haystack = commandName.lowercased() + " " + lowercasedArguments
+        let executable = ExecutablePath.lowercasedName(commandName)
+        let scan = CommandLineScan(commandName: commandName, arguments: arguments)
 
-        let isBanyanAgentWrapper = lastComponent == "banyan-agent-wrapper"
-            || lowercasedArguments.contains("banyan-agent-wrapper")
+        // A process that has exited but not been reaped keeps its name in the
+        // process table. It is neither a live agent nor work in flight, so every
+        // question below has to answer "no" for it.
+        let isExited = state.hasPrefix("Z")
+        self.isExited = isExited
 
-        let isCodexRuntimeHelper = haystack.contains("codex-code-mode-host") || haystack.contains("cua_node")
+        let isBanyanAgentWrapper = executable == "banyan-agent-wrapper"
+            || scan.contains(Self.banyanAgentWrapperMarker)
+
+        let isCodexRuntimeHelper = scan.contains(anyOf: Self.codexRuntimeHelperMarkers)
         self.isCodexRuntimeHelper = isCodexRuntimeHelper
 
         let provider = CodingAgentProvider.detect(in: commandName)
             ?? CodingAgentProvider.detect(in: arguments)
-            ?? lowercasedArguments
-                .split(whereSeparator: { $0 == " " || $0 == "/" })
-                .compactMap { CodingAgentProvider.detect(in: String($0)) }
-                .first
+            ?? CodingAgentProvider.detectInPathSegments(of: arguments)
         self.supportedAgentProvider = provider
-        self.isSupportedAgent = !isBanyanAgentWrapper && !isCodexRuntimeHelper && provider != nil
+        self.isSupportedAgent = !isBanyanAgentWrapper && !isCodexRuntimeHelper && !isExited && provider != nil
 
-        self.isShellOrWrapper = [
-            "bash", "zsh", "sh", "fish", "login", "env", "script",
-            "banyan-agent-wrapper"
-        ].contains(lastComponent)
+        self.isShellOrWrapper = Self.shellNames.contains(executable)
 
-        self.isBanyanAgentLogProcess = lastComponent == "tee" && arguments.contains("banyan-agent-process.log")
-        self.isTmuxPlumbing = lastComponent == "tmux" || lastComponent == "reattach-to-user-namespace"
-        self.isNodeAgentLauncher = lastComponent == "node"
+        self.isBanyanAgentLogProcess = executable == "tee" && arguments.contains("banyan-agent-process.log")
+        self.isTmuxPlumbing = executable == "tmux" || executable == "reattach-to-user-namespace"
+        self.isNodeAgentLauncher = executable == "node"
 
-        self.isLikelyMCPServer = haystack.contains("modelcontextprotocol")
-            || haystack.contains("mcp-server")
-            || haystack.contains("mcp_server")
-            || haystack.contains("-mcp")
-            || haystack.contains("/mcp")
-            || haystack.contains(" mcp")
-            || haystack.hasPrefix("mcp")
+        self.isLikelyMCPServer = scan.contains(anyOf: Self.mcpServerMarkers)
+            || scan.hasPrefix(Self.mcpPrefixMarker)
     }
 
-    public static func load() -> [ProcessInfoRow] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-axo", "pid=,ppid=,stat=,etime=,comm=,command="]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        // Nothing reads this child's stderr. A pipe would leak a descriptor per tick and
-        // could wedge the child once its buffer filled; the null device does neither.
-        process.standardError = FileHandle.nullDevice
-        defer { pipe.closeBothEnds() }
-
-        do {
-            try process.run()
-        } catch {
-            return []
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return [] }
-
-        let output = String(data: data, encoding: .utf8) ?? ""
-        return output.split(separator: "\n").compactMap(parse)
-    }
-
-    private static func parse(_ line: Substring) -> ProcessInfoRow? {
-        let parts = line.split(separator: " ", maxSplits: 5, omittingEmptySubsequences: true)
-        guard parts.count >= 6,
-              let pid = Int(parts[0]),
-              let parentPID = Int(parts[1]),
-              let elapsed = parseElapsedTime(parts[3])
-        else {
-            return nil
-        }
-
-        return ProcessInfoRow(
-            pid: pid,
-            parentPID: parentPID,
-            state: String(parts[2]),
-            elapsed: elapsed,
-            commandName: String(parts[4]),
-            arguments: String(parts[5])
+    init(row: ProcessTableRow, command: ProcessCommandLine?) {
+        self.init(
+            pid: row.pid,
+            parentPID: row.parentPID,
+            state: row.state,
+            elapsed: row.elapsed,
+            // A process whose argv the kernel will not hand over — a zombie, or
+            // one owned by another user — still gets its accounting name so the
+            // subtree walk keeps a stable identity for it.
+            commandName: command?.name ?? row.accountingName,
+            arguments: command?.arguments ?? row.accountingName
         )
     }
 
-    private static func parseElapsedTime(_ value: Substring) -> TimeInterval? {
-        let dayAndTime = value.split(separator: "-", maxSplits: 1)
-        let dayCount: Int
-        let timePart: Substring
-        if dayAndTime.count == 2 {
-            guard let days = Int(dayAndTime[0]) else { return nil }
-            dayCount = days
-            timePart = dayAndTime[1]
-        } else {
-            dayCount = 0
-            timePart = value
-        }
+    var tableRow: ProcessTableRow {
+        ProcessTableRow(
+            pid: pid,
+            parentPID: parentPID,
+            state: state,
+            elapsed: elapsed,
+            accountingName: commandName,
+            resolvedCommand: ProcessCommandLine(name: commandName, arguments: arguments)
+        )
+    }
 
-        let components = timePart.split(separator: ":").compactMap { Int($0) }
-        guard components.count == 2 || components.count == 3 else { return nil }
+    private static let shellNames: Set<String> = [
+        "bash", "zsh", "sh", "fish", "login", "env", "script", "banyan-agent-wrapper"
+    ]
 
-        let seconds: Int
-        if components.count == 3 {
-            seconds = components[0] * 3600 + components[1] * 60 + components[2]
-        } else {
-            seconds = components[0] * 60 + components[1]
+    private static let banyanAgentWrapperMarker = CommandLineMarker("banyan-agent-wrapper")
+
+    private static let codexRuntimeHelperMarkers = [
+        CommandLineMarker("codex-code-mode-host"),
+        CommandLineMarker("cua_node")
+    ]
+
+    private static let mcpServerMarkers = [
+        CommandLineMarker("modelcontextprotocol"),
+        CommandLineMarker("mcp-server"),
+        CommandLineMarker("mcp_server"),
+        CommandLineMarker("-mcp"),
+        CommandLineMarker("/mcp"),
+        CommandLineMarker(" mcp")
+    ]
+
+    private static let mcpPrefixMarker = CommandLineMarker("mcp")
+
+    public static func load() -> [ProcessInfoRow] {
+        ProcessTable(tableRows: ProcessTableSource.rows()).allRows()
+    }
+}
+
+extension ProcessTable {
+    /// Every row, classified. Only used by callers that genuinely need the whole
+    /// machine; a supervisor tick wants `descendants(of:)`.
+    func allRows() -> [ProcessInfoRow] {
+        let rows = rowByPID.values.sorted { $0.pid < $1.pid }
+        let commandLines = ProcessTableSource.commandLines(
+            forPIDs: rows.filter { $0.resolvedCommand == nil }.map(\.pid)
+        )
+        return rows.map { row in
+            ProcessInfoRow(row: row, command: row.resolvedCommand ?? commandLines[row.pid])
         }
-        return TimeInterval(dayCount * 86_400 + seconds)
     }
 }

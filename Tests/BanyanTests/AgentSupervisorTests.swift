@@ -1147,6 +1147,11 @@ private let freshOpenCodePane = [
 
     #expect(!rows.isEmpty)
     #expect(rows.contains { $0.pid > 0 && $0.elapsed >= 0 && !$0.commandName.isEmpty })
+    #expect(rows.contains { $0.pid > 1 && $0.parentPID > 0 })
+    // The kernel reader exists to escape the 16-character cap `ps -o comm=`
+    // applies to an executable path; on a Mac essentially every Homebrew- or
+    // nvm-installed binary sits beyond it.
+    #expect(rows.contains { $0.commandName.count > 16 && $0.commandName.hasPrefix("/") })
 }
 
 private func makeSupervisor(
@@ -1189,12 +1194,13 @@ private func process(
     parentPID: Int = 100,
     commandName: String,
     arguments: String,
-    elapsed: TimeInterval
+    elapsed: TimeInterval,
+    state: String = "S"
 ) -> ProcessInfoRow {
     ProcessInfoRow(
         pid: pid,
         parentPID: parentPID,
-        state: "S",
+        state: state,
         elapsed: elapsed,
         commandName: commandName,
         arguments: arguments
@@ -1217,4 +1223,26 @@ private struct FakeSupervisorBackend: AgentSupervisorBackend {
     func captureVisibleText(paneID: String, lineLimit: Int) -> String {
         visibleText
     }
+}
+
+@Test func supervisorIgnoresUnreapedChildrenWhenLookingForWork() {
+    // A defunct child is not a command in flight. Counting one as work pinned the
+    // session to `.executing`, which the backoff policy then exempts from ever
+    // slowing down — so a single unreaped process kept the supervisor at its
+    // fastest cadence indefinitely.
+    let supervisor = makeSupervisor(
+        visibleText: "❯ ",
+        processes: [
+            agentProcess("claude"),
+            process(pid: 102, parentPID: 101, commandName: "/bin/cat", arguments: "cat", elapsed: 3, state: "Z")
+        ]
+    )
+
+    let result = supervisor.inspect(
+        tmuxSessionName: "banyan-session-1",
+        launchCommand: "claude",
+        currentStatus: .running
+    )
+
+    #expect(result?.status != .executing)
 }
