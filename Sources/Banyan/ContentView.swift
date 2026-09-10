@@ -417,6 +417,8 @@ struct ContentView: View {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .accessibilityIdentifier(AccessibilityID.sidebarOptions)
                 .help("Sidebar options")
 
