@@ -1908,7 +1908,12 @@ private struct SessionRow: View {
         HStack(spacing: 6) {
             JumpKeyBadge(label: jumpKeyLabel, provider: session.displayAgentProvider)
 
-            if let launchProfile, session.displayAgentProvider != nil {
+            // A plain-shell profile (the built-in `zsh`) matches every session
+            // whose command is empty, including one that later became an agent
+            // session. Only let a profile brand the row when it declares an
+            // icon identity; otherwise the detected provider wins, so an agent
+            // started by hand inside a shell is still recognized.
+            if let launchProfile, launchProfile.hasIconIdentity, session.displayAgentProvider != nil {
                 NewSessionLaunchIcon(launch: launchProfile, size: 18)
                     .accessibilityLabel(launchProfile.label)
             } else if let provider = session.displayAgentProvider {

@@ -41,6 +41,16 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
         provider != nil && (iconName == nil || customIconURL != nil)
     }
 
+    /// Whether the profile declares a visual identity of its own — a provider,
+    /// an SF Symbol, or a custom image. The built-in plain-shell profile
+    /// declares none, so it must not shadow the provider the supervisor
+    /// detects in a session that was started as a bare shell (for example
+    /// `opencode` started by hand inside a `zsh` session): that row should
+    /// show the agent's icon, not the shell glyph.
+    var hasIconIdentity: Bool {
+        providerName != nil || iconName?.isEmpty == false
+    }
+
     /// A custom provider still gets a recognizable generic launch icon.
     var systemImage: String {
         guard customIconURL == nil else {
