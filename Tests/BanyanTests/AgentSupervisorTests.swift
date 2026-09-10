@@ -1147,6 +1147,11 @@ private let freshOpenCodePane = [
 
     #expect(!rows.isEmpty)
     #expect(rows.contains { $0.pid > 0 && $0.elapsed >= 0 && !$0.commandName.isEmpty })
+    #expect(rows.contains { $0.pid > 1 && $0.parentPID > 0 })
+    // The kernel reader exists to escape the 16-character cap `ps -o comm=`
+    // applies to an executable path; on a Mac essentially every Homebrew- or
+    // nvm-installed binary sits beyond it.
+    #expect(rows.contains { $0.commandName.count > 16 && $0.commandName.hasPrefix("/") })
 }
 
 private func makeSupervisor(

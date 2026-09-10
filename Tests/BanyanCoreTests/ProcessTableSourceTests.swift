@@ -76,20 +76,6 @@ import Testing
     #expect(descendants.first { $0.pid == 100 }?.state == "S")
 }
 
-@Test func platformProcessTableReportsParentsAndUntruncatedExecutablePaths() {
-    let rows = ProcessInfoRow.load()
-
-    #expect(!rows.isEmpty)
-    #expect(rows.contains { $0.pid > 0 && $0.elapsed >= 0 && !$0.commandName.isEmpty })
-    #expect(rows.contains { $0.pid > 1 && $0.parentPID > 0 })
-
-    #if os(macOS)
-    // The kernel reader exists to escape `ps -o comm=`'s 16-character cap; on a
-    // Mac essentially every Homebrew or nvm binary is longer than that.
-    #expect(rows.contains { $0.commandName.count > 16 && $0.commandName.hasPrefix("/") })
-    #endif
-}
-
 @Test func exitedProcessesAreNeitherLiveAgentsNorWorkInFlight() {
     // The kernel keeps a reaped-pending process's name, so a zombie `claude`
     // reads exactly like a running one until its state is consulted.
