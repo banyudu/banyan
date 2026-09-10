@@ -204,8 +204,20 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         return prompt.isEmpty ? nil : prompt
     }
 
-    private static func provider(forExecutable token: String) -> CodingAgentProvider? {
-        let executable = URL(fileURLWithPath: token).lastPathComponent.lowercased()
+    /// Last-resort provider scan for a command line that names the agent only
+    /// inside a path, e.g. `node /…/node_modules/.bin/claude`. Splits on spaces
+    /// and path separators and matches each segment as an executable name.
+    static func detectInPathSegments(of command: String) -> CodingAgentProvider? {
+        for segment in command.split(whereSeparator: { $0 == " " || $0 == "/" }) {
+            if let provider = provider(forExecutable: segment) {
+                return provider
+            }
+        }
+        return nil
+    }
+
+    private static func provider<S: StringProtocol>(forExecutable token: S) -> CodingAgentProvider? {
+        let executable = ExecutablePath.lowercasedName(token)
         if isProviderMarker(executable) {
             switch executable.dropFirst("banyan_agent_provider=".count) {
             case "deepseek":
@@ -242,9 +254,8 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         }
     }
 
-    private static func isProviderMarker(_ token: String) -> Bool {
-        URL(fileURLWithPath: token).lastPathComponent.lowercased()
-            .hasPrefix("banyan_agent_provider=")
+    private static func isProviderMarker<S: StringProtocol>(_ token: S) -> Bool {
+        ExecutablePath.lowercasedName(token).hasPrefix("banyan_agent_provider=")
     }
 
     private static let optionsTakingValue: Set<String> = [
