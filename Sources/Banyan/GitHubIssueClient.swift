@@ -86,6 +86,59 @@ enum GitHubIssueClient {
         }
     }
 
+    static func issueURL(
+        number: Int,
+        cwd: String,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> URL {
+        let start = DispatchTime.now()
+        do {
+            let output = try await SubprocessRunner.runAsync(
+                arguments: ["gh", "issue", "view", String(number), "--json", "url"],
+                cwd: cwd,
+                environment: processEnvironment(base: environment, homeDirectory: homeDirectory),
+                timeout: 12
+            )
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            guard output.terminationStatus == 0,
+                  let payload = try? JSONDecoder().decode(ReferencePayload.self, from: output.standardOutput),
+                  let rawURL = payload.url,
+                  let url = URL(string: rawURL) else {
+                axiomExporter?.sendHTTPRequest(
+                    service: "github",
+                    method: "CLI",
+                    url: "github-cli://gh/issue/view#url",
+                    statusCode: output.terminationStatus == 0 ? 500 : Int(output.terminationStatus),
+                    durationMS: duration,
+                    error: output.terminationStatus == 0 ? "missing url in response" : "exit \(output.terminationStatus)"
+                )
+                throw GitHubIssueClientError.requestFailed
+            }
+            axiomExporter?.sendHTTPRequest(
+                service: "github",
+                method: "CLI",
+                url: "github-cli://gh/issue/view#url",
+                statusCode: 200,
+                durationMS: duration
+            )
+            return url
+        } catch {
+            let duration = PerformanceTelemetry.elapsedMS(since: start)
+            if (error as? GitHubIssueClientError) == nil {
+                axiomExporter?.sendHTTPRequest(
+                    service: "github",
+                    method: "CLI",
+                    url: "github-cli://gh/issue/view#url",
+                    statusCode: 0,
+                    durationMS: duration,
+                    error: error.localizedDescription
+                )
+            }
+            throw error
+        }
+    }
+
     static func message(for error: Error) -> String {
         if let error = error as? GitHubIssueClientError, error == .requestFailed {
             return "gh issue view failed"
@@ -112,6 +165,10 @@ enum GitHubIssueClient {
 }
 
 private enum GitHubIssueClientError: Error, Equatable { case requestFailed }
+
+private struct ReferencePayload: Decodable {
+    let url: String?
+}
 
 private struct Payload: Decodable {
     let url: String

@@ -44,6 +44,54 @@ private func detectedRanges(after text: String, in view: DetectingLocalProcessTe
     #expect(detectedRanges(after: "error: build failed in 12:34", in: view).isEmpty)
 }
 
+/// Agent status lines print bare references like `PR #9326`. They are detected on
+/// the rendered row rather than in the byte stream, so a reference split across
+/// two PTY reads is still one link — the old byte-level scan missed the split
+/// and the reference silently stopped being clickable.
+@MainActor
+@Test func detectsReferenceNumberOnTheRow() {
+    let view = makeTerminalView()
+
+    #expect(detectedRanges(after: "PR #9326 · ← for agents", in: view) == [3..<8])
+}
+
+@MainActor
+@Test func detectsReferenceNumberSplitAcrossFeeds() {
+    let view = makeTerminalView()
+    view.feed(text: "PR #93")
+    view.feed(text: "26")
+
+    #expect(view.terminal.implicitLinkRowRanges(row: 0) == [3..<8])
+}
+
+@MainActor
+@Test func ignoresIdentifiersAndHexColorsThatLookLikeReferences() {
+    let view = makeTerminalView()
+
+    #expect(detectedRanges(after: "id#45 abc#123 #ff0000 e7#12 --color=#123456", in: view).isEmpty)
+}
+
+@MainActor
+@Test func linkMatchReturnsTheReferenceNumber() {
+    let view = makeTerminalView()
+    view.feed(text: "PR #9326 now")
+
+    let match = view.terminal.linkMatch(at: .buffer(Position(col: 4, row: 0)), mode: .explicitAndImplicit)
+    #expect(match?.text == "#9326")
+    #expect(match?.isExplicit == false)
+}
+
+@MainActor
+@Test func detectedReferenceRendersInLinkColor() {
+    let view = makeTerminalView()
+    TerminalTheme.dark.apply(to: view)
+    view.feed(text: "PR #9326 now")
+
+    let link = renderedRuns(of: view).first { $0.text == "#9326" }
+    #expect(link?.color == TerminalTheme.dark.linkColor)
+    #expect(link?.underlined == true)
+}
+
 @MainActor
 @Test func linkColorTracksTheTerminalTheme() {
     #expect(TerminalTheme.dark.linkColor != TerminalTheme.light.linkColor)

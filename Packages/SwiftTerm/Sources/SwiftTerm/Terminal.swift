@@ -6130,8 +6130,10 @@ open class Terminal {
     }
 
     /// Cheap rejection for the common case. Every scheme the implicit matcher knows
-    /// about contains a colon, so a row whose group cannot contain one is skipped
-    /// before paying for the line map and the regex.
+    /// about contains a colon, and the bare `#123` reference branch needs a `#`
+    /// followed by a digit — or a `#` that ends the visual row and may continue on
+    /// a wrapped row. Anything else cannot produce a match, so it is skipped before
+    /// paying for the line map and the regex.
     private func rowMayContainImplicitLink(_ row: Int, in buffer: Buffer) -> Bool
     {
         for candidate in (row - 1)...(row + 1) {
@@ -6143,8 +6145,20 @@ open class Terminal {
             guard limit > 0 else {
                 continue
             }
-            for col in 0..<limit where line[col].code == 58 {
-                return true
+            for col in 0..<limit {
+                let code = line[col].code
+                if code == 58 {
+                    return true
+                }
+                if code == 35 {
+                    let next = col + 1
+                    if next >= limit {
+                        return true
+                    }
+                    if line[next].code >= 48 && line[next].code <= 57 {
+                        return true
+                    }
+                }
             }
         }
         return false
@@ -6244,7 +6258,15 @@ open class Terminal {
             noTrailingColon +
             trailingSpacesAtEOL
 
-        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch
+        // Bare `#123` references, the form agents print for pull requests and
+        // issues (`PR #9326`). The `#` must not follow a word character or a
+        // path/URL/identifier character, and the digits must not run into a
+        // word character or hyphen, so hex colors, URL fragments, and embedded
+        // identifiers (`#ff0000`, `owner/repo#123`, `page#123`, `#123abc`) are
+        // left alone.
+        let referenceNumberBranch = #"(?<![\w$&/#.@=:%-])#\d+(?![\w/-])"#
+
+        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch + "|" + referenceNumberBranch
         return try? NSRegularExpression(pattern: regex, options: [])
     }()
 

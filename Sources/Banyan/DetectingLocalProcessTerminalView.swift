@@ -220,7 +220,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         if let text = String(bytes: slice, encoding: .utf8) {
             onOutput?(text)
         }
-        super.dataReceived(slice: TerminalFooterLinkifier.annotate(slice))
+        super.dataReceived(slice: slice)
         if let preservedTopRow {
             restoreScrollbackPosition(preservedTopRow)
         } else if !preservesUserScrollback {
