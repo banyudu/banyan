@@ -234,6 +234,85 @@ import Foundation
     #expect(worktreeContext.gitLookupDegraded == false)
 }
 
+@Test func workspaceRootResolvesWorktreeToMainCheckout() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let main = root.appendingPathComponent("repo")
+    let worktree = main.appendingPathComponent(".worktrees").appendingPathComponent("feature-x")
+    try makeRepository(at: main)
+    try runGit(["worktree", "add", "-b", "feature-x", worktree.path], cwd: main)
+
+    let resolved = SessionDisplayLabel.workspaceRoot(cwd: worktree.path, environment: [:])
+
+    // The user-visible behaviour: the project header's "+" opens the repository,
+    // not the worktree the representative session happens to live in.
+    #expect(resolved == main.standardizedFileURL.path)
+}
+
+@Test func workspaceRootResolvesSubdirectoryToRepositoryRoot() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let main = root.appendingPathComponent("repo")
+    let nested = main.appendingPathComponent("some").appendingPathComponent("subdir")
+    try makeRepository(at: main)
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+
+    let resolved = SessionDisplayLabel.workspaceRoot(cwd: nested.path, environment: [:])
+
+    #expect(resolved == main.standardizedFileURL.path)
+}
+
+@Test func workspaceRootKeepsMainCheckoutUnchanged() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let main = root.appendingPathComponent("repo")
+    try makeRepository(at: main)
+
+    let resolved = SessionDisplayLabel.workspaceRoot(cwd: main.path, environment: [:])
+
+    #expect(resolved == main.standardizedFileURL.path)
+}
+
+@Test func workspaceRootFallsBackToWorkingDirectoryOutsideGit() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let resolved = SessionDisplayLabel.workspaceRoot(cwd: directory.path, environment: [:])
+
+    #expect(resolved == directory.standardizedFileURL.path)
+}
+
+@Test func workspaceRootKeepsSubmoduleCheckoutOutOfGitInternals() throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let upstream = root.appendingPathComponent("upstream")
+    let main = root.appendingPathComponent("repo")
+    try makeRepository(at: upstream)
+    try makeRepository(at: main)
+    try runGit(
+        ["-c", "protocol.file.allow=always", "submodule", "add", upstream.path, "sub"],
+        cwd: main
+    )
+    let submodule = main.appendingPathComponent("sub")
+
+    let resolved = SessionDisplayLabel.workspaceRoot(cwd: submodule.path, environment: [:])
+
+    // A submodule's `--git-common-dir` is `<repo>/.git/modules/sub`; spawning
+    // there would drop the session inside git internals. Its own checkout is
+    // the workspace root.
+    #expect(resolved == submodule.standardizedFileURL.path)
+}
+
+private func makeRepository(at directory: URL) throws {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try runGit(["init"], cwd: directory)
+    try runGit(["config", "user.email", "test@example.com"], cwd: directory)
+    try runGit(["config", "user.name", "Banyan Tests"], cwd: directory)
+    try "test".write(to: directory.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+    try runGit(["add", "README.md"], cwd: directory)
+    try runGit(["commit", "-m", "Initial commit"], cwd: directory)
+}
+
 private func temporaryDirectory() throws -> URL {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("BanyanCoreTests-\(UUID().uuidString)")

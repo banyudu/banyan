@@ -114,6 +114,50 @@ public enum SessionDisplayLabel {
         )
     }
 
+    /// The directory a repository-level action should open: the main checkout of
+    /// the repository containing `cwd`. A worktree (`<repo>/.worktrees/x`) and a
+    /// subdirectory (`<repo>/a/b`) both resolve to `<repo>`; a path outside any
+    /// git repository resolves to itself.
+    ///
+    /// Only for controls that act on the project as a whole — the sidebar
+    /// project header's "+". Session-level controls (`Cmd+N`, the toolbar "+")
+    /// deliberately keep inheriting the selected session's own directory.
+    public static func workspaceRoot(
+        cwd: String,
+        environment: [String: String]
+    ) -> String {
+        let resolvedCWD = standardizedPath(cwd)
+        guard let topLevel = gitLookup(
+            ["rev-parse", "--show-toplevel"],
+            cwd: resolvedCWD,
+            environment: environment
+        ).value else {
+            // Not a repository, or the lookup failed to run: this directory is
+            // the only answer we can trust.
+            return resolvedCWD
+        }
+        let mainDirectory = gitMainDirectory(
+            cwd: resolvedCWD,
+            fallbackTopLevel: topLevel,
+            environment: environment
+        ).value
+        // `--git-common-dir` names the git directory, whose parent is a checkout
+        // only for the ordinary `<repo>/.git` layout. A submodule
+        // (`<repo>/.git/modules/<name>`) or a `--separate-git-dir` repository
+        // would otherwise open a session inside git internals, so require a
+        // working tree and fall back to this checkout's own top level.
+        guard isWorkingTreeRoot(mainDirectory) else {
+            return standardizedPath(topLevel)
+        }
+        return mainDirectory
+    }
+
+    private static func isWorkingTreeRoot(_ path: String) -> Bool {
+        FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: path).appendingPathComponent(".git").path
+        )
+    }
+
     public static func make(
         project: String,
         branch: String?,

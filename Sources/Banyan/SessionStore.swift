@@ -1350,8 +1350,14 @@ final class SessionStore: ObservableObject {
             return nil
         }
         rememberProjectLaunch(launch, for: groupID)
+        // This is a project-level control, so it opens the repository itself
+        // rather than whichever worktree or subdirectory the representative
+        // session happens to sit in. `spawnSiblingSession` stays session-level.
         return spawn(
-            cwd: representative.cwd,
+            cwd: SessionDisplayLabel.workspaceRoot(
+                cwd: representative.cwd,
+                environment: environment
+            ),
             command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
             parentSessionID: representative.parentSessionID
         )
