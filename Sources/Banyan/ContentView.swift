@@ -1919,6 +1919,7 @@ private struct SessionRow: View {
             } else if let provider = session.displayAgentProvider {
                 AgentProviderIcon(provider: provider, size: 18, helpText: session.agentRuntimeIdentityLabel)
                     .accessibilityLabel(provider.displayName)
+                PeakPriceBadge(provider: provider)
             } else if !session.isImportedHistory {
                 ShellSessionIcon()
             }
@@ -2230,30 +2231,55 @@ private struct ProjectNewSessionButton: View {
     let groupTitle: String
 
     var body: some View {
-        let current = store.projectLaunch(for: groupID)
-        Menu {
-            ForEach(store.sessionLaunchProfiles) { launch in
-                Button {
-                    store.spawnSession(inProjectGroup: groupID, launch: launch)
-                } label: {
-                    Label {
-                        Text(launch.label)
-                    } icon: {
-                        launch.menuIconImage
+        // Time-of-use pricing flips at most a few times a day, so a
+        // once-a-minute refresh is sufficient to keep the Peak suffix fresh.
+        // Polling here is unavoidable: there is no push source for wall-clock
+        // pricing boundaries.
+        TimelineView(.everyMinute) { context in
+            let current = store.projectLaunch(for: groupID)
+            Menu {
+                ForEach(store.sessionLaunchProfiles) { launch in
+                    Button {
+                        store.spawnSession(inProjectGroup: groupID, launch: launch)
+                    } label: {
+                        Label {
+                            Text(peakAwareLabel(for: launch, at: context.date))
+                        } icon: {
+                            launch.menuIconImage
+                        }
                     }
                 }
+            } label: {
+                NewSessionLaunchIcon(launch: current)
+            } primaryAction: {
+                store.spawnSession(inProjectGroup: groupID, launch: current)
             }
-        } label: {
-            NewSessionLaunchIcon(launch: current)
-        } primaryAction: {
-            store.spawnSession(inProjectGroup: groupID, launch: current)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.visible)
+            .fixedSize()
+            .banyanButtonHoverEffect()
+            .help(peakAwareHelp(for: current, at: context.date))
+            .accessibilityIdentifier(AccessibilityID.projectAddSession(groupID))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.visible)
-        .fixedSize()
-        .banyanButtonHoverEffect()
-        .help("New \(current.label) session in \(groupTitle)")
-        .accessibilityIdentifier(AccessibilityID.projectAddSession(groupID))
+    }
+
+    private func peakAwareLabel(for launch: NewSessionLaunch, at date: Date) -> String {
+        guard let provider = launch.provider,
+              PeakPricingPolicy.isPeak(at: date, for: provider)
+        else {
+            return launch.label
+        }
+        return "\(launch.label) · Peak 2x"
+    }
+
+    private func peakAwareHelp(for launch: NewSessionLaunch, at date: Date) -> String {
+        let base = "New \(launch.label) session in \(groupTitle)"
+        guard let provider = launch.provider,
+              let pricing = PeakPricingPolicy.helpText(for: provider, at: date)
+        else {
+            return base
+        }
+        return "\(base)\n\(pricing)"
     }
 }
 
@@ -2281,8 +2307,54 @@ private struct AgentProviderIcon: View {
     let provider: CodingAgentProvider
     var size: CGFloat = 20
     var helpText: String? = nil
+    /// Closed/history rows show a past session, so peak-*now* would mislead.
+    /// Pass false there; live rows and the picker leave it true.
+    var showsPeakBadge: Bool = true
 
     var body: some View {
+        if showsPeakBadge, PeakPricingPolicy.hasTimeSensitivePricing(provider) {
+            // Same once-a-minute rationale as the picker: pricing boundaries
+            // are wall-clock events with no push source.
+            TimelineView(.everyMinute) { context in
+                iconStack(at: context.date)
+            }
+        } else {
+            iconStack(at: Date())
+        }
+    }
+
+    private func iconStack(at date: Date) -> some View {
+        baseIcon
+            .overlay(alignment: .bottomTrailing) {
+                if PeakPricingPolicy.isPeak(at: date, for: provider) {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: peakDotDiameter, height: peakDotDiameter)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white, lineWidth: 1.5)
+                        )
+                        .accessibilityLabel("Peak pricing")
+                }
+            }
+            .frame(width: size, height: size)
+            .help(combinedHelp(at: date))
+    }
+
+    private var peakDotDiameter: CGFloat {
+        max(6, size * 0.38)
+    }
+
+    private func combinedHelp(at date: Date) -> String {
+        let base = helpText ?? provider.displayName
+        guard let pricing = PeakPricingPolicy.helpText(for: provider, at: date) else {
+            return base
+        }
+        if base == pricing { return pricing }
+        return "\(base)\n\(pricing)"
+    }
+
+    private var baseIcon: some View {
         Group {
             if let modelIcon = modelIcon {
                 Image(nsImage: modelIcon)
@@ -2312,8 +2384,6 @@ private struct AgentProviderIcon: View {
                     )
             }
         }
-        .frame(width: size, height: size)
-        .help(helpText ?? provider.displayName)
     }
 
     private var modelIcon: NSImage? {
@@ -2451,6 +2521,29 @@ private struct AgentProviderIcon: View {
     }
 }
 
+/// Text badge for time-sensitive pricing. The icon dot alone is not enough —
+/// color can't carry the price signal for VoiceOver or colorblind users.
+private struct PeakPriceBadge: View {
+    let provider: CodingAgentProvider
+
+    var body: some View {
+        if PeakPricingPolicy.hasTimeSensitivePricing(provider) {
+            TimelineView(.everyMinute) { context in
+                if PeakPricingPolicy.isPeak(at: context.date, for: provider) {
+                    Text("Peak 2x")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.orange))
+                        .help(PeakPricingPolicy.helpText(for: provider, at: context.date) ?? "Peak pricing")
+                        .accessibilityLabel("Peak pricing, twice off-peak price")
+                }
+            }
+        }
+    }
+}
+
 private struct ClosedSessionHistoryView: View {
     @EnvironmentObject private var store: SessionStore
     @ObservedObject var session: BanyanSession
@@ -2459,7 +2552,7 @@ private struct ClosedSessionHistoryView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 if let provider = session.agentProvider {
-                    AgentProviderIcon(provider: provider)
+                    AgentProviderIcon(provider: provider, showsPeakBadge: false)
                 } else {
                     Image(systemName: "terminal")
                         .font(.system(size: 18, weight: .medium))
@@ -2555,7 +2648,7 @@ private struct ImportedSessionHistoryView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 if let provider = session.agentProvider {
-                    AgentProviderIcon(provider: provider)
+                    AgentProviderIcon(provider: provider, showsPeakBadge: false)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.displayTitle)
