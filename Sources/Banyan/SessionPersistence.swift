@@ -17,6 +17,19 @@ struct LinearIssueListCacheSnapshot: Codable {
     let updatedAt: Date
 }
 
+/// Persisted `#123` reference lookups for `GitHubReferenceCache`. A nil `url`
+/// is a number the repository did not contain when it was checked.
+struct GitHubReferenceCacheSnapshot: Codable {
+    struct Entry: Codable {
+        let groupID: String
+        let number: Int
+        let url: String?
+        let checkedAt: Date
+    }
+
+    let entries: [Entry]
+}
+
 /// macOS-specific facade for the shared session database. It owns only the
 /// serialization policy for workspace preferences and Linear cache data.
 protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
@@ -24,10 +37,13 @@ protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
     func saveWorkspace(_ workspace: WorkspaceSnapshot)
     func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot?
     func saveLinearIssueListCache(_ snapshot: LinearIssueListCacheSnapshot)
+    func loadGitHubReferenceCache() -> GitHubReferenceCacheSnapshot?
+    func saveGitHubReferenceCache(_ snapshot: GitHubReferenceCacheSnapshot)
 }
 
 struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
     private static let linearIssueListCacheKey = "linearIssueListCache"
+    private static let githubReferenceCacheKey = "githubReferenceCache"
 
     private let sessionDatabase: SessionDatabase
 
@@ -86,5 +102,23 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
         guard let data = try? encoder.encode(snapshot),
               let rawCache = String(data: data, encoding: .utf8) else { return }
         sessionDatabase.saveState([Self.linearIssueListCacheKey: rawCache])
+    }
+
+    func loadGitHubReferenceCache() -> GitHubReferenceCacheSnapshot? {
+        guard let rawCache = sessionDatabase.loadState()[Self.githubReferenceCacheKey],
+              let data = rawCache.data(using: .utf8) else {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(GitHubReferenceCacheSnapshot.self, from: data)
+    }
+
+    func saveGitHubReferenceCache(_ snapshot: GitHubReferenceCacheSnapshot) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(snapshot),
+              let rawCache = String(data: data, encoding: .utf8) else { return }
+        sessionDatabase.saveState([Self.githubReferenceCacheKey: rawCache])
     }
 }

@@ -85,6 +85,10 @@ final class BanyanSession: ObservableObject, Identifiable {
     let telemetry: PerformanceTelemetry
     let homeDirectory: String
     let environment: [String: String]
+    /// Remembers `gh` reference lookups so repeated clicks do not spend GitHub
+    /// rate limit. Sessions are built by `SessionStore`, which owns the cache;
+    /// a nil cache simply means every click asks.
+    let githubReferenceCache: GitHubReferenceCache?
 
     // MARK: - Presentation memoization
     //
@@ -189,13 +193,15 @@ final class BanyanSession: ObservableObject, Identifiable {
         fontSize: Double = 13,
         tmuxBackend: any TmuxClientBackend,
         telemetry: PerformanceTelemetry,
-        host: HostRuntimeContext
+        host: HostRuntimeContext,
+        githubReferenceCache: GitHubReferenceCache? = nil
     ) {
         self.tmuxBackend = tmuxBackend
         self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)
         self.telemetry = telemetry
         self.homeDirectory = host.homeDirectory.path
         self.environment = host.environment
+        self.githubReferenceCache = githubReferenceCache
         let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(
             cwd: cwd,
             homeDirectory: self.homeDirectory,
@@ -356,12 +362,16 @@ final class BanyanSession: ObservableObject, Identifiable {
         let cwd = self.cwd
         let environment = self.environment
         let homeDirectory = self.homeDirectory
+        let repositoryGroupID = self.projectGroupID
+        let cache = self.githubReferenceCache
         Task.detached(priority: .utility) {
             let url = await GitHubReferenceResolver.resolve(
                 number: number,
                 cwd: cwd,
                 environment: environment,
-                homeDirectory: homeDirectory
+                homeDirectory: homeDirectory,
+                repositoryGroupID: repositoryGroupID,
+                cache: cache
             )
             await MainActor.run {
                 if let url {

@@ -198,6 +198,9 @@ final class SessionStore: ObservableObject {
 
     private var controlServer: ControlServer?
     private let persistence: any SessionStorePersistenceBackend
+    /// Shared memory of `gh` reference lookups, so a click on a `#123` that has
+    /// already been resolved does not spend another GitHub API call.
+    private let githubReferenceCache: GitHubReferenceCache
     /// Serial queue for the SQLite session write, keeping the full-table rewrite off
     /// the main thread. Serial + ordered so concurrent saves can't collide on the
     /// `BEGIN IMMEDIATE` transaction.
@@ -307,6 +310,7 @@ final class SessionStore: ObservableObject {
         attentionNotifier: AttentionNotifier
     ) {
         self.persistence = persistence
+        self.githubReferenceCache = GitHubReferenceCache(persistence: persistence)
         self.tmuxBackend = tmuxBackend
         self.sessionBackend = sessionBackend
         self.processTable = processTable
@@ -676,7 +680,8 @@ final class SessionStore: ObservableObject {
                 fontSize: terminalFontSize,
                 tmuxBackend: sessionBackend,
                 telemetry: telemetry,
-                host: host
+                host: host,
+                githubReferenceCache: githubReferenceCache
             )
             session.reportedTitle = snapshot.reportedTitle
             attach(session)
@@ -1393,7 +1398,8 @@ final class SessionStore: ObservableObject {
             fontSize: terminalFontSize,
             tmuxBackend: sessionBackend,
             telemetry: telemetry,
-            host: host
+            host: host,
+            githubReferenceCache: githubReferenceCache
         )
         attachScratch(session)
         scratchSession = session
@@ -1499,7 +1505,8 @@ final class SessionStore: ObservableObject {
             fontSize: terminalFontSize,
             tmuxBackend: sessionBackend,
             telemetry: telemetry,
-            host: host
+            host: host,
+            githubReferenceCache: githubReferenceCache
         )
         attach(session)
         sessions.append(session)
