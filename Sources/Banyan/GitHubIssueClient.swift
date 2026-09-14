@@ -59,15 +59,16 @@ enum GitHubIssueClient {
                 )
                 return try decodeDetails(output.standardOutput)
             } else {
+                let message = errorMessage(from: output)
                 axiomExporter?.sendHTTPRequest(
                     service: "github",
                     method: "CLI",
                     url: "github-cli://gh/issue/view",
                     statusCode: Int(output.terminationStatus),
                     durationMS: duration,
-                    error: "exit \(output.terminationStatus)"
+                    error: message ?? "exit \(output.terminationStatus)"
                 )
-                throw GitHubIssueClientError.requestFailed
+                throw GitHubIssueClientError.requestFailed(message)
             }
         } catch {
             let duration = PerformanceTelemetry.elapsedMS(since: start)
@@ -105,15 +106,18 @@ enum GitHubIssueClient {
                   let payload = try? JSONDecoder().decode(ReferencePayload.self, from: output.standardOutput),
                   let rawURL = payload.url,
                   let url = URL(string: rawURL) else {
+                let message = output.terminationStatus == 0
+                    ? "missing url in response"
+                    : errorMessage(from: output)
                 axiomExporter?.sendHTTPRequest(
                     service: "github",
                     method: "CLI",
                     url: "github-cli://gh/issue/view#url",
                     statusCode: output.terminationStatus == 0 ? 500 : Int(output.terminationStatus),
                     durationMS: duration,
-                    error: output.terminationStatus == 0 ? "missing url in response" : "exit \(output.terminationStatus)"
+                    error: message ?? "exit \(output.terminationStatus)"
                 )
-                throw GitHubIssueClientError.requestFailed
+                throw GitHubIssueClientError.requestFailed(message)
             }
             axiomExporter?.sendHTTPRequest(
                 service: "github",
@@ -139,14 +143,34 @@ enum GitHubIssueClient {
         }
     }
 
+    /// True when `gh` answered that the repository has no issue or pull request
+    /// with the number, rather than failing to run the lookup at all.
+    static func isReferenceNotFound(_ error: Error) -> Bool {
+        guard let clientError = error as? GitHubIssueClientError,
+              case .requestFailed(let message) = clientError else { return false }
+        return GitHubReferenceResolver.isNotFound(message: message)
+    }
+
     static func message(for error: Error) -> String {
-        if let error = error as? GitHubIssueClientError, error == .requestFailed {
+        if let error = error as? GitHubIssueClientError, case .requestFailed = error {
             return "gh issue view failed"
         }
         if let error = error as? SubprocessRunner.RunError, case .timedOut = error {
             return "gh issue view timed out"
         }
         return "Unable to load GitHub issue"
+    }
+
+    private static func errorMessage(from output: SubprocessRunner.Output) -> String? {
+        let stderr = String(data: output.standardError, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let stderr, !stderr.isEmpty {
+            return stderr
+        }
+        let stdout = String(data: output.standardOutput, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let stdout, !stdout.isEmpty else { return nil }
+        return stdout
     }
 
     private static func processEnvironment(
@@ -164,7 +188,7 @@ enum GitHubIssueClient {
     }
 }
 
-private enum GitHubIssueClientError: Error, Equatable { case requestFailed }
+private enum GitHubIssueClientError: Error, Equatable { case requestFailed(String?) }
 
 private struct ReferencePayload: Decodable {
     let url: String?

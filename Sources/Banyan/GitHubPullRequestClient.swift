@@ -89,6 +89,14 @@ enum GitHubPullRequestClient {
         }
     }
 
+    /// True when `gh` answered that the repository has no pull request with the
+    /// number, rather than failing to run the lookup at all.
+    static func isReferenceNotFound(_ error: Error) -> Bool {
+        guard let clientError = error as? GitHubPullRequestClientError,
+              case .requestFailed(let message) = clientError else { return false }
+        return GitHubReferenceResolver.isNotFound(message: message)
+    }
+
     static func fetchPullRequest(
         url: URL?,
         cwd: String,

@@ -28,9 +28,25 @@ import Testing
 
 @MainActor
 @Test func repositoryReferenceURLUsesTheGitHubRemote() {
-    let url = BanyanSession.repositoryReferenceURL(number: 9326, groupID: "git:github.com/example/repo")
+    let url = GitHubReferenceResolver.repositoryURL(number: 9326, groupID: "git:github.com/example/repo")
 
     #expect(url?.absoluteString == "https://github.com/example/repo/issues/9326")
-    #expect(BanyanSession.repositoryReferenceURL(number: 1, groupID: "git:gitlab.com/example/repo") == nil)
-    #expect(BanyanSession.repositoryReferenceURL(number: 1, groupID: "path:/tmp/example") == nil)
+    #expect(GitHubReferenceResolver.repositoryURL(number: 1, groupID: "git:gitlab.com/example/repo") == nil)
+    #expect(GitHubReferenceResolver.repositoryURL(number: 1, groupID: "path:/tmp/example") == nil)
+}
+
+/// `gh` phrasing for "this repository has no such number". It must be told
+/// apart from failures to run at all, because only the former means a
+/// repository URL would definitely 404.
+@Test func referenceLookupReadsGraphQLResolveFailuresAsNotFound() {
+    #expect(GitHubReferenceResolver.isNotFound(
+        message: "GraphQL: Could not resolve to a PullRequest with the number of 9326. (repository.pullRequest)"
+    ))
+    #expect(GitHubReferenceResolver.isNotFound(
+        message: "GraphQL: Could not resolve to an issue or pull request with the number of 99999. (repository.issue)"
+    ))
+
+    #expect(!GitHubReferenceResolver.isNotFound(message: "failed to run git: fatal: not a git repository"))
+    #expect(!GitHubReferenceResolver.isNotFound(message: "dial tcp: lookup api.github.com: no such host"))
+    #expect(!GitHubReferenceResolver.isNotFound(message: nil))
 }

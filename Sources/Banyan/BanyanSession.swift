@@ -348,14 +348,16 @@ final class BanyanSession: ObservableObject, Identifiable {
         _ = NSWorkspace.shared.open(url)
     }
 
-    /// A bare `#123` printed by an agent: resolve it as a pull request first, then
-    /// an issue, then through the session repository.
+    /// A bare `#123` printed by an agent: resolve it as a pull request first,
+    /// then an issue, then through the session repository. Nothing opens when
+    /// the repository is known not to contain the number — a guessed URL would
+    /// only 404.
     private func openGitHubReference(number: Int) {
         let cwd = self.cwd
         let environment = self.environment
         let homeDirectory = self.homeDirectory
         Task.detached(priority: .utility) {
-            let url = await Self.resolveGitHubReference(
+            let url = await GitHubReferenceResolver.resolve(
                 number: number,
                 cwd: cwd,
                 environment: environment,
@@ -371,39 +373,6 @@ final class BanyanSession: ObservableObject, Identifiable {
         }
     }
 
-    /// GitHub serves both issues and pull requests at `/issues/<n>` — a pull
-    /// request number redirects to `/pull/<n>` — so the repository fallback opens
-    /// the right page even when `gh` cannot look the number up.
-    nonisolated static func resolveGitHubReference(
-        number: Int,
-        cwd: String,
-        environment: [String: String],
-        homeDirectory: String
-    ) async -> URL? {
-        if let url = try? await GitHubPullRequestClient.pullRequestURL(
-            number: number,
-            cwd: cwd,
-            environment: environment,
-            homeDirectory: homeDirectory
-        ) {
-            return url
-        }
-        if let url = try? await GitHubIssueClient.issueURL(
-            number: number,
-            cwd: cwd,
-            environment: environment,
-            homeDirectory: homeDirectory
-        ) {
-            return url
-        }
-        let groupID = SessionDisplayLabel.context(
-            cwd: cwd,
-            homeDirectory: homeDirectory,
-            environment: environment
-        ).groupID
-        return repositoryReferenceURL(number: number, groupID: groupID)
-    }
-
     /// The `#123` form agents print in status lines and footers. Explicit OSC 8
     /// hyperlinks still arrive as full URLs and are opened through
     /// `terminalLinkURL`.
@@ -413,16 +382,6 @@ final class BanyanSession: ObservableObject, Identifiable {
         let digits = trimmed.dropFirst()
         guard digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
         return Int(digits)
-    }
-
-    /// The last-resort URL for a bare reference whose `gh` lookups failed, built
-    /// from the session repository's normalized group id (`git:github.com/...`).
-    nonisolated static func repositoryReferenceURL(number: Int, groupID: String) -> URL? {
-        let prefix = "git:github.com/"
-        guard groupID.hasPrefix(prefix) else { return nil }
-        let repository = groupID.dropFirst(prefix.count)
-        guard !repository.isEmpty else { return nil }
-        return URL(string: "https://github.com/\(repository)/issues/\(number)")
     }
 
     static func terminalLinkURL(_ link: String) -> URL? {
