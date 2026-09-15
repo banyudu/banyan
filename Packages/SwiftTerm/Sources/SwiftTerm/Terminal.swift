@@ -828,6 +828,10 @@ open class Terminal {
         // call this
         cols = max (options.cols, MINIMUM_COLS)
         rows = max (options.rows, MINIMUM_ROWS)
+        // Buffer contents are being replaced; row generations may restart from
+        // zero and would otherwise falsely validate stale link caches.
+        implicitLinkRowCache.removeAll(keepingCapacity: true)
+        implicitSeamCache.removeAll(keepingCapacity: true)
         
         if isReset {
             resetNormalBuffer()
@@ -6066,6 +6070,56 @@ open class Terminal {
         return nil
     }
 
+    /// Cache for per-row implicit link ranges. `drawTerminalContents` rebuilds
+    /// every dirty row on every frame while output streams, and each rebuild ran
+    /// the full Ghostty regex plus the seam-join heuristic — ~17-120ms per draw
+    /// on wide terminals, pinning the main thread (energy impact ~3900).
+    /// The cache is keyed by row and validated against the line's `generation`,
+    /// `cols`, and buffer identity, so only rows whose content actually changed
+    /// pay for detection again.
+    private var implicitLinkRowCache: [Int: (generation: UInt64, cols: Int, isAlt: Bool, ranges: [Range<Int>])] = [:]
+    /// Cache for the seam-join heuristic between adjacent rows. The heuristic runs
+    /// an ICU regex per seam per row per draw; results only change when one of the
+    /// two rows changes, so memoizing cuts the per-draw cost from O(rows) regexes
+    /// to (usually) zero.
+    private var implicitSeamCache: [Int: (upperGen: UInt64, lowerGen: UInt64, cols: Int, isAlt: Bool, joins: Bool)] = [:]
+    private static let implicitLinkCacheLimit = 512
+
+    /// Cheap prefilter before paying for the Ghostty ICU regex. The full pattern
+    /// matches scheme URLs, paths (with or without a dot, e.g. `/usr/bin/foo`),
+    /// and bare `#123` references; anything without `://`, a `#digit` sequence,
+    /// a `/`, or a scheme-like `letters:` (e.g. `mailto:`, `tel:`) cannot match.
+    /// This skips status/spinner rows (`Thought · 2.2s`, `12:34`, box-drawing
+    /// borders) that contain a bare colon but no link shape.
+    private static func lineMapMayContainLink(_ text: String) -> Bool {
+        if text.contains("://") || text.contains("/") {
+            return true
+        }
+        var index = text.startIndex
+        while index < text.endIndex {
+            let ch = text[index]
+            if ch == "#" {
+                let next = text.index(after: index)
+                if next < text.endIndex, text[next].isNumber {
+                    return true
+                }
+            } else if ch == ":" {
+                // Scheme-like `letters:` with a non-space after the colon
+                // (`mailto:foo`, `tel:+1`). Plain `12:34` (digit before) and
+                // `error: foo` (space after) miss here.
+                let prev = index > text.startIndex ? text[text.index(before: index)] : " "
+                let next = text.index(after: index)
+                if prev.isLetter,
+                   next < text.endIndex,
+                   !text[next].isWhitespace {
+                    return true
+                }
+            }
+            index = text.index(after: index)
+        }
+        return false
+    }
+
     /// Returns the column ranges on the display buffer's `row` that are covered by
     /// implicitly detected links: URLs printed as plain text, with no OSC 8 payload.
     public func implicitLinkRowRanges(row: Int) -> [Range<Int>]
@@ -6082,9 +6136,32 @@ open class Terminal {
     /// changes once a later row arrives repaints when that row is next rebuilt.
     func implicitLinkRowRanges(row: Int, in buffer: Buffer) -> [Range<Int>]
     {
+        guard row >= 0, row < buffer.lines.count else {
+            return []
+        }
+        let isAlt = buffer === altBuffer
+        let generation = buffer.lines[row].generation
+        if let cached = implicitLinkRowCache[row],
+           cached.generation == generation,
+           cached.cols == cols,
+           cached.isAlt == isAlt {
+            return cached.ranges
+        }
+        let ranges = uncachedImplicitLinkRowRanges(row: row, in: buffer)
+        if implicitLinkRowCache.count >= Self.implicitLinkCacheLimit {
+            implicitLinkRowCache.removeAll(keepingCapacity: true)
+            implicitSeamCache.removeAll(keepingCapacity: true)
+        }
+        implicitLinkRowCache[row] = (generation: generation, cols: cols, isAlt: isAlt, ranges: ranges)
+        return ranges
+    }
+
+    private func uncachedImplicitLinkRowRanges(row: Int, in buffer: Buffer) -> [Range<Int>]
+    {
         guard let regex = Self.ghosttyImplicitLinkRegex,
               rowMayContainImplicitLink(row, in: buffer),
-              let lineMap = buildGhosttyImplicitLineMap(row: row, targetCol: nil, in: buffer)
+              let lineMap = buildGhosttyImplicitLineMap(row: row, targetCol: nil, in: buffer),
+              Self.lineMapMayContainLink(lineMap.text)
         else {
             return []
         }
@@ -6402,6 +6479,29 @@ open class Terminal {
     }
 
     private func canJoinImplicitRows(upper: Int, lower: Int, in buffer: Buffer) -> Bool
+    {
+        guard upper >= 0, lower < buffer.lines.count else {
+            return false
+        }
+        let isAlt = buffer === altBuffer
+        let upperGen = buffer.lines[upper].generation
+        let lowerGen = buffer.lines[lower].generation
+        if let cached = implicitSeamCache[upper],
+           cached.upperGen == upperGen,
+           cached.lowerGen == lowerGen,
+           cached.cols == cols,
+           cached.isAlt == isAlt {
+            return cached.joins
+        }
+        let joins = uncachedCanJoinImplicitRows(upper: upper, lower: lower, in: buffer)
+        if implicitSeamCache.count >= Self.implicitLinkCacheLimit {
+            implicitSeamCache.removeAll(keepingCapacity: true)
+        }
+        implicitSeamCache[upper] = (upperGen: upperGen, lowerGen: lowerGen, cols: cols, isAlt: isAlt, joins: joins)
+        return joins
+    }
+
+    private func uncachedCanJoinImplicitRows(upper: Int, lower: Int, in buffer: Buffer) -> Bool
     {
         guard let upperInfo = linkRowEdgeInfo(row: upper, in: buffer),
               let lowerInfo = linkRowEdgeInfo(row: lower, in: buffer)

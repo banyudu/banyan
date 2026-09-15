@@ -19,6 +19,13 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     private let displayInvalidationLock = NSLock()
     private var displayInvalidationPending = false
     private var accumulatedDirtyRect: NSRect = .zero
+    /// Adaptive coalescing state. Link highlighting made each repaint cost
+    /// 17-120ms on wide terminals, so flushing every run-loop turn during
+    /// streaming pinned the main thread (energy impact ~3900). When the last
+    /// draw was slow, subsequent flushes are spaced to ~30fps so more PTY
+    /// chunks coalesce into each repaint. Guarded by displayInvalidationLock.
+    private var lastDrawMS: Double = 0
+    private var lastFlushUptime: TimeInterval = 0
     /// A non-bottom SwiftTerm viewport is not, by itself, proof that the user
     /// is reading scrollback. tmux screen redraws can briefly leave a hidden
     /// terminal at an earlier local row. Only preserve a viewport after an
@@ -108,9 +115,9 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// run-loop turn, accumulating the union of the dirty rects so SwiftTerm's
     /// per-row draw skip still only repaints rows that actually changed.
     ///
-    /// Deliberately *not* rate-limited: a wall-clock throttle was measured to give
-    /// no CPU benefit (the cost was per-repaint, not per-second — see #31) while
-    /// adding up to a frame of latency to every paint, which reads as lag.
+    /// When draws are slow (link highlighting + CoreText on wide terminals), the
+    /// flush is additionally spaced to ~30fps so bursts of chunks collapse into
+    /// fewer, cheaper repaints instead of one 100ms+ draw per run-loop turn.
     override func setNeedsDisplay(_ invalidRect: NSRect) {
         displayInvalidationLock.lock()
         if displayInvalidationPending {
@@ -120,10 +127,18 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         }
         displayInvalidationPending = true
         accumulatedDirtyRect = invalidRect
+        let now = ProcessInfo.processInfo.systemUptime
+        let delay: TimeInterval = lastDrawMS > 12 ? max(0, (1.0 / 30.0) - (now - lastFlushUptime)) : 0
         displayInvalidationLock.unlock()
 
-        DispatchQueue.main.async { [weak self] in
-            self?.flushCoalescedDisplayInvalidation()
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.flushCoalescedDisplayInvalidation()
+            }
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.flushCoalescedDisplayInvalidation()
+            }
         }
     }
 
@@ -156,6 +171,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         displayInvalidationPending = false
         let dirtyRect = accumulatedDirtyRect
         accumulatedDirtyRect = .zero
+        lastFlushUptime = ProcessInfo.processInfo.systemUptime
         displayInvalidationLock.unlock()
 
         guard !isHiddenOrHasHiddenAncestor,
@@ -171,6 +187,9 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         let start = CACurrentMediaTime()
         super.draw(dirtyRect)
         let elapsed = (CACurrentMediaTime() - start) * 1000.0
+        displayInvalidationLock.lock()
+        lastDrawMS = elapsed
+        displayInvalidationLock.unlock()
         telemetry?.recordDurationIfSlow("terminal.draw", durationMS: elapsed)
     }
 
