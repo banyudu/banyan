@@ -58,11 +58,33 @@ import Testing
 @Test func lifecyclePolicyIncludesRestoredSessionsInSupervision() {
     #expect(SessionLifecyclePolicy.participatesInSupervisorTick(
         isProcessStarted: false,
-        isRestored: true
+        isRestored: true,
+        isSuspended: false
     ))
     #expect(!SessionLifecyclePolicy.participatesInSupervisorTick(
         isProcessStarted: false,
-        isRestored: false
+        isRestored: false,
+        isSuspended: false
+    ))
+}
+
+@Test func lifecyclePolicyExcludesSuspendedSessionsFromSupervision() {
+    // Parking leaves tmux and the agent running, so a parked session still looks
+    // both started and restored. Only the explicit gate keeps it out of the tick.
+    #expect(!SessionLifecyclePolicy.participatesInSupervisorTick(
+        isProcessStarted: true,
+        isRestored: true,
+        isSuspended: true
+    ))
+    #expect(!SessionLifecyclePolicy.participatesInSupervisorTick(
+        isProcessStarted: true,
+        isRestored: false,
+        isSuspended: true
+    ))
+    #expect(!SessionLifecyclePolicy.participatesInSupervisorTick(
+        isProcessStarted: false,
+        isRestored: true,
+        isSuspended: true
     ))
 }
 
@@ -76,33 +98,41 @@ import Testing
 }
 
 @Test func needsAttentionCoversSessionsBlockedOnAHuman() {
-    #expect(SessionLifecyclePolicy.needsAttention(status: .asking, isImportedHistory: false))
-    #expect(SessionLifecyclePolicy.needsAttention(status: .needInput, isImportedHistory: false))
-    #expect(SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: false))
+    #expect(SessionLifecyclePolicy.needsAttention(status: .asking, isImportedHistory: false, isSuspended: false))
+    #expect(SessionLifecyclePolicy.needsAttention(status: .needInput, isImportedHistory: false, isSuspended: false))
+    #expect(SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: false, isSuspended: false))
 }
 
 @Test func needsAttentionSkipsQuietAndBusySessions() {
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .idle, isImportedHistory: false))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .running, isImportedHistory: false))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .executing, isImportedHistory: false))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .subagents, isImportedHistory: false))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .longRunningShell, isImportedHistory: false))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .review, isImportedHistory: false))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .completed, isImportedHistory: false))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .closed, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .idle, isImportedHistory: false, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .running, isImportedHistory: false, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .executing, isImportedHistory: false, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .subagents, isImportedHistory: false, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .longRunningShell, isImportedHistory: false, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .review, isImportedHistory: false, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .completed, isImportedHistory: false, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .closed, isImportedHistory: false, isSuspended: false))
 }
 
 @Test func needsAttentionSkipsImportedHistory() {
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .asking, isImportedHistory: true))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .needInput, isImportedHistory: true))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: true))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .asking, isImportedHistory: true, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .needInput, isImportedHistory: true, isSuspended: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: true, isSuspended: false))
+}
+
+@Test func needsAttentionSkipsParkedSessions() {
+    // Nothing observes a parked session, so the status it froze at would keep
+    // it at the front of attention navigation until it was resumed.
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .asking, isImportedHistory: false, isSuspended: true))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .needInput, isImportedHistory: false, isSuspended: true))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: false, isSuspended: true))
 }
 
 @Test func needsAttentionIsNarrowerThanWorkable() {
     // `idle` is the split: workable (you can type there) but not waiting on you.
     #expect(SessionLifecyclePolicy.isWorkable(status: .idle, isImportedHistory: false))
-    #expect(!SessionLifecyclePolicy.needsAttention(status: .idle, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .idle, isImportedHistory: false, isSuspended: false))
     // `failed` is the other half: not workable, but it does need a decision.
     #expect(!SessionLifecyclePolicy.isWorkable(status: .failed, isImportedHistory: false))
-    #expect(SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: false))
+    #expect(SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: false, isSuspended: false))
 }

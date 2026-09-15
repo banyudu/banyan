@@ -148,6 +148,8 @@ public enum ControlRoute: Equatable {
     case screenshot
     case windowState
     case tick
+    case suspend
+    case resume
 
     public static func resolve(method: String, path: String) -> ControlRoute? {
         switch (method, path) {
@@ -162,13 +164,15 @@ public enum ControlRoute: Equatable {
         case ("POST", "/remove"): return .remove
         case ("POST", "/screenshot"): return .screenshot
         case ("POST", "/tick"): return .tick
+        case ("POST", "/suspend"): return .suspend
+        case ("POST", "/resume"): return .resume
         default: return nil
         }
     }
 
     public var requiresID: Bool {
         switch self {
-        case .select, .mark, .close, .respawn, .restart, .remove: return true
+        case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume: return true
         case .list, .spawn, .screenshot, .windowState, .tick: return false
         }
     }

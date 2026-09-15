@@ -43,6 +43,10 @@ struct BanyanCtl {
                 try post("/select", payload: parsePayload(Array(arguments.dropFirst())))
             case "tick":
                 try post("/tick", payload: parsePayload(Array(arguments.dropFirst())))
+            case "suspend":
+                try post("/suspend", payload: parsePayload(Array(arguments.dropFirst())))
+            case "resume":
+                try post("/resume", payload: parsePayload(Array(arguments.dropFirst())))
             case "close":
                 try post("/close", payload: parsePayload(Array(arguments.dropFirst())))
             case "respawn":
@@ -116,6 +120,10 @@ struct BanyanCtl {
         switch subcommand {
         case "new", "spawn":
             try post("/spawn", payload: parsePayload(Array(args.dropFirst())))
+        case "suspend":
+            try post("/suspend", payload: parsePayload(Array(args.dropFirst())))
+        case "resume":
+            try post("/resume", payload: parsePayload(Array(args.dropFirst())))
         default:
             throw CLIError.message("unknown session subcommand '\(subcommand)'")
         }
@@ -450,6 +458,8 @@ struct BanyanCtl {
           banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE] [--title-url URL]
           banyanctl select --id ID
           banyanctl tick   [--id ID]
+          banyanctl suspend --id ID
+          banyanctl resume  --id ID
           banyanctl close  --id ID
           banyanctl respawn --id ID
           banyanctl restart --id ID
@@ -460,6 +470,11 @@ struct BanyanCtl {
           banyanctl perf fix [--since 7d] [--agent codex|claude] [--cwd PATH]
           banyanctl window-state
           banyanctl list
+
+        suspend parks a session: Banyan stops supervising and rendering it, while
+        its tmux session and any agent inside keep running. resume is lossless and
+        keeps the status the session had when it was parked. Neither one signals or
+        terminates the agent. `banyanctl session suspend|resume --id ID` are aliases.
         """)
     }
 }

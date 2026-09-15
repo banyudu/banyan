@@ -232,6 +232,17 @@ final class ControlServer {
                 }
                 return (200, ["session": summary(session)], nil)
 
+            case .suspend, .resume:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let id = body.id!
+                try store.setSuspended(id: id, suspended: route == .suspend)
+                guard let session = store.sessions.first(where: { $0.id == id }) else {
+                    throw ControlError.notFound(id)
+                }
+                return (200, ["session": summary(session)], nil)
+
             case .remove:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
@@ -368,6 +379,7 @@ final class ControlServer {
             "parent": session.parentSessionID ?? "",
             "isRestored": session.isRestored,
             "isProcessStarted": session.isProcessStarted,
+            "isSuspended": session.isSuspended,
             "projectGroupID": session.projectGroupID,
             "projectGroupTitle": session.projectGroupTitle,
             "displayContextDegraded": session.displayContextDegraded,

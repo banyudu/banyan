@@ -17,6 +17,8 @@ enum AccessibilityID {
     static let terminalReconnectBanner = "banyan.terminal.reconnect-banner"
     static let terminalAttachButton = "banyan.terminal.reconnect-banner.attach"
     static let terminalRecoveryFailureMessage = "banyan.terminal.reconnect-banner.recovery-failure"
+    static let terminalSuspendedBanner = "banyan.terminal.suspended-banner"
+    static let terminalResumeButton = "banyan.terminal.suspended-banner.resume"
     static let toolbarAddSession = "banyan.toolbar.add-session"
     static let toolbarPreferences = "banyan.toolbar.preferences"
     static let toolbarLogo = "banyan.toolbar.logo"
@@ -63,5 +65,9 @@ enum AccessibilityID {
 
     static func sessionRowCloseButton(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id).close"
+    }
+
+    static func sessionRowSuspendedBadge(_ id: String) -> String {
+        "banyan.sidebar.session-row.\(id).suspended"
     }
 }

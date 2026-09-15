@@ -25,7 +25,7 @@ public struct SessionDatabase: Sendable {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto
+            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -63,6 +63,7 @@ public struct SessionDatabase: Sendable {
                     tone: tone,
                     parentSessionID: columnText(statement, 11),
                     agentSessionID: columnText(statement, 14),
+                    isSuspended: sqlite3_column_int(statement, 16) != 0,
                     createdAt: createdAt,
                     updatedAt: updatedAt
                 ))
@@ -190,6 +191,10 @@ public struct SessionDatabase: Sendable {
         try? execute(database, "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN agent_session_id TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN title_url_auto INTEGER NOT NULL DEFAULT 1")
+        // Additive on purpose: an older build ignores an unknown column, so a
+        // suspended row still loads there. A new `status` string would not — an
+        // unparsable status makes `load` drop the row entirely.
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN is_suspended INTEGER NOT NULL DEFAULT 0")
         try execute(database, """
         CREATE TABLE IF NOT EXISTS workspace_state (
             key TEXT PRIMARY KEY,
@@ -210,8 +215,8 @@ public struct SessionDatabase: Sendable {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
@@ -228,7 +233,8 @@ public struct SessionDatabase: Sendable {
             updated_at = excluded.updated_at,
             sort_order = excluded.sort_order,
             agent_session_id = excluded.agent_session_id,
-            title_url_auto = excluded.title_url_auto
+            title_url_auto = excluded.title_url_auto,
+            is_suspended = excluded.is_suspended
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -253,6 +259,7 @@ public struct SessionDatabase: Sendable {
         sqlite3_bind_int64(statement, 15, Int64(sortOrder))
         bindText(statement, 16, snapshot.agentSessionID)
         sqlite3_bind_int(statement, 17, snapshot.titleURLWasAutoDetected ? 1 : 0)
+        sqlite3_bind_int(statement, 18, snapshot.isSuspended ? 1 : 0)
 
         guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
     }

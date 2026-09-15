@@ -16,6 +16,11 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public let tone: SessionTone
     public let parentSessionID: String?
     public let agentSessionID: String?
+    /// Parked out of Banyan's supervision and render budget. Orthogonal to
+    /// `status`: the tmux session and its agent keep running untouched, so a
+    /// suspended row still carries the last observed agent state and resuming
+    /// restores it rather than resetting it.
+    public let isSuspended: Bool
     public let createdAt: Date
     public let updatedAt: Date
 
@@ -34,6 +39,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         tone: SessionTone,
         parentSessionID: String? = nil,
         agentSessionID: String? = nil,
+        isSuspended: Bool = false,
         createdAt: Date,
         updatedAt: Date
     ) {
@@ -51,6 +57,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.tone = tone
         self.parentSessionID = parentSessionID
         self.agentSessionID = agentSessionID
+        self.isSuspended = isSuspended
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -66,7 +73,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, tmuxSessionName, title, titleURL, titleURLWasAutoDetected
         case reportedTitle, generatedTitle, isTitlePinned, cwd, command
-        case status, tone, parentSessionID, agentSessionID, createdAt, updatedAt
+        case status, tone, parentSessionID, agentSessionID, isSuspended, createdAt, updatedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -86,6 +93,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             tone: try container.decode(SessionTone.self, forKey: .tone),
             parentSessionID: try container.decodeIfPresent(String.self, forKey: .parentSessionID),
             agentSessionID: try container.decodeIfPresent(String.self, forKey: .agentSessionID),
+            isSuspended: try container.decodeIfPresent(Bool.self, forKey: .isSuspended) ?? false,
             createdAt: try container.decode(Date.self, forKey: .createdAt),
             updatedAt: try container.decode(Date.self, forKey: .updatedAt)
         )
@@ -95,6 +103,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         status: SessionStatus? = nil,
         tone: SessionTone? = nil,
         title: String? = nil,
+        isSuspended: Bool? = nil,
         updatedAt: Date = Date()
     ) -> SessionSnapshot {
         SessionSnapshot(
@@ -112,6 +121,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             tone: tone ?? self.tone,
             parentSessionID: parentSessionID,
             agentSessionID: agentSessionID,
+            isSuspended: isSuspended ?? self.isSuspended,
             createdAt: createdAt,
             updatedAt: updatedAt
         )

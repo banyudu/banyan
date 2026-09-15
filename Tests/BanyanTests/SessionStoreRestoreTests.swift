@@ -37,10 +37,16 @@ import Testing
 
 @Test func supervisorInspectsRestoredSessionsBeforeTheirTerminalClientAttaches() {
     // Restored-but-unclicked: the row's provider icon and status come from here.
-    #expect(SessionLifecyclePolicy.participatesInSupervisorTick(isProcessStarted: false, isRestored: true))
-    #expect(SessionLifecyclePolicy.participatesInSupervisorTick(isProcessStarted: true, isRestored: false))
+    #expect(SessionLifecyclePolicy.participatesInSupervisorTick(
+        isProcessStarted: false, isRestored: true, isSuspended: false
+    ))
+    #expect(SessionLifecyclePolicy.participatesInSupervisorTick(
+        isProcessStarted: true, isRestored: false, isSuspended: false
+    ))
     // Never launched, or the client terminated: nothing to inspect.
-    #expect(!SessionLifecyclePolicy.participatesInSupervisorTick(isProcessStarted: false, isRestored: false))
+    #expect(!SessionLifecyclePolicy.participatesInSupervisorTick(
+        isProcessStarted: false, isRestored: false, isSuspended: false
+    ))
 }
 
 @Test func closeConfirmationTreatsSupportedAgentSessionsAsOngoingAgents() {

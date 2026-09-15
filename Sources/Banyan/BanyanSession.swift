@@ -71,6 +71,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var isProcessStarted: Bool
     /// Persisted metadata can outlive the dedicated tmux session after reboot.
     @Published var needsRecovery: Bool
+    /// Parked out of Banyan's working set. Deliberately orthogonal to `status`:
+    /// the tmux session and its agent are untouched, so the row keeps the last
+    /// observed agent state and resuming restores it instead of resetting it.
+    /// See `suspend()` / `resume()`.
+    @Published var isSuspended: Bool
     @Published var parentSessionID: String?
     /// Underlying coding-agent session UUID (codex/claude), resolved by matching
     /// live sessions against imported transcript history. Used to build a resume
@@ -187,6 +192,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         updatedAt: Date = Date(),
         isRestored: Bool = false,
         needsRecovery: Bool = false,
+        isSuspended: Bool = false,
         displayContext: SessionProjectContext? = nil,
         theme: TerminalTheme,
         fontFamily: String? = nil,
@@ -262,6 +268,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.updatedAt = updatedAt
         self.isRestored = isRestored
         self.needsRecovery = needsRecovery
+        self.isSuspended = isSuspended
         // A freshly spawned background session has no tmux backing yet. Keep this
         // false until ensureSession succeeds; otherwise the supervisor can race
         // the async tmux creation, observe a missing session, and mark the row

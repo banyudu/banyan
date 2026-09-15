@@ -1099,6 +1099,9 @@ struct ContentView: View {
             onRemove: {
                 try? store.remove(id: item.session.id)
             },
+            onToggleSuspended: {
+                try? store.toggleSuspended(id: item.session.id)
+            },
             onFocusTerminal: {
                 store.focusSelectedTerminal()
             },
@@ -1243,6 +1246,13 @@ struct ContentView: View {
                         ClosedSessionHistoryView(session: session)
                     } else if session.isImportedHistory {
                         ImportedSessionHistoryView(session: session)
+                    } else if session.isSuspended {
+                        VStack(spacing: 0) {
+                            SuspendedSessionBanner(session: session)
+                            Divider()
+                            Spacer()
+                        }
+                        .background(.background)
                     } else if session.needsManualAttach {
                         VStack(spacing: 0) {
                             TerminalReconnectBanner(session: session)
@@ -1867,6 +1877,7 @@ private struct SessionRow: View {
     let isHandoffPending: Bool
     let onHandoff: () -> Void
     let onRemove: () -> Void
+    let onToggleSuspended: () -> Void
     let onFocusTerminal: () -> Void
     let onReopenHistory: () -> Void
 
@@ -1907,6 +1918,16 @@ private struct SessionRow: View {
                 PeakPriceBadge(provider: provider)
             } else if !session.isImportedHistory {
                 ShellSessionIcon()
+            }
+
+            if session.isSuspended && !session.isImportedHistory && session.status != .closed {
+                Image(systemName: "pause.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 18)
+                    .help("Parked — Banyan is not supervising or rendering this session. Its tmux session and agent are still running.")
+                    .accessibilityLabel("Parked")
+                    .accessibilityIdentifier(AccessibilityID.sessionRowSuspendedBadge(session.id))
             }
 
             if !session.isImportedHistory && session.status != .closed && !hidesStatusEmoji {
@@ -1977,7 +1998,7 @@ private struct SessionRow: View {
         .padding(.leading, 4)
         .padding(.trailing, 4)
         .background(rowBackground)
-        .opacity(isHistory && !isSelected ? 0.55 : 1)
+        .opacity(dimsRow ? 0.55 : 1)
         .contentShape(Rectangle())
         .onHover(perform: setRowHovered)
         .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
@@ -2009,6 +2030,9 @@ private struct SessionRow: View {
                 }
             }
             if !session.isImportedHistory && session.status != .closed {
+                Button(session.isSuspended ? "Resume" : "Suspend") {
+                    onToggleSuspended()
+                }
                 Button("Restart") {
                     onRestart()
                 }
@@ -2168,6 +2192,13 @@ private struct SessionRow: View {
         } else {
             Color.clear
         }
+    }
+
+    /// History rows and parked sessions both recede: neither is something the
+    /// user is currently working in. Selection always wins so the row the user is
+    /// looking at stays legible.
+    private var dimsRow: Bool {
+        !isSelected && (isHistory || session.isSuspended)
     }
 
     /// `.running` only ever means "a bare shell prompt", which the terminal icon
@@ -2805,6 +2836,41 @@ private struct TerminalReconnectBanner: View {
             return "Session needs recovery after restart"
         }
         return "Session is detached"
+    }
+}
+
+/// Shown over the frozen pane of a parked session. Nothing was torn down, so the
+/// only thing on offer is putting it back in the working set.
+private struct SuspendedSessionBanner: View {
+    @EnvironmentObject private var store: SessionStore
+    @ObservedObject var session: BanyanSession
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "pause.circle")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Session is parked")
+                    .font(.callout)
+                Text("Banyan stopped supervising and rendering it. Its tmux session and any agent inside are still running.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button {
+                try? store.resume(id: session.id)
+            } label: {
+                Label("Resume", systemImage: "play")
+            }
+            .buttonStyle(.banyanBorderedProminent)
+            .controlSize(.small)
+            .accessibilityIdentifier(AccessibilityID.terminalResumeButton)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .accessibilityIdentifier(AccessibilityID.terminalSuspendedBanner)
     }
 }
 

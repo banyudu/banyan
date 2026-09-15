@@ -333,13 +333,15 @@ swift run banyanctl agent run \
 
 swift run banyanctl mark --id TASK-123 --status need-input --tone yellow
 swift run banyanctl mark --id TASK-123 --status review --tone purple --title "TASK-123 review"
+swift run banyanctl suspend --id TASK-123
+swift run banyanctl resume --id TASK-123
 swift run banyanctl close --id TASK-123
 swift run banyanctl respawn --id TASK-123
 swift run banyanctl remove --id TASK-123
 swift run banyanctl list
 ```
 
-`session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
+`session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. `suspend` parks a session: Banyan drops it from the supervisor tick, branch/context refresh, and terminal rendering, while its tmux session and any agent inside keep running untouched — so the app's idle cost tracks the sessions you are actually watching rather than every session you have open. `resume` puts it back, keeping the status it had when it was parked. Neither one signals or terminates the agent. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
 
 The control API uses a versioned JSON schema (`apiVersion: "v1"`) and a local shared token stored at:
 

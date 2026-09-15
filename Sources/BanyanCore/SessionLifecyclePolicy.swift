@@ -29,19 +29,31 @@ public enum SessionLifecyclePolicy {
     /// `SessionStatus.priority` — asking, need-input, failed — so attention
     /// navigation visits sessions in the same order the sidebar already sorts
     /// them.
+    /// Parked sessions are excluded whatever their status: nothing observes one,
+    /// so the status it was parked at is frozen and would keep answering this
+    /// question forever, which is the competition for attention parking exists
+    /// to end.
     public static func needsAttention(
         status: SessionStatus,
-        isImportedHistory: Bool
+        isImportedHistory: Bool,
+        isSuspended: Bool
     ) -> Bool {
         !isImportedHistory
+            && !isSuspended
             && [.asking, .needInput, .failed].contains(status)
     }
 
+    /// A suspended session is an explicit gate rather than something inferred
+    /// from status: parking leaves the tmux session and its agent running, so a
+    /// parked row still looks started/restored and would otherwise keep paying
+    /// the full per-tick inspection cost.
     public static func participatesInSupervisorTick(
         isProcessStarted: Bool,
-        isRestored: Bool
+        isRestored: Bool,
+        isSuspended: Bool
     ) -> Bool {
-        isProcessStarted || isRestored
+        guard !isSuspended else { return false }
+        return isProcessStarted || isRestored
     }
 
     public static func restoredStatus(snapshotStatus: SessionStatus) -> SessionStatus {

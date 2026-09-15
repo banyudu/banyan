@@ -16,7 +16,7 @@ extension BanyanSession {
     }
 
     func start() {
-        guard !isImportedHistory else { return }
+        guard !isImportedHistory, !isSuspended else { return }
         guard !terminalView.process.running else { return }
         isDetachingTerminalClient = false
         let startedAt = DispatchTime.now()
@@ -34,7 +34,7 @@ extension BanyanSession {
     /// stealing selection/focus. When the session is later selected, `start()` attaches
     /// the visible client to this already-running tmux session (`ensureSession` is idempotent).
     func startBackgroundBackendIfNeeded() {
-        guard !isImportedHistory, status != .closed else { return }
+        guard !isImportedHistory, status != .closed, !isSuspended else { return }
         // Deliberately does not attach a visible client, so it must not create a
         // terminal either — an absent one is by definition not running.
         guard !isProcessStarted, loadedTerminalView?.process.running != true else { return }
@@ -278,12 +278,16 @@ extension BanyanSession {
         stopTerminalClient()
         if markClosed {
             status = .closed
+            // A closed session is over, not parked. Leaving the flag set would
+            // badge a history row and carry parking into a later reopen.
+            isSuspended = false
         }
         touch()
     }
 
     func killBackingSession() {
         status = .closed
+        isSuspended = false
         stopTerminalClient()
         sessionRuntime.removeBackingSession(named: tmuxSessionName)
         touch()
@@ -305,6 +309,46 @@ extension BanyanSession {
         }
         isProcessStarted = false
         isRestored = false
+        touch()
+    }
+
+    /// Parks the session: Banyan stops observing and rendering it, while its tmux
+    /// session and agent process keep running untouched. Nothing is torn down, so
+    /// `resume()` is lossless.
+    ///
+    /// `status` is deliberately left alone. It still describes the agent, which is
+    /// still doing whatever it was doing; overwriting it here would lose exactly
+    /// the state a resume is supposed to bring back.
+    func suspend() {
+        guard !isImportedHistory, status != .closed, !isSuspended else { return }
+        isSuspended = true
+        // Drops the SwiftTerm client only. Reattaching later rebuilds the buffer
+        // from the live pane, so no scrollback is lost.
+        detachTerminalClient()
+    }
+
+    /// Returns the session to Banyan's working set.
+    ///
+    /// Nothing observed this session while it was parked, so a tmux server that
+    /// exited meanwhile is only discovered here. One `has-session` probe settles
+    /// whether the row re-enters supervision or needs recovery.
+    func resume() {
+        guard isSuspended else { return }
+        isSuspended = false
+        if tmuxBackend.hasSession(named: tmuxSessionName) {
+            // The backing session ran the whole time, so rejoin the supervisor
+            // tick immediately rather than waiting for a visible client to attach.
+            isProcessStarted = true
+            // This probe outranks anything the liveness sweep concluded earlier.
+            needsRecovery = false
+        } else {
+            // Same shape as a session restored without its tmux server: persisted
+            // metadata, nothing behind it. `needsManualAttach` reads all three
+            // fields, so the recovery banner needs `isRestored` set here too.
+            isProcessStarted = false
+            isRestored = true
+            needsRecovery = true
+        }
         touch()
     }
 

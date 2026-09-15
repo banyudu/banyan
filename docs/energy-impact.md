@@ -29,6 +29,15 @@ started sessions are idle, the cadence becomes 6 seconds in the foreground and
 15 seconds in the background, before existing session-count, low-power, and
 thermal backoff is applied.
 
+Sessions the user has parked (`banyanctl suspend`, or Suspend in the sidebar
+context menu) are excluded from the tick entirely, along with branch/context
+refresh, selected-context refresh, and terminal rendering. `supervisor.tick`'s
+`sessions=` detail counts only unparked sessions, and no `supervisor.session`
+event is written for a parked one, so tick cost tracks the working set rather
+than the number of open sessions. Their tmux sessions and agents are untouched;
+a single `tmux list-sessions` sweep, at most hourly regardless of how many are
+parked, notices one whose backing session exited.
+
 Each session also backs off independently after repeated identical
 observations. Quiet sessions progress from the normal cadence to 2x, 4x, 8x,
 and longer intervals, capped at one hour. If every session is backed off, the
