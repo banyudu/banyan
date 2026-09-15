@@ -30,6 +30,14 @@ When the Linear sidebar is active, use `Cmd+J` / `Cmd+K` to move through issues,
 Sessions. The existing `Cmd+J` / `Cmd+K` shortcuts continue to move through
 terminals when the Sessions sidebar is active.
 
+### Jumping to sessions that need you
+
+`Cmd+Opt+J` / `Cmd+Opt+K` move forward and back through only the sessions that
+are blocked on you — asking, needing input, or failed — wrapping around the
+sidebar order. Idle shells and imported history are skipped, and the chord stays
+put when the session you are on is the only one waiting, so nothing happens
+silently. Both directions are also in the Terminal menu and the command palette.
+
 The toolbar is intentionally small:
 
 - `+` forks the selected session's working directory into a new default shell.

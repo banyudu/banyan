@@ -46,3 +46,183 @@ import Testing
 @Test func nextMatchingSelectionReturnsNilWithoutMatches() {
     #expect(SessionSelectionNavigator.nextMatchingID(in: ["one", "two"], selectedID: "one") { _ in false } == nil)
 }
+
+@Test func matchingSelectionWrapsBackwardThroughMatches() {
+    let ids = ["one", "two", "three", "four"]
+    let matches: Set<String> = ["two", "four"]
+
+    #expect(navigatePrevious(ids, from: "three", matches) == "two")
+    #expect(navigatePrevious(ids, from: "two", matches) == "four")
+    #expect(navigatePrevious(ids, from: "one", matches) == "four")
+    #expect(navigatePrevious(ids, from: nil, matches) == "four")
+}
+
+@Test func matchingSelectionCanSkipTheCurrentSelection() {
+    let ids = ["one", "two", "three"]
+    let onlyMatch: Set<String> = ["two"]
+
+    // Sitting on the single match: including it silently reselects, excluding it
+    // makes "nothing else is waiting" an observable no-op.
+    #expect(SessionSelectionNavigator.matchingID(
+        in: ids,
+        selectedID: "two",
+        direction: .next,
+        isMatch: onlyMatch.contains
+    ) == "two")
+    #expect(SessionSelectionNavigator.matchingID(
+        in: ids,
+        selectedID: "two",
+        direction: .next,
+        includingSelection: false,
+        isMatch: onlyMatch.contains
+    ) == nil)
+    #expect(SessionSelectionNavigator.matchingID(
+        in: ids,
+        selectedID: "two",
+        direction: .previous,
+        includingSelection: false,
+        isMatch: onlyMatch.contains
+    ) == nil)
+}
+
+@Test func matchingSelectionStillMovesOffTheSelectionWhenOthersMatch() {
+    let ids = ["one", "two", "three", "four"]
+    let matches: Set<String> = ["two", "four"]
+
+    #expect(SessionSelectionNavigator.matchingID(
+        in: ids,
+        selectedID: "two",
+        direction: .next,
+        includingSelection: false,
+        isMatch: matches.contains
+    ) == "four")
+    #expect(SessionSelectionNavigator.matchingID(
+        in: ids,
+        selectedID: "four",
+        direction: .next,
+        includingSelection: false,
+        isMatch: matches.contains
+    ) == "two")
+    #expect(SessionSelectionNavigator.matchingID(
+        in: ids,
+        selectedID: "two",
+        direction: .previous,
+        includingSelection: false,
+        isMatch: matches.contains
+    ) == "four")
+}
+
+@Test func matchingSelectionFallsBackWhenSelectionIsMissing() {
+    let ids = ["one", "two", "three"]
+    let matches: Set<String> = ["two", "three"]
+
+    #expect(navigatePrevious(ids, from: "missing", matches) == "three")
+    #expect(SessionSelectionNavigator.matchingID(
+        in: [],
+        selectedID: nil,
+        direction: .previous,
+        isMatch: matches.contains
+    ) == nil)
+}
+
+/// The composition the app actually runs: sidebar order + `needsAttention`.
+private struct RosterEntry {
+    let id: String
+    let status: SessionStatus
+    var isImportedHistory = false
+}
+
+private let roster: [RosterEntry] = [
+    RosterEntry(id: "running", status: .running),
+    RosterEntry(id: "asking", status: .asking),
+    RosterEntry(id: "idle", status: .idle),
+    RosterEntry(id: "need-input", status: .needInput),
+    RosterEntry(id: "executing", status: .executing),
+    RosterEntry(id: "failed", status: .failed),
+    RosterEntry(id: "imported-asking", status: .asking, isImportedHistory: true)
+]
+
+private func nextNeedingAttention(from selectedID: String?) -> String? {
+    SessionSelectionNavigator.matchingID(
+        in: roster.map(\.id),
+        selectedID: selectedID,
+        direction: .next,
+        includingSelection: false,
+        isMatch: needsAttention
+    )
+}
+
+private func previousNeedingAttention(from selectedID: String?) -> String? {
+    SessionSelectionNavigator.matchingID(
+        in: roster.map(\.id),
+        selectedID: selectedID,
+        direction: .previous,
+        includingSelection: false,
+        isMatch: needsAttention
+    )
+}
+
+private func needsAttention(_ id: String) -> Bool {
+    guard let entry = roster.first(where: { $0.id == id }) else { return false }
+    return SessionLifecyclePolicy.needsAttention(
+        status: entry.status,
+        isImportedHistory: entry.isImportedHistory
+    )
+}
+
+@Test func attentionNavigationSkipsBusyQuietAndImportedSessions() {
+    #expect(nextNeedingAttention(from: "running") == "asking")
+    #expect(nextNeedingAttention(from: "asking") == "need-input")
+    #expect(nextNeedingAttention(from: "idle") == "need-input")
+    #expect(nextNeedingAttention(from: "need-input") == "failed")
+    #expect(nextNeedingAttention(from: "executing") == "failed")
+}
+
+@Test func attentionNavigationWrapsPastTheEndOfTheRoster() {
+    // "imported-asking" is last and never a target, so the wrap has to reach it
+    // and keep going back to the top of the list.
+    #expect(nextNeedingAttention(from: "failed") == "asking")
+    #expect(nextNeedingAttention(from: "imported-asking") == "asking")
+    #expect(previousNeedingAttention(from: "asking") == "failed")
+    #expect(previousNeedingAttention(from: "running") == "failed")
+}
+
+@Test func attentionNavigationReversesThroughTheSameSessions() {
+    #expect(previousNeedingAttention(from: "failed") == "need-input")
+    #expect(previousNeedingAttention(from: "executing") == "need-input")
+    #expect(previousNeedingAttention(from: "need-input") == "asking")
+    #expect(previousNeedingAttention(from: "idle") == "asking")
+}
+
+@Test func attentionNavigationStaysPutWhenNothingElseIsWaiting() {
+    let calm = ["running", "asking", "idle"]
+    let isMatch: (String) -> Bool = { $0 == "asking" }
+
+    #expect(SessionSelectionNavigator.matchingID(
+        in: calm,
+        selectedID: "asking",
+        direction: .next,
+        includingSelection: false,
+        isMatch: isMatch
+    ) == nil)
+    #expect(SessionSelectionNavigator.matchingID(
+        in: calm,
+        selectedID: "asking",
+        direction: .previous,
+        includingSelection: false,
+        isMatch: isMatch
+    ) == nil)
+}
+
+private func navigatePrevious(
+    _ ids: [String],
+    from selectedID: String?,
+    _ matches: Set<String>
+) -> String? {
+    SessionSelectionNavigator.matchingID(
+        in: ids,
+        selectedID: selectedID,
+        direction: .previous,
+        isMatch: matches.contains
+    )
+}

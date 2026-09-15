@@ -74,3 +74,35 @@ import Testing
     #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .completed, provider: .codex))
     #expect(!SessionLifecyclePolicy.isOngoingCodingAgentSession(status: .executing, provider: .gemini))
 }
+
+@Test func needsAttentionCoversSessionsBlockedOnAHuman() {
+    #expect(SessionLifecyclePolicy.needsAttention(status: .asking, isImportedHistory: false))
+    #expect(SessionLifecyclePolicy.needsAttention(status: .needInput, isImportedHistory: false))
+    #expect(SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: false))
+}
+
+@Test func needsAttentionSkipsQuietAndBusySessions() {
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .idle, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .running, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .executing, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .subagents, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .longRunningShell, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .review, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .completed, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .closed, isImportedHistory: false))
+}
+
+@Test func needsAttentionSkipsImportedHistory() {
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .asking, isImportedHistory: true))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .needInput, isImportedHistory: true))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: true))
+}
+
+@Test func needsAttentionIsNarrowerThanWorkable() {
+    // `idle` is the split: workable (you can type there) but not waiting on you.
+    #expect(SessionLifecyclePolicy.isWorkable(status: .idle, isImportedHistory: false))
+    #expect(!SessionLifecyclePolicy.needsAttention(status: .idle, isImportedHistory: false))
+    // `failed` is the other half: not workable, but it does need a decision.
+    #expect(!SessionLifecyclePolicy.isWorkable(status: .failed, isImportedHistory: false))
+    #expect(SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: false))
+}

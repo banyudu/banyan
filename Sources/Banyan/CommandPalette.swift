@@ -11,6 +11,64 @@ struct CommandPaletteItem: Identifiable {
     let action: () -> Void
 }
 
+/// The Navigation rows of the command palette.
+///
+/// Built here rather than inline in `ContentView` so the advertised shortcut
+/// labels come from `SessionAttentionShortcuts` — the same values the key
+/// monitor matches and the menu binds — and so they can be asserted in tests.
+enum NavigationCommandPaletteItems {
+    static func items(
+        onNextSession: @escaping () -> Void,
+        onPreviousSession: @escaping () -> Void,
+        onNextNeedingAttention: @escaping () -> Void,
+        onPreviousNeedingAttention: @escaping () -> Void,
+        onNextWorkable: @escaping () -> Void
+    ) -> [CommandPaletteItem] {
+        [
+            CommandPaletteItem(
+                id: "navigation.next-session",
+                category: "Navigation",
+                title: "Next Session",
+                detail: nil,
+                shortcut: "⌘J",
+                action: onNextSession
+            ),
+            CommandPaletteItem(
+                id: "navigation.previous-session",
+                category: "Navigation",
+                title: "Previous Session",
+                detail: nil,
+                shortcut: "⌘K",
+                action: onPreviousSession
+            ),
+            CommandPaletteItem(
+                id: "navigation.next-needs-attention",
+                category: "Navigation",
+                title: "Next Session Needing Attention",
+                detail: "Jump to a session waiting on a decision",
+                shortcut: SessionAttentionShortcuts.next.display,
+                action: onNextNeedingAttention
+            ),
+            CommandPaletteItem(
+                id: "navigation.previous-needs-attention",
+                category: "Navigation",
+                title: "Previous Session Needing Attention",
+                detail: "Jump back to a session waiting on a decision",
+                shortcut: SessionAttentionShortcuts.previous.display,
+                action: onPreviousNeedingAttention
+            ),
+            CommandPaletteItem(
+                id: "navigation.next-workable",
+                category: "Navigation",
+                title: "Next Workable Session",
+                detail: nil,
+                shortcut: nil,
+                action: onNextWorkable
+            )
+        ]
+    }
+}
+
 private struct ScoredCommandItem {
     let score: Int
     let offset: Int

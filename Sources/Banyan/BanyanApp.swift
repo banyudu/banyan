@@ -103,6 +103,9 @@ struct BanyanApp: App {
                             store.selectPreviousSession()
                         }
                     }
+                    Self.jumpOverlayMonitor.onSelectNeedingAttention = { [weak store] direction in
+                        store?.selectSessionNeedingAttention(direction: direction)
+                    }
                     Self.jumpOverlayMonitor.onHandoff = { [weak store] in
                         store?.handleHandoffShortcut()
                         return true
@@ -256,6 +259,24 @@ struct BanyanApp: App {
                     store.selectNextWorkableSession()
                 }
                 .disabled(!store.hasWorkableSession)
+
+                Button("Next Terminal Needing Attention") {
+                    store.selectNextSessionNeedingAttention()
+                }
+                .keyboardShortcut(
+                    SessionAttentionShortcuts.next.keyEquivalent,
+                    modifiers: SessionAttentionShortcuts.next.eventModifiers
+                )
+                .disabled(!store.canSelectSessionNeedingAttention)
+
+                Button("Previous Terminal Needing Attention") {
+                    store.selectPreviousSessionNeedingAttention()
+                }
+                .keyboardShortcut(
+                    SessionAttentionShortcuts.previous.keyEquivalent,
+                    modifiers: SessionAttentionShortcuts.previous.eventModifiers
+                )
+                .disabled(!store.canSelectSessionNeedingAttention)
 
                 Divider()
 

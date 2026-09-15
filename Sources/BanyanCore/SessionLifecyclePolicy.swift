@@ -23,6 +23,20 @@ public enum SessionLifecyclePolicy {
             && [.asking, .needInput, .idle].contains(status)
     }
 
+    /// Sessions that are blocked on a human decision or input.
+    /// Deliberately narrower than `isWorkable`: an `idle` shell is quiet, not
+    /// blocked, while a `failed` one does need a call. The set is the top of
+    /// `SessionStatus.priority` — asking, need-input, failed — so attention
+    /// navigation visits sessions in the same order the sidebar already sorts
+    /// them.
+    public static func needsAttention(
+        status: SessionStatus,
+        isImportedHistory: Bool
+    ) -> Bool {
+        !isImportedHistory
+            && [.asking, .needInput, .failed].contains(status)
+    }
+
     public static func participatesInSupervisorTick(
         isProcessStarted: Bool,
         isRestored: Bool

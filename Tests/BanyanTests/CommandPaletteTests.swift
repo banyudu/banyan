@@ -1,6 +1,51 @@
 @testable import Banyan
+import AppKit
 import Foundation
 import Testing
+
+private func navigationItems() -> [CommandPaletteItem] {
+    NavigationCommandPaletteItems.items(
+        onNextSession: {},
+        onPreviousSession: {},
+        onNextNeedingAttention: {},
+        onPreviousNeedingAttention: {},
+        onNextWorkable: {}
+    )
+}
+
+@Test func commandPaletteAdvertisesTheAttentionShortcutsThatAreActuallyBound() {
+    let items = navigationItems()
+
+    let next = items.first { $0.id == "navigation.next-needs-attention" }
+    let previous = items.first { $0.id == "navigation.previous-needs-attention" }
+
+    #expect(next?.title == "Next Session Needing Attention")
+    #expect(next?.shortcut == "⌘⌥J")
+    #expect(previous?.title == "Previous Session Needing Attention")
+    #expect(previous?.shortcut == "⌘⌥K")
+
+    // The advertised label has to be the chord the key monitor consumes.
+    #expect(SessionAttentionShortcuts.direction(
+        for: "j",
+        modifiers: [.command, .option]
+    ) == .next)
+    #expect(SessionAttentionShortcuts.direction(
+        for: "k",
+        modifiers: [.command, .option]
+    ) == .previous)
+}
+
+@Test func commandPaletteKeepsTheExistingNavigationRows() {
+    let ids = navigationItems().map(\.id)
+
+    #expect(ids == [
+        "navigation.next-session",
+        "navigation.previous-session",
+        "navigation.next-needs-attention",
+        "navigation.previous-needs-attention",
+        "navigation.next-workable"
+    ])
+}
 
 @Test func commandPaletteRecognizesLinearIssueIdentifiers() {
     #expect(CommandPaletteTargetResolver.linearIssueID(in: "ENG-123") == "ENG-123")
