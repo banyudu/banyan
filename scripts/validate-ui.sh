@@ -13,7 +13,8 @@ REPLACED_RUNNING_APP=0
 mkdir -p "$ARTIFACT_DIR"
 
 if [[ ! -d "$APP" || ! -x "$CTL" ]]; then
-  "$ROOT_DIR/scripts/package-app.sh"
+  # Pin the checkout: $APP and $CTL below are read back from this one.
+  BANYAN_ROOT="$ROOT_DIR" "$ROOT_DIR/scripts/package-app.sh"
 fi
 
 cleanup() {
