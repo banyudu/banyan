@@ -6160,6 +6160,7 @@ open class Terminal {
     {
         guard let regex = Self.ghosttyImplicitLinkRegex,
               rowMayContainImplicitLink(row, in: buffer),
+              implicitGroupMayContainLink(around: row, in: buffer),
               let lineMap = buildGhosttyImplicitLineMap(row: row, targetCol: nil, in: buffer),
               Self.lineMapMayContainLink(lineMap.text)
         else {
@@ -6239,6 +6240,35 @@ open class Terminal {
             }
         }
         return false
+    }
+
+    /// Second, still-cheap prefilter, applied *before* `buildGhosttyImplicitLineMap`
+    /// so link-free rows never pay for the line map or its per-seam ICU regexes.
+    ///
+    /// A row the seam heuristic joined is always adjacent to a seam whose regex
+    /// matched across it, so the matched text — and with it one of `://`, `/`,
+    /// `#digit`, or `letters:` followed by a non-space — lies within this row's ±1
+    /// window. Rows in a real terminal wrap are the exception: their link can carry
+    /// its shape characters further out, so they keep the weak colon test that
+    /// `rowMayContainImplicitLink` has already applied rather than being rejected.
+    private func implicitGroupMayContainLink(around row: Int, in buffer: Buffer) -> Bool
+    {
+        if buffer.lines[row].isWrapped {
+            return true
+        }
+        if row + 1 < buffer.lines.count, buffer.lines[row + 1].isWrapped {
+            return true
+        }
+
+        var text = ""
+        for candidate in (row - 1)...(row + 1) {
+            guard candidate >= 0, candidate < buffer.lines.count else {
+                continue
+            }
+            let line = buffer.lines[candidate]
+            text += implicitLineSegmentText(line: line, startCol: 0, endCol: min(cols, line.count))
+        }
+        return Self.lineMapMayContainLink(text)
     }
 
     private func payloadCode(at position: Position, in buffer: Buffer) -> UInt16?

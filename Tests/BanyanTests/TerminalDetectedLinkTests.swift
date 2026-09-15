@@ -71,6 +71,21 @@ private func detectedRanges(after text: String, in view: DetectingLocalProcessTe
     #expect(detectedRanges(after: "id#45 abc#123 #ff0000 e7#12 --color=#123456", in: view).isEmpty)
 }
 
+/// A URL longer than the row is wrapped by the terminal into a real `isWrapped`
+/// group, so both rows have to report the columns they cover. Row-level detection
+/// prefiltering must not reject a continuation row just because its own text holds
+/// no recognizable fragment of the URL.
+@MainActor
+@Test func detectsURLSpreadAcrossWrappedRows() {
+    let view = makeTerminalView(width: 400)
+    let cols = view.terminal.cols
+    let url = "https://example.com/" + String(repeating: "a", count: cols - 8)
+    view.feed(text: url)
+
+    #expect(view.terminal.implicitLinkRowRanges(row: 0) == [0..<cols])
+    #expect(!view.terminal.implicitLinkRowRanges(row: 1).isEmpty)
+}
+
 @MainActor
 @Test func linkMatchReturnsTheReferenceNumber() {
     let view = makeTerminalView()
