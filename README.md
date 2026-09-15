@@ -214,7 +214,20 @@ scripts/restart-app.sh                    # relaunch the packaged candidate
 scripts/restart-app.sh --stable           # switch to /Applications/Banyan.app
 scripts/restart-app.sh --stable --force   # dev build is hung: SIGKILL it first
 scripts/restart-app.sh --previous         # roll back to the pre-promotion stable
+scripts/restart-app.sh --here             # use this checkout, not the main one
 ```
+
+### Which checkout gets built and launched
+
+`package-app.sh` and `restart-app.sh` act on the **main checkout** by default,
+even when invoked from a linked worktree — after merging, the intent is normally
+"run what is on main". Both print the checkout they resolved to. Pass `--here` to
+act on the worktree the script lives in (testing an unmerged change), or set
+`BANYAN_ROOT` to pin one explicitly.
+
+Because the two channels share port 7842 and `state.sqlite`, `restart-app.sh`
+also refuses to launch while another Banyan still owns the port, and names the
+process that holds it. Quit that instance, or pass `--force`.
 
 ### Reboot recovery
 

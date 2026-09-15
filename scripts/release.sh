@@ -28,6 +28,9 @@ if [[ -z "$IDENTITY" ]]; then
 fi
 
 echo "Building Banyan $VERSION with: $IDENTITY"
+# Pin the checkout: a release packages the tree this script just verified clean,
+# never whatever the main checkout happens to be sitting on.
+BANYAN_ROOT="$ROOT_DIR" \
 BANYAN_VERSION="$VERSION" \
 BANYAN_SKIP_INSTALL=1 \
 BANYAN_SIGNING_IDENTITY="$IDENTITY" \

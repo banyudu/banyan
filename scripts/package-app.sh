@@ -1,7 +1,35 @@
 #!/usr/bin/env bash
+# Build, sign, and package Banyan.app, then promote it to /Applications.
+#
+# Which checkout:
+#   By default this builds the MAIN checkout, not the worktree the script happens
+#   to live in — packaging is normally "ship what is on merged main". Pass --here
+#   to build this script's own checkout, or set BANYAN_ROOT to pin one (which is
+#   what release.sh and validate-ui.sh do, since they read back <root>/dist).
+#
+# Environment:
+#   BANYAN_VERSION         CFBundleShortVersionString (default below)
+#   BANYAN_INSTALL_DIR     where to promote the bundle (default /Applications)
+#   BANYAN_SKIP_INSTALL=1  package only, do not promote
+#   BANYAN_SIGNING_IDENTITY / APPLE_SIGNING_IDENTITY_DEV  Developer ID to sign with
 set -euo pipefail
 
-ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/repo-root.sh
+source "$SCRIPT_ROOT/scripts/lib/repo-root.sh"
+
+HERE=0
+for arg in "$@"; do
+  case "$arg" in
+    --here) HERE=1 ;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "package-app: unknown option '$arg' (--here)" >&2; exit 1 ;;
+  esac
+done
+
+ROOT_DIR="$(banyan_resolve_root "$SCRIPT_ROOT" "$HERE")"
+banyan_announce_root "$ROOT_DIR" "$SCRIPT_ROOT" "Building checkout:"
+
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/Banyan.app"
 CONTENTS_DIR="$APP_DIR/Contents"

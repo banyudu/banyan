@@ -43,9 +43,12 @@ generalize them before writing them into the repo.
 - Delivery workflow: when asked to ship a change, review the scoped diff, commit,
   push the current branch, rebuild/package the app (`scripts/package-app.sh`),
   restart the requested Banyan channel (`scripts/restart-app.sh`), and verify that
-  the app's control server comes back up. Report the commit, push, build, restart,
-  and verification results, including any pre-existing test failures or build
-  warnings.
+  the app's control server comes back up. Both scripts act on the main checkout by
+  default even when run from a worktree, and print which one they resolved to, so
+  a post-merge ship packages merged `main`; pass `--here` to build the worktree
+  instead (for verifying a change before it lands). Report the commit, push,
+  build, restart, and verification results, including any pre-existing test
+  failures or build warnings.
 
 - Prefer native SwiftUI controls, toolbar items, window styling, and layout APIs for the macOS app. Avoid custom AppKit titlebar/accessory replacements unless there is no native SwiftUI path and the tradeoff is explicitly accepted.
 - Prefer async, event-driven app logic for UI and runtime state. Avoid polling loops and repeating timers for state that can come from delegate callbacks, notifications, filesystem/process events, async sequences, or SwiftUI/Observation updates; if polling is unavoidable, document why and keep the interval adaptive to foreground/background, battery, and session count.
