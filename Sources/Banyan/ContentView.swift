@@ -276,40 +276,25 @@ struct ContentView: View {
                 detail: store.selectedPullRequestURL?.absoluteString,
                 shortcut: nil,
                 action: store.openSelectedPullRequest
-            ),
-            CommandPaletteItem(
-                id: "navigation.next-session",
-                category: "Navigation",
-                title: "Next Session",
-                detail: nil,
-                shortcut: "⌘J",
-                action: store.selectNextSession
-            ),
-            CommandPaletteItem(
-                id: "navigation.previous-session",
-                category: "Navigation",
-                title: "Previous Session",
-                detail: nil,
-                shortcut: "⌘K",
-                action: store.selectPreviousSession
-            ),
-            CommandPaletteItem(
-                id: "navigation.next-workable",
-                category: "Navigation",
-                title: "Next Workable Session",
-                detail: nil,
-                shortcut: nil,
-                action: store.selectNextWorkableSession
-            ),
-            CommandPaletteItem(
-                id: "view.sessions",
-                category: "View",
-                title: "Show Sessions",
-                detail: "Open the sessions sidebar",
-                shortcut: "⌘⇧S",
-                action: { store.sidebarMode = .sessions }
             )
         ]
+
+        items.append(contentsOf: NavigationCommandPaletteItems.items(
+            onNextSession: store.selectNextSession,
+            onPreviousSession: store.selectPreviousSession,
+            onNextNeedingAttention: store.selectNextSessionNeedingAttention,
+            onPreviousNeedingAttention: store.selectPreviousSessionNeedingAttention,
+            onNextWorkable: store.selectNextWorkableSession
+        ))
+
+        items.append(CommandPaletteItem(
+            id: "view.sessions",
+            category: "View",
+            title: "Show Sessions",
+            detail: "Open the sessions sidebar",
+            shortcut: "⌘⇧S",
+            action: { store.sidebarMode = .sessions }
+        ))
 
         for (index, item) in store.sidebarSessions.enumerated() {
             let shortcut = JumpOverlayMonitor.shortcutDisplay(for: index + 1)

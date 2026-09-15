@@ -2496,6 +2496,37 @@ final class SessionStore: ObservableObject {
         sidebarSessions.contains { isWorkableSession($0.id) }
     }
 
+    func selectNextSessionNeedingAttention() {
+        selectSessionNeedingAttention(direction: .next)
+    }
+
+    func selectPreviousSessionNeedingAttention() {
+        selectSessionNeedingAttention(direction: .previous)
+    }
+
+    /// Moves to the nearest session blocked on a decision, wrapping around the
+    /// sidebar order. The current selection is excluded, so pressing the chord
+    /// while sitting on the only waiting session stays put instead of silently
+    /// reselecting it.
+    func selectSessionNeedingAttention(direction: SessionSelectionDirection) {
+        guard let id = SessionSelectionNavigator.matchingID(
+            in: sidebarSessions.map(\.id),
+            selectedID: selection.selectedSessionID,
+            direction: direction,
+            includingSelection: false,
+            isMatch: isSessionNeedingAttention
+        ) else {
+            return
+        }
+        selection.selectedSessionID = id
+    }
+
+    var canSelectSessionNeedingAttention: Bool {
+        sidebarSessions.contains {
+            $0.id != selection.selectedSessionID && isSessionNeedingAttention($0.id)
+        }
+    }
+
     @discardableResult
     func selectSession(shortcutIndex: Int) -> Bool {
         guard let id = SessionSelectionNavigator.directID(
@@ -3586,6 +3617,14 @@ final class SessionStore: ObservableObject {
     private func isWorkableSession(_ id: String) -> Bool {
         guard let session = sessions.first(where: { $0.id == id }) else { return false }
         return SessionLifecyclePolicy.isWorkable(
+            status: session.status,
+            isImportedHistory: session.isImportedHistory
+        )
+    }
+
+    private func isSessionNeedingAttention(_ id: String) -> Bool {
+        guard let session = sessions.first(where: { $0.id == id }) else { return false }
+        return SessionLifecyclePolicy.needsAttention(
             status: session.status,
             isImportedHistory: session.isImportedHistory
         )

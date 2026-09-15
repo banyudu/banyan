@@ -1,4 +1,5 @@
 import AppKit
+import BanyanCore
 
 /// Handles the always-visible session jump shortcuts and ⌘J/⌘K navigation.
 /// Digits use ⌘+0…9; letters use ⌘⇧+A…Z so ordinary editing shortcuts remain free;
@@ -9,6 +10,7 @@ final class JumpOverlayMonitor {
     var onJump: ((Int) -> Bool)?
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
+    var onSelectNeedingAttention: ((SessionSelectionDirection) -> Void)?
     var onHandoff: (() -> Bool)?
 
     private var keyMonitor: Any?
@@ -26,6 +28,7 @@ final class JumpOverlayMonitor {
             guard let self else { return event }
 
             if self.handleHandoff(event) { return nil }
+            if self.handleAttentionShortcut(event) { return nil }
             if self.handleCmdJK(event) { return nil }
             if self.handleJumpKey(event) { return nil }
             return event
@@ -41,7 +44,7 @@ final class JumpOverlayMonitor {
 
     // MARK: - Event handling
 
-    private static let interestingModifiers: NSEvent.ModifierFlags = [.command, .shift, .control, .option]
+    private static let interestingModifiers = SessionShortcut.comparedModifiers
 
     private func handleHandoff(_ event: NSEvent) -> Bool {
         guard let char = event.charactersIgnoringModifiers?.lowercased().first,
@@ -49,6 +52,15 @@ final class JumpOverlayMonitor {
             return false
         }
         return onHandoff?() ?? false
+    }
+
+    private func handleAttentionShortcut(_ event: NSEvent) -> Bool {
+        guard let char = event.charactersIgnoringModifiers?.first else { return false }
+        return Self.dispatchAttentionShortcut(
+            for: char,
+            modifiers: event.modifierFlags,
+            onSelect: onSelectNeedingAttention
+        )
     }
 
     private func handleCmdJK(_ event: NSEvent) -> Bool {
@@ -123,6 +135,25 @@ final class JumpOverlayMonitor {
             return false
         }
         _ = onJump?(index)
+        return true
+    }
+
+    /// ⌘⌥J/⌘⌥K are consumed even when nothing is waiting and even when no
+    /// handler is attached, matching the reserve-even-when-unmapped convention
+    /// used for jump chords: an unhandled ⌥J/⌥K types ∆/˚ into the focused
+    /// terminal.
+    static func dispatchAttentionShortcut(
+        for char: Character,
+        modifiers: NSEvent.ModifierFlags,
+        onSelect: ((SessionSelectionDirection) -> Void)?
+    ) -> Bool {
+        guard let direction = SessionAttentionShortcuts.direction(
+            for: char,
+            modifiers: modifiers
+        ) else {
+            return false
+        }
+        onSelect?(direction)
         return true
     }
 

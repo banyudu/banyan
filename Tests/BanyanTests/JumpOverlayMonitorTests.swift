@@ -1,5 +1,6 @@
 @testable import Banyan
 import AppKit
+import BanyanCore
 import Testing
 
 @Test func jumpIndexMapsDigitsToPositionsStartingAtZero() {
@@ -142,4 +143,67 @@ private func jumpKeyCharacter(forLabel label: String) -> Character {
         return fKey(number)
     }
     return Character(label.lowercased())
+}
+
+@Test func attentionShortcutsUseCommandOptionJAndK() {
+    #expect(SessionAttentionShortcuts.next.display == "⌘⌥J")
+    #expect(SessionAttentionShortcuts.previous.display == "⌘⌥K")
+    #expect(SessionAttentionShortcuts.direction(for: "j", modifiers: [.command, .option]) == .next)
+    #expect(SessionAttentionShortcuts.direction(for: "K", modifiers: [.command, .option]) == .previous)
+}
+
+@Test func attentionShortcutsIgnoreOtherModifierCombinations() {
+    #expect(SessionAttentionShortcuts.direction(for: "j", modifiers: .command) == nil)
+    #expect(SessionAttentionShortcuts.direction(for: "j", modifiers: .option) == nil)
+    #expect(SessionAttentionShortcuts.direction(for: "j", modifiers: [.command, .option, .shift]) == nil)
+    #expect(SessionAttentionShortcuts.direction(for: "h", modifiers: [.command, .option]) == nil)
+}
+
+@Test func attentionShortcutsDoNotCollideWithJumpOrHandoffChords() {
+    // ⌘⇧J/⌘⇧K belong to the slot-jump range, ⌘⌥⇧H to handoff; ⌘⌥J/⌘⌥K must
+    // stay out of both so no chord is handled twice.
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "j", modifiers: [.command, .option]) == nil)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: "k", modifiers: [.command, .option]) == nil)
+    #expect(!JumpOverlayMonitor.isHandoffShortcut(for: "j", modifiers: [.command, .option]))
+    #expect(SessionAttentionShortcuts.direction(for: "j", modifiers: [.command, .shift]) == nil)
+}
+
+@Test func attentionShortcutDispatchForwardsDirection() {
+    var directions: [SessionSelectionDirection] = []
+    let consumedNext = JumpOverlayMonitor.dispatchAttentionShortcut(
+        for: "j",
+        modifiers: [.command, .option],
+        onSelect: { directions.append($0) }
+    )
+    let consumedPrevious = JumpOverlayMonitor.dispatchAttentionShortcut(
+        for: "k",
+        modifiers: [.command, .option],
+        onSelect: { directions.append($0) }
+    )
+
+    #expect(consumedNext)
+    #expect(consumedPrevious)
+    #expect(directions == [.next, .previous])
+}
+
+@Test func attentionShortcutIsConsumedEvenWithoutAHandler() {
+    // Otherwise an unhandled ⌥J/⌥K types ∆/˚ into the focused terminal.
+    #expect(JumpOverlayMonitor.dispatchAttentionShortcut(
+        for: "j",
+        modifiers: [.command, .option],
+        onSelect: nil
+    ))
+    #expect(JumpOverlayMonitor.dispatchAttentionShortcut(
+        for: "k",
+        modifiers: [.command, .option],
+        onSelect: nil
+    ))
+}
+
+@Test func unrelatedChordsAreNotConsumedAsAttentionShortcuts() {
+    #expect(!JumpOverlayMonitor.dispatchAttentionShortcut(
+        for: "j",
+        modifiers: .command,
+        onSelect: nil
+    ))
 }
