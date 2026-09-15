@@ -108,6 +108,24 @@ public struct ControlPayload: Codable {
     /// focus/selection. Absent means "let the app decide" (background unless nothing
     /// is currently selected).
     public let focus: String?
+    /// `/output`: how many rows of pane text to return.
+    public let lines: LenientInt?
+    /// `/input`: named keys to press, e.g. `["Down", "Enter"]`.
+    public let keys: [String]?
+    /// `/input`: text typed verbatim, never read as key names.
+    public let text: String?
+    /// `/input`: append Enter after `keys`/`text`.
+    public let submit: LenientBool?
+    /// `/answer`: 1-based option index from the preceding `/output`.
+    public let option: LenientInt?
+    /// `/answer`: `yes` / `no` / `always`.
+    public let choice: String?
+    /// `/answer`: accept whichever option the agent has highlighted.
+    public let confirm: LenientBool?
+    /// `/answer`: the `footprint` of the prompt the human was shown.
+    public let footprint: String?
+    /// `/events`: the highest cursor the client has already seen.
+    public let since: LenientInt?
 
     public init(
         apiVersion: String? = ControlProtocol.version,
@@ -120,7 +138,16 @@ public struct ControlPayload: Codable {
         tone: String? = nil,
         parent: String? = nil,
         path: String? = nil,
-        focus: String? = nil
+        focus: String? = nil,
+        lines: Int? = nil,
+        keys: [String]? = nil,
+        text: String? = nil,
+        submit: Bool? = nil,
+        option: Int? = nil,
+        choice: String? = nil,
+        confirm: Bool? = nil,
+        footprint: String? = nil,
+        since: Int? = nil
     ) {
         self.apiVersion = apiVersion
         self.id = id
@@ -133,6 +160,73 @@ public struct ControlPayload: Codable {
         self.parent = parent
         self.path = path
         self.focus = focus
+        self.lines = lines.map(LenientInt.init(value:))
+        self.keys = keys
+        self.text = text
+        self.submit = submit.map(LenientBool.init(value:))
+        self.option = option.map(LenientInt.init(value:))
+        self.choice = choice
+        self.confirm = confirm.map(LenientBool.init(value:))
+        self.footprint = footprint
+        self.since = since.map(LenientInt.init(value:))
+    }
+}
+
+/// An integer that decodes from a JSON number or from its string spelling.
+///
+/// `banyanctl` posts a flat string dictionary, while a bridge written against the
+/// documented JSON shape sends `{"option": 2}`. Both are the same request, so both
+/// decode rather than one of them being a 400 nobody can explain.
+public struct LenientInt: Codable, Sendable, Equatable {
+    public let value: Int
+
+    public init(value: Int) {
+        self.value = value
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let number = try? container.decode(Int.self) {
+            value = number
+            return
+        }
+        let raw = try container.decode(String.self)
+        guard let number = Int(raw.trimmingCharacters(in: .whitespaces)) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "expected an integer, got '\(raw)'")
+        }
+        value = number
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(value)
+    }
+}
+
+/// A boolean that decodes from a JSON bool or from `"true"` / `"false"`.
+public struct LenientBool: Codable, Sendable, Equatable {
+    public let value: Bool
+
+    public init(value: Bool) {
+        self.value = value
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let flag = try? container.decode(Bool.self) {
+            value = flag
+            return
+        }
+        let raw = try container.decode(String.self)
+        guard let flag = Bool(raw.trimmingCharacters(in: .whitespaces).lowercased()) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "expected a boolean, got '\(raw)'")
+        }
+        value = flag
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(value)
     }
 }
 
@@ -150,11 +244,21 @@ public enum ControlRoute: Equatable {
     case tick
     case suspend
     case resume
+    /// Reads a session's pane: its text, and the prompt it is blocked on.
+    case output
+    /// Writes raw keys or literal text into a session's pane.
+    case input
+    /// Answers a parsed prompt by its footprint.
+    case answer
+    /// Long-polls for status transitions.
+    case events
 
     public static func resolve(method: String, path: String) -> ControlRoute? {
-        switch (method, path) {
+        switch (method, ControlRoute.normalizedPath(path)) {
         case ("GET", "/list"): return .list
         case ("GET", "/window-state"): return .windowState
+        case ("GET", "/output"): return .output
+        case ("GET", "/events"): return .events
         case ("POST", "/select"): return .select
         case ("POST", "/spawn"): return .spawn
         case ("POST", "/mark"): return .mark
@@ -166,14 +270,37 @@ public enum ControlRoute: Equatable {
         case ("POST", "/tick"): return .tick
         case ("POST", "/suspend"): return .suspend
         case ("POST", "/resume"): return .resume
+        case ("POST", "/input"): return .input
+        case ("POST", "/answer"): return .answer
         default: return nil
         }
     }
 
+    /// Drops the query string. `/output` and `/events` are documented as GETs with
+    /// parameters, and route matching happens before those are read.
+    public static func normalizedPath(_ path: String) -> String {
+        guard let separator = path.firstIndex(of: "?") else { return path }
+        return String(path[..<separator])
+    }
+
+    /// Parses `a=b&c=d` from a request path into a payload's string fields.
+    public static func queryItems(in path: String) -> [String: String] {
+        guard let separator = path.firstIndex(of: "?") else { return [:] }
+        var items: [String: String] = [:]
+        for pair in path[path.index(after: separator)...].split(separator: "&", omittingEmptySubsequences: true) {
+            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard let name = parts.first, !name.isEmpty else { continue }
+            let value = parts.count > 1 ? parts[1] : ""
+            items[name] = value.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? value
+        }
+        return items
+    }
+
     public var requiresID: Bool {
         switch self {
-        case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume: return true
-        case .list, .spawn, .screenshot, .windowState, .tick: return false
+        case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume,
+             .output, .input, .answer: return true
+        case .list, .spawn, .screenshot, .windowState, .tick, .events: return false
         }
     }
 
@@ -184,17 +311,28 @@ public enum ControlRoute: Equatable {
         if self == .screenshot, payload.path?.isEmpty != false {
             throw ControlValidationError.missingPath
         }
+        if self == .input, payload.keys?.isEmpty != false, payload.text?.isEmpty != false,
+           payload.submit?.value != true {
+            throw ControlValidationError.missingInput
+        }
+        if self == .answer, payload.footprint?.isEmpty != false {
+            throw ControlValidationError.missingFootprint
+        }
     }
 }
 
 public enum ControlValidationError: LocalizedError, Equatable {
     case missingID
     case missingPath
+    case missingInput
+    case missingFootprint
 
     public var errorDescription: String? {
         switch self {
         case .missingID: return "request requires id"
         case .missingPath: return "request requires path"
+        case .missingInput: return "request requires keys, text or submit"
+        case .missingFootprint: return "request requires the footprint from a preceding /output"
         }
     }
 }

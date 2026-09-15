@@ -57,6 +57,14 @@ struct BanyanCtl {
                 try post("/remove", payload: parsePayload(Array(arguments.dropFirst())))
             case "screenshot":
                 try post("/screenshot", payload: parseScreenshotPayload(Array(arguments.dropFirst())))
+            case "output":
+                try get("/output", query: parseOutputOptions(Array(arguments.dropFirst())))
+            case "send":
+                try postJSON("/input", payload: parseSendPayload(Array(arguments.dropFirst())))
+            case "answer":
+                try postJSON("/answer", payload: parseAnswerPayload(Array(arguments.dropFirst())))
+            case "events":
+                try get("/events", query: parseEventsOptions(Array(arguments.dropFirst())), timeout: 35)
             case "list":
                 try get("/list")
             case "window-state":
@@ -291,6 +299,102 @@ struct BanyanCtl {
         }
     }
 
+    private func parseOutputOptions(_ args: [String]) throws -> [String: String] {
+        var query = try parsePayload(args)
+        query.removeValue(forKey: "json")
+        guard query["id"]?.isEmpty == false else {
+            throw CLIError.message("output requires --id ID")
+        }
+        return query
+    }
+
+    private func parseEventsOptions(_ args: [String]) throws -> [String: String] {
+        try parsePayload(args)
+    }
+
+    /// `send` is the raw path: named keys stay a list so `--key Down --key Enter`
+    /// keeps its order, and `--text` is never read as a key name.
+    private func parseSendPayload(_ args: [String]) throws -> [String: Any] {
+        var payload: [String: Any] = [:]
+        var keys: [String] = []
+        var index = 0
+        while index < args.count {
+            let token = args[index]
+            guard token.hasPrefix("--") else {
+                throw CLIError.message("unexpected argument '\(token)'")
+            }
+            let key = String(token.dropFirst(2))
+            if key == "submit" {
+                payload["submit"] = true
+                index += 1
+                continue
+            }
+            guard index + 1 < args.count else {
+                throw CLIError.message("missing value for \(token)")
+            }
+            let value = args[index + 1]
+            switch key {
+            case "key", "keys":
+                keys.append(value)
+            case "id", "text":
+                payload[key] = value
+            default:
+                throw CLIError.message("unknown send option '\(token)'")
+            }
+            index += 2
+        }
+        guard payload["id"] != nil else {
+            throw CLIError.message("send requires --id ID")
+        }
+        if !keys.isEmpty {
+            payload["keys"] = keys
+        }
+        guard payload["keys"] != nil || payload["text"] != nil || payload["submit"] != nil else {
+            throw CLIError.message("send requires --key NAME, --text TEXT or --submit")
+        }
+        return payload
+    }
+
+    private func parseAnswerPayload(_ args: [String]) throws -> [String: Any] {
+        var payload: [String: Any] = [:]
+        var index = 0
+        while index < args.count {
+            let token = args[index]
+            guard token.hasPrefix("--") else {
+                throw CLIError.message("unexpected argument '\(token)'")
+            }
+            let key = String(token.dropFirst(2))
+            if key == "confirm" {
+                payload["confirm"] = true
+                index += 1
+                continue
+            }
+            guard index + 1 < args.count else {
+                throw CLIError.message("missing value for \(token)")
+            }
+            let value = args[index + 1]
+            switch key {
+            case "option":
+                guard let number = Int(value), number >= 1 else {
+                    throw CLIError.message("--option must be a 1-based option number")
+                }
+                payload["option"] = number
+            case "id", "choice", "footprint":
+                payload[key] = value
+            default:
+                throw CLIError.message("unknown answer option '\(token)'")
+            }
+            index += 2
+        }
+        guard payload["id"] != nil else {
+            throw CLIError.message("answer requires --id ID")
+        }
+        guard payload["footprint"] != nil else {
+            throw CLIError.message("answer requires --footprint H from a preceding `banyanctl output`")
+        }
+        return payload
+    }
+
     private func parseScreenshotPayload(_ args: [String]) throws -> [String: String] {
         var result = try parsePayload(args)
         if let output = result.removeValue(forKey: "output") {
@@ -389,15 +493,32 @@ struct BanyanCtl {
         }
     }
 
-    private func get(_ path: String) throws {
-        var request = URLRequest(url: baseURL.appendingPathComponent(String(path.dropFirst())))
+    private func get(_ path: String, query: [String: String] = [:], timeout: TimeInterval = 5) throws {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent(String(path.dropFirst())),
+            resolvingAgainstBaseURL: false
+        )
+        if !query.isEmpty {
+            components?.queryItems = query.sorted { $0.key < $1.key }
+                .map { URLQueryItem(name: $0.key, value: $0.value) }
+        }
+        guard let url = components?.url else {
+            throw CLIError.message("could not build a request URL for \(path)")
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 5
+        // `/events` holds the request open until a session changes status, so it
+        // needs to outlast the server's own hold rather than time out under it.
+        request.timeoutInterval = timeout
         try authorize(&request)
         try send(request)
     }
 
     private func post(_ path: String, payload: [String: String]) throws {
+        try postJSON(path, payload: payload)
+    }
+
+    private func postJSON(_ path: String, payload: [String: Any]) throws {
         var request = URLRequest(url: baseURL.appendingPathComponent(String(path.dropFirst())))
         request.httpMethod = "POST"
         request.timeoutInterval = 5
@@ -475,6 +596,19 @@ struct BanyanCtl {
         its tmux session and any agent inside keep running. resume is lossless and
         keeps the status the session had when it was parked. Neither one signals or
         terminates the agent. `banyanctl session suspend|resume --id ID` are aliases.
+
+        Reading and answering a blocked agent:
+          banyanctl output --id ID [--lines N]
+          banyanctl send   --id ID [--key Enter]... [--text "…"] [--submit]
+          banyanctl answer --id ID (--option N | --choice yes|no|always | --confirm) --footprint H
+          banyanctl events [--since CURSOR]
+
+        `output` prints the pane text plus, when the session is genuinely waiting
+        on a human, the parsed question, its options and a `footprint`. `answer`
+        requires that footprint and refuses if the pane has moved on, so a stale
+        reply can never land on a newer question. `send` is the raw path: --text is
+        typed verbatim and is never read as a key name. `events` holds the request
+        open until a session changes status.
         """)
     }
 }

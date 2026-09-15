@@ -209,9 +209,23 @@ final class SessionStore: ObservableObject {
     /// no-op saves (e.g. every supervisor tick) that re-serialized unchanged state.
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
     private let detector: AgentStateDetector
-    private let tmuxBackend: any TmuxSessionStoreBackend
+    /// Internal rather than private so the pane-input routes in
+    /// `SessionStore+AgentInput.swift` can hand it to their off-main work.
+    let tmuxBackend: any TmuxSessionStoreBackend
     private let sessionBackend: any TmuxClientBackend
-    private let processTable: any ProcessTableProvider
+    let processTable: any ProcessTableProvider
+    /// Refuses an answer that the pane has moved past, and one a delivery target
+    /// has already had accepted. Main-actor confined, which is what makes
+    /// "consumed" a decision and not a race.
+    private var answerLedger = AgentAnswerLedger()
+    /// Status transitions a `/events` long-poll has not read yet.
+    private var sessionEventLog = SessionEventLog()
+    /// Last status written to the event log per session, so a transition can name
+    /// what it came from.
+    private var lastRecordedEventStatuses: [String: SessionStatus] = [:]
+    /// Wakes a parked `/events` request the moment a transition lands, so the
+    /// control server never has to poll for one.
+    var onSessionEvent: ((SessionEvent) -> Void)?
     private let historyBackend: any SessionHistoryBackend
     private let attentionNotifier: AttentionNotifier
     private var didLoadPersistedSessions = false
@@ -1985,6 +1999,75 @@ final class SessionStore: ObservableObject {
         saveSessions()
     }
 
+    // MARK: - Pane reading and input
+
+    /// Snapshots the identity a pane operation needs, and refuses one for a
+    /// session that is closed — a closed row has no pane to read or type into.
+    func paneTarget(id: String) throws -> SessionPaneTarget {
+        guard let session = sessions.first(where: { $0.id == id }) else {
+            throw ControlError.notFound(id)
+        }
+        guard session.status != .closed else {
+            throw ControlError.badRequest("session '\(id)' is closed")
+        }
+        return SessionPaneTarget(
+            id: session.id,
+            tmuxSessionName: session.tmuxSessionName,
+            command: session.command,
+            status: session.status,
+            cwd: session.cwd,
+            createdAt: session.createdAt,
+            environment: session.environment
+        )
+    }
+
+    /// Folds a one-off pane reading back into the sidebar, exactly as a supervisor
+    /// tick would, and tells the answer ledger what the pane is showing now.
+    func absorb(_ reading: SessionPaneReading, for id: String) {
+        answerLedger.note(sessionID: id, observedFootprint: reading.prompt?.footprint)
+        guard let observation = reading.observation else { return }
+        if applySupervisorResults([observation]) {
+            saveSessions()
+        }
+    }
+
+    func decideAnswer(id: String, request: AgentAnswerRequest, reading: SessionPaneReading) -> AgentAnswerDecision {
+        answerLedger.decide(
+            sessionID: id,
+            request: request,
+            observedStatus: reading.status,
+            observedPrompt: reading.prompt
+        )
+    }
+
+    /// Releases a footprint reserved for an answer that never reached the pane.
+    func releaseConsumedAnswer(id: String) {
+        answerLedger.forget(sessionID: id)
+    }
+
+    /// An injected keystroke changes the session's state within a beat, so drop
+    /// whatever observation backoff the session had built up while it sat idle and
+    /// let the next tick see it at the fast cadence.
+    ///
+    /// Deliberately does not observe right now: the agent has not reacted yet, so
+    /// an immediate tick spends tmux subprocesses re-reading the state we just
+    /// typed into.
+    func noteInjection(id: String) {
+        resetSupervisorObservationBackoff(for: id)
+    }
+
+    func sessionEvents(since: Int?) -> SessionEventBatch {
+        sessionEventLog.batch(since: since)
+    }
+
+    private func recordStatusEvent(id: String, status: SessionStatus) {
+        let previous = lastRecordedEventStatuses[id]
+        guard previous != status else { return }
+        lastRecordedEventStatuses[id] = status
+        let event = sessionEventLog.append(sessionID: id, status: status, previousStatus: previous)
+        onSessionEvent?(event)
+    }
+
     func tick(id: String? = nil) throws {
         if let id {
             guard sessions.contains(where: { $0.id == id }) else {
@@ -2919,6 +3002,7 @@ final class SessionStore: ObservableObject {
         session.onStatusSignal = { [weak self, weak session] status in
             guard let self, let session else { return }
             self.resetSupervisorObservationBackoff(for: session.id)
+            self.recordStatusEvent(id: session.id, status: status)
             self.attentionNotifier.notifyIfNeeded(session: session, status: status)
         }
         session.onProjectContextObserved = { [weak self, weak session] cwd, context in
@@ -3277,7 +3361,7 @@ final class SessionStore: ObservableObject {
         return state.nextDueAt <= now
     }
 
-    private func resetSupervisorObservationBackoff(for sessionID: String) {
+    func resetSupervisorObservationBackoff(for sessionID: String) {
         guard let state = supervisorObservationStates[sessionID] else { return }
         supervisorObservationStates[sessionID] = SupervisorObservationState(
             lastObservation: nil,
@@ -3596,7 +3680,7 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
-    private func applySupervisorResults(_ results: [SessionStatusObservation]) -> Bool {
+    func applySupervisorResults(_ results: [SessionStatusObservation]) -> Bool {
         var didUpdateProvider = false
         var didChangePersistentState = false
         for result in results {
