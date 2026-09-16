@@ -4985,10 +4985,17 @@ open class Terminal {
         updateRange (endLine, scrolling: scrolling)
     }
     
+    /// Set when a caller demanded a repaint for a reason the buffer contents do not
+    /// express — a theme, font, or link-highlight change, or a surface that dropped
+    /// its invalidations while hidden. A view that filters repaints by content must
+    /// honor this, or the change never reaches the screen.
+    public private(set) var forcesFullRepaint = false
+
     public func updateFullScreen ()
     {
         refreshStart = 0
         refreshEnd = rows
+        forcesFullRepaint = true
         
         scrollInvariantRefreshStart = buffer.yDisp
         scrollInvariantRefreshEnd = buffer.yDisp + rows
@@ -5077,6 +5084,7 @@ open class Terminal {
     {
         refreshStart = Int.max
         refreshEnd = -1
+        forcesFullRepaint = false
         
         scrollInvariantRefreshStart = Int.max
         scrollInvariantRefreshEnd = -1
@@ -6140,7 +6148,7 @@ open class Terminal {
             return []
         }
         let isAlt = buffer === altBuffer
-        let generation = buffer.lines[row].generation
+        let generation = buffer.lines[row].contentHash
         if let cached = implicitLinkRowCache[row],
            cached.generation == generation,
            cached.cols == cols,
@@ -6514,8 +6522,8 @@ open class Terminal {
             return false
         }
         let isAlt = buffer === altBuffer
-        let upperGen = buffer.lines[upper].generation
-        let lowerGen = buffer.lines[lower].generation
+        let upperGen = buffer.lines[upper].contentHash
+        let lowerGen = buffer.lines[lower].contentHash
         if let cached = implicitSeamCache[upper],
            cached.upperGen == upperGen,
            cached.lowerGen == lowerGen,
