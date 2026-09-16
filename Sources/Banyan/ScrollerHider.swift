@@ -13,114 +13,129 @@ private struct ScrollerHider: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: ScrollerHidingView, context: Context) {
-        nsView.hideEnclosingScroller()
+        nsView.hideScrollers()
     }
 }
 
 private final class ScrollerHidingView: NSView {
-    private var observedScrollViews: [ObjectIdentifier: NSScrollView] = [:]
-    private var scrollerObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
-    private var discoveryAttempts = 0
-    private static let maxDiscoveryAttempts = 20
+    /// KVO observations keyed weakly: entries vanish with their scroll views,
+    /// so replaced instances never pin detached views (or leak them).
+    private let observations = NSMapTable<NSScrollView, NSKeyValueObservation>(
+        keyOptions: .weakMemory, valueOptions: .strongMemory
+    )
+    private var windowObserver: NSObjectProtocol?
+    private weak var subscribedWindow: NSWindow?
+    private var lastFullScan = Date.distantPast
+    private static let fullScanInterval: TimeInterval = 0.5
+
+    deinit {
+        if let windowObserver {
+            NotificationCenter.default.removeObserver(windowObserver)
+        }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        hideEnclosingScroller()
+        resubscribeWindow()
+        hideScrollers()
     }
 
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
-        hideEnclosingScroller()
+        hideScrollers()
     }
 
     override func layout() {
         super.layout()
-        hideEnclosingScroller()
+        hideScrollers()
     }
 
     override func viewWillDraw() {
         super.viewWillDraw()
-        hideEnclosingScroller()
+        hideScrollers()
     }
 
-    /// SwiftUI reconfigures the enclosing NSScrollView on state updates, which
-    /// restores `hasVerticalScroller` and brings the scrollbar back. A one-shot
-    /// hide is not enough — and layout/draw hooks rarely fire on a zero-size
-    /// background view — so enforcement is event-driven: KVO catches the exact
-    /// mutation that re-enables the scroller. Trackpad/mouse-wheel scrolling
-    /// keeps working; only the visible bar stays gone.
+    private func resubscribeWindow() {
+        guard window !== subscribedWindow else { return }
+        if let windowObserver {
+            NotificationCenter.default.removeObserver(windowObserver)
+            self.windowObserver = nil
+        }
+        subscribedWindow = window
+        guard let window else { return }
+        // SwiftUI can rebuild a List's NSScrollView without any callback
+        // firing on this (zero-size background) view, so re-scan on every
+        // window display pass (throttled) instead of trusting hooks alone.
+        windowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didUpdateNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.hideScrollers()
+        }
+    }
+
+    /// Hides vertical scrollers while keeping trackpad/mouse-wheel scrolling.
     ///
-    /// Every trigger re-walks the live ancestor chain instead of trusting the
-    /// cache: SwiftUI can swap in a replacement scroll view instance (e.g. when
-    /// a ScrollViewReader attaches or state reconfigures the list) while the
-    /// old instance stays alive, which would otherwise pin the cache to a
-    /// detached view while its replacement shows a bar. All ancestors are
-    /// hidden, not just the nearest, so nested scroll views are covered too.
-    func hideEnclosingScroller() {
-        let scrollViews = findAncestorScrollViews()
-        guard !scrollViews.isEmpty else {
-            scheduleDiscoveryRetry()
-            return
+    /// Discovery deliberately does NOT walk up to an "enclosing" scroll view:
+    /// live hierarchy inspection (lldb, Sep 2026) proved that `.background()`
+    /// on a `List` is hosted *outside* the List's internal NSScrollView —
+    /// `ScrollerHidingView → PlatformViewHost → NSHostingView → … →
+    /// NSSplitView` with no scroll view in between — so ancestor search always
+    /// finds nothing and any fix built on it is a no-op for Lists. Instead, a
+    /// mounted hider acts as a beacon: every NSScrollView in the same window
+    /// gets its vertical scroller removed, enforced instantly via KVO on
+    /// `hasVerticalScroller` plus re-assertion on each display pass (which
+    /// also picks up scroll views SwiftUI creates or swaps in later).
+    func hideScrollers() {
+        reassertKnownScrollViews()
+        guard let window, Date().timeIntervalSince(lastFullScan) >= Self.fullScanInterval else { return }
+        lastFullScan = Date()
+        for scrollView in scrollViews(in: window) {
+            conceal(scrollView)
         }
-        discoveryAttempts = 0
-        let currentIDs = Set(scrollViews.map { ObjectIdentifier($0) })
-        for id in observedScrollViews.keys where !currentIDs.contains(id) {
-            scrollerObservations[id]?.invalidate()
-            scrollerObservations.removeValue(forKey: id)
-            observedScrollViews.removeValue(forKey: id)
-        }
-        for scrollView in scrollViews {
-            Self.setScrollerHidden(on: scrollView)
-            let id = ObjectIdentifier(scrollView)
-            guard scrollerObservations[id] == nil else { continue }
-            observedScrollViews[id] = scrollView
-            scrollerObservations[id] = scrollView.observe(
-                \.hasVerticalScroller,
-                options: [.new]
-            ) { scrollView, change in
-                guard change.newValue == true else { return }
-                DispatchQueue.main.async { [weak scrollView] in
-                    guard let scrollView else { return }
-                    Self.setScrollerHidden(on: scrollView)
-                }
+    }
+
+    private func reassertKnownScrollViews() {
+        let enumerator = observations.keyEnumerator()
+        while let scrollView = enumerator.nextObject() as? NSScrollView {
+            if scrollView.hasVerticalScroller {
+                scrollView.hasVerticalScroller = false
             }
         }
     }
 
-    private static func setScrollerHidden(on scrollView: NSScrollView) {
-        if scrollView.hasVerticalScroller {
-            scrollView.hasVerticalScroller = false
-        }
-        if scrollView.verticalScroller?.isHidden == false {
-            scrollView.verticalScroller?.isHidden = true
-        }
-    }
-
-    private func findAncestorScrollViews() -> [NSScrollView] {
+    private func scrollViews(in window: NSWindow) -> [NSScrollView] {
+        guard let contentView = window.contentView else { return [] }
         var found: [NSScrollView] = []
-        var current: NSView? = self
-        while let view = current {
+        var stack: [NSView] = [contentView]
+        while let view = stack.popLast() {
             if let scrollView = view as? NSScrollView {
                 found.append(scrollView)
             }
-            current = view.superview
+            stack.append(contentsOf: view.subviews)
         }
         return found
     }
 
-    /// The enclosing scroll view may not exist yet while SwiftUI is still
-    /// assembling the hierarchy; retry with bounded backoff until found.
-    /// Replacement instances are handled by reconciling the live ancestor
-    /// chain on every trigger (see above), so no retry is needed once
-    /// anything is observed.
-    private func scheduleDiscoveryRetry() {
-        guard window != nil, observedScrollViews.isEmpty else { return }
-        guard discoveryAttempts < Self.maxDiscoveryAttempts else { return }
-        discoveryAttempts += 1
-        let delay = min(0.1 * Double(discoveryAttempts), 1.0)
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.observedScrollViews.isEmpty, self.window != nil else { return }
-            self.hideEnclosingScroller()
+    private func conceal(_ scrollView: NSScrollView) {
+        if scrollView.hasVerticalScroller {
+            scrollView.hasVerticalScroller = false
+        }
+        // Weak capture is load-bearing: a strong capture would keep every
+        // replaced scroll view (plus observation and closure) alive forever.
+        if observations.object(forKey: scrollView) == nil {
+            observations.setObject(
+                scrollView.observe(\.hasVerticalScroller, options: [.new]) { [weak scrollView] _, change in
+                    guard change.newValue == true else { return }
+                    DispatchQueue.main.async { [weak scrollView] in
+                        if scrollView?.hasVerticalScroller == true {
+                            scrollView?.hasVerticalScroller = false
+                        }
+                    }
+                },
+                forKey: scrollView
+            )
         }
     }
 }
