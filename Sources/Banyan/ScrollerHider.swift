@@ -18,14 +18,19 @@ private struct ScrollerHider: NSViewRepresentable {
 }
 
 private final class ScrollerHidingView: NSView {
+    private weak var observedScrollView: NSScrollView?
+    private var scrollerObservation: NSKeyValueObservation?
+    private var discoveryAttempts = 0
+    private static let maxDiscoveryAttempts = 20
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        hideEnclosingScroller(retryIfMissing: true)
+        hideEnclosingScroller()
     }
 
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
-        hideEnclosingScroller(retryIfMissing: true)
+        hideEnclosingScroller()
     }
 
     override func layout() {
@@ -38,27 +43,61 @@ private final class ScrollerHidingView: NSView {
         hideEnclosingScroller()
     }
 
-    /// SwiftUI recreates or reconfigures the enclosing NSScrollView on state
-    /// updates, which restores `hasVerticalScroller` and brings the scrollbar
-    /// back. Re-applying on every layout/draw pass keeps it hidden while
-    /// trackpad/mouse-wheel scrolling keeps working.
-    func hideEnclosingScroller(retryIfMissing: Bool = false) {
+    /// SwiftUI reconfigures the enclosing NSScrollView on state updates, which
+    /// restores `hasVerticalScroller` and brings the scrollbar back. A one-shot
+    /// hide is not enough — and layout/draw hooks rarely fire on a zero-size
+    /// background view — so enforcement is event-driven: KVO catches the exact
+    /// mutation that re-enables the scroller. Trackpad/mouse-wheel scrolling
+    /// keeps working; only the visible bar stays gone.
+    func hideEnclosingScroller() {
+        if let scrollView = observedScrollView {
+            if scrollView.hasVerticalScroller {
+                scrollView.hasVerticalScroller = false
+            }
+            return
+        }
+        guard let scrollView = findEnclosingScrollView() else {
+            scheduleDiscoveryRetry()
+            return
+        }
+        discoveryAttempts = 0
+        observedScrollView = scrollView
+        if scrollView.hasVerticalScroller {
+            scrollView.hasVerticalScroller = false
+        }
+        scrollerObservation = scrollView.observe(\.hasVerticalScroller, options: [.new]) { scrollView, change in
+            guard change.newValue == true else { return }
+            DispatchQueue.main.async { [weak scrollView] in
+                if scrollView?.hasVerticalScroller == true {
+                    scrollView?.hasVerticalScroller = false
+                }
+            }
+        }
+    }
+
+    private func findEnclosingScrollView() -> NSScrollView? {
         var current: NSView? = self
         while let view = current {
             if let scrollView = view as? NSScrollView {
-                if scrollView.hasVerticalScroller {
-                    scrollView.hasVerticalScroller = false
-                }
-                return
+                return scrollView
             }
             current = view.superview
         }
-        // The enclosing scroll view may not exist yet when SwiftUI is still
-        // assembling the hierarchy; retry once on the next runloop turn.
-        if retryIfMissing, window != nil {
-            DispatchQueue.main.async { [weak self] in
-                self?.hideEnclosingScroller()
-            }
+        return nil
+    }
+
+    /// The enclosing scroll view may not exist yet while SwiftUI is still
+    /// assembling the hierarchy; retry with bounded backoff until found.
+    /// (If SwiftUI later replaces the scroll view instance, the move/layout
+    /// hooks above re-run discovery; the weak ref going nil is the signal.)
+    private func scheduleDiscoveryRetry() {
+        guard window != nil, observedScrollView == nil else { return }
+        guard discoveryAttempts < Self.maxDiscoveryAttempts else { return }
+        discoveryAttempts += 1
+        let delay = min(0.1 * Double(discoveryAttempts), 1.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.observedScrollView == nil, self.window != nil else { return }
+            self.hideEnclosingScroller()
         }
     }
 }
