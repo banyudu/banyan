@@ -165,6 +165,15 @@ public struct AgentSupervisor: Sendable {
         }
 
         if !externalProcesses.isEmpty {
+            // The model database is the primary signal for OpenCode model
+            // switches (e.g. deepseek -> muse-spark). When it misses, fall back
+            // to the status bar even while executing, otherwise the icon stays
+            // pinned to the launch identity for the whole turn.
+            if modelIdentity == nil, hasLiveOpenCode {
+                let executingText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: Self.captureLineLimit)
+                modelIdentity = OpenCodeSessionModelDetector.statusBarIdentity(in: executingText)
+                provider = modelIdentity?.provider ?? baseProvider
+            }
             return result(.executing, .blue)
         }
 
@@ -228,13 +237,23 @@ public struct AgentSupervisor: Sendable {
         paneCommand: String,
         descendants: [ProcessInfoRow]
     ) -> CodingAgentProvider? {
-        if let provider = CodingAgentProvider.detect(in: launchCommand) {
-            return provider
+        // Prefer the live process tree over the launch command so manually
+        // switching agents (or OpenCode models, refined later via modelIdentity)
+        // is observed. The DeepSeek launch marker (`BANYAN_AGENT_PROVIDER=deepseek
+        // opencode`) is more specific than the generic `opencode` live process,
+        // so it still wins as a fallback when the database/status-bar lookup
+        // cannot refine the runtime model.
+        let liveProvider = CodingAgentProvider.detect(in: paneCommand)
+            ?? descendants.compactMap(\.supportedAgentProvider).first
+        if let liveProvider {
+            if liveProvider == .opencode,
+               let launchProvider = CodingAgentProvider.detect(in: launchCommand),
+               launchProvider != .opencode {
+                return launchProvider
+            }
+            return liveProvider
         }
-        if let provider = CodingAgentProvider.detect(in: paneCommand) {
-            return provider
-        }
-        return descendants.compactMap(\.supportedAgentProvider).first
+        return CodingAgentProvider.detect(in: launchCommand)
     }
 
     /// PIDs of the persistent MCP-server helpers a coding agent spawns and keeps

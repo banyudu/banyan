@@ -123,6 +123,12 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         case "qwen", "qwen3", "qwen-3", "tongyi", "qianwen":
             self = .qwen
         default:
+            // Versioned Muse Spark agent names (e.g. muse-spark-1.3) should keep
+            // resolving without a per-release allowlist update.
+            if normalized.hasPrefix("muse-spark") || normalized.hasPrefix("muse spark") {
+                self = .muse
+                return
+            }
             return nil
         }
     }

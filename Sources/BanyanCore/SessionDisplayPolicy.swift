@@ -6,7 +6,12 @@ public enum SessionDisplayPolicy {
         command: String,
         detectedProvider: CodingAgentProvider?
     ) -> CodingAgentProvider? {
-        CodingAgentProvider.detect(in: command) ?? detectedProvider
+        // Live runtime identity wins over the launch command so switching models
+        // inside OpenCode (e.g. deepseek -> muse-spark via the picker, which the
+        // supervisor observes through the OpenCode model database / status bar)
+        // updates the icon. Falls back to the launch command for the startup
+        // window before the first supervisor observation.
+        detectedProvider ?? CodingAgentProvider.detect(in: command)
     }
 
     public static func displayAgentProvider(
