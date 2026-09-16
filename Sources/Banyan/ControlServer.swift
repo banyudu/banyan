@@ -281,7 +281,7 @@ final class ControlServer {
                 guard let session = store.sessions.first(where: { $0.id == id }) else {
                     throw ControlError.notFound(id)
                 }
-                return (200, ["session": summary(session)], nil)
+                return respond(.ok(["session": summary(session)]))
 
             case .remove:
                 let body = try request.decode(ControlPayload.self)
@@ -523,6 +523,10 @@ final class ControlServer {
             "paneID": reading.paneID,
             "status": reading.status.rawValue,
             "statusEmoji": reading.status.emoji,
+            // A parked session is reported, not observed: its status is whatever was
+            // last seen and it carries no prompt, so say so rather than let a caller
+            // read the frozen status as a live one.
+            "isSuspended": reading.isSuspended,
             "visibleText": reading.visibleText
         ]
         if let session = store.sessions.first(where: { $0.id == id }) {

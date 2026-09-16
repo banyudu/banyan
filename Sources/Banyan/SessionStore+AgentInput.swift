@@ -13,6 +13,9 @@ struct SessionPaneTarget: Sendable {
     let cwd: String
     let createdAt: Date
     let environment: [String: String]
+    /// Parked sessions are deliberately outside the supervision loop, so a pane
+    /// operation has to decide what to do about one rather than quietly resume it.
+    let isSuspended: Bool
 }
 
 /// One reading of a session's pane: what it shows, and what — if anything — it is
@@ -25,8 +28,10 @@ struct SessionPaneReading: Sendable {
     /// Parsed from the same capture the supervisor classified, never a second one.
     let prompt: AgentPrompt?
     /// The supervisor's verdict, when it had one, so the caller can fold this
-    /// reading back into the sidebar exactly as a tick would.
+    /// reading back into the sidebar exactly as a tick would. Absent for a parked
+    /// session, which was not observed at all.
     let observation: SessionStatusObservation?
+    let isSuspended: Bool
 }
 
 struct SessionInputReceipt: Sendable {
@@ -49,6 +54,11 @@ extension SessionStore {
     /// parsed from the supervisor's own capture, because the supervisor's verdict
     /// is what makes the prompt safe to act on — parsing a second, later capture
     /// would let an answer be offered for a question the classification never saw.
+    /// A parked session is read but never observed: its status stays frozen at what
+    /// was last seen, and no prompt is offered. Parking is the user saying "stop
+    /// watching this", so supervising one on demand would undo the thing they
+    /// asked for — and an answer injected into a pane Banyan is not rendering
+    /// would land somewhere nobody is looking.
     func readPaneOutput(id: String, lines: Int?) async throws -> SessionPaneReading {
         let target = try paneTarget(id: id)
         let backend = tmuxBackend
@@ -75,6 +85,7 @@ extension SessionStore {
     /// `answerPrompt`.
     func injectInput(id: String, keys: [TmuxKey], text: String?, submit: Bool) async throws -> SessionInputReceipt {
         let target = try paneTarget(id: id)
+        try Self.refuseIfSuspended(target)
         let backend = tmuxBackend
         guard let paneID = await Task.detached(priority: .userInitiated, operation: {
             backend.primaryPaneSnapshot(named: target.tmuxSessionName)?.paneID
@@ -109,6 +120,7 @@ extension SessionStore {
     /// saw some time ago, and the only way to know it is still on screen is to
     /// look now. Every rejection path returns before a single keystroke is sent.
     func answerPrompt(id: String, request: AgentAnswerRequest) async throws -> SessionAnswerReceipt {
+        try Self.refuseIfSuspended(paneTarget(id: id))
         let reading = try await readPaneOutput(id: id, lines: nil)
         let decision = decideAnswer(id: id, request: request, reading: reading)
         guard case .send(let keys, _) = decision else {
@@ -135,6 +147,18 @@ extension SessionStore {
 
     // MARK: - Pane work (off the main actor)
 
+    /// Parking means "Banyan is not watching this". Typing into one would put the
+    /// answer somewhere the user has told the app not to render, so both write
+    /// paths refuse and name the reason — a delivery target can then retire a
+    /// message it is holding rather than retry forever.
+    nonisolated static func refuseIfSuspended(_ target: SessionPaneTarget) throws {
+        guard target.isSuspended else { return }
+        throw ControlError.conflict(
+            code: "session_suspended",
+            message: "session '\(target.id)' is parked; resume it before sending input"
+        )
+    }
+
     nonisolated private static func read(
         _ target: SessionPaneTarget,
         lines: Int?,
@@ -142,6 +166,22 @@ extension SessionStore {
         processTable: ProcessTable
     ) -> SessionPaneReading? {
         guard let pane = backend.primaryPaneSnapshot(named: target.tmuxSessionName) else { return nil }
+
+        guard !target.isSuspended else {
+            // Read the pane, observe nothing. One capture in answer to an explicit
+            // request is not the supervision loop parking switched off.
+            return SessionPaneReading(
+                paneID: pane.paneID,
+                status: target.status,
+                visibleText: backend.captureVisibleText(
+                    paneID: pane.paneID,
+                    lineLimit: lines ?? AgentSupervisor.captureLineLimit
+                ),
+                prompt: nil,
+                observation: nil,
+                isSuspended: true
+            )
+        }
 
         let supervisor = AgentSupervisor(backend: backend, processTable: processTable)
         let result = supervisor.inspect(
@@ -183,7 +223,8 @@ extension SessionStore {
                     modelIDIsExact: result.modelIDIsExact,
                     currentPath: result.currentPath
                 )
-            }
+            },
+            isSuspended: false
         )
     }
 }

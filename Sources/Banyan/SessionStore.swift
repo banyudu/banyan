@@ -2008,7 +2008,15 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
         guard session.status != .closed else {
-            throw ControlError.badRequest("session '\(id)' is closed")
+            throw ControlError.conflict(code: "session_closed", message: "session '\(id)' is closed")
+        }
+        // An imported-history row reconstructs a session that already ended; it has
+        // no pane behind it, so say that rather than fail later on a missing one.
+        guard !session.isImportedHistory else {
+            throw ControlError.conflict(
+                code: "session_imported_history",
+                message: "session '\(id)' is imported history and has no live pane"
+            )
         }
         return SessionPaneTarget(
             id: session.id,
@@ -2017,7 +2025,8 @@ final class SessionStore: ObservableObject {
             status: session.status,
             cwd: session.cwd,
             createdAt: session.createdAt,
-            environment: session.environment
+            environment: session.environment,
+            isSuspended: session.isSuspended
         )
     }
 
@@ -3940,11 +3949,16 @@ private final class HandoffOutputBuffer {
 enum ControlError: LocalizedError {
     case notFound(String)
     case badRequest(String)
+    /// The request is well-formed but the session is in a state that cannot serve
+    /// it. Carries its own code so a caller can tell "parked" from "malformed"
+    /// and say which it was.
+    case conflict(code: String, message: String)
 
     var code: String {
         switch self {
         case .notFound: return "not_found"
         case .badRequest: return "bad_request"
+        case .conflict(let code, _): return code
         }
     }
 
@@ -3952,6 +3966,7 @@ enum ControlError: LocalizedError {
         switch self {
         case .notFound: return 404
         case .badRequest: return 400
+        case .conflict: return 409
         }
     }
 
@@ -3959,6 +3974,7 @@ enum ControlError: LocalizedError {
         switch self {
         case .notFound(let id): return "No session found for id '\(id)'"
         case .badRequest(let message): return message
+        case .conflict(_, let message): return message
         }
     }
 }

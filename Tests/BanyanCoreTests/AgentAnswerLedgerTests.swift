@@ -193,3 +193,17 @@ private func prompt(footprint: String, selected: Int = 1) -> AgentPrompt {
         footprint: footprint
     )
 }
+
+@Test func awaitingAnAnswerIsNarrowerThanNeedingAttention() {
+    // Both predicates exist and neither is redundant. `needsAttention` asks whether
+    // a session should compete for the user's eye — a failed one should. This asks
+    // whether there is a prompt that will accept a keystroke — a failed one has
+    // none, and typing into it would land in a pane that already gave up.
+    #expect(SessionLifecyclePolicy.needsAttention(status: .failed, isImportedHistory: false, isSuspended: false))
+    #expect(SessionStatus.failed.isAwaitingHumanAnswer == false)
+
+    for status in [SessionStatus.asking, .needInput] {
+        #expect(status.isAwaitingHumanAnswer)
+        #expect(SessionLifecyclePolicy.needsAttention(status: status, isImportedHistory: false, isSuspended: false))
+    }
+}
