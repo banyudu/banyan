@@ -15,6 +15,18 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// off to tmux's copy-mode instead of keeping a duplicate local history.
     var tmuxSessionName: String?
     var telemetry: PerformanceTelemetry?
+    /// Which renderer paints this view. Applied once the view has a window,
+    /// because the GPU path builds an `MTKView` and its pipeline state.
+    var rendererPreference: TerminalRendererPreference = .coreGraphics {
+        didSet {
+            guard rendererPreference != oldValue else { return }
+            applyRendererPreference()
+        }
+    }
+    /// The renderer actually in use. `setUseMetal` can fail (no Metal device,
+    /// pipeline compilation), and the reported draw samples have to name the
+    /// renderer that produced them rather than the one that was requested.
+    private var activeRenderer: TerminalRendererPreference = .coreGraphics
     private var tmuxScrollPosition = 0
     private let displayInvalidationLock = NSLock()
     private var displayInvalidationPending = false
@@ -162,8 +174,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         displayInvalidationLock.unlock()
 
         terminal.updateFullScreen()
-        needsDisplay = true
-        super.setNeedsDisplay(bounds)
+        requestFullRedraw()
     }
 
     private func flushCoalescedDisplayInvalidation() {
@@ -186,12 +197,34 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     override func draw(_ dirtyRect: NSRect) {
         let start = CACurrentMediaTime()
         super.draw(dirtyRect)
-        let elapsed = (CACurrentMediaTime() - start) * 1000.0
-        displayInvalidationLock.lock()
-        lastDrawMS = elapsed
-        displayInvalidationLock.unlock()
-        telemetry?.recordDurationIfSlow("terminal.draw", durationMS: elapsed)
+        // SwiftTerm's `draw(_:)` returns immediately while Metal is on, so this
+        // measures the CoreGraphics path only. The GPU path reports through
+        // `onMetalFrameRendered`.
+        guard activeRenderer == .coreGraphics else { return }
+        recordDraw(durationMS: (CACurrentMediaTime() - start) * 1000.0)
     }
+
+    /// Both renderers report through the same metric, so a performance report
+    /// compares like with like; `renderer=` in the detail says which produced
+    /// the sample.
+    private func recordDraw(durationMS: Double) {
+        displayInvalidationLock.lock()
+        lastDrawMS = durationMS
+        displayInvalidationLock.unlock()
+        let detail = "renderer=\(activeRenderer.telemetryName)"
+        if Self.recordsEveryDraw {
+            telemetry?.recordDuration("terminal.draw", durationMS: durationMS, detail: detail)
+        } else {
+            telemetry?.recordDurationIfSlow("terminal.draw", durationMS: durationMS, detail: detail)
+        }
+    }
+
+    /// `BANYAN_TERMINAL_DRAW_PROFILE=1` retains every draw sample instead of
+    /// only the ones over the slow threshold, so an A/B run can report an
+    /// average and a p95 rather than a tail count. Off by default: it writes
+    /// several rows a second per visible session.
+    private static let recordsEveryDraw =
+        ProcessInfo.processInfo.environment["BANYAN_TERMINAL_DRAW_PROFILE"] == "1"
 
     var hasVisibleText: Bool {
         let dimensions = terminal.getDims()
@@ -215,6 +248,31 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         configureInteraction()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        applyRendererPreference()
+    }
+
+    /// Falls back to CoreGraphics when the GPU path cannot start: an
+    /// experimental renderer must never cost the user their terminal.
+    private func applyRendererPreference() {
+        guard window != nil else { return }
+        let requested = rendererPreference
+        guard requested != activeRenderer else { return }
+        do {
+            try setUseMetal(requested == .metal)
+        } catch {
+            NSLog("Banyan could not enable the Metal terminal renderer: \(error.localizedDescription)")
+        }
+        // Read back what the view ended up with rather than what was asked for.
+        activeRenderer = isUsingMetalRenderer ? .metal : .coreGraphics
+        onMetalFrameRendered = activeRenderer == .metal
+            ? { [weak self] durationMS in self?.recordDraw(durationMS: durationMS) }
+            : nil
+        requestFullRedraw()
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -284,8 +342,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     func resetForNewProcess() {
         beginInitialScreenSynchronization(restarting: true)
         terminal.resetToInitialState()
-        needsDisplay = true
-        setNeedsDisplay(bounds)
+        requestFullRedraw()
     }
 
     func refreshLinkTracking() {
@@ -346,8 +403,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         let completion = initialScreenSyncCompletion
         initialScreenSyncCompletion = nil
         alphaValue = 1
-        needsDisplay = true
-        setNeedsDisplay(bounds)
+        requestFullRedraw()
         completion?()
     }
 

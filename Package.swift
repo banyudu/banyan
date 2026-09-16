@@ -50,8 +50,17 @@ packageTargets.append(contentsOf: [
     .testTarget(
         name: "BanyanTests",
         dependencies: ["Banyan"]
+    ),
+    // A/B harness for the terminal renderer experiment; see
+    // docs/terminal-renderer-experiment.md.
+    .executableTarget(
+        name: "TerminalRenderBench",
+        dependencies: [
+            .product(name: "SwiftTerm", package: "SwiftTerm")
+        ]
     )
 ])
+packageProducts.append(.executable(name: "TerminalRenderBench", targets: ["TerminalRenderBench"]))
 #endif
 
 let package = Package(

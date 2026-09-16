@@ -190,8 +190,7 @@ final class TerminalContainerView: NSView {
         layoutSubtreeIfNeeded()
         syncTerminalFrameIfNeeded(markNeedsDisplay: true)
         terminalView.terminal.updateFullScreen()
-        terminalView.needsDisplay = true
-        terminalView.setNeedsDisplay(terminalView.bounds)
+        terminalView.requestFullRedraw()
         layer?.setNeedsDisplay()
     }
 
@@ -222,7 +221,7 @@ final class TerminalContainerView: NSView {
         guard terminalFrame.width > 40, terminalFrame.height > 40 else { return }
         guard !terminalView.frame.equalTo(terminalFrame) else {
             if markNeedsDisplay {
-                terminalView.needsDisplay = true
+                terminalView.requestFullRedraw()
             }
             return
         }
@@ -234,7 +233,7 @@ final class TerminalContainerView: NSView {
         }
         (terminalView as? DetectingLocalProcessTerminalView)?.refreshLinkTracking()
         if markNeedsDisplay {
-            terminalView.needsDisplay = true
+            terminalView.requestFullRedraw()
         }
     }
 

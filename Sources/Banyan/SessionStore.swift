@@ -179,6 +179,23 @@ final class SessionStore: ObservableObject {
             applyAppearance()
         }
     }
+    /// Experiment switch for SwiftTerm's Metal renderer. Kept in `UserDefaults`
+    /// rather than the workspace snapshot: it is a rendering experiment, not
+    /// part of the workspace a user would expect to carry around.
+    @Published var terminalRenderer: TerminalRendererPreference = .coreGraphics {
+        didSet {
+            guard terminalRenderer != oldValue else { return }
+            // A renderer pinned for one launch must not write itself into the
+            // user's stored preference.
+            if !TerminalRendererPreference.isPinnedByEnvironment(ProcessInfo.processInfo.environment) {
+                UserDefaults.standard.set(
+                    terminalRenderer.rawValue,
+                    forKey: TerminalRendererPreference.defaultsKey
+                )
+            }
+            applyTerminalRenderer()
+        }
+    }
     /// Applies only to newly launched or explicitly resumed Codex sessions.
     /// Existing sessions keep their persisted launch command so switching this
     /// setting cannot steal or release a live thread writer.
@@ -368,6 +385,7 @@ final class SessionStore: ObservableObject {
         terminalFontFamily = workspace.terminalFontFamily
         terminalFontSize = workspace.terminalFontSize
         enableCodexAppServerMode = workspace.enableCodexAppServerMode
+        terminalRenderer = TerminalRendererPreference.resolvedDefault
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
             projectLaunchByGroup = stored
         }
@@ -3097,6 +3115,14 @@ final class SessionStore: ObservableObject {
             $0.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
         }
         scratchSession?.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
+    }
+
+    /// Reads the resolved preference rather than the published one so an
+    /// environment pin keeps winning over the picker.
+    private func applyTerminalRenderer() {
+        let renderer = TerminalRendererPreference.resolvedDefault
+        sessions.forEach { $0.apply(renderer: renderer) }
+        scratchSession?.apply(renderer: renderer)
     }
 
     func refreshTerminalAppearance() {
