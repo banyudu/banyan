@@ -34,10 +34,18 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// Adaptive coalescing state. Link highlighting made each repaint cost
     /// 17-120ms on wide terminals, so flushing every run-loop turn during
     /// streaming pinned the main thread (energy impact ~3900). When the last
-    /// draw was slow, subsequent flushes are spaced to ~30fps so more PTY
-    /// chunks coalesce into each repaint. Guarded by displayInvalidationLock.
+    /// draw was slow, subsequent flushes are spaced so bursts of chunks
+    /// collapse into fewer repaints instead of one 100ms+ draw per run-loop
+    /// turn — and draws can never take more than ~half the main thread no
+    /// matter how costly one viewport rebuild is. Guarded by
+    /// displayInvalidationLock.
     private var lastDrawMS: Double = 0
     private var lastFlushUptime: TimeInterval = 0
+    /// Uptime of the last completed CoreGraphics draw. Spacing is measured
+    /// from here (not from the last flush) so back-to-back flushes skip
+    /// intermediate frames and the screen shows the latest state at the
+    /// capped rate. Guarded by displayInvalidationLock.
+    private var lastDrawUptime: TimeInterval = 0
     /// A non-bottom SwiftTerm viewport is not, by itself, proof that the user
     /// is reading scrollback. tmux screen redraws can briefly leave a hidden
     /// terminal at an earlier local row. Only preserve a viewport after an
@@ -151,9 +159,14 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// run-loop turn, accumulating the union of the dirty rects so SwiftTerm's
     /// per-row draw skip still only repaints rows that actually changed.
     ///
-    /// When draws are slow (link highlighting + CoreText on wide terminals), the
-    /// flush is additionally spaced to ~30fps so bursts of chunks collapse into
-    /// fewer, cheaper repaints instead of one 100ms+ draw per run-loop turn.
+    /// When draws are slow, the flush is additionally spaced from the last
+    /// completed draw so bursts collapse into fewer repaints: at most ~30fps,
+    /// and at most ~half the main thread (spacing scales with the last draw's
+    /// own cost, capped so the worst-case added latency stays under 100ms).
+    /// Chunks arriving during the wait only extend the accumulated rect, so
+    /// intermediate frames are skipped and the screen always shows the latest
+    /// state. Idle single echoes are unaffected: with no recent slow draw the
+    /// flush still runs on the next run-loop turn.
     override func setNeedsDisplay(_ invalidRect: NSRect) {
         displayInvalidationLock.lock()
         if displayInvalidationPending {
@@ -164,7 +177,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         displayInvalidationPending = true
         accumulatedDirtyRect = invalidRect
         let now = ProcessInfo.processInfo.systemUptime
-        let delay: TimeInterval = lastDrawMS > 12 ? max(0, (1.0 / 30.0) - (now - lastFlushUptime)) : 0
+        let delay = Self.coalesceDelay(now: now, lastDrawMS: lastDrawMS, lastDrawUptime: lastDrawUptime)
         displayInvalidationLock.unlock()
 
         if delay > 0 {
@@ -176,6 +189,17 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
                 self?.flushCoalescedDisplayInvalidation()
             }
         }
+    }
+
+    /// Spacing for the next coalesced flush after a draw burst. Pure so the
+    /// repaint contract tests can pin it without depending on wall-clock timing.
+    static func coalesceDelay(now: TimeInterval, lastDrawMS: Double, lastDrawUptime: TimeInterval) -> TimeInterval {
+        guard lastDrawMS > 12 else { return 0 }
+        // Half-duty cap: a draw costing D ms earns at least 2*D ms before the
+        // next one, so draws saturate at ~50% of main come what may. At most
+        // ~30fps, and the added latency never exceeds 100ms.
+        let spacing = max(1.0 / 30.0, min((lastDrawMS / 1000.0) * 2, 0.1))
+        return max(0, spacing - (now - lastDrawUptime))
     }
 
     /// tmux scrolls its history by repainting the visible rows in place, so the
@@ -231,6 +255,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         let elapsed = (CACurrentMediaTime() - start) * 1000.0
         displayInvalidationLock.lock()
         lastDrawMS = elapsed
+        lastDrawUptime = ProcessInfo.processInfo.systemUptime
         displayInvalidationLock.unlock()
         let stats = lastDrawStats
         drawCount += 1

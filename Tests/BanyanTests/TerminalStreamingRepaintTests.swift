@@ -258,3 +258,24 @@ private func fullFrameRepaints(frames: Int, rows: Int, cols: Int) -> [String] {
 
     #expect(harness.view.pendingRenderOnlyInvalidation)
 }
+
+/// The half-duty cap: spacing math is pure wall-clock arithmetic, pinned here
+/// without depending on real draw timing.
+@Test func coalesceDelayIsZeroForFastOrStaleDraws() {
+    // Fast draws never space: single keystroke echoes stay immediate.
+    #expect(DetectingLocalProcessTerminalView.coalesceDelay(now: 100, lastDrawMS: 5, lastDrawUptime: 99.9) == 0)
+    // A slow draw long past earns no spacing either.
+    #expect(DetectingLocalProcessTerminalView.coalesceDelay(now: 100, lastDrawMS: 25, lastDrawUptime: 90) == 0)
+}
+
+@Test func coalesceDelayBoundsDrawsToHalfDuty() {
+    // A 25ms draw earns a 50ms spacing; 10ms after it, 40ms remain.
+    let delay = DetectingLocalProcessTerminalView.coalesceDelay(now: 100.01, lastDrawMS: 25, lastDrawUptime: 100)
+    #expect(abs(delay - 0.04) < 0.005)
+    // Floor is ~30fps even for barely-slow draws.
+    let floor = DetectingLocalProcessTerminalView.coalesceDelay(now: 100, lastDrawMS: 13, lastDrawUptime: 100)
+    #expect(abs(floor - (1.0 / 30.0)) < 0.005)
+    // Latency cap: a 500ms pathological draw still only defers 100ms.
+    let capped = DetectingLocalProcessTerminalView.coalesceDelay(now: 100, lastDrawMS: 500, lastDrawUptime: 100)
+    #expect(abs(capped - 0.1) < 0.005)
+}
