@@ -10,6 +10,14 @@ public struct AgentSupervisor: Sendable {
         public let modelID: String?
         public let modelIDIsExact: Bool
         public let currentPath: String?
+        /// The capture this status was decided from, when one was taken.
+        ///
+        /// Carried out so a caller that needs to read the pane — to show the
+        /// question, or to digest it before injecting an answer — reads exactly the
+        /// text that was classified, rather than a second capture taken a moment
+        /// later. Those two can disagree, and the whole point of gating on the
+        /// supervisor is that they must not.
+        public let visibleText: String?
 
         public init(
             status: SessionStatus,
@@ -17,7 +25,8 @@ public struct AgentSupervisor: Sendable {
             provider: CodingAgentProvider?,
             modelID: String? = nil,
             modelIDIsExact: Bool = false,
-            currentPath: String?
+            currentPath: String?,
+            visibleText: String? = nil
         ) {
             self.status = status
             self.tone = tone
@@ -25,8 +34,13 @@ public struct AgentSupervisor: Sendable {
             self.modelID = modelID
             self.modelIDIsExact = modelIDIsExact
             self.currentPath = currentPath
+            self.visibleText = visibleText
         }
     }
+
+    /// Rows of pane text every status decision is made from. Exposed so callers
+    /// that re-read the pane ask for the same window the classification used.
+    public static let captureLineLimit = 60
 
     private let backend: any AgentSupervisorBackend
     private let processTable: ProcessTable
@@ -131,7 +145,7 @@ public struct AgentSupervisor: Sendable {
         let agentProcessCount = Self.logicalAgentProcessCount(in: descendants)
         if rootAgentProcessCount + agentProcessCount > 1 {
             if modelIdentity == nil, hasLiveOpenCode {
-                let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: 60)
+                let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: Self.captureLineLimit)
                 modelIdentity = OpenCodeSessionModelDetector.statusBarIdentity(in: visibleText)
                 provider = modelIdentity?.provider ?? baseProvider
             }
@@ -154,7 +168,7 @@ public struct AgentSupervisor: Sendable {
             return result(.executing, .blue)
         }
 
-        let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: 60)
+        let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: Self.captureLineLimit)
         if modelIdentity == nil, hasLiveOpenCode {
             modelIdentity = OpenCodeSessionModelDetector.statusBarIdentity(in: visibleText)
             provider = modelIdentity?.provider ?? baseProvider
@@ -174,19 +188,20 @@ public struct AgentSupervisor: Sendable {
             return result(.idle, .neutral)
         }
         if Self.looksLikeAgentQuestion(visibleText) {
-            return result(.asking, .yellow)
+            return result(.asking, .yellow, capturedText: visibleText)
         }
 
-        return result(.needInput, .yellow)
+        return result(.needInput, .yellow, capturedText: visibleText)
 
-        func result(_ status: SessionStatus, _ tone: SessionTone) -> Result {
+        func result(_ status: SessionStatus, _ tone: SessionTone, capturedText: String? = nil) -> Result {
             Result(
                 status: status,
                 tone: tone,
                 provider: provider,
                 modelID: modelIdentity?.modelID,
                 modelIDIsExact: modelIdentity?.isExactModelID ?? false,
-                currentPath: pane.currentPath
+                currentPath: pane.currentPath,
+                visibleText: capturedText
             )
         }
     }

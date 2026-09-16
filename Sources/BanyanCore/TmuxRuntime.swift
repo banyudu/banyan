@@ -58,6 +58,20 @@ public protocol TmuxSessionLifecycleBackend: TmuxSessionLookupBackend {
     func killSession(named name: String)
 }
 
+/// Writes into a pane from outside it.
+///
+/// Kept separate from the read-only surfaces because this is the one place the
+/// control API can type into a process running with the user's privileges.
+/// Injection goes through tmux rather than the embedded terminal's PTY: a
+/// background session deliberately has no attached client, and the in-process
+/// write path only reaches panes that do.
+public protocol TmuxInputBackend: Sendable {
+    /// Presses named keys in the pane.
+    func sendKeys(paneID: String, keys: [TmuxKey]) throws
+    /// Types text verbatim, never interpreted as key names.
+    func sendLiteral(paneID: String, text: String) throws
+}
+
 public protocol TmuxDisplayBackend: TmuxSessionBackend {
     func captureCurrentVisibleText(paneID: String) -> String
 }
@@ -77,8 +91,9 @@ public protocol TmuxClientBackend: TmuxTerminalBackend {
     func scrollHistory(paneID: String, lines: Int, up: Bool, onScrollPosition: (@Sendable (Int) -> Void)?)
 }
 
-/// Backend surface needed by the macOS session store for discovery and supervision.
-public protocol TmuxSessionStoreBackend: AgentSupervisorBackend, TmuxSessionLifecycleBackend {
+/// Backend surface needed by the macOS session store for discovery, supervision,
+/// and answering a session that is blocked on a human.
+public protocol TmuxSessionStoreBackend: AgentSupervisorBackend, TmuxSessionLifecycleBackend, TmuxInputBackend {
     func listBanyanSessions() -> [String]
 }
 

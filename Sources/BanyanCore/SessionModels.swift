@@ -22,6 +22,25 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
         }
     }
 
+    /// True only for the states that mean a human still has to say something.
+    ///
+    /// Narrower than `isCodingAgentIdle` on purpose: `.idle` is an agent sitting at
+    /// an empty prompt with nothing to answer, and `.review` is output to read.
+    /// Injecting a keystroke into either would type into a session nobody asked a
+    /// question in, so this is the gate every injection route checks.
+    ///
+    /// Also narrower than `SessionLifecyclePolicy.needsAttention`, and not a
+    /// duplicate of it. That one answers "should this session compete for the
+    /// user's attention", which `.failed` does; this one answers "is there a prompt
+    /// here that will accept an answer", which `.failed` does not.
+    public var isAwaitingHumanAnswer: Bool {
+        switch self {
+        case .needInput, .asking: return true
+        case .review, .idle, .running, .executing, .longRunningShell, .subagents,
+             .completed, .failed, .closed: return false
+        }
+    }
+
     public var label: String {
         switch self {
         case .running: return "Running"

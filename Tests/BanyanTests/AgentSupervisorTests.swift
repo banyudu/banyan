@@ -1246,3 +1246,52 @@ private struct FakeSupervisorBackend: AgentSupervisorBackend {
 
     #expect(result?.status != .executing)
 }
+
+@Test func supervisorCarriesTheCaptureItsBlockedVerdictWasMadeFrom() {
+    // `/output` parses the prompt from this text rather than taking its own
+    // capture: a second read is a different moment, and the whole point of gating
+    // on the supervisor is that the verdict and the text agree.
+    let dialog = freshClaudePane.replacingOccurrences(
+        of: "─────────────────────────────────────── ↯ ─",
+        with: [
+            "❯ delete the build directory",
+            "",
+            " Do you want to proceed?",
+            " ❯ 1. Yes",
+            "   2. No",
+            "",
+            "─────────────────────────────────────── ↯ ─"
+        ].joined(separator: "\n")
+    )
+
+    let result = makeSupervisor(visibleText: dialog, processes: [agentProcess("claude")]).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .executing
+    )
+
+    #expect(result?.status == .asking)
+    #expect(result?.visibleText == dialog)
+}
+
+@Test func supervisorCarriesNoCaptureForVerdictsMadeFromTheProcessTreeAlone() {
+    // A pane whose agent has exited was never read, so there is no text a prompt
+    // could honestly be attributed to.
+    let closed = makeSupervisor(pane: pane(isDead: true)).inspect(
+        tmuxSessionName: "agent",
+        launchCommand: "claude",
+        currentStatus: .running
+    )
+    let busy = makeSupervisor(
+        visibleText: "",
+        processes: [
+            agentProcess("claude"),
+            process(pid: 102, parentPID: 101, commandName: "/usr/bin/make", arguments: "make -j8", elapsed: 3)
+        ]
+    ).inspect(tmuxSessionName: "agent", launchCommand: "claude", currentStatus: .running)
+
+    #expect(closed?.status == .closed)
+    #expect(closed?.visibleText == nil)
+    #expect(busy?.status == .executing)
+    #expect(busy?.visibleText == nil)
+}

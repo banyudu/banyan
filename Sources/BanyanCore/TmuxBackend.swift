@@ -160,6 +160,22 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         (try? run(["capture-pane", "-p", "-J", "-t", paneID])) ?? ""
     }
 
+    /// Presses keys in a pane from outside the app.
+    ///
+    /// Addresses the pane rather than the session: a session can hold more than
+    /// one pane, and only the agent's should ever receive an injected answer.
+    /// Errors propagate — a caller that has told a human "sent" must not learn
+    /// afterwards that tmux refused.
+    public func sendKeys(paneID: String, keys: [TmuxKey]) throws {
+        guard !keys.isEmpty else { return }
+        _ = try run(AgentInputCommand.sendKeysArguments(paneID: paneID, keys: keys))
+    }
+
+    public func sendLiteral(paneID: String, text: String) throws {
+        guard !text.isEmpty else { return }
+        _ = try run(AgentInputCommand.sendLiteralArguments(paneID: paneID, text: text))
+    }
+
     /// Scrolls the pane's history using tmux's own copy-mode, so the scrollback the
     /// user sees is tmux's (already held, ~35 MB for a whole server) instead of a
     /// duplicated SwiftTerm buffer (~123 MB per terminal at a 20k limit).
