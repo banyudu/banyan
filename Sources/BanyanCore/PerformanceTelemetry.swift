@@ -89,16 +89,24 @@ public struct PerformanceEventStore {
     }
 
     public func record(_ event: PerformanceEvent) {
+        record([event])
+    }
+
+    /// Writes a whole batch under one transaction. Prefer this over repeated
+    /// single-event calls: an `INSERT` outside an explicit transaction is its own
+    /// WAL commit, so a burst of terminal draws became a burst of disk writes.
+    public func record(_ events: [PerformanceEvent]) {
+        guard !events.isEmpty else { return }
         do {
             let database = try writableDatabase()
-            try insert(event, database: database)
-            writer.insertsSincePrune += 1
+            try insert(events, database: database)
+            writer.insertsSincePrune += events.count
             if writer.insertsSincePrune >= Self.insertsBetweenPrunes {
                 writer.insertsSincePrune = 0
                 try prune(database)
             }
         } catch {
-            NSLog("Banyan failed to record performance event: \(error.localizedDescription)")
+            NSLog("Banyan failed to record performance events: \(error.localizedDescription)")
         }
     }
 
@@ -223,6 +231,20 @@ public struct PerformanceEventStore {
                 lines.append("- \(Self.displayDate(event.createdAt)) \(event.name) \(Self.ms(event.durationMS))\(session)\(detail)")
             }
         }
+
+        // Without this, a sampled metric's count reads as the true event rate.
+        let sampledNotes = report.summaries
+            .compactMap { summary -> String? in
+                guard let policy = PerformanceSampler.defaultPolicies[summary.name] else { return nil }
+                return "- \(summary.name): every event >= \(Self.ms(policy.alwaysRecordAtOrAboveMS)) recorded, "
+                    + "faster ones 1 in \(policy.sampleRate). Multiply counts below that bar by ~\(policy.sampleRate)."
+            }
+            .sorted()
+        if !sampledNotes.isEmpty {
+            lines.append("")
+            lines.append("Sampled metrics:")
+            lines.append(contentsOf: sampledNotes)
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -316,7 +338,9 @@ public struct PerformanceEventStore {
         try execute(database, "CREATE INDEX IF NOT EXISTS idx_performance_events_name ON performance_events(name)")
     }
 
-    private func insert(_ event: PerformanceEvent, database: OpaquePointer) throws {
+    /// One transaction and one prepared statement for the whole batch, so a flush
+    /// of N events costs a single WAL commit instead of N.
+    private func insert(_ events: [PerformanceEvent], database: OpaquePointer) throws {
         let sql = """
         INSERT INTO performance_events (name, session_id, correlation_id, duration_ms, detail, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -327,15 +351,28 @@ public struct PerformanceEventStore {
         }
         defer { sqlite3_finalize(statement) }
 
-        bindText(statement, 1, event.name)
-        bindText(statement, 2, event.sessionID)
-        bindText(statement, 3, event.correlationID)
-        sqlite3_bind_double(statement, 4, event.durationMS)
-        bindText(statement, 5, event.detail)
-        bindText(statement, 6, Self.encodeDate(event.createdAt))
+        try execute(database, "BEGIN IMMEDIATE")
+        do {
+            for event in events {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                bindText(statement, 1, event.name)
+                bindText(statement, 2, event.sessionID)
+                bindText(statement, 3, event.correlationID)
+                sqlite3_bind_double(statement, 4, event.durationMS)
+                bindText(statement, 5, event.detail)
+                bindText(statement, 6, Self.encodeDate(event.createdAt))
 
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw databaseError(database)
+                guard sqlite3_step(statement) == SQLITE_DONE else {
+                    throw databaseError(database)
+                }
+            }
+            try execute(database, "COMMIT")
+        } catch {
+            // Leaving the transaction open would fail every later BEGIN on this
+            // long-lived handle, so telemetry would stop recording for good.
+            try? execute(database, "ROLLBACK")
+            throw error
         }
     }
 
@@ -412,6 +449,60 @@ public struct PerformanceEventStore {
     }()
 }
 
+/// Thins out high-frequency metrics without losing their slow tail.
+///
+/// `terminal.draw`'s 16ms report threshold is one frame at 60Hz, so during
+/// streaming output nearly every draw clears it — recording them all is what
+/// turned diagnostics into a steady stream of disk writes. Draws slow enough to
+/// be a visible hitch stay at or above `alwaysRecordAtOrAboveMS` and are never
+/// sampled out; only the routine band below it is thinned to one in
+/// `sampleRate`. Metrics absent from the policy table are always recorded in
+/// full, so `supervisor.tick` and `switcher.switch_visible` keep every sample.
+struct PerformanceSampler {
+    struct Policy: Equatable {
+        /// At or above this duration an event is always recorded, with full detail.
+        let alwaysRecordAtOrAboveMS: Double
+        /// One in every `sampleRate` events below that duration is kept.
+        let sampleRate: Int
+    }
+
+    enum Decision: Equatable {
+        /// Record the event, appending `detailSuffix` to its detail when non-nil.
+        case record(detailSuffix: String?)
+        case drop
+    }
+
+    /// 50ms is roughly three dropped frames: past that a draw is a hitch worth
+    /// investigating, below it the sample only matters in aggregate.
+    static let defaultPolicies: [String: Policy] = [
+        "terminal.draw": Policy(alwaysRecordAtOrAboveMS: 50, sampleRate: 8)
+    ]
+
+    private let policies: [String: Policy]
+    private var counters: [String: Int] = [:]
+
+    init(policies: [String: Policy] = PerformanceSampler.defaultPolicies) {
+        self.policies = policies
+    }
+
+    mutating func decide(name: String, durationMS: Double) -> Decision {
+        guard let policy = policies[name], policy.sampleRate > 1 else {
+            return .record(detailSuffix: nil)
+        }
+        guard durationMS < policy.alwaysRecordAtOrAboveMS else {
+            return .record(detailSuffix: nil)
+        }
+        let seen = (counters[name] ?? 0) + 1
+        guard seen >= policy.sampleRate else {
+            counters[name] = seen
+            return .drop
+        }
+        counters[name] = 0
+        // Tag the survivor so a reader knows this metric's count is scaled down.
+        return .record(detailSuffix: "sample=1/\(policy.sampleRate)")
+    }
+}
+
 public final class PerformanceTelemetry: @unchecked Sendable {
     private struct ActiveSpan {
         let name: String
@@ -434,11 +525,29 @@ public final class PerformanceTelemetry: @unchecked Sendable {
     private let queue = DispatchQueue(label: "app.banyan.performance-telemetry", qos: .utility)
     private var activeSpans: [String: ActiveSpan] = [:]
     private var activeSwitches: [String: ActiveSessionSwitch] = [:]
+    /// Buffered until a flush. Everything below is touched only on `queue`, which
+    /// is serial, so none of it needs its own locking.
+    private var pendingEvents: [PerformanceEvent] = []
+    private var isFlushScheduled = false
+    private var sampler = PerformanceSampler()
     public var axiomExporter: AxiomExporter?
+
+    /// Deliberately a one-shot `asyncAfter` armed only while the buffer is
+    /// non-empty, not a repeating timer: an idle app schedules nothing at all and
+    /// never wakes for a flush it has no work for.
+    static let flushInterval: TimeInterval = 5
+    /// Caps how many events a crash can lose, and bounds the transaction size.
+    static let maxBufferedEvents = 64
 
     public init(store: PerformanceEventStore, axiomExporter: AxiomExporter? = nil) {
         self.store = store
         self.axiomExporter = axiomExporter
+    }
+
+    /// Safe to touch the buffer directly: deinit means no references survive, and
+    /// every queued block holds only a weak one, so nothing else can be running.
+    deinit {
+        flushPendingLocked()
     }
 
     @discardableResult
@@ -636,20 +745,72 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         detail: String?,
         sendToAxiom: Bool = true
     ) {
+        guard case .record(let detailSuffix) = sampler.decide(name: name, durationMS: durationMS) else {
+            return
+        }
         let event = PerformanceEvent(
             name: name,
             sessionID: sessionID,
             correlationID: correlationID,
             durationMS: durationMS,
-            detail: detail
+            detail: Self.appending(detailSuffix, to: detail)
         )
-        store.record(event)
+        pendingEvents.append(event)
+        scheduleFlushLocked()
         // supervisor.* is high-frequency; keep in local SQLite for `banyanctl perf`
         // but don't pay per-tick Axiom log ingestion. Switch to metrics if needed.
         let isSupervisor = name.hasPrefix("supervisor.")
         if sendToAxiom && !isSupervisor {
             axiomExporter?.sendPerformanceEvent(event)
         }
+    }
+
+    private static func appending(_ suffix: String?, to detail: String?) -> String? {
+        guard let suffix else { return detail }
+        guard let detail, !detail.isEmpty else { return suffix }
+        return "\(detail) \(suffix)"
+    }
+
+    /// How many events are waiting to be written. Reading it drains everything
+    /// already queued, so it also serves as a barrier. Must not be called from `queue`.
+    var bufferedEventCount: Int {
+        queue.sync { pendingEvents.count }
+    }
+
+    /// Writes the buffer out without waiting. Safe to call from any thread.
+    public func flushPendingEvents() {
+        queue.async { [weak self] in
+            self?.flushPendingLocked()
+        }
+    }
+
+    /// Blocks until the buffer is on disk. For app termination, where a queued
+    /// async flush would never run. Must not be called from `queue`.
+    public func flushPendingEventsAndWait() {
+        queue.sync {
+            flushPendingLocked()
+        }
+    }
+
+    private func scheduleFlushLocked() {
+        if pendingEvents.count >= Self.maxBufferedEvents {
+            flushPendingLocked()
+            return
+        }
+        guard !isFlushScheduled else { return }
+        isFlushScheduled = true
+        queue.asyncAfter(deadline: .now() + Self.flushInterval) { [weak self] in
+            guard let self else { return }
+            self.isFlushScheduled = false
+            self.flushPendingLocked()
+        }
+    }
+
+    private func flushPendingLocked() {
+        guard !pendingEvents.isEmpty else { return }
+        let events = pendingEvents
+        pendingEvents.removeAll(keepingCapacity: true)
+        store.record(events)
     }
 
     /// A session switch that hasn't reached terminal-ready / first-output within
