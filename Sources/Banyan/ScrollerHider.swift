@@ -18,8 +18,8 @@ private struct ScrollerHider: NSViewRepresentable {
 }
 
 private final class ScrollerHidingView: NSView {
-    private weak var observedScrollView: NSScrollView?
-    private var scrollerObservation: NSKeyValueObservation?
+    private var observedScrollViews: [ObjectIdentifier: NSScrollView] = [:]
+    private var scrollerObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
     private var discoveryAttempts = 0
     private static let maxDiscoveryAttempts = 20
 
@@ -49,54 +49,77 @@ private final class ScrollerHidingView: NSView {
     /// background view — so enforcement is event-driven: KVO catches the exact
     /// mutation that re-enables the scroller. Trackpad/mouse-wheel scrolling
     /// keeps working; only the visible bar stays gone.
+    ///
+    /// Every trigger re-walks the live ancestor chain instead of trusting the
+    /// cache: SwiftUI can swap in a replacement scroll view instance (e.g. when
+    /// a ScrollViewReader attaches or state reconfigures the list) while the
+    /// old instance stays alive, which would otherwise pin the cache to a
+    /// detached view while its replacement shows a bar. All ancestors are
+    /// hidden, not just the nearest, so nested scroll views are covered too.
     func hideEnclosingScroller() {
-        if let scrollView = observedScrollView {
-            if scrollView.hasVerticalScroller {
-                scrollView.hasVerticalScroller = false
-            }
-            return
-        }
-        guard let scrollView = findEnclosingScrollView() else {
+        let scrollViews = findAncestorScrollViews()
+        guard !scrollViews.isEmpty else {
             scheduleDiscoveryRetry()
             return
         }
         discoveryAttempts = 0
-        observedScrollView = scrollView
-        if scrollView.hasVerticalScroller {
-            scrollView.hasVerticalScroller = false
+        let currentIDs = Set(scrollViews.map { ObjectIdentifier($0) })
+        for id in observedScrollViews.keys where !currentIDs.contains(id) {
+            scrollerObservations[id]?.invalidate()
+            scrollerObservations.removeValue(forKey: id)
+            observedScrollViews.removeValue(forKey: id)
         }
-        scrollerObservation = scrollView.observe(\.hasVerticalScroller, options: [.new]) { scrollView, change in
-            guard change.newValue == true else { return }
-            DispatchQueue.main.async { [weak scrollView] in
-                if scrollView?.hasVerticalScroller == true {
-                    scrollView?.hasVerticalScroller = false
+        for scrollView in scrollViews {
+            Self.setScrollerHidden(on: scrollView)
+            let id = ObjectIdentifier(scrollView)
+            guard scrollerObservations[id] == nil else { continue }
+            observedScrollViews[id] = scrollView
+            scrollerObservations[id] = scrollView.observe(
+                \.hasVerticalScroller,
+                options: [.new]
+            ) { scrollView, change in
+                guard change.newValue == true else { return }
+                DispatchQueue.main.async { [weak scrollView] in
+                    guard let scrollView else { return }
+                    Self.setScrollerHidden(on: scrollView)
                 }
             }
         }
     }
 
-    private func findEnclosingScrollView() -> NSScrollView? {
+    private static func setScrollerHidden(on scrollView: NSScrollView) {
+        if scrollView.hasVerticalScroller {
+            scrollView.hasVerticalScroller = false
+        }
+        if scrollView.verticalScroller?.isHidden == false {
+            scrollView.verticalScroller?.isHidden = true
+        }
+    }
+
+    private func findAncestorScrollViews() -> [NSScrollView] {
+        var found: [NSScrollView] = []
         var current: NSView? = self
         while let view = current {
             if let scrollView = view as? NSScrollView {
-                return scrollView
+                found.append(scrollView)
             }
             current = view.superview
         }
-        return nil
+        return found
     }
 
     /// The enclosing scroll view may not exist yet while SwiftUI is still
     /// assembling the hierarchy; retry with bounded backoff until found.
-    /// (If SwiftUI later replaces the scroll view instance, the move/layout
-    /// hooks above re-run discovery; the weak ref going nil is the signal.)
+    /// Replacement instances are handled by reconciling the live ancestor
+    /// chain on every trigger (see above), so no retry is needed once
+    /// anything is observed.
     private func scheduleDiscoveryRetry() {
-        guard window != nil, observedScrollView == nil else { return }
+        guard window != nil, observedScrollViews.isEmpty else { return }
         guard discoveryAttempts < Self.maxDiscoveryAttempts else { return }
         discoveryAttempts += 1
         let delay = min(0.1 * Double(discoveryAttempts), 1.0)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.observedScrollView == nil, self.window != nil else { return }
+            guard let self, self.observedScrollViews.isEmpty, self.window != nil else { return }
             self.hideEnclosingScroller()
         }
     }
