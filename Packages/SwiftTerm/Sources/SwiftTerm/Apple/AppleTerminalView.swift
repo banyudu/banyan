@@ -860,6 +860,11 @@ extension TerminalView {
         guard screenRow >= 0 && screenRow < terminal.rows else {
             return
         }
+        // The hover underline is baked into the row's attributes by
+        // `buildAttributedString`, and hovering does not change the line's
+        // generation, so the cached copy has to go: otherwise the repaint below
+        // redraws the row exactly as it was.
+        lineInfoCache.removeValue(forKey: bufferRow)
         terminal.updateRange(borrowing: displayBuffer, screenRow)
     }
 

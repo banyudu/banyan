@@ -6,6 +6,7 @@ import os
 import CoreText
 import Metal
 import MetalKit
+import QuartzCore
 #if os(macOS)
 import AppKit
 #else
@@ -313,6 +314,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             }
         }
 #endif
+        let frameStart = terminalView?.onMetalFrameRendered == nil ? 0 : CACurrentMediaTime()
         if frameSemaphore.wait(timeout: .now()) != .success {
             markPendingRedraw()
             return
@@ -521,6 +523,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         commandBuffer.present(drawable)
         bufferPool.commit(commandBuffer: commandBuffer)
         commandBuffer.commit()
+        // Reported only for frames that were actually encoded, so a host can
+        // compare this against the CoreGraphics `draw(_:)` cost like for like.
+        // GPU execution is asynchronous and is not included.
+        if let onMetalFrameRendered = terminalView.onMetalFrameRendered {
+            onMetalFrameRendered((CACurrentMediaTime() - frameStart) * 1000.0)
+        }
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.Commit", signpostID: commitID)

@@ -19,7 +19,11 @@ particular:
   at least 150 ms; it includes the Banyan session ID to identify a slow pane.
 - `terminal.draw` is retained only when a draw takes at least 16 ms. Fast draws
   are deliberately not written to SQLite so telemetry cannot create persistent
-  background I/O during output-heavy sessions.
+  background I/O during output-heavy sessions. Its detail carries `renderer=cg`
+  or `renderer=metal`, so samples from the two renderers can be told apart; see
+  `docs/terminal-renderer-experiment.md`. `BANYAN_TERMINAL_DRAW_PROFILE=1`
+  retains every sample instead of only the slow ones, which is what an A/B run
+  needs to compute an average and a p95.
 
 The supervisor invokes `ps` once and batches pane metadata for all started
 sessions into one tmux command per tick. It still captures visible text only for

@@ -139,7 +139,40 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     public var isUsingMetalRenderer: Bool {
         return useMetalRenderer
     }
+
+    /// Invoked after every Metal frame with the CPU time that frame spent in the
+    /// renderer, in milliseconds. `draw(_:)` is the equivalent seam for the
+    /// CoreGraphics path, which the GPU path never enters, so a host that times
+    /// its terminal draws needs this to keep measuring the same thing.
+    public var onMetalFrameRendered: ((Double) -> Void)?
+
+    func metalVisibleRange() -> ClosedRange<Int>? {
+        guard let terminal else { return nil }
+        let buffer = terminal.displayBuffer
+        guard buffer.lines.count > 0 else { return nil }
+        let firstRow = buffer.yDisp
+        let lastRow = min(buffer.lines.count - 1, buffer.yDisp + buffer.rows - 1)
+        return firstRow > lastRow ? nil : firstRow...lastRow
+    }
 #endif
+
+    /// Repaints the entire terminal surface on whichever renderer is active.
+    ///
+    /// `needsDisplay` only reaches the CoreGraphics path: under Metal the pixels
+    /// come from an `MTKView` subview that AppKit view invalidation does not
+    /// touch. Hosts that force a repaint - after revealing a hidden view,
+    /// reattaching a client, or recovering a blank surface - must call this
+    /// instead of setting `needsDisplay`.
+    public func requestFullRedraw() {
+#if canImport(MetalKit)
+        if metalView != nil {
+            metalDirtyRange = metalVisibleRange()
+            requestMetalDisplay()
+            return
+        }
+#endif
+        needsDisplay = true
+    }
 
     var cellDimension: CellDimension!
     var caretView: CaretView!
@@ -274,12 +307,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             mtkView.colorPixelFormat = .bgra8Unorm
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
             mtkView.delegate = renderer
+            // Below every existing subview: the GPU surface is the terminal's
+            // background, and the scroller, progress bar, find bar and URL
+            // preview are overlays on top of it. Inserting it relative to the
+            // caret alone left the scroller and anything else added before it
+            // painted underneath.
+            addSubview(mtkView, positioned: .below, relativeTo: subviews.first)
             if let caretView = caretView {
-                addSubview(mtkView, positioned: .below, relativeTo: caretView)
                 caretView.disableAnimations()
                 caretView.isHidden = true
-            } else {
-                addSubview(mtkView, positioned: .below, relativeTo: nil)
             }
             metalView = mtkView
             metalRenderer = renderer

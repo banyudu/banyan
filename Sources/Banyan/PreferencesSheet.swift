@@ -47,6 +47,23 @@ struct PreferencesSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
+                Text("Terminal renderer")
+                    .font(.headline)
+
+                Picker("Renderer", selection: $store.terminalRenderer) {
+                    ForEach(TerminalRendererPreference.allCases) { renderer in
+                        Text(renderer.label).tag(renderer)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(isRendererPinnedByEnvironment)
+
+                Text(rendererDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Codex")
                     .font(.headline)
 
@@ -70,8 +87,22 @@ struct PreferencesSheet: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 440, height: 400)
+        .frame(width: 440, height: 500)
         .accessibilityIdentifier(AccessibilityID.preferencesSheet)
+    }
+
+    private var isRendererPinnedByEnvironment: Bool {
+        TerminalRendererPreference.isPinnedByEnvironment(ProcessInfo.processInfo.environment)
+    }
+
+    private var rendererDescription: String {
+        if isRendererPinnedByEnvironment {
+            return "Pinned to \(store.terminalRenderer.label) by \(TerminalRendererPreference.environmentKey) for this launch."
+        }
+        if store.terminalRenderer == .metal {
+            return "Experimental: terminals paint through SwiftTerm's Metal renderer. Switch back to CoreGraphics if text, selection, or images look wrong."
+        }
+        return "Terminals paint through CoreGraphics on the main thread. Metal is experimental and moves glyph compositing to the GPU."
     }
 
     private var codexConnectionDescription: String {

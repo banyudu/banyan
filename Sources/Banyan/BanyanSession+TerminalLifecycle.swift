@@ -137,8 +137,7 @@ extension BanyanSession {
                     guard let self, !self.isImportedHistory,
                           let terminalView = self.loadedTerminalView,
                           terminalView.process.running else { return }
-                    terminalView.needsDisplay = true
-                    terminalView.setNeedsDisplay(terminalView.bounds)
+                    terminalView.requestFullRedraw()
                 }
             }
             return
@@ -165,8 +164,7 @@ extension BanyanSession {
                   terminalView.process.running else {
                 return
             }
-            terminalView.needsDisplay = true
-            terminalView.setNeedsDisplay(terminalView.bounds)
+            terminalView.requestFullRedraw()
             self.terminalRefreshTask = nil
         }
     }
@@ -364,8 +362,16 @@ extension BanyanSession {
         appliedTheme = theme
         appliedFontFamily = fontFamily
         appliedFontSize = fontSize
-        view.needsDisplay = true
+        view.requestFullRedraw()
     }
+
+    /// Switching renderers on a live session rebuilds its drawing surface, so
+    /// it only touches sessions that already have a terminal; the rest resolve
+    /// the preference in `makeTerminalView`.
+    func apply(renderer: TerminalRendererPreference) {
+        loadedTerminalView?.rendererPreference = renderer
+    }
+
     func terminate(markClosed: Bool = true) {
         stopTerminalClient()
         if markClosed {

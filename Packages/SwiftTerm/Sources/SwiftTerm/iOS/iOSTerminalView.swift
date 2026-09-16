@@ -228,7 +228,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var isUsingMetalRenderer: Bool {
         return useMetalRenderer
     }
+
+    /// Invoked after every Metal frame with the CPU time that frame spent in the
+    /// renderer, in milliseconds. `draw(_:)` is the equivalent seam for the
+    /// CoreGraphics path, which the GPU path never enters, so a host that times
+    /// its terminal draws needs this to keep measuring the same thing.
+    public var onMetalFrameRendered: ((Double) -> Void)?
 #endif
+
+    /// Repaints the entire terminal surface on whichever renderer is active.
+    ///
+    /// `needsDisplay` only reaches the CoreGraphics path: under Metal the pixels
+    /// come from an `MTKView` subview that AppKit view invalidation does not
+    /// touch. Hosts that force a repaint - after revealing a hidden view,
+    /// reattaching a client, or recovering a blank surface - must call this
+    /// instead of setting `needsDisplay`.
+    public func requestFullRedraw() {
+#if canImport(MetalKit)
+        if metalView != nil {
+            metalDirtyRange = metalVisibleRange()
+            requestMetalDisplay()
+            return
+        }
+#endif
+        setNeedsDisplay(bounds)
+    }
     var cellDimension: CellDimension
     var caretView: CaretView?
     var terminal: Terminal!
