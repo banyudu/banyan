@@ -36,6 +36,7 @@ struct ContentView: View {
     @State private var showingPreferences = false
     @State private var showingCommandPalette = false
     @State private var draggingSidebarSessionID: String?
+    @State private var lastAutoScrolledSidebarSessionID: String?
 
     init(selection: SessionSelection) {
         self.selection = selection
@@ -353,13 +354,36 @@ struct ContentView: View {
         let groups = store.unifiedSidebarGroups
         let jumpKeyLabels = makeJumpKeyLabels(groups: groups)
         return VStack(spacing: 0) {
-            List {
-                sidebarSections(groups, jumpKeyLabels: jumpKeyLabels)
-            }
-            .listStyle(.sidebar)
-            .scrollIndicators(.hidden)
+            ScrollViewReader { proxy in
+                List {
+                    sidebarSections(groups, jumpKeyLabels: jumpKeyLabels)
+                }
+                .listStyle(.sidebar)
+                .scrollIndicators(.hidden)
                 .hidesVerticalScroller()
-            .accessibilityIdentifier(AccessibilityID.sidebarList)
+                .accessibilityIdentifier(AccessibilityID.sidebarList)
+                .onAppear {
+                    guard let id = selection.selectedSessionID,
+                          id != lastAutoScrolledSidebarSessionID,
+                          store.unifiedSidebarGroups.flatMap(\.items).contains(where: { $0.id == id })
+                    else { return }
+                    lastAutoScrolledSidebarSessionID = id
+                    // Defer one runloop so the List has laid out its rows before jumping.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(id, anchor: .center)
+                    }
+                }
+                .onReceive(selection.$selectedSessionID) { id in
+                    guard let id,
+                          id != lastAutoScrolledSidebarSessionID,
+                          store.unifiedSidebarGroups.flatMap(\.items).contains(where: { $0.id == id })
+                    else { return }
+                    lastAutoScrolledSidebarSessionID = id
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(id, anchor: .center)
+                    }
+                }
+            }
 
             Spacer(minLength: 0)
 
@@ -1111,6 +1135,7 @@ struct ContentView: View {
                 reopenHistory(item)
             }
         )
+        .id(item.session.id)
         .tag(item.session.id)
         .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
         .modifier(SidebarDragSortModifier(
