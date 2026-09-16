@@ -860,6 +860,9 @@ extension TerminalView {
         guard screenRow >= 0 && screenRow < terminal.rows else {
             return
         }
+        // Hover highlighting changes how a row draws without changing a single cell,
+        // so the content filter in `visiblyChangedRows` would otherwise drop it.
+        pendingRenderOnlyInvalidation = true
         terminal.updateRange(borrowing: displayBuffer, screenRow)
     }
 
@@ -1235,6 +1238,11 @@ extension TerminalView {
         }
         var placeholderImageCache: [UInt32: TTImage] = [:]
 
+        var stats = TerminalDrawStats()
+        stats.rowsInRange = max(0, lastRow - firstRow + 1)
+        stats.dirtyHeightFraction = bounds.height > 0 ? Double(dirtyRect.height / bounds.height) : 0
+        defer { lastDrawStats = stats }
+
         for row in firstRow...lastRow {
             if row < 0 {
                 continue
@@ -1283,10 +1291,11 @@ extension TerminalView {
             }
             let line = displayBuffer.lines [row]
             let cols = displayBuffer.cols
-            let lineGeneration = line.generation
+            let lineGeneration = line.contentHash
             let lineRect = CGRect (origin: lineOrigin, size: CGSize (width: dirtyRect.width, height: cellDimension.height))
             if !lineRect.intersects(dirtyRect),
                lineInfoCache[row] != nil {
+                stats.rowsSkipped += 1
                 switch renderMode {
                 case .single: break
                 default: context.restoreGState()
@@ -1298,8 +1307,10 @@ extension TerminalView {
                cached.generation == lineGeneration,
                cached.cols == cols,
                !selection.active {
+                stats.rowsCached += 1
                 lineInfo = cached.info
             } else {
+                stats.rowsRebuilt += 1
                 lineInfo = buildAttributedString(row: row, line: line, cols: cols)
                 if !selection.active {
                     lineInfoCache[row] = (generation: lineGeneration, cols: cols, info: lineInfo)
@@ -1637,12 +1648,70 @@ extension TerminalView {
 #endif
     }
     
+    /// `getUpdateRange` reports the rows the terminal *wrote*, not the rows that
+    /// look different. A full-screen program repaints its whole frame on every tick
+    /// — and tmux repaints a whole pane on unrelated events — so that range routinely
+    /// covers a screen whose rendered result is unchanged. Narrow it to the rows whose
+    /// content actually moved, and report nothing when none did.
+    ///
+    /// Returns the original range unfiltered when the repaint was forced, because then
+    /// the reason to redraw lives outside the buffer (theme, font, link highlighting,
+    /// or a surface that dropped invalidations while it was hidden).
+    func visiblyChangedRows (from rowStart: Int, to rowEnd: Int, forced: Bool) -> (Int, Int)?
+    {
+        // Row indices address the normal and the alternate buffer independently, so
+        // hashes recorded for one say nothing about the other.
+        let isAlternate = terminal.isCurrentBufferAlternate
+        guard !forced, isAlternate == paintedBufferIsAlternate else {
+            // The painted contents no longer describe what is on screen.
+            paintedContentHashes.removeAll (keepingCapacity: true)
+            paintedBufferIsAlternate = isAlternate
+            return (rowStart, rowEnd)
+        }
+        let buffer = terminal.displayBuffer
+        let lineCount = buffer.lines.count
+        // Scrollback keeps growing, so drop rows that have left the viewport rather
+        // than remembering every line the session ever painted.
+        if paintedContentHashes.count > terminal.rows * 4 {
+            let visible = buffer.yDisp..<(buffer.yDisp + terminal.rows)
+            paintedContentHashes = paintedContentHashes.filter { visible.contains($0.key) }
+        }
+        var first = -1
+        var last = -1
+        for row in rowStart...rowEnd {
+            let absolute = buffer.yDisp + row
+            guard absolute >= 0, absolute < lineCount else {
+                // Outside the buffer we cannot prove the row is unchanged.
+                first = first < 0 ? row : first
+                last = row
+                continue
+            }
+            let hash = buffer.lines [absolute].contentHash
+            if paintedContentHashes [absolute] == hash {
+                continue
+            }
+            paintedContentHashes [absolute] = hash
+            first = first < 0 ? row : first
+            last = row
+        }
+        guard first >= 0 else { return nil }
+        return (first, last)
+    }
+
+    /// Forgets what is believed to be on screen, so the next repaint is unfiltered.
+    /// Callers that drop an invalidation (a hidden surface, for example) must do this,
+    /// otherwise the skipped rows stay marked as already painted.
+    public func resetPaintedContentTracking ()
+    {
+        paintedContentHashes.removeAll (keepingCapacity: true)
+    }
+
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
         defer { pendingDisplay = false }
         updateCursorPosition()
-        guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
+        guard let (reportedStart, reportedEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
                 let buffer = terminal.displayBuffer
                 let y = buffer.yDisp+buffer.y
@@ -1651,10 +1720,24 @@ extension TerminalView {
             return
         }
         if notifyUpdateChanges {
-            terminalDelegate?.rangeChanged (source: self, startY: rowStart, endY: rowEnd)
+            terminalDelegate?.rangeChanged (source: self, startY: reportedStart, endY: reportedEnd)
         }
 
+        let forcedFullRepaint = terminal.forcesFullRepaint || pendingRenderOnlyInvalidation
+        pendingRenderOnlyInvalidation = false
         terminal.clearUpdateRange ()
+
+        guard let (rowStart, rowEnd) = visiblyChangedRows (
+            from: reportedStart,
+            to: reportedEnd,
+            forced: forcedFullRepaint
+        ) else {
+            // Everything the terminal rewrote renders identically to what is already
+            // on screen. Invalidating here would cost a wakeup and a full repaint for
+            // no visible difference.
+            updateDebugDisplay ()
+            return
+        }
                 
         #if os(macOS)
         let baseLine = frame.height

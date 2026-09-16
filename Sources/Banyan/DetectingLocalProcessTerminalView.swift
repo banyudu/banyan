@@ -38,6 +38,30 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     private var initialScreenSyncEarliestReveal = TimeInterval.zero
     private var initialScreenSyncDeadline = TimeInterval.zero
     private var initialScreenSyncCompletion: (() -> Void)?
+    /// Whether painting this surface would reach the user. Hidden and occluded
+    /// terminals drop their invalidations entirely. Overridable so the repaint
+    /// benchmarks can run in a headless test process, which never reports a window
+    /// as visible.
+    var surfaceVisibilityOverride: (() -> Bool)?
+    /// Repaint accounting for those benchmarks: a fixed workload must produce far
+    /// fewer, and cheaper, draws than it does PTY chunks.
+    private(set) var drawCount = 0
+    private(set) var drawnRowsRebuilt = 0
+    private(set) var totalDrawMS: Double = 0
+
+    private var isSurfaceWorthPainting: Bool {
+        if let surfaceVisibilityOverride {
+            return surfaceVisibilityOverride()
+        }
+        return !isHiddenOrHasHiddenAncestor
+            && window?.occlusionState.contains(.visible) == true
+    }
+
+    func resetDrawAccounting() {
+        drawCount = 0
+        drawnRowsRebuilt = 0
+        totalDrawMS = 0
+    }
 
     /// A tmux client attaches by redrawing its already-visible screen one line at
     /// a time. Make that first redraw transparent, then reveal one complete frame
@@ -174,8 +198,11 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         lastFlushUptime = ProcessInfo.processInfo.systemUptime
         displayInvalidationLock.unlock()
 
-        guard !isHiddenOrHasHiddenAncestor,
-              window?.occlusionState.contains(.visible) == true else {
+        guard isSurfaceWorthPainting else {
+            // The invalidation is being thrown away, so SwiftTerm must stop believing
+            // these rows reached the screen; otherwise a later unchanged repaint would
+            // be filtered out and the surface would stay stale after it is revealed.
+            resetPaintedContentTracking()
             return
         }
 
@@ -190,7 +217,18 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         displayInvalidationLock.lock()
         lastDrawMS = elapsed
         displayInvalidationLock.unlock()
-        telemetry?.recordDurationIfSlow("terminal.draw", durationMS: elapsed)
+        let stats = lastDrawStats
+        drawCount += 1
+        drawnRowsRebuilt += stats.rowsRebuilt
+        totalDrawMS += elapsed
+        telemetry?.recordDurationIfSlow(
+            "terminal.draw",
+            durationMS: elapsed,
+            detail: "rows=\(stats.rowsInRange) rebuilt=\(stats.rowsRebuilt)"
+                + " cached=\(stats.rowsCached) skipped=\(stats.rowsSkipped)"
+                + " dirty=\(String(format: "%.2f", stats.dirtyHeightFraction))"
+                + " cols=\(terminal.getDims().cols)"
+        )
     }
 
     var hasVisibleText: Bool {

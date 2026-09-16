@@ -233,6 +233,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var caretView: CaretView?
     var terminal: Terminal!
     var lineInfoCache: [Int: (generation: UInt64, cols: Int, info: ViewLineInfo)] = [:]
+    /// Per-draw counters, published so an embedder can attribute repaint cost.
+    public var lastDrawStats = TerminalDrawStats()
+    /// What each visible buffer row looked like when it was last invalidated for
+    /// painting, so an unchanged repaint can be dropped. See `visiblyChangedRows`.
+    var paintedContentHashes: [Int: UInt64] = [:]
+    /// Set when a repaint is owed to view state rather than buffer contents — link
+    /// hover highlighting, for example. Consumed once by the next `updateDisplay`.
+    var pendingRenderOnlyInvalidation = false
+    /// Which buffer `paintedContentHashes` describes; its row indices are not
+    /// comparable across a normal/alternate screen switch.
+    var paintedBufferIsAlternate = false
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
