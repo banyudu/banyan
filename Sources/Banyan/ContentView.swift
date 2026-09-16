@@ -424,6 +424,9 @@ struct ContentView: View {
                             Text(sortMode.label).tag(sortMode)
                         }
                     }
+                    Divider()
+                    Toggle("Show finished children", isOn: $store.showFinishedChildren)
+                        .help("Reveal completed child sessions in the sidebar")
                 } label: {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                 }
@@ -1065,6 +1068,12 @@ struct ContentView: View {
                 // between projects. The history/search header gets a touch more
                 // space so it reads as a separator above the active rows.
                 .padding(.top, group.id == firstGroupID ? 4 : (isStatic ? 8 : 0))
+                .padding(.bottom, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Sticky headers float over scrolled rows. .bar is too
+                // translucent (~30-40% effective fill) so text showed through.
+                // Match the titlebar header: most opaque system blur.
+                .background(.ultraThickMaterial)
             }
             .listSectionSeparator(isStatic ? .visible : .hidden, edges: .top)
         }
@@ -1103,9 +1112,22 @@ struct ContentView: View {
             depth: item.depth,
             titleOverride: item.titleOverride,
             isHistory: isHistory,
+            isParent: item.isParent,
+            isCollapsed: item.isCollapsed,
+            hiddenChildCount: item.hiddenChildCount,
             jumpKeyLabel: jumpKeyLabel,
             onSelect: {
                 store.userSelect(id: item.session.id)
+            },
+            onToggleCollapse: {
+                store.toggleChildrenCollapsed(for: item.session.id)
+            },
+            onRevealHidden: {
+                if item.isCollapsed {
+                    store.toggleChildrenCollapsed(for: item.session.id)
+                } else {
+                    store.showFinishedChildren = true
+                }
             },
             onClose: {
                 store.requestClose(id: item.session.id)
@@ -1938,8 +1960,13 @@ private struct SessionRow: View {
     let depth: Int
     let titleOverride: String?
     let isHistory: Bool
+    let isParent: Bool
+    let isCollapsed: Bool
+    let hiddenChildCount: Int
     let jumpKeyLabel: String
     let onSelect: () -> Void
+    let onToggleCollapse: () -> Void
+    let onRevealHidden: () -> Void
     let onClose: () -> Void
     let onRestart: () -> Void
     let onRespawn: () -> Void
@@ -1973,6 +2000,27 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            // Child rows and parents share a fixed leading slot so titles
+            // align whether or not the row has a disclosure triangle.
+            if isParent || depth > 0 {
+                if isParent {
+                    Button(action: onToggleCollapse) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 14, height: 18)
+                            .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                    }
+                    .buttonStyle(.banyanPlainLabelOnly)
+                    .help(isCollapsed ? "Expand child sessions" : "Collapse child sessions")
+                    .accessibilityLabel(isCollapsed ? "Expand child sessions" : "Collapse child sessions")
+                    .accessibilityIdentifier(AccessibilityID.sessionRowDisclosure(session.id))
+                } else {
+                    Color.clear
+                        .frame(width: 14, height: 18)
+                }
+            }
+
             JumpKeyBadge(label: jumpKeyLabel, provider: session.displayAgentProvider)
 
             // A plain-shell profile (the built-in `zsh`) matches every session
@@ -2025,6 +2073,28 @@ private struct SessionRow: View {
                     .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
             } else {
                 titleLabel
+            }
+
+            if hiddenChildCount > 0 {
+                Button(action: onRevealHidden) {
+                    Text("\(hiddenChildCount)")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: Capsule())
+                }
+                .buttonStyle(.banyanPlainLabelOnly)
+                .help(
+                    isCollapsed
+                        ? "\(hiddenChildCount) hidden child sessions — click to expand"
+                        : "\(hiddenChildCount) finished child sessions hidden — click to show"
+                )
+                .accessibilityLabel(
+                    isCollapsed
+                        ? "Expand \(hiddenChildCount) hidden child sessions"
+                        : "Show \(hiddenChildCount) finished child sessions"
+                )
             }
 
             Spacer(minLength: 0)

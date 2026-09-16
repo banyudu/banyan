@@ -8,12 +8,26 @@ struct SidebarSessionItem: Identifiable {
     let depth: Int
     let titleOverride: String?
     let isHistory: Bool
+    let isParent: Bool
+    let isCollapsed: Bool
+    let hiddenChildCount: Int
 
-    init(session: BanyanSession, depth: Int, titleOverride: String? = nil, isHistory: Bool = false) {
+    init(
+        session: BanyanSession,
+        depth: Int,
+        titleOverride: String? = nil,
+        isHistory: Bool = false,
+        isParent: Bool = false,
+        isCollapsed: Bool = false,
+        hiddenChildCount: Int = 0
+    ) {
         self.session = session
         self.depth = depth
         self.titleOverride = titleOverride
         self.isHistory = isHistory
+        self.isParent = isParent
+        self.isCollapsed = isCollapsed
+        self.hiddenChildCount = hiddenChildCount
     }
 
     var id: String {
@@ -212,6 +226,41 @@ final class SessionStore: ObservableObject {
     @Published private(set) var sessionLaunchProfiles = NewSessionLaunch.builtInDefaults
     @Published private(set) var sessionLaunchConfigurationDiagnostic: String?
     private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
+    /// Parents whose child rows are manually collapsed. Persisted in
+    /// `UserDefaults`; the effective collapsed set also auto-collapses parents
+    /// whose whole subtree is finished or parked (see
+    /// `SessionChildVisibilityPolicy`).
+    @Published var collapsedParentIDs: Set<String> = [] {
+        didSet {
+            UserDefaults.standard.set(
+                Array(collapsedParentIDs),
+                forKey: Self.collapsedParentsDefaultsKey
+            )
+        }
+    }
+    /// Parents the user explicitly expanded, exempting them from auto-collapse.
+    @Published var expandedParentIDs: Set<String> = [] {
+        didSet {
+            UserDefaults.standard.set(
+                Array(expandedParentIDs),
+                forKey: Self.expandedParentsDefaultsKey
+            )
+        }
+    }
+    /// When false (the default), completed child rows hide behind their
+    /// parent's count badge instead of spending a row each. Failed children
+    /// always stay visible: they need a human decision.
+    @Published var showFinishedChildren = false {
+        didSet {
+            UserDefaults.standard.set(
+                showFinishedChildren,
+                forKey: Self.showFinishedChildrenDefaultsKey
+            )
+        }
+    }
+    private static let collapsedParentsDefaultsKey = "sidebarCollapsedParentIDs"
+    private static let expandedParentsDefaultsKey = "sidebarManuallyExpandedParentIDs"
+    private static let showFinishedChildrenDefaultsKey = "sidebarShowFinishedChildren"
 
     private var controlServer: ControlServer?
     private let persistence: any SessionStorePersistenceBackend
@@ -398,6 +447,13 @@ final class SessionStore: ObservableObject {
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
             projectLaunchByGroup = stored
         }
+        if let collapsed = defaults.array(forKey: Self.collapsedParentsDefaultsKey) as? [String] {
+            collapsedParentIDs = Set(collapsed)
+        }
+        if let expanded = defaults.array(forKey: Self.expandedParentsDefaultsKey) as? [String] {
+            expandedParentIDs = Set(expanded)
+        }
+        showFinishedChildren = defaults.bool(forKey: Self.showFinishedChildrenDefaultsKey)
         let launchConfiguration = SessionLaunchProfileLoader.load(
             homeDirectory: host.homeDirectory
         )
@@ -455,6 +511,10 @@ final class SessionStore: ObservableObject {
     var sessionSidebarGroups: [SidebarSessionGroup] {
         var hasher = Hasher()
         hasher.combine(sortMode)
+        hasher.combine(showFinishedChildren)
+        hasher.combine(selectedSessionID)
+        hasher.combine(collapsedParentIDs.sorted())
+        hasher.combine(expandedParentIDs.sorted())
         for session in sessions {
             hasher.combine(session.id)
             hasher.combine(session.status)
@@ -488,13 +548,49 @@ final class SessionStore: ObservableObject {
             )
         }
         let sessionsByID = Dictionary(active.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let visibilityInfo = active.map {
+            SessionChildVisibilityItem(
+                id: $0.id,
+                parentSessionID: $0.parentSessionID,
+                status: $0.status,
+                isSuspended: $0.isSuspended
+            )
+        }
+        let visibilityByID = Dictionary(
+            visibilityInfo.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let effectiveCollapsed = collapsedParentIDs.union(
+            SessionChildVisibilityPolicy.autoCollapsedParents(
+                in: visibilityInfo,
+                selectedID: selectedSessionID
+            )
+        ).subtracting(expandedParentIDs)
         let result = SessionSidebarGroupingPolicy.groups(for: candidates).map { group in
-            SidebarSessionGroup(
+            let rowIDs = Set(group.rows.map(\.id))
+            let parentsInGroup = Set(
+                group.rows.compactMap { visibilityByID[$0.id]?.parentSessionID }
+                    .filter { rowIDs.contains($0) }
+            )
+            let (visibleRows, hiddenCounts) = SessionChildVisibilityPolicy.visibleRows(
+                rows: group.rows,
+                itemsByID: visibilityByID,
+                collapsedParentIDs: effectiveCollapsed,
+                showFinishedChildren: showFinishedChildren,
+                selectedID: selectedSessionID
+            )
+            return SidebarSessionGroup(
                 id: group.id,
                 title: group.title,
-                items: group.rows.compactMap { row in
+                items: visibleRows.compactMap { row in
                     guard let session = sessionsByID[row.id] else { return nil }
-                    return SidebarSessionItem(session: session, depth: row.depth)
+                    return SidebarSessionItem(
+                        session: session,
+                        depth: row.depth,
+                        isParent: parentsInGroup.contains(row.id),
+                        isCollapsed: effectiveCollapsed.contains(row.id),
+                        hiddenChildCount: hiddenCounts[row.id] ?? 0
+                    )
                 }
             )
         }
@@ -2738,7 +2834,67 @@ final class SessionStore: ObservableObject {
     }
 
     func select(id: String) {
+        userSelect(id: id)
+    }
+
+    /// Explicit user-initiated selection (click, shortcut, palette, nav).
+    /// A parked session auto-resumes so the user lands in a live terminal.
+    /// Programmatic selection (close/remove/restore) must keep writing
+    /// `selectedSessionID`/`selection` directly so a parked neighbor is not
+    /// woken by accident.
+    func userSelect(id: String) {
+        if let session = sessions.first(where: { $0.id == id }), session.isSuspended {
+            try? resume(id: id)
+        }
+        // An explicitly selected session must stay visible: lift its ancestors
+        // out of the collapsed set so the row does not hide again.
+        expandAncestors(of: id)
         selection.selectedSessionID = id
+    }
+
+    private func expandAncestors(of id: String) {
+        // Fast path: top-level sessions have no ancestors to lift.
+        guard sessions.first(where: { $0.id == id })?.parentSessionID != nil else { return }
+        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var cursor = sessionsByID[id]?.parentSessionID
+        var visited: Set<String> = []
+        while let current = cursor, visited.insert(current).inserted {
+            collapsedParentIDs.remove(current)
+            expandedParentIDs.insert(current)
+            cursor = sessionsByID[current]?.parentSessionID
+        }
+    }
+
+    /// Flips a parent between collapsed and expanded child rows. Manual state
+    /// wins over auto-collapse in both directions.
+    func toggleChildrenCollapsed(for parentID: String) {
+        if effectiveCollapsedParentIDs().contains(parentID) {
+            collapsedParentIDs.remove(parentID)
+            expandedParentIDs.insert(parentID)
+        } else {
+            collapsedParentIDs.insert(parentID)
+            expandedParentIDs.remove(parentID)
+        }
+    }
+
+    /// Manual collapses plus auto-collapsed finished/parked subtrees, minus
+    /// manual expansions.
+    func effectiveCollapsedParentIDs() -> Set<String> {
+        let items = sessions
+            .filter { !$0.isImportedHistory && $0.status != .closed }
+            .map {
+                SessionChildVisibilityItem(
+                    id: $0.id,
+                    parentSessionID: $0.parentSessionID,
+                    status: $0.status,
+                    isSuspended: $0.isSuspended
+                )
+            }
+        let auto = SessionChildVisibilityPolicy.autoCollapsedParents(
+            in: items,
+            selectedID: selectedSessionID
+        )
+        return collapsedParentIDs.union(auto).subtracting(expandedParentIDs)
     }
 
     func moveSidebarSessions(in groupID: String, from sourceOffsets: IndexSet, to destinationOffset: Int) {
@@ -2832,7 +2988,7 @@ final class SessionStore: ObservableObject {
         ) else {
             return
         }
-        selection.selectedSessionID = id
+        userSelect(id: id)
     }
 
     var hasWorkableSession: Bool {
@@ -2920,7 +3076,7 @@ final class SessionStore: ObservableObject {
         ) else {
             return false
         }
-        selection.selectedSessionID = id
+        userSelect(id: id)
         return true
     }
 
@@ -4008,7 +4164,7 @@ final class SessionStore: ObservableObject {
         ) else {
             return
         }
-        selection.selectedSessionID = id
+        userSelect(id: id)
     }
 
     private func isWorkableSession(_ id: String) -> Bool {

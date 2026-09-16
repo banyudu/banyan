@@ -71,4 +71,8 @@ enum AccessibilityID {
     static func sessionRowSuspendedBadge(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id).suspended"
     }
+
+    static func sessionRowDisclosure(_ id: String) -> String {
+        "banyan.sidebar.session-row.\(id).disclosure"
+    }
 }
