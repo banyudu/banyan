@@ -45,6 +45,7 @@ extension BanyanSession {
             tone: tone,
             parentSessionID: parentSessionID,
             agentSessionID: agentSessionID,
+            isSuspended: isSuspended,
             createdAt: createdAt,
             updatedAt: updatedAt
         )

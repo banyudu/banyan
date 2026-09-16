@@ -84,6 +84,19 @@ import Testing
     try ControlRoute.select.validate(ControlPayload(apiVersion: "v1", id: "agent"))
 }
 
+@Test func suspendAndResumeRoutesRequireSessionID() throws {
+    #expect(ControlRoute.resolve(method: "POST", path: "/suspend") == .suspend)
+    #expect(ControlRoute.resolve(method: "POST", path: "/resume") == .resume)
+    #expect(ControlRoute.resolve(method: "GET", path: "/suspend") == nil)
+
+    for route in [ControlRoute.suspend, .resume] {
+        #expect(throws: ControlValidationError.missingID) {
+            try route.validate(ControlPayload(apiVersion: "v1", id: nil))
+        }
+        try route.validate(ControlPayload(apiVersion: "v1", id: "agent"))
+    }
+}
+
 @Test func missingRequiredIDIsRejected() throws {
     let payload = ControlPayload(apiVersion: "v1", id: nil)
 

@@ -273,6 +273,10 @@ final class SessionStore: ObservableObject {
     private var branchRefreshTask: Task<Void, Never>?
     private var lastBranchRefreshByCWD: [String: Date] = [:]
     private static let branchRefreshInterval: TimeInterval = 15
+    private var lastSuspendedLivenessSweepAt = Date.distantPast
+    /// Matches the slowest cadence the supervisor ever backs a quiet live session
+    /// off to, so a parked session is never checked more often than a stable one.
+    private static let suspendedLivenessSweepInterval = SessionSupervisorBackoffPolicy.maxInterval
     /// Ceiling on transcripts inspected when resolving a closed row's agent
     /// session. Each one costs a short head read, and files are visited
     /// newest-first, so this only ever gives up on the oldest conversations —
@@ -388,7 +392,8 @@ final class SessionStore: ObservableObject {
                 id: $0.id,
                 status: $0.status,
                 updatedAt: $0.updatedAt,
-                displayTitle: $0.displayTitle
+                displayTitle: $0.displayTitle,
+                isSuspended: $0.isSuspended
             )
         }
         let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -405,6 +410,9 @@ final class SessionStore: ObservableObject {
         for session in sessions {
             hasher.combine(session.id)
             hasher.combine(session.status)
+            // Parked rows sort below live ones, so the grouped projection is stale
+            // until this changes too.
+            hasher.combine(session.isSuspended)
             hasher.combine(session.isImportedHistory)
             hasher.combine(session.updatedAt)
             hasher.combine(session.title)
@@ -674,6 +682,7 @@ final class SessionStore: ObservableObject {
                 updatedAt: snapshot.updatedAt,
                 isRestored: true,
                 needsRecovery: restorationPlan.needsRecovery,
+                isSuspended: snapshot.isSuspended,
                 displayContext: displayContext,
                 theme: terminalTheme,
                 fontFamily: terminalFontFamily,
@@ -766,7 +775,7 @@ final class SessionStore: ObservableObject {
     func refreshBranchContextsIfNeeded(force: Bool = false) {
         guard branchRefreshTask == nil else { return }
         let now = Date()
-        let candidates = sessions.filter { $0.status != .closed }
+        let candidates = sessions.filter { $0.status != .closed && !$0.isSuspended }
         guard !candidates.isEmpty else { return }
         // Group by cwd so one git lookup covers all sessions in that directory.
         var cwds: Set<String> = []
@@ -794,7 +803,7 @@ final class SessionStore: ObservableObject {
                 guard let self else { return }
                 self.branchRefreshTask = nil
                 var didUpdate = false
-                for session in self.sessions where session.status != .closed {
+                for session in self.sessions where session.status != .closed && !session.isSuspended {
                     guard let context = resolved[session.cwd] else { continue }
                     // Only apply if the lookup was trustworthy; degraded results
                     // must not clobber the last good branch (handled by
@@ -1217,7 +1226,8 @@ final class SessionStore: ObservableObject {
             $0.status != .closed
                 && SessionLifecyclePolicy.participatesInSupervisorTick(
                     isProcessStarted: $0.isProcessStarted,
-                    isRestored: $0.isRestored
+                    isRestored: $0.isRestored,
+                    isSuspended: $0.isSuspended
                 )
         }
         guard !participatingSessions.isEmpty else { return baseInterval }
@@ -1273,6 +1283,7 @@ final class SessionStore: ObservableObject {
     private func supervisorTimerFired() {
         runSupervisorTick()
         refreshBranchContextsIfNeeded()
+        sweepSuspendedSessionLivenessIfNeeded()
         // Focus, thermal, power, or session count may have changed since the timer
         // was installed; adopt the new cadence for the next fire.
         rescheduleSupervisor()
@@ -1532,6 +1543,7 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        unparkForAttach(session)
         historyResumeErrors.removeValue(forKey: id)
         // A worktree deleted after its branch merged leaves the session pointing
         // at nothing, and every attach re-runs the launch command in a directory
@@ -1563,6 +1575,7 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id && $0.needsRecovery }) else {
             throw ControlError.notFound(id)
         }
+        unparkForAttach(session)
         if recoverWorktreeThenRespawn(id: id, session: session, continuation: { store in
             try? store.recover(id: id, select: select)
         }) {
@@ -1840,9 +1853,128 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        unparkForAttach(session)
         session.restartBackingSession()
         selectedSessionID = id
         saveSessions()
+    }
+
+    /// Parks a session outside Banyan's supervision and render budget. The tmux
+    /// session and whatever agent is running inside it are left completely alone,
+    /// so this is neither `close` (which kills the backing session) nor a
+    /// SIGSTOP of the agent — only Banyan stops paying for it.
+    func suspend(id: String) throws {
+        guard let session = sessions.first(where: { $0.id == id }) else {
+            throw ControlError.notFound(id)
+        }
+        guard !session.isImportedHistory else {
+            throw ControlError.badRequest("cannot suspend imported history '\(id)'")
+        }
+        guard session.status != .closed else {
+            throw ControlError.badRequest("cannot suspend closed session '\(id)'")
+        }
+        guard !session.isSuspended else { return }
+
+        session.suspend()
+        // Its backoff state describes a session nothing is observing any more.
+        supervisorObservationStates.removeValue(forKey: id)
+        // The selection deliberately stays put: the parked banner over the frozen
+        // pane says what happened and offers Resume, which reads better than
+        // silently moving the user to some other session.
+        if selectedSessionID == id {
+            refreshSelectedContextInfo(force: true)
+        }
+        saveSessions()
+        // One fewer started session may mean a different cadence.
+        rescheduleSupervisor()
+    }
+
+    /// Returns a parked session to the working set and re-observes it at once, so
+    /// the sidebar shows what the agent actually did while Banyan was not watching.
+    func resume(id: String) throws {
+        guard let session = sessions.first(where: { $0.id == id }) else {
+            throw ControlError.notFound(id)
+        }
+        guard session.isSuspended else { return }
+
+        // Parking never touched the agent, so whatever was last observed is still
+        // the truth. Attaching a client optimistically marks `.running`, which
+        // would otherwise flick the row through a state it was never in.
+        let observedStatus = session.status
+        let observedTone = session.tone
+        session.resume()
+        if !session.needsRecovery, session.loadedTerminalView != nil {
+            // `onTerminalReady` fires once per container and this session already
+            // has one, so nothing else would rebuild the client from the live pane.
+            session.reattachTerminalClient()
+            session.status = observedStatus
+            session.tone = observedTone
+            session.touch()
+        }
+        resetSupervisorObservationBackoff(for: id)
+        if selectedSessionID == id {
+            refreshSelectedContextInfo(force: true)
+        }
+        runSupervisorTick(sessionID: id)
+        saveSessions()
+        rescheduleSupervisor()
+    }
+
+    /// `respawn`, `recover` and `restart` all mean "put this session back to
+    /// work", which is the opposite of parked. Each then attaches a client and
+    /// sets its own runtime state, so this only has to drop the gate — otherwise
+    /// they would leave a row claiming to be parked while its client attaches.
+    private func unparkForAttach(_ session: BanyanSession) {
+        guard session.isSuspended else { return }
+        session.isSuspended = false
+        supervisorObservationStates.removeValue(forKey: session.id)
+    }
+
+    func setSuspended(id: String, suspended: Bool) throws {
+        try suspended ? suspend(id: id) : resume(id: id)
+    }
+
+    func toggleSuspended(id: String) throws {
+        guard let session = sessions.first(where: { $0.id == id }) else {
+            throw ControlError.notFound(id)
+        }
+        try setSuspended(id: id, suspended: !session.isSuspended)
+    }
+
+    /// Nothing observes a parked session, so a tmux session that exits while it is
+    /// parked would otherwise go unnoticed until the user resumed it. This costs one
+    /// `tmux list-sessions` for the whole set — independent of how many are parked —
+    /// so it rides the existing supervisor timer instead of needing its own.
+    private func sweepSuspendedSessionLivenessIfNeeded() {
+        let now = Date()
+        guard now.timeIntervalSince(lastSuspendedLivenessSweepAt) >= Self.suspendedLivenessSweepInterval else {
+            return
+        }
+        let parked = sessions.filter { $0.isSuspended && $0.status != .closed && !$0.needsRecovery }
+        guard !parked.isEmpty else { return }
+        lastSuspendedLivenessSweepAt = now
+
+        let backend = tmuxBackend
+        Task.detached(priority: .background) { [weak self] in
+            let liveNames = Set(backend.listBanyanSessions())
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                var didUpdate = false
+                for session in self.sessions where session.isSuspended && !session.needsRecovery {
+                    guard SessionLifecyclePolicy.shouldMarkForRecovery(
+                        status: session.status,
+                        tmuxSessionName: session.tmuxSessionName,
+                        liveTmuxSessionNames: liveNames
+                    ) else { continue }
+                    session.needsRecovery = true
+                    session.touch()
+                    didUpdate = true
+                }
+                if didUpdate {
+                    self.saveSessions()
+                }
+            }
+        }
     }
 
     func mark(id: String, status: SessionStatus? = nil, tone: SessionTone? = nil, title: String? = nil, titleURL: String? = nil) throws {
@@ -3056,7 +3188,8 @@ final class SessionStore: ObservableObject {
             }
             guard SessionLifecyclePolicy.participatesInSupervisorTick(
                 isProcessStarted: session.isProcessStarted,
-                isRestored: session.isRestored
+                isRestored: session.isRestored,
+                isSuspended: session.isSuspended
             ) else {
                 return nil
             }
@@ -3442,7 +3575,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func selectedContextLookupInput() -> SessionContextLookupInput? {
-        guard let session = selectedSession, session.status != .closed else {
+        guard let session = selectedSession, session.status != .closed, !session.isSuspended else {
             return nil
         }
         return SessionContextLookupInput(
@@ -3626,7 +3759,8 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else { return false }
         return SessionLifecyclePolicy.needsAttention(
             status: session.status,
-            isImportedHistory: session.isImportedHistory
+            isImportedHistory: session.isImportedHistory,
+            isSuspended: session.isSuspended
         )
     }
 

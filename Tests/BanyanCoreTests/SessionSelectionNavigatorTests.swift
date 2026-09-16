@@ -130,8 +130,11 @@ private struct RosterEntry {
     let id: String
     let status: SessionStatus
     var isImportedHistory = false
+    var isSuspended = false
 }
 
+// Parked sessions sink below the watched ones in the sidebar, so the roster
+// ends with the two kinds attention navigation must walk past.
 private let roster: [RosterEntry] = [
     RosterEntry(id: "running", status: .running),
     RosterEntry(id: "asking", status: .asking),
@@ -139,7 +142,8 @@ private let roster: [RosterEntry] = [
     RosterEntry(id: "need-input", status: .needInput),
     RosterEntry(id: "executing", status: .executing),
     RosterEntry(id: "failed", status: .failed),
-    RosterEntry(id: "imported-asking", status: .asking, isImportedHistory: true)
+    RosterEntry(id: "imported-asking", status: .asking, isImportedHistory: true),
+    RosterEntry(id: "parked-asking", status: .asking, isSuspended: true)
 ]
 
 private func nextNeedingAttention(from selectedID: String?) -> String? {
@@ -166,7 +170,8 @@ private func needsAttention(_ id: String) -> Bool {
     guard let entry = roster.first(where: { $0.id == id }) else { return false }
     return SessionLifecyclePolicy.needsAttention(
         status: entry.status,
-        isImportedHistory: entry.isImportedHistory
+        isImportedHistory: entry.isImportedHistory,
+        isSuspended: entry.isSuspended
     )
 }
 
@@ -179,12 +184,20 @@ private func needsAttention(_ id: String) -> Bool {
 }
 
 @Test func attentionNavigationWrapsPastTheEndOfTheRoster() {
-    // "imported-asking" is last and never a target, so the wrap has to reach it
-    // and keep going back to the top of the list.
+    // The roster ends with two sessions that are never targets, so the wrap has
+    // to walk through both and keep going back to the top of the list.
     #expect(nextNeedingAttention(from: "failed") == "asking")
     #expect(nextNeedingAttention(from: "imported-asking") == "asking")
+    #expect(nextNeedingAttention(from: "parked-asking") == "asking")
     #expect(previousNeedingAttention(from: "asking") == "failed")
     #expect(previousNeedingAttention(from: "running") == "failed")
+}
+
+@Test func attentionNavigationSkipsParkedSessions() {
+    // Parking freezes the status, so "parked-asking" stays `.asking` forever and
+    // would otherwise be a permanent stop on the way round.
+    #expect(nextNeedingAttention(from: "failed") != "parked-asking")
+    #expect(previousNeedingAttention(from: "running") != "parked-asking")
 }
 
 @Test func attentionNavigationReversesThroughTheSameSessions() {

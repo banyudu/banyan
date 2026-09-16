@@ -23,11 +23,14 @@ These identifiers are defined in `Sources/Banyan/AccessibilityIdentifiers.swift`
 | Session row | `banyan.sidebar.session-row.<session-id>` |
 | Session row title | `banyan.sidebar.session-row.<session-id>.title` |
 | Session row status | `banyan.sidebar.session-row.<session-id>.status` |
+| Session row parked badge | `banyan.sidebar.session-row.<session-id>.suspended` |
 | Detail area | `banyan.detail` |
 | Empty detail area | `banyan.detail.empty` |
 | Terminal container, including text selection, copy/paste, and wheel scrolling | `banyan.terminal` |
 | Terminal reconnect banner | `banyan.terminal.reconnect-banner` |
 | Terminal attach button | `banyan.terminal.reconnect-banner.attach` |
+| Terminal parked banner | `banyan.terminal.suspended-banner` |
+| Terminal resume button | `banyan.terminal.suspended-banner.resume` |
 | Add session sheet | `banyan.sheet.add-session` |
 | Preferences sheet | `banyan.sheet.preferences` |
 
@@ -39,6 +42,8 @@ Automation should describe Banyan in product terms:
 - `spawnSession(id:title:cwd:command:)`
 - `selectSession(id:)`
 - `markSession(id:status:tone:)`
+- `suspendSession(id:)`
+- `resumeSession(id:)`
 - `closeSession(id:)`
 - `removeSession(id:)`
 - `relaunchApp`
