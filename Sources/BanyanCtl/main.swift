@@ -30,7 +30,7 @@ struct BanyanCtl {
         do {
             switch command {
             case "spawn":
-                try post("/spawn", payload: parsePayload(Array(arguments.dropFirst())))
+                try post("/spawn", payload: withDefaultParent(parsePayload(Array(arguments.dropFirst()))))
             case "session":
                 try runSessionCommand(Array(arguments.dropFirst()))
             case "agent":
@@ -108,14 +108,14 @@ struct BanyanCtl {
             guard report.eventCount > 0 else {
                 throw CLIError.message("no performance events found for the requested window")
             }
-            try post("/spawn", payload: [
+            try post("/spawn", payload: withDefaultParent([
                 "title": "Fix Banyan performance",
                 "cwd": options.cwd,
                 "command": AgentLaunchCommand.command(
                     provider: options.provider,
                     prompt: makePerformanceFixPrompt(since: options.since)
                 )
-            ])
+            ]))
         default:
             throw CLIError.message("unknown perf subcommand '\(subcommand)'")
         }
@@ -127,7 +127,7 @@ struct BanyanCtl {
         }
         switch subcommand {
         case "new", "spawn":
-            try post("/spawn", payload: parsePayload(Array(args.dropFirst())))
+            try post("/spawn", payload: withDefaultParent(parsePayload(Array(args.dropFirst()))))
         case "suspend":
             try post("/suspend", payload: parsePayload(Array(args.dropFirst())))
         case "resume":
@@ -143,7 +143,7 @@ struct BanyanCtl {
         }
         switch subcommand {
         case "run":
-            try post("/spawn", payload: parseAgentRunPayload(Array(args.dropFirst())))
+            try post("/spawn", payload: withDefaultParent(parseAgentRunPayload(Array(args.dropFirst()))))
         default:
             throw CLIError.message("unknown agent subcommand '\(subcommand)'")
         }
@@ -176,6 +176,14 @@ struct BanyanCtl {
                 index += 1
                 continue
             }
+            if rawKey == "no-parent" {
+                // Explicit top-level: the empty value blocks the env/tmux
+                // default in withDefaultParent, and the server treats empty
+                // the same as absent.
+                result["parent"] = ""
+                index += 1
+                continue
+            }
             let key: String
             switch rawKey {
             case "cmd":
@@ -194,6 +202,68 @@ struct BanyanCtl {
             index += 2
         }
         return result
+    }
+
+    /// Fills in `--parent` when the caller did not give one explicitly, so a
+    /// session spawned from inside another session nests under it by default.
+    /// An explicit `--parent` (even empty) or `--no-parent` disables the
+    /// default; pass one of those for a top-level session.
+    private func withDefaultParent(_ payload: [String: String]) -> [String: String] {
+        var payload = payload
+        guard payload["parent"] == nil, let parent = defaultParentSessionID() else {
+            return payload
+        }
+        payload["parent"] = parent
+        return payload
+    }
+
+    /// Parent for a spawn issued from inside a Banyan session: explicit env
+    /// first, otherwise the enclosing tmux session when running inside one.
+    private func defaultParentSessionID() -> String? {
+        if let parent = BanyanSessionEnvironment.parentSessionID(from: host.environment) {
+            return parent
+        }
+        return enclosingTmuxSessionID(environment: host.environment)
+    }
+
+    /// Banyan id of the tmux session this process runs inside, if any.
+    /// Covers shells in sessions created before `BANYAN_SESSION_ID` injection
+    /// existed, and any spawner that does not forward the variable. Sessions
+    /// on a foreign tmux server (no `banyan-` prefix) yield nil.
+    private func enclosingTmuxSessionID(environment: [String: String]) -> String? {
+        guard environment["TMUX_PANE"] != nil || environment["TMUX"] != nil else {
+            return nil
+        }
+        let tmuxArguments: [String]
+        if let socket = environment["TMUX"]?.split(separator: ",").first.map(String.init),
+           !socket.isEmpty {
+            tmuxArguments = ["tmux", "-S", socket, "display-message", "-p", "#{session_name}"]
+        } else {
+            tmuxArguments = ["tmux", "-L", TmuxBackend.socketName, "display-message", "-p", "#{session_name}"]
+        }
+        // `tmux` resolves through the caller's PATH; tmux looks at TMUX/TMUX_PANE
+        // in the child's environment to pick the client, so forward everything.
+        var queryEnvironment = environment
+        let currentPath = queryEnvironment["PATH"] ?? ""
+        let merged = (HostExecutablePaths.systemPaths() + currentPath.split(separator: ":").map(String.init))
+            .reduce(into: [String]()) { paths, path in
+                if !paths.contains(path) {
+                    paths.append(path)
+                }
+            }
+            .joined(separator: ":")
+        queryEnvironment["PATH"] = merged
+        guard let output = try? SubprocessRunner.run(
+            arguments: tmuxArguments,
+            cwd: host.homeDirectory.path,
+            environment: queryEnvironment,
+            timeout: 2
+        ), output.terminationStatus == 0 else {
+            return nil
+        }
+        let name = String(decoding: output.standardOutput, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return BanyanSessionEnvironment.sessionID(fromTmuxSessionName: name)
     }
 
     private func parsePerfReportOptions(_ args: [String]) throws -> (since: Date, json: Bool) {
@@ -433,6 +503,11 @@ struct BanyanCtl {
                 index += 1
                 continue
             }
+            if rawKey == "no-parent" {
+                result["parent"] = ""
+                index += 1
+                continue
+            }
             guard index + 1 < args.count else {
                 throw CLIError.message("missing value for \(token)")
             }
@@ -569,13 +644,18 @@ struct BanyanCtl {
         banyanctl controls a running Banyan app on localhost:7842.
 
         Usage:
-          banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue] [--focus|--background]
-          banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--tone blue] [--focus|--background]
-          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|hunyuan|mimo|minimax|muse|opencode [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
+          banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
+          banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
+          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|hunyuan|mimo|minimax|muse|opencode [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--parent ID] [--no-parent] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
 
         Spawns open in the background by default (they do not steal focus from the
         current session). Pass --focus to select the new session, or --background
         to force background even when nothing is currently selected.
+
+        A spawn issued from inside a Banyan session nests under it by default:
+        --parent comes from $BANYAN_PARENT_SESSION_ID / $BANYAN_SESSION_ID, or
+        from the enclosing tmux session. Pass --parent ID to pick a different
+        parent, or --no-parent for a top-level session.
           banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE] [--title-url URL]
           banyanctl select --id ID
           banyanctl tick   [--id ID]

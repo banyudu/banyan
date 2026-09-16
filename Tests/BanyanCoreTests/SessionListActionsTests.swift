@@ -31,6 +31,6 @@ private struct LookupBackend: TmuxSessionLookupBackend {
 
 private struct LifecycleBackend: TmuxSessionLifecycleBackend {
     func hasSession(named name: String) -> Bool { false }
-    func ensureSession(named name: String, cwd: String, command: String) throws {}
+    func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String?) throws {}
     func killSession(named name: String) {}
 }
