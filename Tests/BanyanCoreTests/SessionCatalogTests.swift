@@ -45,7 +45,7 @@ private final class FakeCatalogBackend: TmuxSessionLifecycleBackend, @unchecked 
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
     func captureVisibleText(paneID: String, lineLimit: Int) -> String { "" }
 
-    func ensureSession(named name: String, cwd: String, command: String) throws {
+    func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String?) throws {
         events.append("ensure:\(name)")
     }
 

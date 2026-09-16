@@ -219,7 +219,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         }
     }
 
-    public func ensureSession(named name: String, cwd: String, command: String) throws {
+    public func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String? = nil) throws {
         // Most global options only need to be applied when the server starts.
         // The server lives as long as it has ≥1 session, but terminal capability
         // settings must also be migrated when the app is upgraded underneath an
@@ -236,6 +236,13 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         }
 
         var arguments = ["new-session", "-d", "-s", name, "-c", cwd]
+        // Expose the Banyan identity inside the pane so processes spawned from
+        // it (`workit`, `banyanctl`, agents) can default `--parent` to the
+        // calling session. `-e` exists since tmux 3.2; the retry below covers
+        // older servers by creating the session without it.
+        if let banyanSessionID, !banyanSessionID.isEmpty {
+            arguments.append(contentsOf: ["-e", "\(BanyanSessionEnvironment.sessionIDKey)=\(banyanSessionID)"])
+        }
         let shell = HostShell.executablePath(environment: environment)
         let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedCommand.isEmpty {
@@ -246,11 +253,37 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         do {
             try run(arguments)
         } catch {
-            // A concurrent ensureSession (e.g. background start racing a later
-            // foreground attach) may have already created it; tolerate that.
-            guard hasSession(named: name) else { throw error }
+            // `-e` needs tmux 3.2+. On an older server the first attempt fails;
+            // retry once without the session environment — the banyanctl
+            // tmux-name fallback still nests those sessions correctly.
+            if arguments.contains("-e"),
+               let stripped = Self.argumentsWithoutSessionEnvironment(arguments) {
+                do {
+                    try run(stripped)
+                } catch {
+                    // A concurrent ensureSession (e.g. background start racing a
+                    // later foreground attach) may have already created it;
+                    // tolerate that.
+                    guard hasSession(named: name) else { throw error }
+                }
+            } else {
+                // A concurrent ensureSession (e.g. background start racing a later
+                // foreground attach) may have already created it; tolerate that.
+                guard hasSession(named: name) else { throw error }
+            }
         }
         configureSessionOptions(named: name)
+    }
+
+    /// Removes a `-e KEY=VALUE` pair previously added for the session
+    /// environment, so a retry runs the same `new-session` without it.
+    private static func argumentsWithoutSessionEnvironment(_ arguments: [String]) -> [String]? {
+        guard let index = arguments.firstIndex(of: "-e"), index + 1 < arguments.count else {
+            return nil
+        }
+        var stripped = arguments
+        stripped.removeSubrange(index...index + 1)
+        return stripped
     }
 
     public func killSession(named name: String) {

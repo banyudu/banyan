@@ -146,7 +146,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     var displayAgentProviderCache: (key: DisplayAgentProviderKey, value: CodingAgentProvider?)?
 
     var launchRequest: SessionLaunchRequest {
-        SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command)
+        SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command, banyanSessionID: id)
     }
     var onDidChange: (() -> Void)?
     var onOutput: ((String) -> Void)?

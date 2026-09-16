@@ -68,6 +68,8 @@ struct ContentView: View {
                         context: context,
                         onOpenLinear: store.openSelectedLinearIssue
                     )
+                } else if let session = store.selectedSession {
+                    TitleBarSessionFallbackView(session: session)
                 }
             }
             ToolbarItemGroup(placement: .primaryAction) {
@@ -1601,6 +1603,37 @@ private struct TitleBarContextView: View {
     private var sanitizedLinearIssueTitle: String? {
         let trimmed = context.linearIssueTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
+    }
+}
+
+/// Toolbar fallback for sessions with no bound Linear issue: show the session's
+/// display title (first prompt for agent sessions) instead of leaving the
+/// titlebar empty. Plain shells stay empty — only agent sessions get a label.
+private struct TitleBarSessionFallbackView: View {
+    @ObservedObject var session: BanyanSession
+
+    var body: some View {
+        if session.agentProvider != nil, let title = fallbackTitle {
+            HStack(spacing: 6) {
+                if let provider = session.displayAgentProvider {
+                    AgentProviderIcon(provider: provider, size: 14, showsPeakBadge: false)
+                }
+                Text(title)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: 560)
+            .padding(.horizontal, 10)
+            .lineLimit(1)
+            .accessibilityIdentifier(AccessibilityID.toolbarSessionTitle)
+        }
+    }
+
+    private var fallbackTitle: String? {
+        let trimmed = session.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

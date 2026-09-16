@@ -66,7 +66,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         SessionLaunchRequest(
             sessionName: tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id),
             cwd: cwd,
-            command: command
+            command: command,
+            banyanSessionID: id
         )
     }
 

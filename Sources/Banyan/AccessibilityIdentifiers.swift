@@ -24,6 +24,7 @@ enum AccessibilityID {
     static let toolbarLogo = "banyan.toolbar.logo"
     static let toolbarContext = "banyan.toolbar.context"
     static let toolbarLinearLink = "banyan.toolbar.linear-link"
+    static let toolbarSessionTitle = "banyan.toolbar.session-title"
     static let toolbarPullRequestLink = "banyan.toolbar.pull-request-link"
     static let toolbarUpdate = "banyan.toolbar.update"
     static let pullRequestPreviewPanel = "banyan.github-pr.panel"

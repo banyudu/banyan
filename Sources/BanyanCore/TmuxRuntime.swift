@@ -54,8 +54,15 @@ public extension TmuxSessionBackend {
 }
 
 public protocol TmuxSessionLifecycleBackend: TmuxSessionLookupBackend {
-    func ensureSession(named name: String, cwd: String, command: String) throws
+    func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String?) throws
     func killSession(named name: String)
+}
+
+public extension TmuxSessionLifecycleBackend {
+    /// Convenience for callers (mostly tests) that do not model a Banyan identity.
+    func ensureSession(named name: String, cwd: String, command: String) throws {
+        try ensureSession(named: name, cwd: cwd, command: command, banyanSessionID: nil)
+    }
 }
 
 /// Writes into a pane from outside it.
@@ -101,11 +108,16 @@ public struct SessionLaunchRequest: Sendable {
     public let sessionName: String
     public let cwd: String
     public let command: String
+    /// Banyan session id owning this tmux session. Carried so the backend can
+    /// expose it inside the pane (`BANYAN_SESSION_ID`); nil for callers that
+    /// do not model a Banyan identity (mostly tests).
+    public let banyanSessionID: String?
 
-    public init(sessionName: String, cwd: String, command: String) {
+    public init(sessionName: String, cwd: String, command: String, banyanSessionID: String? = nil) {
         self.sessionName = sessionName
         self.cwd = cwd
         self.command = command
+        self.banyanSessionID = banyanSessionID
     }
 }
 
@@ -128,7 +140,8 @@ public struct SessionRuntimeCoordinator: Sendable, SessionRuntimeBackend {
         try backend.ensureSession(
             named: request.sessionName,
             cwd: request.cwd,
-            command: request.command
+            command: request.command,
+            banyanSessionID: request.banyanSessionID
         )
     }
 
@@ -141,7 +154,8 @@ public struct SessionRuntimeCoordinator: Sendable, SessionRuntimeBackend {
         try backend.ensureSession(
             named: request.sessionName,
             cwd: request.cwd,
-            command: request.command
+            command: request.command,
+            banyanSessionID: request.banyanSessionID
         )
     }
 }

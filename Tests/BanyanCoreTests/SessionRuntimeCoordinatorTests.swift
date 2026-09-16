@@ -10,8 +10,23 @@ import Testing
 
     #expect(backend.events == [
         "kill:banyan-test",
-        "ensure:banyan-test:/tmp:codex"
+        "ensure:banyan-test:/tmp:codex:-"
     ])
+}
+
+@Test func runtimeCoordinatorForwardsBanyanSessionID() throws {
+    let backend = FakeLifecycleBackend()
+    let coordinator = SessionRuntimeCoordinator(backend: backend)
+    let request = SessionLaunchRequest(
+        sessionName: "banyan-ENG-123",
+        cwd: "/tmp",
+        command: "codex",
+        banyanSessionID: "ENG-123"
+    )
+
+    try coordinator.ensureBackingSession(request)
+
+    #expect(backend.events == ["ensure:banyan-ENG-123:/tmp:codex:ENG-123"])
 }
 
 private final class FakeLifecycleBackend: TmuxSessionLifecycleBackend, @unchecked Sendable {
@@ -21,8 +36,8 @@ private final class FakeLifecycleBackend: TmuxSessionLifecycleBackend, @unchecke
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
     func captureVisibleText(paneID: String, lineLimit: Int) -> String { "" }
 
-    func ensureSession(named name: String, cwd: String, command: String) throws {
-        events.append("ensure:\(name):\(cwd):\(command)")
+    func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String?) throws {
+        events.append("ensure:\(name):\(cwd):\(command):\(banyanSessionID ?? "-")")
     }
 
     func killSession(named name: String) {
