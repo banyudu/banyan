@@ -21,6 +21,19 @@ public enum SessionDisplayLabel {
         homeDirectory: String,
         environment: [String: String]
     ) -> SessionProjectContext {
+        resolvedContext(cwd: cwd, homeDirectory: homeDirectory, environment: environment).context
+    }
+
+    /// `context` plus the path of the `HEAD` file the answer depends on, so a
+    /// caller can tell whether re-running these git lookups could produce
+    /// anything new. `nil` when the directory is not a repository, or has a git
+    /// layout this cannot name without asking git — in which case a caller must
+    /// assume the answer can always have changed.
+    static func resolvedContext(
+        cwd: String,
+        homeDirectory: String,
+        environment: [String: String]
+    ) -> (context: SessionProjectContext, headPath: String?) {
         let resolvedCWD = standardizedPath(cwd)
         let topLevel = gitLookup(
             ["rev-parse", "--show-toplevel"],
@@ -32,7 +45,7 @@ public enum SessionDisplayLabel {
             // or the lookup failed to run — propagate `degraded` so a transient
             // failure isn't cached as "not a worktree".
             let project = projectName(resolvedCWD, homeDirectory: homeDirectory)
-            return SessionProjectContext(
+            return (SessionProjectContext(
                 project: project,
                 branch: nil,
                 groupID: "path:\(resolvedCWD)",
@@ -40,8 +53,10 @@ public enum SessionDisplayLabel {
                 isGitWorktree: false,
                 isDefaultBranch: false,
                 gitLookupDegraded: topLevel.degraded
-            )
+            ), nil)
         }
+
+        let headPath = gitHeadPath(topLevel: gitTopLevel)
 
         var degraded = false
         let project = projectName(gitTopLevel, homeDirectory: homeDirectory)
@@ -92,7 +107,7 @@ public enum SessionDisplayLabel {
         degraded = degraded || remote.degraded
         if let remoteURL = remote.value {
             let normalizedAddress = normalizedGitAddress(remoteURL)
-            return SessionProjectContext(
+            return (SessionProjectContext(
                 project: project,
                 branch: branch,
                 groupID: "git:\(normalizedAddress)",
@@ -100,10 +115,10 @@ public enum SessionDisplayLabel {
                 isGitWorktree: isGitWorktree,
                 isDefaultBranch: defaultBranch.value,
                 gitLookupDegraded: degraded
-            )
+            ), headPath)
         }
 
-        return SessionProjectContext(
+        return (SessionProjectContext(
             project: project,
             branch: branch,
             groupID: "path:\(mainDirectory.value)",
@@ -111,7 +126,34 @@ public enum SessionDisplayLabel {
             isGitWorktree: isGitWorktree,
             isDefaultBranch: defaultBranch.value,
             gitLookupDegraded: degraded
-        )
+        ), headPath)
+    }
+
+    /// The `HEAD` file behind a checkout, without asking git for it.
+    ///
+    /// `<topLevel>/.git` is a directory in an ordinary checkout and a
+    /// `gitdir: …` pointer file in a linked worktree; both layouts put that
+    /// checkout's own `HEAD` — the file `git checkout` rewrites — at the end of
+    /// that path. Anything else (a `--separate-git-dir` repo, `GIT_DIR` set in
+    /// the environment) returns `nil` rather than a guess.
+    private static func gitHeadPath(topLevel: String) -> String? {
+        let gitEntry = URL(fileURLWithPath: standardizedPath(topLevel)).appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: gitEntry.path, isDirectory: &isDirectory) else {
+            return nil
+        }
+        if isDirectory.boolValue {
+            return gitEntry.appendingPathComponent("HEAD").path
+        }
+        guard let contents = try? String(contentsOf: gitEntry, encoding: .utf8) else { return nil }
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("gitdir:") else { return nil }
+        let gitDirPath = trimmed.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+        guard !gitDirPath.isEmpty else { return nil }
+        let gitDir = gitDirPath.hasPrefix("/")
+            ? URL(fileURLWithPath: gitDirPath)
+            : gitEntry.deletingLastPathComponent().appendingPathComponent(gitDirPath)
+        return gitDir.standardizedFileURL.appendingPathComponent("HEAD").path
     }
 
     /// The directory a repository-level action should open: the main checkout of

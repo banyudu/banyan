@@ -1169,7 +1169,8 @@ private func makeSupervisor(
 private func pane(
     rootPID: Int = 100,
     currentCommand: String = "zsh",
-    isDead: Bool = false
+    isDead: Bool = false,
+    lastActivityAt: Date? = nil
 ) -> TmuxPaneSnapshot {
     TmuxPaneSnapshot(
         paneID: "%1",
@@ -1177,7 +1178,10 @@ private func pane(
         currentCommand: currentCommand,
         currentPath: "/tmp",
         isDead: isDead,
-        isInMode: false
+        isInMode: false,
+        lastActivityAt: lastActivityAt,
+        width: 120,
+        height: 40
     )
 }
 
@@ -1294,4 +1298,115 @@ private struct FakeSupervisorBackend: AgentSupervisorBackend {
     #expect(closed?.visibleText == nil)
     #expect(busy?.status == .executing)
     #expect(busy?.visibleText == nil)
+}
+
+@Test func supervisorSkipsTheCaptureWhileThePaneProducesNoOutput() {
+    // The dominant per-tick cost at scale is one `tmux capture-pane` fork/exec
+    // per live agent pane. A pane that has produced no output since the last
+    // capture cannot classify differently, so the supervisor must reuse the text
+    // it already has rather than spawn for it again.
+    let backend = CountingSupervisorBackend(visibleText: "❯ ")
+    let cache = SupervisorInspectionCache()
+    let supervisor = AgentSupervisor(
+        backend: backend,
+        processTable: ProcessTable(rows: [agentProcess("claude")]),
+        cache: cache
+    )
+    let quiet = Date(timeIntervalSince1970: 1_000)
+
+    func inspect(activityAt: Date) -> AgentSupervisor.Result? {
+        supervisor.inspect(
+            tmuxSessionName: "banyan-test",
+            launchCommand: "claude",
+            currentStatus: .running,
+            paneSnapshot: pane(lastActivityAt: activityAt)
+        )
+    }
+
+    #expect(inspect(activityAt: quiet)?.status == .needInput)
+    #expect(inspect(activityAt: quiet)?.status == .needInput)
+    #expect(inspect(activityAt: quiet)?.status == .needInput)
+    #expect(backend.captureCount == 1)
+
+    // New output invalidates it, and the fresh text decides the status.
+    backend.visibleText = "esc to interrupt"
+    #expect(inspect(activityAt: quiet.addingTimeInterval(1))?.status == .executing)
+    #expect(backend.captureCount == 2)
+}
+
+@Test func supervisorWithoutACacheAlwaysCapturesThePane() {
+    // The prompt-answering path builds its own supervisor with no cache: it must
+    // read the pane it is about to type into, not a memo of it.
+    let backend = CountingSupervisorBackend(visibleText: "❯ ")
+    let supervisor = AgentSupervisor(
+        backend: backend,
+        processTable: ProcessTable(rows: [agentProcess("claude")])
+    )
+    let quiet = Date(timeIntervalSince1970: 1_000)
+
+    for _ in 0..<3 {
+        _ = supervisor.inspect(
+            tmuxSessionName: "banyan-test",
+            launchCommand: "claude",
+            currentStatus: .running,
+            paneSnapshot: pane(lastActivityAt: quiet)
+        )
+    }
+
+    #expect(backend.captureCount == 3)
+}
+
+private final class CountingSupervisorBackend: AgentSupervisorBackend, @unchecked Sendable {
+    var visibleText: String
+    private(set) var captureCount = 0
+
+    init(visibleText: String) {
+        self.visibleText = visibleText
+    }
+
+    func hasSession(named name: String) -> Bool { true }
+
+    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
+
+    func captureVisibleText(paneID: String, lineLimit: Int) -> String {
+        captureCount += 1
+        return visibleText
+    }
+}
+
+/// The status dot must stay as fresh as it was. Reusing a capture cannot delay
+/// `idle -> executing`, because that transition is decided by the process tree —
+/// a command appearing below the agent — and the process tree is read afresh
+/// every observation. Proven here with a warm cache: the pane is silent
+/// throughout (a command that prints nothing yet bumps no tmux activity), and
+/// the very next inspection still reports `.executing` without re-reading it.
+@Test func cachedPaneStillReportsExecutingTheMomentAProcessAppears() {
+    let backend = CountingSupervisorBackend(visibleText: "❯ ")
+    let cache = SupervisorInspectionCache()
+    let quiet = Date(timeIntervalSince1970: 1_000)
+
+    func inspect(processes: [ProcessInfoRow]) -> AgentSupervisor.Result? {
+        AgentSupervisor(
+            backend: backend,
+            processTable: ProcessTable(rows: processes),
+            cache: cache
+        ).inspect(
+            tmuxSessionName: "banyan-test",
+            launchCommand: "claude",
+            currentStatus: .running,
+            paneSnapshot: pane(lastActivityAt: quiet)
+        )
+    }
+
+    let idle = [agentProcess("claude")]
+    #expect(inspect(processes: idle)?.status == .needInput)
+    #expect(backend.captureCount == 1)
+
+    let working = idle + [
+        process(pid: 102, parentPID: 101, commandName: "/usr/bin/make", arguments: "make", elapsed: 1)
+    ]
+    #expect(inspect(processes: working)?.status == .executing)
+    #expect(inspect(processes: idle)?.status == .needInput)
+    // Still one capture: neither transition needed the pane re-read.
+    #expect(backend.captureCount == 1)
 }

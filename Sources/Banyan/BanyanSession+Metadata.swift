@@ -116,7 +116,7 @@ extension BanyanSession {
 
     func updateCurrentDirectory(_ directory: String?) {
         guard let directory = SessionInputPolicy.normalizedDirectory(directory) else { return }
-        let displayContext = SessionDisplayLabel.context(
+        let displayContext = SessionDisplayLabel.cachedContext(
             cwd: directory,
             homeDirectory: homeDirectory,
             environment: environment

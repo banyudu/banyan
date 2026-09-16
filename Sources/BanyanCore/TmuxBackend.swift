@@ -85,7 +85,10 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
             "#{pane_current_command}",
             "#{pane_current_path}",
             "#{pane_dead}",
-            "#{pane_in_mode}"
+            "#{pane_in_mode}",
+            "#{window_activity}",
+            "#{pane_width}",
+            "#{pane_height}"
         ].joined(separator: "\t")
         guard let output = try? run(["list-panes", "-t", name, "-F", format]),
               let line = output.split(separator: "\n", omittingEmptySubsequences: true).first
@@ -103,7 +106,10 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
             currentCommand: parts[2],
             currentPath: parts[3],
             isDead: parts[4] == "1",
-            isInMode: parts[5] == "1"
+            isInMode: parts[5] == "1",
+            lastActivityAt: parts.count >= 7 ? Self.activityDate(parts[6]) : nil,
+            width: parts.count >= 8 ? Int(parts[7]) ?? 0 : 0,
+            height: parts.count >= 9 ? Int(parts[8]) ?? 0 : 0
         )
     }
 
@@ -117,7 +123,10 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
             "#{pane_current_command}",
             "#{pane_current_path}",
             "#{pane_dead}",
-            "#{pane_in_mode}"
+            "#{pane_in_mode}",
+            "#{window_activity}",
+            "#{pane_width}",
+            "#{pane_height}"
         ].joined(separator: "\t")
 
         guard let output = try? run(["list-panes", "-a", "-F", format]) else {
@@ -145,10 +154,23 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
                 currentCommand: parts[3],
                 currentPath: parts[4],
                 isDead: parts[5] == "1",
-                isInMode: parts[6] == "1"
+                isInMode: parts[6] == "1",
+                lastActivityAt: parts.count >= 8 ? Self.activityDate(parts[7]) : nil,
+                width: parts.count >= 9 ? Int(parts[8]) ?? 0 : 0,
+                height: parts.count >= 10 ? Int(parts[9]) ?? 0 : 0
             )
         }
         return snapshots
+    }
+
+    /// `#{window_activity}` as a date. tmux prints seconds since the epoch, and 0
+    /// for a window that has never been marked active — which is not a timestamp
+    /// we can compare against, so it reads as "unknown".
+    static func activityDate(_ value: String) -> Date? {
+        guard let seconds = TimeInterval(value.trimmingCharacters(in: .whitespaces)), seconds > 0 else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: seconds)
     }
 
     public func captureVisibleText(paneID: String, lineLimit: Int = 80) -> String {

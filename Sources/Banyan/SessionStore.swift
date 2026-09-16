@@ -230,6 +230,10 @@ final class SessionStore: ObservableObject {
     private let attentionNotifier: AttentionNotifier
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
+    /// Outlives individual ticks so a pane that produced no output since the last
+    /// observation is classified from the text already in hand instead of paying
+    /// another `tmux capture-pane`. See `SupervisorInspectionCache`.
+    private let supervisorInspectionCache = SupervisorInspectionCache()
     /// Effective cadence the live `supervisorTimer` was installed with, so we can
     /// skip re-installing the timer when the adaptive interval is unchanged.
     private var currentSupervisorInterval: TimeInterval = 0
@@ -667,7 +671,7 @@ final class SessionStore: ObservableObject {
             if let cached = displayContextsByCWD[snapshot.cwd] {
                 displayContext = cached
             } else {
-                let resolved = SessionDisplayLabel.context(
+                let resolved = SessionDisplayLabel.cachedContext(
                     cwd: snapshot.cwd,
                     homeDirectory: homeDirectory,
                     environment: environment
@@ -752,7 +756,7 @@ final class SessionStore: ObservableObject {
         displayContextRetryTask = Task.detached(priority: .utility) { [weak self] in
             var resolved: [String: SessionProjectContext] = [:]
             for lookup in lookups {
-                resolved[lookup.cwd] = SessionDisplayLabel.context(
+                resolved[lookup.cwd] = SessionDisplayLabel.cachedContext(
                     cwd: lookup.cwd,
                     homeDirectory: lookup.homeDirectory,
                     environment: lookup.environment
@@ -810,7 +814,7 @@ final class SessionStore: ObservableObject {
         branchRefreshTask = Task.detached(priority: .utility) { [weak self] in
             var contexts: [String: SessionProjectContext] = [:]
             for cwd in limited {
-                contexts[cwd] = SessionDisplayLabel.context(cwd: cwd, homeDirectory: home, environment: env)
+                contexts[cwd] = SessionDisplayLabel.cachedContext(cwd: cwd, homeDirectory: home, environment: env)
             }
             let resolved = contexts
             await MainActor.run { [weak self] in
@@ -3307,6 +3311,7 @@ final class SessionStore: ObservableObject {
         isSupervisorTickRunning = true
         let backend = tmuxBackend
         let processTableProvider = processTable
+        let inspectionCache = supervisorInspectionCache
         let frequentSessionCount = inputs.filter {
             guard let state = supervisorObservationStates[$0.id],
                   state.lastObservation != nil else {
@@ -3324,7 +3329,8 @@ final class SessionStore: ObservableObject {
             let tickStartedAt = DispatchTime.now()
             let synchronizer = SessionStatusSynchronizer(
                 backend: backend,
-                processTable: processTableProvider.snapshot()
+                processTable: processTableProvider.snapshot(),
+                cache: inspectionCache
             )
             let results = synchronizer.observe(inputs) { sessionID, durationMS in
                 telemetry.recordDurationIfSlow(
