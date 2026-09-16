@@ -264,6 +264,8 @@ struct LinearIssuePanel: View {
             .frame(maxWidth: presentation.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollIndicators(.hidden)
+        .hidesVerticalScroller()
         .onAppear {
             selectedStateID = issue.state.id
         }

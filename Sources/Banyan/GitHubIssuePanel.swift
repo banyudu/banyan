@@ -69,6 +69,8 @@ struct GitHubIssuePanel: View {
                 }
             }.padding(14)
         }
+        .scrollIndicators(.hidden)
+        .hidesVerticalScroller()
     }
 
     private func metadata(_ issue: GitHubIssueDetails) -> some View {

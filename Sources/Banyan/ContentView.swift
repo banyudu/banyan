@@ -618,6 +618,8 @@ struct ContentView: View {
                     }
                     .padding(.vertical, 6)
                 }
+                .scrollIndicators(.hidden)
+                .hidesVerticalScroller()
                 .frame(maxHeight: 320)
 
                 Divider()
@@ -2714,6 +2716,8 @@ private struct ImportedSessionHistoryView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
             }
+            .scrollIndicators(.hidden)
+            .hidesVerticalScroller()
 
             Divider()
 

@@ -197,6 +197,8 @@ struct CommandPaletteView: View {
                             }
                             .padding(8)
                         }
+                        .scrollIndicators(.hidden)
+                        .hidesVerticalScroller()
                         .frame(maxHeight: 430)
                         .onChange(of: selectedIndex) { _, index in
                             guard filteredItems.indices.contains(index) else { return }

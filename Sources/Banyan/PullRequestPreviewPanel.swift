@@ -146,6 +146,8 @@ struct PullRequestPreviewPanel: View {
             }
             .padding(14)
         }
+        .scrollIndicators(.hidden)
+        .hidesVerticalScroller()
     }
 
     private func metadataGrid(_ details: GitHubPullRequestDetails) -> some View {
