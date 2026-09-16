@@ -613,6 +613,14 @@ final class ControlServer {
             } else {
                 state["toolbarContextFound"] = false
             }
+            if let sessionTitleFrame = viewFrame(window: window, identifier: AccessibilityID.toolbarSessionTitle) {
+                state["toolbarSessionTitleFound"] = true
+                state["toolbarSessionTitleMinX"] = sessionTitleFrame.minX
+                state["toolbarSessionTitleMaxX"] = sessionTitleFrame.maxX
+                state["toolbarSessionTitleWidth"] = sessionTitleFrame.width
+            } else {
+                state["toolbarSessionTitleFound"] = false
+            }
             if !actionFrames.isEmpty {
                 let actionsFrame = actionFrames.dropFirst().reduce(actionFrames[0]) { $0.union($1) }
                 state["toolbarActionsFound"] = true
