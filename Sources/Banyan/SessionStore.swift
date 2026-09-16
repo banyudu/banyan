@@ -2729,9 +2729,11 @@ final class SessionStore: ObservableObject {
     }
 
     /// Moves to the nearest session blocked on a decision, wrapping around the
-    /// sidebar order. The current selection is excluded, so pressing the chord
-    /// while sitting on the only waiting session stays put instead of silently
-    /// reselecting it.
+    /// sidebar order. A parent whose subtree still holds the waiting question
+    /// is skipped so the chord lands where input is actually needed; a parent
+    /// with nothing waiting below it stays a stop. The current selection is
+    /// excluded, so pressing the chord while sitting on the only waiting
+    /// session stays put instead of silently reselecting it.
     func selectSessionNeedingAttention(direction: SessionSelectionDirection) {
         guard let id = SessionSelectionNavigator.matchingID(
             in: sidebarSessions.map(\.id),
@@ -3850,11 +3852,32 @@ final class SessionStore: ObservableObject {
 
     private func isSessionNeedingAttention(_ id: String) -> Bool {
         guard let session = sessions.first(where: { $0.id == id }) else { return false }
-        return SessionLifecyclePolicy.needsAttention(
+        guard SessionLifecyclePolicy.needsAttention(
             status: session.status,
             isImportedHistory: session.isImportedHistory,
             isSuspended: session.isSuspended
-        )
+        ) else {
+            return false
+        }
+        // A parent whose subtree holds the waiting question is skipped so the
+        // chord lands where input is actually needed; a parent with nothing
+        // waiting below it stays a target.
+        let items = sessions.map {
+            SessionRelationshipItem(
+                id: $0.id,
+                parentSessionID: $0.parentSessionID,
+                status: $0.status,
+                isImportedHistory: $0.isImportedHistory,
+                isSuspended: $0.isSuspended
+            )
+        }
+        return !SessionRelationshipPolicy.hasWaitingDescendant(of: id, in: items) {
+            SessionLifecyclePolicy.needsAttention(
+                status: $0.status,
+                isImportedHistory: $0.isImportedHistory,
+                isSuspended: $0.isSuspended
+            )
+        }
     }
 
     private func uniqueID(_ baseID: String, avoidingLiveTmuxSessions: Bool) -> String {

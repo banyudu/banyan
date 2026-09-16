@@ -227,6 +227,92 @@ private func needsAttention(_ id: String) -> Bool {
     ) == nil)
 }
 
+// Attention navigation targets a session blocked on a human, unless the
+// actual question waits further down its subtree — then the chord skips the
+// parent and lands where input is needed. A parent with nothing waiting below
+// it stays a target.
+private let hierarchyRoster: [SessionRelationshipItem] = [
+    SessionRelationshipItem(id: "parent", parentSessionID: nil, status: .asking),
+    SessionRelationshipItem(id: "child-need-input", parentSessionID: "parent", status: .needInput),
+    SessionRelationshipItem(id: "child-failed", parentSessionID: "parent", status: .failed),
+    SessionRelationshipItem(id: "solo", parentSessionID: nil, status: .asking),
+    SessionRelationshipItem(id: "waiting-parent", parentSessionID: nil, status: .asking),
+    SessionRelationshipItem(id: "busy-child", parentSessionID: "waiting-parent", status: .running),
+    SessionRelationshipItem(id: "grandparent", parentSessionID: nil, status: .asking),
+    SessionRelationshipItem(id: "middle", parentSessionID: "grandparent", status: .running),
+    SessionRelationshipItem(id: "grandchild", parentSessionID: "middle", status: .needInput),
+    SessionRelationshipItem(id: "parked-parent", parentSessionID: nil, status: .asking),
+    SessionRelationshipItem(id: "parked-child", parentSessionID: "parked-parent", status: .asking, isSuspended: true),
+    SessionRelationshipItem(id: "empty-parent", parentSessionID: nil, status: .asking),
+    SessionRelationshipItem(id: "closed-child", parentSessionID: "empty-parent", status: .closed),
+]
+
+private func nextAttentionTarget(from selectedID: String?) -> String? {
+    SessionSelectionNavigator.matchingID(
+        in: hierarchyRoster.map(\.id),
+        selectedID: selectedID,
+        direction: .next,
+        includingSelection: false,
+        isMatch: isAttentionTarget
+    )
+}
+
+private func previousAttentionTarget(from selectedID: String?) -> String? {
+    SessionSelectionNavigator.matchingID(
+        in: hierarchyRoster.map(\.id),
+        selectedID: selectedID,
+        direction: .previous,
+        includingSelection: false,
+        isMatch: isAttentionTarget
+    )
+}
+
+private func isAttentionTarget(_ id: String) -> Bool {
+    guard let entry = hierarchyRoster.first(where: { $0.id == id }) else { return false }
+    guard SessionLifecyclePolicy.needsAttention(
+        status: entry.status,
+        isImportedHistory: entry.isImportedHistory,
+        isSuspended: entry.isSuspended
+    ) else {
+        return false
+    }
+    return !SessionRelationshipPolicy.hasWaitingDescendant(of: id, in: hierarchyRoster) {
+        SessionLifecyclePolicy.needsAttention(
+            status: $0.status,
+            isImportedHistory: $0.isImportedHistory,
+            isSuspended: $0.isSuspended
+        )
+    }
+}
+
+@Test func attentionNavigationSkipsParentsWhileTheirSubtreeWaits() {
+    // "parent" and "grandparent" need attention but are never targets while a
+    // descendant waits; every other waiting session without a waiting
+    // descendant is visited in sidebar order.
+    #expect(nextAttentionTarget(from: "parent") == "child-need-input")
+    #expect(nextAttentionTarget(from: "child-need-input") == "child-failed")
+    #expect(nextAttentionTarget(from: "child-failed") == "solo")
+    #expect(nextAttentionTarget(from: "solo") == "waiting-parent")
+    #expect(nextAttentionTarget(from: "waiting-parent") == "grandchild")
+    #expect(nextAttentionTarget(from: "grandparent") == "grandchild")
+    #expect(nextAttentionTarget(from: "grandchild") == "parked-parent")
+    #expect(nextAttentionTarget(from: "parked-parent") == "empty-parent")
+    #expect(nextAttentionTarget(from: "empty-parent") == "child-need-input")
+    #expect(previousAttentionTarget(from: "grandchild") == "waiting-parent")
+    #expect(previousAttentionTarget(from: "waiting-parent") == "solo")
+    #expect(previousAttentionTarget(from: "child-need-input") == "empty-parent")
+}
+
+@Test func attentionNavigationKeepsParentsWithNothingWaitingBelow() {
+    // A waiting parent whose children are busy, parked, or closed stays a
+    // stop: there is no deeper question to land on instead.
+    #expect(isAttentionTarget("waiting-parent"))
+    #expect(isAttentionTarget("parked-parent"))
+    #expect(isAttentionTarget("empty-parent"))
+    #expect(!isAttentionTarget("parent"))
+    #expect(!isAttentionTarget("grandparent"))
+}
+
 private func navigatePrevious(
     _ ids: [String],
     from selectedID: String?,

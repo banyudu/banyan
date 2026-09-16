@@ -34,7 +34,10 @@ terminals when the Sessions sidebar is active.
 
 `Cmd+Opt+J` / `Cmd+Opt+K` move forward and back through only the sessions that
 are blocked on you — asking, needing input, or failed — wrapping around the
-sidebar order. Idle shells and imported history are skipped, and the chord stays
+sidebar order. Idle shells and imported history are skipped, and a parent is
+skipped while anything below it is still waiting, so the chord lands where
+input is actually needed; a parent with nothing waiting beneath it stays a
+stop. The chord stays
 put when the session you are on is the only one waiting, so nothing happens
 silently. Both directions are also in the Terminal menu and the command palette.
 
