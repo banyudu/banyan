@@ -11,7 +11,7 @@ import Foundation
 /// BufferLines represents a single line of text displayed on the terminal
 
 public final class BufferLine: CustomDebugStringConvertible {
-    public enum RenderLineMode {
+    public enum RenderLineMode: Hashable {
         /// Render each character using a single cell
         case single
         /// Render character using two cells
@@ -20,12 +20,57 @@ public final class BufferLine: CustomDebugStringConvertible {
         case doubledTop
         /// Renders the bottom of a character, using two cells
         case doubledDown
+
+        @inline(__always)
+        var fingerprintCode: UInt8 {
+            switch self {
+            case .single: return 0
+            case .doubleWidth: return 1
+            case .doubledTop: return 2
+            case .doubledDown: return 3
+            }
+        }
     }
     var isWrapped: Bool
     var renderMode: RenderLineMode = .single
     private var data: UnsafeMutableBufferPointer<CharData>
     private var dataSize: Int
     public internal(set) var generation: UInt64 = 0
+
+    /// `generation` counts writes, not changes. A full-screen application repaints
+    /// by erasing each row and rewriting it, so every row's generation moves once
+    /// per frame even when the rendered result is identical. `contentHash` answers
+    /// the question the render caches actually ask — did what we would draw change?
+    /// It is recomputed only when the generation moved, so a steady frame costs one
+    /// pass over each rewritten row instead of a CoreText rebuild of every row.
+    private var cachedContentHash: UInt64 = 0
+    private var cachedContentHashGeneration: UInt64 = .max
+
+    public var contentHash: UInt64 {
+        if cachedContentHashGeneration == generation {
+            return cachedContentHash
+        }
+        let hash = computeContentHash()
+        cachedContentHash = hash
+        cachedContentHashGeneration = generation
+        return hash
+    }
+
+    private func computeContentHash() -> UInt64 {
+        // Image payloads have no cheap identity, so lines carrying them keep the
+        // old write-based behavior rather than risking a stale cached rendering.
+        if let images, !images.isEmpty {
+            return generation ^ 0x9E37_79B9_7F4A_7C15
+        }
+        var fingerprint = ContentFingerprint()
+        fingerprint.combine(renderMode.fingerprintCode)
+        fingerprint.combine(UInt8(isWrapped ? 1 : 0))
+        fingerprint.combine(UInt32(truncatingIfNeeded: dataSize))
+        for index in 0..<dataSize {
+            data[index].fold(into: &fingerprint)
+        }
+        return fingerprint.value
+    }
 
     private var fillCharacter: CharData //used to initialise data
 
