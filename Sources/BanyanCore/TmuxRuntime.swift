@@ -9,6 +9,19 @@ public struct TmuxPaneSnapshot: Sendable {
     public let currentPath: String
     public let isDead: Bool
     public let isInMode: Bool
+    /// When this pane's window last produced output, as tmux reports it
+    /// (`#{window_activity}`, whole-second resolution). Reading the pane does not
+    /// bump it — only output does — which makes it a sound "nothing can have
+    /// changed" signal for skipping a capture.
+    ///
+    /// `nil` when the backend cannot supply it. Callers must then assume the pane
+    /// may have changed and capture it.
+    public let lastActivityAt: Date?
+    /// The pane's grid size. A resize reflows the pane's text without the process
+    /// writing anything, so text captured at one size must not be reused at
+    /// another. `0` means the backend did not report it.
+    public let width: Int
+    public let height: Int
 
     public init(
         paneID: String,
@@ -16,7 +29,10 @@ public struct TmuxPaneSnapshot: Sendable {
         currentCommand: String,
         currentPath: String,
         isDead: Bool,
-        isInMode: Bool
+        isInMode: Bool,
+        lastActivityAt: Date? = nil,
+        width: Int = 0,
+        height: Int = 0
     ) {
         self.paneID = paneID
         self.rootPID = rootPID
@@ -24,6 +40,9 @@ public struct TmuxPaneSnapshot: Sendable {
         self.currentPath = currentPath
         self.isDead = isDead
         self.isInMode = isInMode
+        self.lastActivityAt = lastActivityAt
+        self.width = width
+        self.height = height
     }
 }
 

@@ -44,34 +44,41 @@ public enum SessionSupervisorCadencePolicy {
         isLowPowerModeEnabled: Bool,
         thermalState: SupervisorThermalState
     ) -> TimeInterval {
-        // A tick shells out to tmux for every started session. Once every session
-        // is idle, no user-visible state needs a two-second refresh; terminal
-        // output still updates an attached session immediately. Keep the faster
-        // cadence only while the last observation found active work.
+        // A tick inspects every started session. Once every session is idle, no
+        // user-visible state needs a two-second refresh; terminal output still
+        // updates an attached session immediately. Keep the faster cadence only
+        // while the last observation found active work.
+        let hasActiveWork = activeSessionCount > 0
         var interval: TimeInterval
         let maxInterval: TimeInterval
         switch activityLevel {
         case .active:
-            interval = activeSessionCount > 0 ? 2.0 : 6.0
+            interval = hasActiveWork ? 2.0 : 6.0
             maxInterval = visibleMaxInterval
         case .backgroundVisible:
-            interval = activeSessionCount > 0 ? 6.0 : 15.0
+            interval = hasActiveWork ? 6.0 : 15.0
             maxInterval = visibleMaxInterval
         case .hidden:
             // Nothing is on screen, so the only reason left to look is to raise a
             // notification. An idle agent cannot change without the user, so that
             // case stretches to the ceiling; an executing one can finish at any
             // moment and keeps a half-minute check.
-            interval = activeSessionCount > 0 ? 30.0 : hiddenMaxInterval
+            interval = hasActiveWork ? 30.0 : hiddenMaxInterval
             maxInterval = hiddenMaxInterval
         }
 
-        // Scaling with the session count exists to stop a large workspace from
-        // spiking a two-second cadence. There is no spike to flatten once the
-        // base interval is already half a minute, and stretching it further would
-        // only delay notifications, so it applies to on-screen cadences alone.
+        // Stretch with fleet size. A fleet with live work keeps the original 3x
+        // ceiling, so nothing about executing-session freshness changes. A fleet
+        // where nothing is executing has nothing that can transition between
+        // ticks — only an executing session reaches `needInput` on its own — so
+        // its cadence stretches up to 8x instead of flattening out at 24 sessions
+        // and leaving cost to grow linearly from there. There is no spike to
+        // flatten once the base interval is already half a minute, and stretching
+        // it further would only delay notifications, so it applies to on-screen
+        // cadences alone; the visible ceiling still bounds every on-screen case.
         if activityLevel != .hidden, startedSessionCount > 8 {
-            interval *= min(3.0, Double(startedSessionCount) / 8.0)
+            let scale = Double(startedSessionCount) / 8.0
+            interval *= min(hasActiveWork ? 3.0 : 8.0, scale)
         }
         if isLowPowerModeEnabled {
             interval *= 2.0

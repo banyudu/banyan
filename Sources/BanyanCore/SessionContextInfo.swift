@@ -111,7 +111,7 @@ public enum SessionContextResolver {
         input: SessionContextLookupInput,
         isCancelled: @escaping @Sendable () -> Bool = { false }
     ) async -> SessionContextInfo {
-        let projectContext = SessionDisplayLabel.context(
+        let projectContext = SessionDisplayLabel.cachedContext(
             cwd: input.cwd,
             homeDirectory: input.homeDirectory,
             environment: input.environment

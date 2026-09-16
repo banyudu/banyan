@@ -64,13 +64,18 @@ public struct SessionStatusObservation: Sendable, Equatable {
 public struct SessionStatusSynchronizer: Sendable {
     private let backend: any AgentSupervisorBackend
     private let processTable: ProcessTable
+    /// Survives across ticks, so a quiet pane costs a lookup rather than a
+    /// capture. Owned by the caller because a synchronizer is built per tick.
+    private let cache: SupervisorInspectionCache?
 
     public init(
         backend: any AgentSupervisorBackend,
-        processTable: ProcessTable
+        processTable: ProcessTable,
+        cache: SupervisorInspectionCache? = nil
     ) {
         self.backend = backend
         self.processTable = processTable
+        self.cache = cache
     }
 
     /// Inspects sessions concurrently because each observation may invoke several
@@ -84,7 +89,8 @@ public struct SessionStatusSynchronizer: Sendable {
 
         let supervisor = AgentSupervisor(
             backend: backend,
-            processTable: processTable
+            processTable: processTable,
+            cache: cache
         )
         let collector = ObservationCollector()
         let paneSnapshots = backend.primaryPaneSnapshots(
@@ -129,7 +135,8 @@ public struct SessionStatusSynchronizer: Sendable {
     public func synchronize(_ snapshots: [SessionSnapshot]) -> [SessionSnapshot] {
         let supervisor = AgentSupervisor(
             backend: backend,
-            processTable: processTable
+            processTable: processTable,
+            cache: cache
         )
         let paneSnapshots = backend.primaryPaneSnapshots(
             named: Set(snapshots.map { $0.launchRequest.sessionName })
