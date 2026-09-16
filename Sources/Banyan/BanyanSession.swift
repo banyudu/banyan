@@ -213,7 +213,7 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.homeDirectory = host.homeDirectory.path
         self.environment = host.environment
         self.githubReferenceCache = githubReferenceCache
-        let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.context(
+        let resolvedDisplayContext = displayContext ?? SessionDisplayLabel.cachedContext(
             cwd: cwd,
             homeDirectory: self.homeDirectory,
             environment: self.environment

@@ -120,7 +120,9 @@ extension BanyanSession {
         // Bumping the generation here invalidates it so its stale git result
         // cannot clobber the synchronous result below.
         directoryUpdateGeneration &+= 1
-        let displayContext = SessionDisplayLabel.context(
+        // HEAD-mtime-gated cache shared with the branch timer and supervisor,
+        // so a burst of directory updates reuses one git answer.
+        let displayContext = SessionDisplayLabel.cachedContext(
             cwd: directory,
             homeDirectory: homeDirectory,
             environment: environment
@@ -181,7 +183,9 @@ extension BanyanSession {
         let homeDirectory = homeDirectory
         let environment = environment
         Task.detached(priority: .utility) { [weak self] in
-            let displayContext = SessionDisplayLabel.context(
+            // Shared HEAD-mtime-gated cache: a burst of directory updates across
+            // sibling panes reuses one git answer instead of forking per pane.
+            let displayContext = SessionDisplayLabel.cachedContext(
                 cwd: directory,
                 homeDirectory: homeDirectory,
                 environment: environment

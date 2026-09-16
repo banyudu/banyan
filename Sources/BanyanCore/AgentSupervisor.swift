@@ -44,13 +44,20 @@ public struct AgentSupervisor: Sendable {
 
     private let backend: any AgentSupervisorBackend
     private let processTable: ProcessTable
+    /// Cross-tick memo for the pane capture and the OpenCode model lookup. `nil`
+    /// means every probe runs: the right choice for a one-off inspection served
+    /// in answer to a user action, where a fresh read matters more than the
+    /// subprocess it costs.
+    private let cache: SupervisorInspectionCache?
 
     public init(
         backend: any AgentSupervisorBackend,
-        processTable: ProcessTable
+        processTable: ProcessTable,
+        cache: SupervisorInspectionCache? = nil
     ) {
         self.backend = backend
         self.processTable = processTable
+        self.cache = cache
     }
 
     public func inspect(
@@ -119,7 +126,7 @@ public struct AgentSupervisor: Sendable {
 
         let hasLiveOpenCode = Self.hasLiveOpenCodeProcess(paneCommand: pane.currentCommand, descendants: descendants)
         var modelIdentity: OpenCodeRuntimeIdentity? = if hasLiveOpenCode {
-            OpenCodeSessionModelDetector().resolve(
+            openCodeModelIdentity(
                 directory: pane.currentPath.isEmpty ? cwd : pane.currentPath,
                 sessionStartedAt: sessionStartedAt,
                 environment: environment
@@ -145,8 +152,7 @@ public struct AgentSupervisor: Sendable {
         let agentProcessCount = Self.logicalAgentProcessCount(in: descendants)
         if rootAgentProcessCount + agentProcessCount > 1 {
             if modelIdentity == nil, hasLiveOpenCode {
-                let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: Self.captureLineLimit)
-                modelIdentity = OpenCodeSessionModelDetector.statusBarIdentity(in: visibleText)
+                modelIdentity = readPane(pane).openCodeStatusBarIdentity
                 provider = modelIdentity?.provider ?? baseProvider
             }
             return result(.subagents, .purple)
@@ -170,22 +176,21 @@ public struct AgentSupervisor: Sendable {
             // to the status bar even while executing, otherwise the icon stays
             // pinned to the launch identity for the whole turn.
             if modelIdentity == nil, hasLiveOpenCode {
-                let executingText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: Self.captureLineLimit)
-                modelIdentity = OpenCodeSessionModelDetector.statusBarIdentity(in: executingText)
+                modelIdentity = readPane(pane).openCodeStatusBarIdentity
                 provider = modelIdentity?.provider ?? baseProvider
             }
             return result(.executing, .blue)
         }
 
-        let visibleText = backend.captureVisibleText(paneID: pane.paneID, lineLimit: Self.captureLineLimit)
+        let reading = readPane(pane)
         if modelIdentity == nil, hasLiveOpenCode {
-            modelIdentity = OpenCodeSessionModelDetector.statusBarIdentity(in: visibleText)
+            modelIdentity = reading.openCodeStatusBarIdentity
             provider = modelIdentity?.provider ?? baseProvider
         }
         // A live turn is checked first: its interrupt affordance is scoped to the
         // visible tail, so it beats an untouched-looking prompt during the moment
         // a slash command is still running.
-        if Self.looksLikeAgentExecuting(visibleText) {
+        if reading.looksLikeAgentExecuting {
             return result(.executing, .blue)
         }
         // An untouched prompt outranks the question scan, which searches the whole
@@ -193,14 +198,14 @@ public struct AgentSupervisor: Sendable {
         // `/clear`. A cleared session whose old conversation happened to contain a
         // phrase like "should I merge…" would otherwise stay pinned to `.asking`
         // forever; nothing below the banner can be a live question.
-        if Self.looksLikeUntouchedAgentPrompt(visibleText) {
+        if reading.looksLikeUntouchedAgentPrompt {
             return result(.idle, .neutral)
         }
-        if Self.looksLikeAgentQuestion(visibleText) {
-            return result(.asking, .yellow, capturedText: visibleText)
+        if reading.looksLikeAgentQuestion {
+            return result(.asking, .yellow, capturedText: reading.text)
         }
 
-        return result(.needInput, .yellow, capturedText: visibleText)
+        return result(.needInput, .yellow, capturedText: reading.text)
 
         func result(_ status: SessionStatus, _ tone: SessionTone, capturedText: String? = nil) -> Result {
             Result(
@@ -213,6 +218,55 @@ public struct AgentSupervisor: Sendable {
                 visibleText: capturedText
             )
         }
+    }
+
+    /// The pane's capture, served from the tick's cache when tmux reports the
+    /// pane has produced no output since it was last read. Every status decision
+    /// below is a pure function of that text, so an unchanged pane classifies
+    /// identically while spawning nothing — and the reading carries the
+    /// conclusions along with the bytes, because scanning a capture costs more
+    /// than the subprocess that produced it.
+    private func readPane(_ pane: TmuxPaneSnapshot) -> PaneReading {
+        let capture = {
+            PaneReading(text: backend.captureVisibleText(
+                paneID: pane.paneID,
+                lineLimit: Self.captureLineLimit
+            ))
+        }
+        guard let cache else { return capture() }
+        return cache.read(
+            paneID: pane.paneID,
+            lineLimit: Self.captureLineLimit,
+            size: PaneSize(width: pane.width, height: pane.height),
+            lastActivityAt: pane.lastActivityAt,
+            capture: capture
+        )
+    }
+
+    /// OpenCode's selected model, served from the tick's cache while its database
+    /// is untouched. A model switch necessarily writes the session row, so the
+    /// file's modification time bounds when this answer can have moved — and one
+    /// `stat` is far cheaper than opening the database once per session per tick.
+    private func openCodeModelIdentity(
+        directory: String,
+        sessionStartedAt: Date,
+        environment: [String: String]
+    ) -> OpenCodeRuntimeIdentity? {
+        let detector = OpenCodeSessionModelDetector()
+        let resolve = {
+            detector.resolve(
+                directory: directory,
+                sessionStartedAt: sessionStartedAt,
+                environment: environment
+            )
+        }
+        guard let cache else { return resolve() }
+        return cache.openCodeIdentity(
+            directory: directory,
+            sessionStartedAt: sessionStartedAt,
+            databaseURL: detector.databaseURL(environment: environment),
+            resolve: resolve
+        )
     }
 
     public static func isSupportedAgentCommand(_ command: String) -> Bool {
@@ -307,7 +361,7 @@ public struct AgentSupervisor: Sendable {
         }.count
     }
 
-    private static func looksLikeAgentQuestion(_ text: String) -> Bool {
+    static func looksLikeAgentQuestion(_ text: String) -> Bool {
         let lowercased = text.lowercased()
         let questionPhrases = [
             "do you want",
@@ -482,7 +536,7 @@ public struct AgentSupervisor: Sendable {
     /// editing.` while sitting at an idle prompt). TUI agents instead render a
     /// live "interrupt" affordance only while a turn is in flight and drop it the
     /// instant they return to the prompt, so that hint is the reliable signal.
-    private static func looksLikeAgentExecuting(_ text: String) -> Bool {
+    static func looksLikeAgentExecuting(_ text: String) -> Bool {
         let lines = text
             .lowercased()
             .split(separator: "\n")
@@ -748,5 +802,65 @@ extension ProcessTable {
         return rows.map { row in
             ProcessInfoRow(row: row, command: row.resolvedCommand ?? commandLines[row.pid])
         }
+    }
+}
+
+/// A pane capture together with the conclusions drawn from it.
+///
+/// Scanning a capture costs more CPU than the subprocess that produced it —
+/// measured across 51 live panes, the four derivations below total ~400ms while
+/// the 51 `capture-pane` calls total ~350ms — and every one of them is a pure
+/// function of the text. So a capture reused across ticks has to carry its
+/// conclusions with it, or the supervisor stops spawning and keeps scanning.
+///
+/// Each conclusion is computed at most once, on first ask, preserving the
+/// short-circuit order `inspect` evaluates them in: a pane that is plainly
+/// executing never pays for the question scan.
+final class PaneReading: @unchecked Sendable {
+    let text: String
+
+    private let lock = NSLock()
+    private var executing: Bool?
+    private var untouchedPrompt: Bool?
+    private var question: Bool?
+    // Doubly optional: the inner `nil` is "no identity in this pane", the outer
+    // is "not looked yet".
+    private var statusBarIdentity: OpenCodeRuntimeIdentity??
+
+    init(text: String) {
+        self.text = text
+    }
+
+    var looksLikeAgentExecuting: Bool {
+        memoized(\.executing) { AgentSupervisor.looksLikeAgentExecuting($0) }
+    }
+
+    var looksLikeUntouchedAgentPrompt: Bool {
+        memoized(\.untouchedPrompt) { AgentSupervisor.looksLikeUntouchedAgentPrompt($0) }
+    }
+
+    var looksLikeAgentQuestion: Bool {
+        memoized(\.question) { AgentSupervisor.looksLikeAgentQuestion($0) }
+    }
+
+    var openCodeStatusBarIdentity: OpenCodeRuntimeIdentity? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = statusBarIdentity { return cached }
+        let value = OpenCodeSessionModelDetector.statusBarIdentity(in: text)
+        statusBarIdentity = .some(value)
+        return value
+    }
+
+    private func memoized(
+        _ slot: ReferenceWritableKeyPath<PaneReading, Bool?>,
+        _ compute: (String) -> Bool
+    ) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = self[keyPath: slot] { return cached }
+        let value = compute(text)
+        self[keyPath: slot] = value
+        return value
     }
 }

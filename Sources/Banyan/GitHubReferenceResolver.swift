@@ -79,7 +79,7 @@ enum GitHubReferenceResolver {
         if let repository {
             return URL(string: "https://github.com/\(repository)/issues/\(number)")
         }
-        let groupID = SessionDisplayLabel.context(
+        let groupID = SessionDisplayLabel.cachedContext(
             cwd: cwd,
             homeDirectory: homeDirectory,
             environment: environment
