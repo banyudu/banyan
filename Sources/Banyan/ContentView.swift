@@ -1105,7 +1105,7 @@ struct ContentView: View {
             isHistory: isHistory,
             jumpKeyLabel: jumpKeyLabel,
             onSelect: {
-                selection.selectedSessionID = item.session.id
+                store.userSelect(id: item.session.id)
             },
             onClose: {
                 store.requestClose(id: item.session.id)
@@ -1158,7 +1158,7 @@ struct ContentView: View {
         if item.isHistory {
             reopenHistory(item)
         } else {
-            selection.selectedSessionID = item.session.id
+            store.userSelect(id: item.session.id)
         }
     }
 
@@ -1624,15 +1624,22 @@ private struct TitleBarSessionFallbackView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            // Size to the text's ideal width: toolbar items otherwise lay out
-            // against the principal slot's compressed offer and truncate early
-            // even when the window has room.
-            .fixedSize(horizontal: true, vertical: false)
-            .frame(maxWidth: 1000)
+            // The toolbar pins flexible principal items at ~370px regardless of
+            // maxWidth or ideal size, but honors an explicit width — so measure
+            // the text (same 12pt system font) and demand exactly that.
+            .frame(width: fittedWidth(for: title))
             .padding(.horizontal, 10)
             .lineLimit(1)
             .accessibilityIdentifier(AccessibilityID.toolbarSessionTitle)
         }
+    }
+
+    private func fittedWidth(for title: String) -> CGFloat {
+        let textWidth = (title as NSString).size(
+            withAttributes: [.font: NSFont.systemFont(ofSize: 12)]
+        ).width
+        let chrome: CGFloat = (session.displayAgentProvider != nil ? 14 + 6 : 0) + 20 + 8
+        return min(max(textWidth + chrome, 140), 1100)
     }
 
     private var fallbackTitle: String? {
