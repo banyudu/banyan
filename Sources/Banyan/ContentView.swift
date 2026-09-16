@@ -1624,7 +1624,7 @@ private struct TitleBarSessionFallbackView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            .frame(maxWidth: 560)
+            .frame(maxWidth: 800)
             .padding(.horizontal, 10)
             .lineLimit(1)
             .accessibilityIdentifier(AccessibilityID.toolbarSessionTitle)
