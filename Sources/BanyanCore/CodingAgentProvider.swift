@@ -134,13 +134,24 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
     }
 
     public static func detect(in command: String) -> CodingAgentProvider? {
-        for token in shellTokens(command) {
+        // The provider executable is always among the first tokens (`claude …`,
+        // `/bin/zsh -lc codex …`). Launch commands can carry a huge trailing
+        // prompt (a full Linear issue body), so tokenizing the whole string on
+        // every supervisor tick wastes work scanning prose that can never name
+        // a provider. Cap to a head slice; `promptCandidate` keeps the full
+        // command for title extraction.
+        let head = command.prefix(Self.detectionHeadLimit)
+        for token in shellTokens(String(head)) {
             if let provider = provider(forExecutable: token) {
                 return provider
             }
         }
         return nil
     }
+
+    /// Head slice for provider detection. Must cover the executable plus its
+    /// option prefix; prompts after that are irrelevant to identity.
+    private static let detectionHeadLimit = 2_048
 
     public static func isSupportedCommand(_ command: String) -> Bool {
         detect(in: command) != nil
@@ -214,7 +225,7 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
     /// inside a path, e.g. `node /…/node_modules/.bin/claude`. Splits on spaces
     /// and path separators and matches each segment as an executable name.
     static func detectInPathSegments(of command: String) -> CodingAgentProvider? {
-        for segment in command.split(whereSeparator: { $0 == " " || $0 == "/" }) {
+        for segment in String(command.prefix(detectionHeadLimit)).split(whereSeparator: { $0 == " " || $0 == "/" }) {
             if let provider = provider(forExecutable: segment) {
                 return provider
             }

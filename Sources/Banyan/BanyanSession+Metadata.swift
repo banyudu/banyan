@@ -116,6 +116,10 @@ extension BanyanSession {
 
     func updateCurrentDirectory(_ directory: String?) {
         guard let directory = SessionInputPolicy.normalizedDirectory(directory) else { return }
+        // A background async update may already be in flight for this directory.
+        // Bumping the generation here invalidates it so its stale git result
+        // cannot clobber the synchronous result below.
+        directoryUpdateGeneration &+= 1
         let displayContext = SessionDisplayLabel.context(
             cwd: directory,
             homeDirectory: homeDirectory,
@@ -144,6 +148,58 @@ extension BanyanSession {
         touch()
         if !displayContext.gitLookupDegraded {
             onProjectContextObserved?(directory, displayContext)
+        }
+    }
+
+    /// Async variant for terminal OSC7 directory notifications, which fire on the
+    /// main thread during streaming agent output. The git lookups (up to ~6
+    /// subprocesses, 5s timeout each) run on a background task; the cwd itself is
+    /// applied immediately so the UI never shows a stale path, and the
+    /// repository context follows when the lookup completes. Rapid `cd`s are
+    /// coalesced by generation — only the latest directory's result is applied.
+    ///
+    /// Same-directory notifications (the common OSC7 repeat on every prompt) are
+    /// skipped: branch changes without a `cd` are covered by the periodic
+    /// branch refresh, so re-running git on every prompt would be a storm.
+    func updateCurrentDirectoryAsync(_ directory: String?) {
+        guard let directory = SessionInputPolicy.normalizedDirectory(directory) else { return }
+        guard directory != cwd else { return }
+        directoryUpdateGeneration &+= 1
+        let generation = directoryUpdateGeneration
+        let shouldUpdateTitle = SessionInputPolicy.titleTracksCurrentDirectory(
+            title,
+            isTitlePinned: isTitlePinned,
+            cwd: cwd,
+            homeDirectory: homeDirectory
+        )
+        // Show the new path immediately; repository context catches up below.
+        cwd = directory
+        if shouldUpdateTitle {
+            title = titleForCurrentDirectory(directory)
+        }
+        touch()
+        let homeDirectory = homeDirectory
+        let environment = environment
+        Task.detached(priority: .utility) { [weak self] in
+            let displayContext = SessionDisplayLabel.context(
+                cwd: directory,
+                homeDirectory: homeDirectory,
+                environment: environment
+            )
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.directoryUpdateGeneration == generation,
+                      self.cwd == directory else {
+                    return
+                }
+                self.updateDisplayContext(displayContext)
+                self.refreshAutoDetectedTitleURL()
+                self.refreshGeneratedTitle()
+                self.touch()
+                if !displayContext.gitLookupDegraded {
+                    self.onProjectContextObserved?(directory, displayContext)
+                }
+            }
         }
     }
 

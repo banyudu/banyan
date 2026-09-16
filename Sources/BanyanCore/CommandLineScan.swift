@@ -22,13 +22,26 @@ struct CommandLineScan {
     private let bytes: [UInt8]
 
     init(commandName: String, arguments: String) {
+        // Process argv can carry a huge trailing prompt (a full issue body on a
+        // `claude` launch). Markers live in the executable/early argv, so cap
+        // the scanned tail: cheaper per tick and immune to prose that happens
+        // to contain a marker substring (e.g. " mcp" in an issue body).
         var buffer: [UInt8] = []
-        buffer.reserveCapacity(commandName.utf8.count + arguments.utf8.count + 1)
+        buffer.reserveCapacity(min(commandName.utf8.count + arguments.utf8.count + 1, Self.scanCap + 256))
         for byte in commandName.utf8 { buffer.append(Self.lowered(byte)) }
         buffer.append(UInt8(ascii: " "))
-        for byte in arguments.utf8 { buffer.append(Self.lowered(byte)) }
+        var count = 0
+        for byte in arguments.utf8 {
+            guard count < Self.scanCap else { break }
+            buffer.append(Self.lowered(byte))
+            count += 1
+        }
         self.bytes = buffer
     }
+
+    /// Bytes of argv scanned. Covers executable + option prefix; prompts after
+    /// that are identity-irrelevant prose.
+    private static let scanCap = 8_192
 
     func contains(_ marker: CommandLineMarker) -> Bool {
         let needle = marker.bytes

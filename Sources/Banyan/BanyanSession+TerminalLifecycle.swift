@@ -29,6 +29,75 @@ extension BanyanSession {
         )
     }
 
+    /// Async foreground start for terminal-ready paths that run on the main
+    /// thread during a session switch. `startTerminalClient` runs several tmux
+    /// subprocesses synchronously (`ensureBackingSession` + theme options, each
+    /// with a 10s timeout); doing that on the main thread is what froze the UI
+    /// for seconds on first-visit switches (`switcher.switch_visible` p50
+    /// ~8s). The tmux ensure runs on a background task and the PTY attach
+    /// happens back on the main actor. Revisits no-op fast on the main thread
+    /// when the client is already running.
+    func startAsync() {
+        guard !isImportedHistory, !isSuspended else { return }
+        guard loadedTerminalView?.process.running != true else { return }
+        // Fast path: backing session already exists, attach synchronously like
+        // `start()` without paying a hop. `hasSession` is one cheap tmux call;
+        // if it says yes there is nothing blocking left to do off-main.
+        // NOTE: even one tmux call can block up to 10s on a wedged server, so
+        // this fast path is best-effort. A slow `hasSession` still stalls the
+        // switch; the full-async fallback below covers the common first-visit
+        // case where the backing session is known-absent (`!isProcessStarted`).
+        if isProcessStarted {
+            start()
+            return
+        }
+        isDetachingTerminalClient = false
+        let runtime = sessionRuntime
+        let request = launchRequest
+        let backend = tmuxBackend
+        let themeStyle = pendingTheme.tmuxDefaultStyle
+        let telemetry = telemetry
+        let sessionID = id
+        let tmuxName = tmuxSessionName
+        let startedAt = DispatchTime.now()
+        Task.detached(priority: .userInitiated) { [weak self] in
+            backend.configureTerminalTheme(style: themeStyle, for: nil)
+            do {
+                try runtime.ensureBackingSession(request)
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run { [weak self] in
+                    self?.failToStart(message)
+                }
+                return
+            }
+            backend.configureTerminalTheme(style: themeStyle, for: tmuxName)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard !self.isImportedHistory, !self.isSuspended else { return }
+                guard self.loadedTerminalView?.process.running != true else { return }
+                self.isRestored = false
+                self.isProcessStarted = true
+                self.attemptedBlankTerminalRecovery = false
+                self.status = .running
+                self.terminalView.beginInitialScreenSynchronization(restarting: true)
+                self.terminalView.startProcess(
+                    executable: "/usr/bin/env",
+                    args: ["-u", "TMUX", "-u", "TMUX_PANE", backend.executableURL.path] + backend.attachArguments(for: tmuxName),
+                    environment: self.terminalEnvironment(),
+                    currentDirectory: self.cwd
+                )
+                self.touch()
+                telemetry.recordDuration(
+                    "terminal.start_client",
+                    durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                    sessionID: sessionID,
+                    detail: "tmux=\(tmuxName) async"
+                )
+            }
+        }
+    }
+
     /// Start the tmux backing (and its launch command) without attaching a visible
     /// terminal client, so a session spawned in the background actually runs without
     /// stealing selection/focus. When the session is later selected, `start()` attaches
@@ -114,18 +183,41 @@ extension BanyanSession {
               terminalView.hasVisibleText == false else {
             return
         }
-        let capturedText = tmuxBackend.captureCurrentVisibleText(paneID: tmuxSessionName)
-        guard capturedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            return
-        }
-        telemetry.recordDuration(
-            "terminal.blank_recovery",
-            durationMS: 1,
-            sessionID: id,
-            detail: "tmux=\(tmuxSessionName)"
-        )
+        // `capture-pane` is a synchronous tmux subprocess (10s timeout). Running
+        // it here used to block the main thread 0.5s after every switch. Capture
+        // in the background; the reattach below only runs when the pane actually
+        // has content the blank terminal missed (rare).
+        let backend = tmuxBackend
+        let tmuxName = tmuxSessionName
+        let telemetry = telemetry
+        let sessionID = id
         attemptedBlankTerminalRecovery = true
-        reattachTerminalClient(resetBlankRecoveryAttempt: false)
+        Task.detached(priority: .utility) { [weak self] in
+            let capturedText = backend.captureCurrentVisibleText(paneID: tmuxName)
+            guard capturedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                // Pane is genuinely empty — allow a later switch to retry once
+                // it has content, matching the old synchronous semantics.
+                await MainActor.run { [weak self] in
+                    self?.attemptedBlankTerminalRecovery = false
+                }
+                return
+            }
+            await MainActor.run { [weak self] in
+                guard let self,
+                      !self.isImportedHistory,
+                      self.loadedTerminalView?.process.running == true,
+                      self.loadedTerminalView?.hasVisibleText == false else {
+                    return
+                }
+                telemetry.recordDuration(
+                    "terminal.blank_recovery",
+                    durationMS: 1,
+                    sessionID: sessionID,
+                    detail: "tmux=\(tmuxName)"
+                )
+                self.reattachTerminalClient(resetBlankRecoveryAttempt: false)
+            }
+        }
     }
 
     func reattachTerminalClient(resetBlankRecoveryAttempt: Bool = true) {

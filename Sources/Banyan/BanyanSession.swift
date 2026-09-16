@@ -172,6 +172,11 @@ final class BanyanSession: ObservableObject, Identifiable {
     var attemptedBlankTerminalRecovery = false
     var titleURLWasAutoDetected = false
     var terminalRefreshTask: Task<Void, Never>?
+    /// Generation counter for async directory updates. OSC7 directory
+    /// notifications arrive on the main thread during streaming output; the git
+    /// lookups they need must run in the background. Rapid `cd`s bump this so
+    /// a stale background lookup cannot clobber a newer directory.
+    var directoryUpdateGeneration = 0
 
     init(
         id: String,
@@ -286,7 +291,7 @@ final class BanyanSession: ObservableObject, Identifiable {
             self.touch()
         }
         delegate.onDirectoryChange = { [weak self] directory in
-            self?.updateCurrentDirectory(directory)
+            self?.updateCurrentDirectoryAsync(directory)
         }
         delegate.onTerminate = { [weak self] exitCode in
             guard let self else { return }

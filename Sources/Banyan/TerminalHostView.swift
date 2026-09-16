@@ -81,7 +81,10 @@ struct TerminalHostView: NSViewRepresentable {
               !session.needsManualAttach else {
             return
         }
-        session.start()
+        // `start()` runs tmux ensure synchronously (multiple 10s-timeout
+        // subprocesses). On a first-visit switch that froze the main thread;
+        // `startAsync` ensures in the background and attaches on main.
+        session.startAsync()
         session.refreshTerminalClient(immediately: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             session.refreshTerminalClient()

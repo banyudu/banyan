@@ -47,7 +47,9 @@ struct TerminalSwitcherView: NSViewRepresentable {
                       !session.needsManualAttach else {
                     return
                 }
-                session.start()
+                // Async: `start()`'s tmux ensure blocked the main thread on
+                // first-visit switches. See BanyanSession+TerminalLifecycle.
+                session.startAsync()
                 session.refreshTerminalClient(immediately: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     session.refreshTerminalClient()
