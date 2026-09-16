@@ -317,3 +317,31 @@ private let freshClaudePane = [
     // No capture means no verdict about any text, so there is nothing to gate on.
     #expect(AgentPromptGate.prompt(status: .asking, classifiedText: nil) == nil)
 }
+
+@Test func contextStopsAtTheRuleTheDialogOpensWith() throws {
+    // Captured live: Claude draws the permission dialog below a full-width rule,
+    // with the transcript still above it. Pulling that transcript into the prompt
+    // would make an unrelated spinner line "move" a dialog that never changed —
+    // and a moved footprint rejects the answer to it.
+    let withTranscript = ([
+        "⏺ CronCreate(29 10 16 9 *: __cache-warm-ping__)",
+        "  ⎿  Scheduled 748b9135 (29 10 16 9 *)",
+        "",
+        "⏺ Bash(rm -f sample.txt && ls -la)",
+        "  ⎿  Waiting…",
+        ""
+    ] + claudePermissionDialog.split(separator: "\n", omittingEmptySubsequences: false).map(String.init))
+        .joined(separator: "\n")
+
+    let prompt = try #require(AgentPromptParser.parse(visibleText: withTranscript))
+
+    #expect(prompt.context == [
+        "Bash command",
+        "rm -f sample.txt && ls sample.txt 2>&1",
+        "Delete sample.txt"
+    ])
+    #expect(!prompt.context.contains { $0.contains("Waiting") })
+    // The same dialog under a different transcript is still the same dialog.
+    let spinnerMoved = withTranscript.replacingOccurrences(of: "⎿  Waiting…", with: "⎿  Waiting… (3s)")
+    #expect(try #require(AgentPromptParser.parse(visibleText: spinnerMoved)).footprint == prompt.footprint)
+}

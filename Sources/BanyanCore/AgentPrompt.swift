@@ -67,9 +67,10 @@ public enum AgentPromptParser {
     public static let scanLineLimit = 60
 
     public static func parse(visibleText: String) -> AgentPrompt? {
-        let lines = visibleText
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { stripBorders(String($0)) }
+        let rawLines = visibleText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        // A rule has to be recognized before the border strip, which erases it.
+        let isRule = rawLines.map(isHorizontalRule)
+        let lines = rawLines.map(stripBorders)
         guard !lines.isEmpty else { return nil }
 
         let scanStart = max(0, lines.count - scanLineLimit)
@@ -83,6 +84,7 @@ public enum AgentPromptParser {
         guard let heading = heading(
             above: block.lowerBound,
             in: lines,
+            isRule: isRule,
             from: scanStart,
             allowingMissingQuestionMark: isNumbered
         ) else {
@@ -262,10 +264,18 @@ public enum AgentPromptParser {
     private static func heading(
         above blockStart: Int,
         in lines: [String],
+        isRule: [Bool],
         from scanStart: Int,
         allowingMissingQuestionMark: Bool
     ) -> (question: String, context: [String])? {
-        let windowStart = max(scanStart, blockStart - headingWindow)
+        var windowStart = max(scanStart, blockStart - headingWindow)
+        // An agent draws a rule where its dialog begins. Stopping there keeps the
+        // transcript above it out of both the text a human is shown and the
+        // footprint — otherwise a spinner line updating above an open dialog would
+        // "move" a prompt that never changed, and reject the answer to it.
+        if let rule = isRule[windowStart..<blockStart].lastIndex(of: true) {
+            windowStart = rule + 1
+        }
         guard windowStart < blockStart else { return nil }
         let paragraphs = paragraphs(in: Array(lines[windowStart..<blockStart]))
         guard !paragraphs.isEmpty else { return nil }
@@ -401,6 +411,14 @@ public enum AgentPromptParser {
     private static func isDividerOnly(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         return !trimmed.isEmpty && trimmed.allSatisfy { boxDrawingCharacters.contains($0) || $0 == " " }
+    }
+
+    /// A full-width rule, as opposed to the single `│` a boxed row starts with.
+    /// The length floor is what separates "this is where the dialog begins" from
+    /// one stray box glyph in a line of text.
+    private static func isHorizontalRule(_ line: String) -> Bool {
+        guard isDividerOnly(line) else { return false }
+        return line.filter(boxDrawingCharacters.contains).count >= 8
     }
 }
 
