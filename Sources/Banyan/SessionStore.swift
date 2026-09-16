@@ -2867,9 +2867,49 @@ final class SessionStore: ObservableObject {
     }
 
     var canSelectSessionNeedingAttention: Bool {
-        sidebarSessions.contains {
-            $0.id != selection.selectedSessionID && isSessionNeedingAttention($0.id)
+        // Evaluated on every menu-bar rebuild — effectively every keystroke.
+        // The old form routed through `sidebarSessions` (full grouping over
+        // every row, ~3000 with closed history) and then re-scanned all rows
+        // per candidate inside `isSessionNeedingAttention`: millions of ops
+        // per evaluation, blocking the keystroke. Single pass instead. Closed
+        // history can never need attention, and the parent-subtree rule only
+        // needs the relationship scan for the rare rows that pass the cheap
+        // status gate (built lazily, at most once per evaluation).
+        let selectedID = selection.selectedSessionID
+        var relationshipItems: [SessionRelationshipItem]?
+        for session in sessions {
+            guard session.id != selectedID,
+                  session.status != .closed,
+                  SessionLifecyclePolicy.needsAttention(
+                      status: session.status,
+                      isImportedHistory: session.isImportedHistory,
+                      isSuspended: session.isSuspended
+                  )
+            else { continue }
+            if relationshipItems == nil {
+                relationshipItems = sessions.map {
+                    SessionRelationshipItem(
+                        id: $0.id,
+                        parentSessionID: $0.parentSessionID,
+                        status: $0.status,
+                        isImportedHistory: $0.isImportedHistory,
+                        isSuspended: $0.isSuspended
+                    )
+                }
+            }
+            let waitingBelow = SessionRelationshipPolicy.hasWaitingDescendant(
+                of: session.id,
+                in: relationshipItems!
+            ) {
+                SessionLifecyclePolicy.needsAttention(
+                    status: $0.status,
+                    isImportedHistory: $0.isImportedHistory,
+                    isSuspended: $0.isSuspended
+                )
+            }
+            if !waitingBelow { return true }
         }
+        return false
     }
 
     @discardableResult

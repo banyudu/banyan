@@ -451,7 +451,16 @@ extension BanyanSession {
     }
 
     func touch() {
-        updatedAt = Date()
+        // `updatedAt` feeds sidebar ordering and the sidebar/history cache
+        // hashes, which scan every row (~3000 with closed history). Bumping it
+        // on every observation and output chunk kept those caches permanently
+        // cold: each keystroke re-evaluates the menu bar, which rebuilds the
+        // full grouping. Recency at 2s granularity is plenty for
+        // human-readable ordering and resume heuristics.
+        let now = Date()
+        if now.timeIntervalSince(updatedAt) >= 2 {
+            updatedAt = now
+        }
         onDidChange?()
     }
 
