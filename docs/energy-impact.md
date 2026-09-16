@@ -24,10 +24,69 @@ particular:
 The supervisor invokes `ps` once and batches pane metadata for all started
 sessions into one tmux command per tick. It still captures visible text only for
 sessions with a live coding agent, because that text is needed for status
-detection. Active sessions retain a 2-second foreground cadence. When all
-started sessions are idle, the cadence becomes 6 seconds in the foreground and
-15 seconds in the background, before existing session-count, low-power, and
-thermal backoff is applied.
+detection.
+
+## Idle behavior and background throttling
+
+Banyan cannot ask to be App Napped — no API grants that, and an app with any
+window on screen on any Space is disqualified whatever it does. Nap would also
+only defer timers; it would not stop the subprocesses those timers spawn, which
+is where the energy actually goes. So the app reads the same signal the OS reads
+(`NSApplication.occlusionState`) and throttles itself.
+
+Visibility is three states, not two. "Frontmost or not" is too coarse: an app on
+screen behind another one still has to keep its status dots honest.
+
+- `active` — frontmost.
+- `backgroundVisible` — not frontmost, but a window is on screen and not fully
+  covered.
+- `hidden` — hidden, miniaturized, or every window occluded. Nothing Banyan
+  draws can be read, which is the only state that is free to throttle hard.
+
+Supervisor cadence, before the existing session-count, low-power, and thermal
+multipliers:
+
+| Visibility | Agent executing | Idle |
+| --- | --- | --- |
+| `active` | 2 s | 6 s |
+| `backgroundVisible` | 6 s | 15 s |
+| `hidden` | 30 s | 300 s |
+
+A tick is the only thing that turns an *unattached* session's new state into a
+notification, so hidden cadence is also the worst-case attention latency for a
+session the user has never opened. Attached sessions are unaffected: their
+status signals arrive on the PTY as the agent writes them, so the session the
+user is actually watching still notifies instantly at any visibility. An idle
+agent cannot change without the user, which is why that case stretches to the
+ceiling while an executing one keeps a half-minute check. The session-count
+multiplier applies only to on-screen cadences — it exists to flatten spikes in a
+two-second poll, and at half a minute there is no spike to flatten.
+
+Refreshes that feed on-screen chrome only are treated separately, because they
+raise no notification and persist no decision. The branch chip's git sweep runs
+every 15 s frontmost, every 60 s on screen but not frontmost, and **not at all
+while hidden**; the selected session's Linear status poll is gated the same way.
+This is the largest single saving: each cycle spawns several `git` invocations
+per distinct working directory, so a workspace with 30-odd worktrees was
+spawning on the order of 80 processes every 15 seconds, around the clock,
+regardless of whether anyone could see the result.
+
+Becoming visible again runs an immediate forced supervisor tick and forces both
+chrome refreshes, so the first frame the user sees is re-synced rather than
+showing what was true when the window was covered. tmux holds the scrollback
+throughout, so throttling changes only when Banyan looks, never what it can find.
+
+### Why sessions are not auto-parked
+
+Parking on an idle timer was considered and rejected. Backoff already collapses
+the cost: a deferred session is filtered out of the tick's inputs entirely, so it
+costs nothing, and quiet sessions reach a one-hour interval on their own. Parking
+would save almost nothing on top of that, and it costs correctness — nothing
+observes a parked session, and `SessionLifecyclePolicy.needsAttention` excludes
+one, so a session auto-parked while quiet would drop out of attention navigation
+and notifications the moment its agent needed input. Parking stays an explicit
+statement of user intent ("I am done with this for now"), not something inferred
+from quiet.
 
 Sessions the user has parked (`banyanctl suspend`, or Suspend in the sidebar
 context menu) are excluded from the tick entirely, along with branch/context

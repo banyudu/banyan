@@ -284,9 +284,14 @@ final class SessionStore: ObservableObject {
     private static let linearIssueListRefreshInterval: TimeInterval = 30 * 60
     private static let linearIssueListLoadTimeout: TimeInterval = 45
     private var branchRefreshTimer: Timer?
+    /// Effective cadence the live `branchRefreshTimer` was installed with, mirroring
+    /// `currentSupervisorInterval` so a reschedule that changes nothing is free.
+    private var currentBranchRefreshInterval: TimeInterval = 0
     private var branchRefreshTask: Task<Void, Never>?
     private var lastBranchRefreshByCWD: [String: Date] = [:]
-    private static let branchRefreshInterval: TimeInterval = 15
+    /// Last visibility the periodic work was scheduled for, so coming back from
+    /// `.hidden` can force the re-sync that the throttled path skipped.
+    private var lastObservedActivityLevel: SupervisorActivityLevel = .active
     private var lastSuspendedLivenessSweepAt = Date.distantPast
     /// Matches the slowest cadence the supervisor ever backs a quiet live session
     /// off to, so a parked session is never checked more often than a stable one.
@@ -788,6 +793,15 @@ final class SessionStore: ObservableObject {
     /// directory to keep git load low.
     func refreshBranchContextsIfNeeded(force: Bool = false) {
         guard branchRefreshTask == nil else { return }
+        // Each cycle spawns several `git` invocations per distinct working
+        // directory, and the chip it feeds is pure chrome. While nothing is on
+        // screen there is no chip to keep honest, so the sweep stops outright;
+        // becoming visible forces one before the user can read a stale branch.
+        let refreshInterval = SessionBackgroundRefreshPolicy.branchRefreshInterval(
+            activityLevel: supervisorActivityLevel
+        )
+        guard force || refreshInterval != nil else { return }
+        let throttle = refreshInterval ?? SessionBackgroundRefreshPolicy.activeBranchRefreshInterval
         let now = Date()
         let candidates = sessions.filter { $0.status != .closed && !$0.isSuspended }
         guard !candidates.isEmpty else { return }
@@ -795,7 +809,7 @@ final class SessionStore: ObservableObject {
         var cwds: Set<String> = []
         for session in candidates {
             let last = lastBranchRefreshByCWD[session.cwd]
-            if force || last == nil || now.timeIntervalSince(last!) >= Self.branchRefreshInterval {
+            if force || last == nil || now.timeIntervalSince(last!) >= throttle {
                 cwds.insert(session.cwd)
             }
         }
@@ -849,12 +863,28 @@ final class SessionStore: ObservableObject {
         codexTitleWatcher = watcher
     }
 
-    private func installBranchRefreshTimerIfNeeded() {
-        guard branchRefreshTimer == nil else { return }
-        let timer = Timer(timeInterval: Self.branchRefreshInterval, repeats: true) { [weak self] _ in
+    /// Installs, retimes, or tears down the branch-refresh timer for how visible the
+    /// app currently is. Tearing it down while hidden removes the wakeup itself, not
+    /// just the git work it would have done.
+    private func rescheduleBranchRefreshTimer() {
+        guard let interval = SessionBackgroundRefreshPolicy.branchRefreshInterval(
+            activityLevel: supervisorActivityLevel
+        ) else {
+            branchRefreshTimer?.invalidate()
+            branchRefreshTimer = nil
+            currentBranchRefreshInterval = 0
+            return
+        }
+        if branchRefreshTimer != nil, abs(interval - currentBranchRefreshInterval) < 0.01 {
+            return
+        }
+        branchRefreshTimer?.invalidate()
+        currentBranchRefreshInterval = interval
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshBranchContextsIfNeeded() }
         }
-        timer.tolerance = 5
+        // Let macOS coalesce these wakeups with other timers to cut energy use.
+        timer.tolerance = interval * 0.3
         RunLoop.main.add(timer, forMode: .common)
         branchRefreshTimer = timer
     }
@@ -1192,10 +1222,27 @@ final class SessionStore: ObservableObject {
 
     func startSupervisor() {
         installSupervisorLifecycleObserversIfNeeded()
-        installBranchRefreshTimerIfNeeded()
+        rescheduleBranchRefreshTimer()
         installCodexTitleWatcherIfNeeded()
         guard supervisorTimer == nil else { return }
         rescheduleSupervisor(runImmediately: true)
+    }
+
+    /// How visible the app is, which decides how fresh its polled state has to be.
+    ///
+    /// `NSApp.isActive` alone cannot tell "on screen behind another app" apart from
+    /// "hidden, miniaturized, or fully covered", and only the second is free to
+    /// throttle. `NSApplication.occlusionState` is the app-wide roll-up macOS itself
+    /// uses to decide whether an app is a candidate for App Nap: `.visible` means at
+    /// least one window is on screen and not completely obscured.
+    ///
+    /// Banyan cannot ask to be napped — no API grants that — and a napped app would
+    /// still spawn every subprocess its timers ask for, just later. So the app reads
+    /// the same signal the OS reads and throttles itself.
+    private var supervisorActivityLevel: SupervisorActivityLevel {
+        if NSApp.isActive { return .active }
+        if NSApp.isHidden { return .hidden }
+        return NSApp.occlusionState.contains(.visible) ? .backgroundVisible : .hidden
     }
 
     /// Adaptive cadence for the supervisor poll. Each tick spawns `/bin/ps`, one
@@ -1226,7 +1273,7 @@ final class SessionStore: ObservableObject {
             thermalState = .nominal
         }
         return SessionSupervisorCadencePolicy.interval(
-            isForeground: NSApp.isActive,
+            activityLevel: supervisorActivityLevel,
             startedSessionCount: startedSessions,
             activeSessionCount: activeSessions,
             isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
@@ -1310,14 +1357,35 @@ final class SessionStore: ObservableObject {
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                self?.lastObservedActivityLevel = .active
                 self?.rescheduleSupervisor(runImmediately: true)
+                self?.rescheduleBranchRefreshTimer()
                 self?.refreshBranchContextsIfNeeded(force: true)
+                self?.refreshSelectedLinearIssueStatus()
             }
         }
         let onResign = center.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.rescheduleSupervisor() }
+            Task { @MainActor in self?.applyActivityLevelChange() }
+        }
+        // Hiding, miniaturizing, or burying every window behind another app changes
+        // what the user can see without changing which app is frontmost, and that is
+        // the line the cadence policy throttles on.
+        let onHide = center.addObserver(
+            forName: NSApplication.didHideNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyActivityLevelChange() }
+        }
+        let onUnhide = center.addObserver(
+            forName: NSApplication.didUnhideNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyActivityLevelChange() }
+        }
+        let onOcclusion = center.addObserver(
+            forName: NSApplication.didChangeOcclusionStateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyActivityLevelChange() }
         }
         let onThermal = center.addObserver(
             forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
@@ -1329,7 +1397,24 @@ final class SessionStore: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.rescheduleSupervisor() }
         }
-        supervisorLifecycleObservers = [onActive, onResign, onThermal, onPower]
+        supervisorLifecycleObservers = [
+            onActive, onResign, onHide, onUnhide, onOcclusion, onThermal, onPower,
+        ]
+    }
+
+    /// Re-times everything that depends on how visible the app is. Coming back from
+    /// `.hidden` runs an immediate forced tick and forces the chrome refreshes the
+    /// throttled path skipped, so the first frame the user sees is re-synced rather
+    /// than showing whatever was true when the window was covered.
+    private func applyActivityLevelChange() {
+        let level = supervisorActivityLevel
+        let becameVisible = level != .hidden && lastObservedActivityLevel == .hidden
+        lastObservedActivityLevel = level
+        rescheduleSupervisor(runImmediately: becameVisible)
+        rescheduleBranchRefreshTimer()
+        guard becameVisible else { return }
+        refreshBranchContextsIfNeeded(force: true)
+        refreshSelectedLinearIssueStatus()
     }
 
     @discardableResult
@@ -2391,6 +2476,11 @@ final class SessionStore: ObservableObject {
     }
 
     private func refreshSelectedLinearIssueStatus() {
+        // Network poll whose only product is the issue chip in the detail panel.
+        // Nothing on screen means nothing to keep fresh; becoming visible forces one.
+        guard SessionBackgroundRefreshPolicy.refreshesOnScreenChrome(
+            activityLevel: supervisorActivityLevel
+        ) else { return }
         guard let session = selectedSession,
               session.status != .closed,
               let issueID = selectedLinearIssueIdentifier,
