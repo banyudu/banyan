@@ -157,6 +157,18 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         detect(in: command) != nil
     }
 
+    /// Providers whose sessions run through the `opencode` executable and share
+    /// its SQLite session store (`~/.local/share/opencode/opencode.db`). They
+    /// all resume via `opencode --session <ses_…>` and match against the same
+    /// history, regardless of the specific `--agent` or model in use.
+    public static let opencodeBackedProviders: Set<CodingAgentProvider> = [
+        .opencode, .deepseek, .hunyuan, .muse, .qwen,
+    ]
+
+    public var isOpencodeBacked: Bool {
+        Self.opencodeBackedProviders.contains(self)
+    }
+
     /// Maps an OpenCode model selection to Banyan's provider icon vocabulary.
     /// Model IDs are preferred because OpenCode's routing provider can be a
     /// gateway such as `opencode-go`, rather than the model vendor.

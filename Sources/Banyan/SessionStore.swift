@@ -1806,9 +1806,21 @@ final class SessionStore: ObservableObject {
             return
         }
 
+        // Opencode sessions persisted before resume support never captured an
+        // `agentSessionID` live. Resolve it now so Recover resumes instead of
+        // starting a blank session. `latestImportedHistory` is in-memory and
+        // fast; the SQLite fallback covers rows beyond the bounded import.
+        if session.agentSessionID == nil,
+           let provider = session.agentProvider,
+           provider.isOpencodeBacked {
+            if !recoverAgentSessionID(for: session) {
+                resolveOpencodeAgentSessionID(for: session)
+            }
+        }
+
         let recoveryCommand: String? = session.agentProvider.flatMap { provider in
             guard let agentSessionID = session.agentSessionID,
-                  [.codex, .claude].contains(provider) else {
+                  ([.codex, .claude].contains(provider) || provider.isOpencodeBacked) else {
                 return nil
             }
             let directCommand = historyBackend.resumeCommand(
@@ -1829,6 +1841,28 @@ final class SessionStore: ObservableObject {
             selectedSessionID = id
         }
         saveSessions()
+    }
+
+    /// Synchronous opencode lookup for Recover. The `session` table is tiny
+    /// (~1k rows) and the query is one indexed-ish scan, so this is safe on the
+    /// main thread for a user-initiated action. Uses the same cwd + timestamp
+    /// windows as the live matcher.
+    private func resolveOpencodeAgentSessionID(for session: BanyanSession) {
+        let candidates = OpenCodeHistory.resumeCandidates(
+            homeDirectory: URL(fileURLWithPath: homeDirectory),
+            cwd: session.cwd
+        )
+        guard let match = AgentSessionMatcher.bestHistoryResumeMatch(
+            sessionCWD: session.cwd,
+            sessionCreatedAt: session.createdAt,
+            sessionUpdatedAt: session.updatedAt,
+            sessionResetAt: session.lastConversationResetAt,
+            provider: session.agentProvider,
+            in: candidates
+        ) else {
+            return
+        }
+        session.markAgentSessionID(match.sourceID)
     }
 
     func recoverAll(selectRecoveredSession: Bool = true) {
@@ -1918,7 +1952,11 @@ final class SessionStore: ObservableObject {
         ) else {
             return false
         }
-        session.markDetectedAgentProvider(match.provider)
+        // See refreshLiveAgentTitles: never downgrade a refined opencode-backed
+        // identity (`.muse`, `.deepseek`, …) to generic `.opencode`.
+        if !(match.provider.isOpencodeBacked && session.agentProvider?.isOpencodeBacked == true) {
+            session.markDetectedAgentProvider(match.provider)
+        }
         session.markAgentSessionID(match.sourceID)
         return true
     }
@@ -2027,7 +2065,9 @@ final class SessionStore: ObservableObject {
                     return
                 }
                 if let match {
-                    session.markDetectedAgentProvider(match.provider)
+                    if !(match.provider.isOpencodeBacked && session.agentProvider?.isOpencodeBacked == true) {
+                        session.markDetectedAgentProvider(match.provider)
+                    }
                     session.markAgentSessionID(match.sourceID)
                     try? self.respawnAfterHistoryRecovery(id: id)
                 } else {
@@ -3530,7 +3570,9 @@ final class SessionStore: ObservableObject {
     }
 
     private func refreshLiveAgentTitles(from imported: [ImportedAgentSession]) {
-        let candidates = imported.filter { [.claude, .codex].contains($0.provider) }
+        let candidates = imported.filter {
+            [.claude, .codex].contains($0.provider) || $0.provider.isOpencodeBacked
+        }
         guard !candidates.isEmpty else { return }
 
         let liveSessions = sessions.filter {
@@ -3556,6 +3598,15 @@ final class SessionStore: ObservableObject {
 
         for session in liveSessions {
             guard let match = matchesBySessionID[session.id] else { continue }
+            // Opencode candidates are always generic `.opencode` (one shared
+            // SQLite store); a live session may already carry a refined
+            // opencode-backed identity (`.muse`, `.deepseek`, …) from the model
+            // database. Never downgrade that — only capture the session ID.
+            if match.provider.isOpencodeBacked,
+               session.agentProvider?.isOpencodeBacked == true {
+                session.markAgentSessionID(match.sourceID)
+                continue
+            }
             if session.detectedAgentProvider != match.provider {
                 session.markDetectedAgentProvider(match.provider)
             }

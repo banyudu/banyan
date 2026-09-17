@@ -16,7 +16,12 @@ public enum AgentSessionHistoryImporter {
             maxSessions: maxPerProvider,
             fileManager: fileManager
         )
-        return (codex + claude).sorted { lhs, rhs in
+        let opencode = OpenCodeHistory.load(
+            homeDirectory: homeDirectory,
+            maxSessions: maxPerProvider,
+            fileManager: fileManager
+        )
+        return (codex + claude + opencode).sorted { lhs, rhs in
             if lhs.updatedAt == rhs.updatedAt {
                 return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
             }
@@ -59,6 +64,14 @@ public enum AgentSessionHistoryImporter {
                 homeDirectory: homeDirectory,
                 cwd: cwd,
                 normalizedCWD: normalizedCWD,
+                maxFilesScanned: maxFilesScanned,
+                fileManager: fileManager
+            )
+        }
+        if provider == nil || provider?.isOpencodeBacked == true {
+            candidates += OpenCodeHistory.resumeCandidates(
+                homeDirectory: homeDirectory,
+                cwd: cwd,
                 maxFilesScanned: maxFilesScanned,
                 fileManager: fileManager
             )

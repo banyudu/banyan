@@ -8,9 +8,14 @@ public enum SessionRecoveryPolicy {
         provider: CodingAgentProvider?,
         agentSessionID: String?
     ) -> Bool {
-        status == .closed
-            && provider.map { [.codex, .claude].contains($0) } == true
-            && (agentSessionID?.isEmpty != false)
+        guard status == .closed,
+              let provider,
+              ( [.codex, .claude].contains(provider) || provider.isOpencodeBacked ),
+              (agentSessionID?.isEmpty != false)
+        else {
+            return false
+        }
+        return true
     }
 
     /// Builds a recovery plan through the caller's history backend. This keeps
@@ -25,7 +30,7 @@ public enum SessionRecoveryPolicy {
     ) -> SessionResumePolicy.Plan? {
         guard status == .closed,
               let provider,
-              [.codex, .claude].contains(provider),
+              ( [.codex, .claude].contains(provider) || provider.isOpencodeBacked ),
               let agentSessionID,
               !agentSessionID.isEmpty else {
             return nil

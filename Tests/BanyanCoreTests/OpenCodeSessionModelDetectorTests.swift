@@ -181,6 +181,107 @@ private func createDatabase(
 
 private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+@Test func openCodeHistoryMatchesByCwdAndCreationWindow() throws {
+    // Regression for "recover after park falls into new session": an opencode
+    // Banyan session must resolve its ses_… via cwd + timestamps so Recover can
+    // run `opencode --session` instead of replaying the launch command.
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-opencode-history-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let dbDir = home.appendingPathComponent(".local/share/opencode", isDirectory: true)
+    try FileManager.default.createDirectory(at: dbDir, withIntermediateDirectories: true)
+    let dbURL = dbDir.appendingPathComponent("opencode.db")
+    let directory = "/tmp/opencode-resume-project"
+    let now = Date()
+    try createHistoryDatabase(
+        at: dbURL,
+        rows: [
+            // Same cwd, created 46s after the Banyan session — the match.
+            ("ses_match1234567890123456789012", directory, "Target conversation",
+             now.addingTimeInterval(46), now.addingTimeInterval(100)),
+            // Same cwd but a day earlier — outside the creation window.
+            ("ses_old123456789012345678901234", directory, "Old conversation",
+             now.addingTimeInterval(-86_400), now.addingTimeInterval(-85_000)),
+        ]
+    )
+
+    let candidates = OpenCodeHistory.resumeCandidates(
+        homeDirectory: home,
+        cwd: directory
+    )
+    #expect(candidates.count == 2)
+
+    let match = AgentSessionMatcher.bestHistoryResumeMatch(
+        sessionCWD: directory,
+        sessionCreatedAt: now,
+        sessionUpdatedAt: now.addingTimeInterval(120),
+        sessionResetAt: nil,
+        provider: .opencode,
+        in: candidates
+    )
+    #expect(match?.sourceID == "ses_match1234567890123456789012")
+}
+
+@Test func openCodeProvidersMatchAcrossSubProviders() {
+    // Restored `opencode --agent …` rows report as generic `.opencode` while
+    // live/model identity may refine to `.muse`/`.deepseek`/…. They share one
+    // SQLite store, so matching must treat the family as equivalent.
+    #expect(AgentSessionMatcher.providersMatch(sessionProvider: .opencode, candidateProvider: .opencode))
+    #expect(AgentSessionMatcher.providersMatch(sessionProvider: .muse, candidateProvider: .opencode))
+    #expect(AgentSessionMatcher.providersMatch(sessionProvider: .opencode, candidateProvider: .muse))
+    #expect(AgentSessionMatcher.providersMatch(sessionProvider: .deepseek, candidateProvider: .qwen))
+    #expect(!AgentSessionMatcher.providersMatch(sessionProvider: .codex, candidateProvider: .opencode))
+    #expect(!AgentSessionMatcher.providersMatch(sessionProvider: .opencode, candidateProvider: .claude))
+    #expect(AgentSessionMatcher.participatesInLiveAgentMatch(
+        isImportedHistory: false, status: .running, provider: .opencode
+    ))
+    #expect(AgentSessionMatcher.participatesInLiveAgentMatch(
+        isImportedHistory: false, status: .needInput, provider: .muse
+    ))
+}
+
+private func createHistoryDatabase(
+    at url: URL,
+    rows: [(id: String, directory: String, title: String, created: Date, updated: Date)]
+) throws {
+    var database: OpaquePointer?
+    guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+        throw NSError(domain: "OpenCodeHistoryTests", code: 1)
+    }
+    defer { sqlite3_close(database) }
+    guard sqlite3_exec(database, """
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            directory TEXT NOT NULL,
+            title TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            time_archived INTEGER
+        )
+        """, nil, nil, nil) == SQLITE_OK else {
+        throw NSError(domain: "OpenCodeHistoryTests", code: 2)
+    }
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database,
+        "INSERT INTO session (id, directory, title, time_created, time_updated) VALUES (?, ?, ?, ?, ?)",
+        -1, &statement, nil) == SQLITE_OK, let statement else {
+        throw NSError(domain: "OpenCodeHistoryTests", code: 3)
+    }
+    defer { sqlite3_finalize(statement) }
+    for row in rows {
+        sqlite3_bind_text(statement, 1, row.id, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 2, row.directory, -1, sqliteTransient)
+        sqlite3_bind_text(statement, 3, row.title, -1, sqliteTransient)
+        sqlite3_bind_int64(statement, 4, Int64(row.created.timeIntervalSince1970 * 1_000))
+        sqlite3_bind_int64(statement, 5, Int64(row.updated.timeIntervalSince1970 * 1_000))
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw NSError(domain: "OpenCodeHistoryTests", code: 4)
+        }
+        sqlite3_reset(statement)
+    }
+}
+
 private struct SupervisorBackend: AgentSupervisorBackend {
     let currentCommand: String
     let currentPath: String

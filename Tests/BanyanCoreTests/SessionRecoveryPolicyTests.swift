@@ -8,6 +8,16 @@ import Testing
         provider: .codex,
         agentSessionID: nil
     ))
+    #expect(SessionRecoveryPolicy.requiresDeepHistoryRecovery(
+        status: .closed,
+        provider: .opencode,
+        agentSessionID: nil
+    ))
+    #expect(SessionRecoveryPolicy.requiresDeepHistoryRecovery(
+        status: .closed,
+        provider: .muse,
+        agentSessionID: ""
+    ))
     #expect(!SessionRecoveryPolicy.requiresDeepHistoryRecovery(
         status: .running,
         provider: .codex,
@@ -38,6 +48,13 @@ import Testing
         cwd: "/tmp/project",
         history: history
     )?.command == "'claude' '--resume' 'abc'")
+    #expect(SessionRecoveryPolicy.resumePlan(
+        status: .closed,
+        provider: .opencode,
+        agentSessionID: "ses_abc123",
+        cwd: "/tmp/project",
+        history: history
+    )?.command == "'opencode' '--session' 'ses_abc123'")
     #expect(SessionRecoveryPolicy.resumePlan(
         status: .running,
         provider: .codex,

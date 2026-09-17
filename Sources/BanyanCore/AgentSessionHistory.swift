@@ -32,6 +32,18 @@ public enum AgentSessionHistory {
                 "--resume",
                 sourceID
             ]
+        case .opencode, .deepseek, .hunyuan, .muse, .qwen:
+            // All opencode-backed sessions share one SQLite store and resume via
+            // the top-level `--session` flag. The stored session already carries
+            // its agent/model, so a generic resume restores the conversation
+            // without overriding it with launch-time flags. Previously this
+            // returned nil, so Recover re-ran the launch command and every
+            // opencode session came back as a blank new session.
+            arguments = [
+                "opencode",
+                "--session",
+                sourceID
+            ]
         default:
             return nil
         }

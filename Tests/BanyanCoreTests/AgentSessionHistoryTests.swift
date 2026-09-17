@@ -19,6 +19,29 @@ import Testing
     )
 }
 
+@Test func agentSessionHistoryBuildsOpencodeResumeCommands() {
+    // All opencode-backed providers share `opencode --session`. Previously this
+    // returned nil, so Recover re-ran the launch command and every opencode
+    // session came back as a blank new session.
+    for provider in [CodingAgentProvider.opencode, .deepseek, .hunyuan, .muse, .qwen] {
+        #expect(
+            AgentSessionHistory.resumeCommand(
+                provider: provider,
+                sourceID: "ses_abc123",
+                cwd: "/tmp/project"
+            ) == "'opencode' '--session' 'ses_abc123'",
+            "provider \(provider) should resume via opencode --session"
+        )
+    }
+    #expect(
+        AgentSessionHistory.resumeCommand(
+            provider: .gemini,
+            sourceID: "abc",
+            cwd: "/tmp"
+        ) == nil
+    )
+}
+
 @Test func agentSessionHistoryParsesImportedIDs() {
     #expect(
         AgentSessionHistory.sourceID(

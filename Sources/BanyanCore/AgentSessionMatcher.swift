@@ -32,7 +32,20 @@ public enum AgentSessionMatcher {
     ) -> Bool {
         guard !isImportedHistory, status != .closed else { return false }
         guard let provider else { return true }
-        return [.claude, .codex].contains(provider)
+        return [.claude, .codex].contains(provider) || provider.isOpencodeBacked
+    }
+
+    /// Providers match when equal, or when both are opencode-backed (they share
+    /// one SQLite store; a restored `opencode --agent …` row reports as generic
+    /// `.opencode` while its live/model identity may refine to `.muse`,
+    /// `.deepseek`, etc.).
+    public static func providersMatch(
+        sessionProvider: CodingAgentProvider?,
+        candidateProvider: CodingAgentProvider
+    ) -> Bool {
+        guard let sessionProvider else { return true }
+        if sessionProvider == candidateProvider { return true }
+        return sessionProvider.isOpencodeBacked && candidateProvider.isOpencodeBacked
     }
 
     public static func bestPromptTitleMatch<Candidate: AgentResumeMatchable>(
@@ -46,7 +59,7 @@ public enum AgentSessionMatcher {
         let matchWindow: TimeInterval = 5 * 60
         let resetWindow: TimeInterval = 30
         let matchingCandidates = candidates.filter {
-            (provider == nil || $0.provider == provider)
+            providersMatch(sessionProvider: provider, candidateProvider: $0.provider)
                 && PathDisplayName.canonicalPath($0.cwd) == normalizedCWD
         }
 
@@ -85,7 +98,7 @@ public enum AgentSessionMatcher {
         let normalizedCWD = PathDisplayName.canonicalPath(sessionCWD)
         return candidates
             .filter {
-                (provider == nil || $0.provider == provider)
+                providersMatch(sessionProvider: provider, candidateProvider: $0.provider)
                     && PathDisplayName.canonicalPath($0.cwd) == normalizedCWD
             }
             .min {
@@ -176,7 +189,7 @@ public enum AgentSessionMatcher {
         let matchWindow: TimeInterval = 5 * 60
         let resetWindow: TimeInterval = 30
         let matchingCandidates = candidates.filter {
-            (session.provider == nil || $0.provider == session.provider)
+            providersMatch(sessionProvider: session.provider, candidateProvider: $0.provider)
                 && PathDisplayName.canonicalPath($0.cwd) == normalizedCWD
         }
 
