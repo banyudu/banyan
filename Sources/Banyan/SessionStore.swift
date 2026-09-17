@@ -2750,12 +2750,13 @@ final class SessionStore: ObservableObject {
         let replacementID = selectedSessionID == id
             ? preferredSelectionAfterClosing(id: id)
             : nil
-        detachChildren(of: id, to: session.parentSessionID)
+        let promotedChildIDs = detachChildren(of: id, to: session.parentSessionID)
         if session.isImportedHistory {
             session.terminate(markClosed: true)
         } else {
             session.killBackingSession()
         }
+        promoteChildrenToParentSlot(closingID: id, promotedChildIDs: promotedChildIDs, removingParent: false)
         if selectedSessionID == id {
             selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
@@ -2779,9 +2780,9 @@ final class SessionStore: ObservableObject {
             return
         }
         let parentSessionID = sessions[index].parentSessionID
-        detachChildren(of: id, to: parentSessionID)
+        let promotedChildIDs = detachChildren(of: id, to: parentSessionID)
         sessions[index].killBackingSession()
-        sessions.remove(at: index)
+        promoteChildrenToParentSlot(closingID: id, promotedChildIDs: promotedChildIDs, removingParent: true)
         if selectedSessionID == id {
             selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
@@ -4199,12 +4200,53 @@ final class SessionStore: ObservableObject {
         return nil
     }
 
-    private func detachChildren(of parentID: String, to newParentID: String?) {
-        let parentIDForChildren = SessionInputPolicy.normalizedOptionalText(newParentID)
+    /// Detaches a closing session's direct children up one tree level, to the
+    /// closing session's own parent. Returns the promoted child IDs in
+    /// sessions order. Grandchildren stay under their parents, so the whole
+    /// subtree moves up exactly one level.
+    @discardableResult
+    private func detachChildren(of parentID: String, to newParentID: String?) -> [String] {
+        let parentIDForChildren = SessionChildPromotionPolicy.promotedParentID(
+            closingParentID: newParentID
+        )
+        var promotedChildIDs: [String] = []
         for session in sessions where session.parentSessionID == parentID {
             session.parentSessionID = parentIDForChildren
             session.touch()
+            promotedChildIDs.append(session.id)
         }
+        return promotedChildIDs
+    }
+
+    /// Moves promoted children into the closing session's slot in manual
+    /// order, so closing `B` in `A, B(B1, B2), C` reads `A, B1, B2, C`
+    /// instead of stranding the children where they were appended (`A, C,
+    /// B1, B2`). With `removingParent` the closing row is dropped from the
+    /// array as well (`remove`); otherwise it stays as a hidden closed row
+    /// (`close`). Non-manual sort modes re-sort for display anyway, so this
+    /// only affects manual order and its persisted `sort_order`.
+    private func promoteChildrenToParentSlot(
+        closingID: String,
+        promotedChildIDs: [String],
+        removingParent: Bool
+    ) {
+        let orderedIDs = sessions.map(\.id)
+        let reordered: [String]?
+        if promotedChildIDs.isEmpty {
+            reordered = removingParent ? orderedIDs.filter { $0 != closingID } : nil
+        } else {
+            reordered = SessionChildPromotionPolicy.reorderedIDs(
+                orderedIDs: orderedIDs,
+                closingID: closingID,
+                promotedChildIDs: promotedChildIDs,
+                removingParent: removingParent
+            )
+        }
+        guard let reordered, reordered != orderedIDs else { return }
+        let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        let next = reordered.compactMap { sessionsByID[$0] }
+        guard next.count == reordered.count else { return }
+        sessions = next
     }
 
     private func selectAdjacentSession(direction: SessionSelectionDirection) {
