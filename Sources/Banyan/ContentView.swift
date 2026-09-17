@@ -3,8 +3,6 @@ import BanyanCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-private let sidebarTitlebarHeaderHeight: CGFloat = 44
-
 private enum LinearFocusTarget: Hashable {
     case filter
     case stateFilter
@@ -316,8 +314,6 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            sidebarModeHeader
-
             switch store.sidebarMode {
             case .sessions:
                 sessionsSidebar
@@ -326,17 +322,7 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(edges: .top)
         .accessibilityIdentifier(AccessibilityID.sidebar)
-    }
-
-    private var sidebarModeHeader: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            Divider()
-        }
-        .frame(height: sidebarTitlebarHeaderHeight, alignment: .bottom)
-        .background(.ultraThickMaterial)
     }
 
     private var sidebarModeSwitcher: some View {
@@ -1076,10 +1062,11 @@ struct ContentView: View {
                 .padding(.top, group.id == firstGroupID ? 4 : (isStatic ? 8 : 0))
                 .padding(.bottom, 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // Sticky headers float over scrolled rows. .bar is too
-                // translucent (~30-40% effective fill) so text showed through.
-                // Match the titlebar header: most opaque system blur.
-                .background(.ultraThickMaterial)
+                // Sticky headers float over scrolled rows. Materials
+                // (.bar/.ultraThickMaterial) are blurs, not opaque fills,
+                // so high-contrast row text still bled through in dark mode.
+                // Use an opaque sidebar-matching fill instead.
+                .background(Color(nsColor: .windowBackgroundColor))
             }
             .listSectionSeparator(isStatic ? .visible : .hidden, edges: .top)
         }
