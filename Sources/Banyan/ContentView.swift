@@ -1025,6 +1025,10 @@ struct ContentView: View {
             // The history and search groups are not user-reorderable and render
             // their rows dimmed, as a visual separator above the active sessions.
             let isStatic = group.id == "history" || group.id == "search"
+            // The disclosure gutter is reserved for every row in the group as
+            // soon as any row needs it, so same-depth badges line up and a
+            // top-level parent never reads as a child of its sibling.
+            let showsDisclosureGutter = group.items.contains { $0.isParent || $0.depth > 0 }
             Section {
                 if isStatic {
                     ForEach(group.items) { item in
@@ -1033,6 +1037,7 @@ struct ContentView: View {
                             groupID: group.id,
                             allowsDragSort: false,
                             isHistory: item.isHistory,
+                            showsDisclosureGutter: showsDisclosureGutter,
                             jumpKeyLabel: jumpKeyLabels[item.id] ?? ""
                         )
                     }
@@ -1043,6 +1048,7 @@ struct ContentView: View {
                             groupID: group.id,
                             allowsDragSort: true,
                             isHistory: false,
+                            showsDisclosureGutter: showsDisclosureGutter,
                             jumpKeyLabel: jumpKeyLabels[item.id] ?? ""
                         )
                     }
@@ -1103,6 +1109,7 @@ struct ContentView: View {
         groupID: String,
         allowsDragSort: Bool,
         isHistory: Bool,
+        showsDisclosureGutter: Bool,
         jumpKeyLabel: String
     ) -> some View {
         SessionRow(
@@ -1113,6 +1120,7 @@ struct ContentView: View {
             titleOverride: item.titleOverride,
             isHistory: isHistory,
             isParent: item.isParent,
+            showsDisclosureGutter: showsDisclosureGutter,
             isCollapsed: item.isCollapsed,
             hiddenChildCount: item.hiddenChildCount,
             jumpKeyLabel: jumpKeyLabel,
@@ -1961,6 +1969,11 @@ private struct SessionRow: View {
     let titleOverride: String?
     let isHistory: Bool
     let isParent: Bool
+    /// Whether every row in this sidebar group reserves the leading
+    /// disclosure slot. Decided per group (see `sidebarSections`): when no
+    /// row needs it, rows stay compact; otherwise same-depth badges align
+    /// and a top-level parent can't read as its sibling's child.
+    let showsDisclosureGutter: Bool
     let isCollapsed: Bool
     let hiddenChildCount: Int
     let jumpKeyLabel: String
@@ -2000,9 +2013,10 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // Child rows and parents share a fixed leading slot so titles
-            // align whether or not the row has a disclosure triangle.
-            if isParent || depth > 0 {
+            // All rows in a group with any nesting share a fixed leading
+            // slot, so same-depth badges align whether or not a given row
+            // has a disclosure triangle of its own.
+            if showsDisclosureGutter {
                 if isParent {
                     Button(action: onToggleCollapse) {
                         Image(systemName: "chevron.right")
