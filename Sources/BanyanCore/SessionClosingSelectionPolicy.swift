@@ -47,6 +47,18 @@ public enum SessionClosingSelectionPolicy {
             return previousSibling.element.id
         }
 
+        // A sub session with no remaining sibling stays in its own tree: fall
+        // back to its parent instead of jumping to the next project group,
+        // mirroring how closing the last session in a project stays local.
+        if let parentID = closingItem.parentSessionID {
+            let parentExists = groups.contains { group in
+                group.items.contains { $0.id == parentID }
+            }
+            if parentExists {
+                return parentID
+            }
+        }
+
         if groupIndex + 1 < groups.count {
             return groups[groupIndex + 1].items.first?.id
         }

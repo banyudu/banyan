@@ -34,3 +34,40 @@ private func selectionItem(_ id: String, parent: String? = nil) -> SessionSelect
     #expect(SessionClosingSelectionPolicy.preferredIDAfterClosing(closingID: "only", groups: groups) == nil)
     #expect(SessionClosingSelectionPolicy.preferredIDAfterClosing(closingID: "missing", groups: groups) == nil)
 }
+
+@Test func closingOnlyChildPrefersParentOverNextGroup() {
+    let groups = [
+        SessionSelectionGroup(
+            id: "project",
+            items: [selectionItem("parent"), selectionItem("closing", parent: "parent")]
+        ),
+        SessionSelectionGroup(id: "next-project", items: [selectionItem("next-group-first")])
+    ]
+
+    #expect(SessionClosingSelectionPolicy.preferredIDAfterClosing(closingID: "closing", groups: groups) == "parent")
+}
+
+@Test func closingNestedChildWithoutSiblingPrefersDirectParent() {
+    let groups = [
+        SessionSelectionGroup(
+            id: "project",
+            items: [
+                selectionItem("grandparent"),
+                selectionItem("middle", parent: "grandparent"),
+                selectionItem("closing", parent: "middle")
+            ]
+        ),
+        SessionSelectionGroup(id: "next-project", items: [selectionItem("next-group-first")])
+    ]
+
+    #expect(SessionClosingSelectionPolicy.preferredIDAfterClosing(closingID: "closing", groups: groups) == "middle")
+}
+
+@Test func closingChildWithMissingParentFallsBackAcrossGroups() {
+    let groups = [
+        SessionSelectionGroup(id: "project", items: [selectionItem("closing", parent: "gone")]),
+        SessionSelectionGroup(id: "next-project", items: [selectionItem("next-group-first")])
+    ]
+
+    #expect(SessionClosingSelectionPolicy.preferredIDAfterClosing(closingID: "closing", groups: groups) == "next-group-first")
+}
