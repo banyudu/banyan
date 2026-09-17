@@ -96,6 +96,55 @@ private func sidebarItem(_ id: String, parent: String? = nil) -> SessionSelectio
     ])
 }
 
+/// Replays `SessionStore.remove` for a sequence of IDs: each removed
+/// session's direct children move to its parent level and take its slot.
+private func rowsAfterRemoving(
+    _ removalOrder: [String],
+    initialOrder: [String],
+    initialParents: [String: String?]
+) -> [SessionSidebarRow] {
+    var order = initialOrder
+    var parents = initialParents
+    for closingID in removalOrder {
+        let grandparent = parents[closingID] ?? nil
+        let promoted = order.filter { parents[$0] ?? nil == closingID }
+        for child in promoted {
+            parents[child] = grandparent
+        }
+        if let reordered = SessionChildPromotionPolicy.reorderedIDs(
+            orderedIDs: order,
+            closingID: closingID,
+            promotedChildIDs: promoted,
+            removingParent: true
+        ) {
+            order = reordered
+        } else {
+            order.removeAll { $0 == closingID }
+        }
+        parents[closingID] = nil
+    }
+    return SessionSidebarHierarchyPolicy.rows(for: order.map {
+        sidebarItem($0, parent: parents[$0] ?? nil)
+    })
+}
+
+@Test func deletingAncestorsLeavesGrandchildrenAtTopLevel() {
+    // A(A1, A2(A2.1, A2.2)): deleting A, A1 and A2 must leave A2.1/A2.2
+    // at top level with indent 0, regardless of deletion order.
+    let initialOrder = ["A", "A1", "A2", "A2.1", "A2.2"]
+    let initialParents: [String: String?] = [
+        "A": nil, "A1": "A", "A2": "A", "A2.1": "A2", "A2.2": "A2",
+    ]
+    let expected = [
+        SessionSidebarRow(id: "A2.1", depth: 0),
+        SessionSidebarRow(id: "A2.2", depth: 0),
+    ]
+    #expect(rowsAfterRemoving(["A", "A1", "A2"], initialOrder: initialOrder, initialParents: initialParents) == expected)
+    #expect(rowsAfterRemoving(["A2", "A1", "A"], initialOrder: initialOrder, initialParents: initialParents) == expected)
+    #expect(rowsAfterRemoving(["A1", "A2", "A"], initialOrder: initialOrder, initialParents: initialParents) == expected)
+    #expect(rowsAfterRemoving(["A1", "A", "A2"], initialOrder: initialOrder, initialParents: initialParents) == expected)
+}
+
 @Test func closingNestedParentKeepsGrandchildrenUnderPromotedChild() {
     // B1 has its own child B1a: only direct children reparent, so the whole
     // subtree moves up exactly one level and renders after its subtree root.
