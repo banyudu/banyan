@@ -267,15 +267,15 @@ struct ContentView: View {
                 category: "GitHub",
                 title: "Preview Selected Pull Request",
                 detail: store.selectedPullRequestURL?.absoluteString,
-                shortcut: "⌘G",
+                shortcut: nil,
                 action: store.showSelectedPullRequestPreview
             ),
             CommandPaletteItem(
                 id: "github.open-selected",
                 category: "GitHub",
-                title: "Open Selected Pull Request",
+                title: "Open Selected Pull Request in Browser",
                 detail: store.selectedPullRequestURL?.absoluteString,
-                shortcut: nil,
+                shortcut: "⌘G",
                 action: store.openSelectedPullRequest
             )
         ]
@@ -1251,15 +1251,15 @@ struct ContentView: View {
 
     private var selectedPullRequestHelp: String {
         guard let context = store.selectedContextInfo else {
-            return "Preview GitHub pull request (Cmd-G)"
+            return "Preview GitHub pull request"
         }
         if let number = context.pullRequestNumber {
-            return "Preview GitHub pull request #\(number) (Cmd-G)"
+            return "Preview GitHub pull request #\(number)"
         }
         if let title = context.pullRequestTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             return "Preview GitHub pull request: \(title)"
         }
-        return "Preview GitHub pull request (Cmd-G)"
+        return "Preview GitHub pull request"
     }
 
     @ViewBuilder
