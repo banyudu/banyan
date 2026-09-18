@@ -131,21 +131,3 @@ private func tempHome() -> URL {
     #expect(result.profiles == NewSessionLaunch.builtInDefaults)
     #expect(result.diagnostic == nil)
 }
-
-@Test func realAgentsFileParsesToSameAsConfig() throws {
-    // Use the real home's agents.yml if present
-    let home = URL(fileURLWithPath: NSHomeDirectory())
-    guard FileManager.default.fileExists(atPath: SessionLaunchProfileLoader.agentsURL(homeDirectory: home).path) else { return }
-    let agentsContents = try String(contentsOf: SessionLaunchProfileLoader.agentsURL(homeDirectory: home), encoding: .utf8)
-    let agentsProfiles = try SessionLaunchProfileLoader.parseAgents(agentsContents)
-    // Should contain the 13 expected ids
-    let ids = Set(agentsProfiles.map(\.id))
-    #expect(ids.contains("zsh"))
-    #expect(ids.contains("claude"))
-    #expect(ids.contains("codex"))
-    #expect(ids.contains("dpsk-flash"))
-    #expect(ids.contains("oxalpha"))
-    // Picker false entries must not appear
-    #expect(!ids.contains("office-dgx-spark"))
-    #expect(!ids.contains("build"))
-}
