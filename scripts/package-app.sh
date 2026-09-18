@@ -38,7 +38,7 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICON_FILE="$ROOT_DIR/Assets/AppIcon.icns"
 INSTALL_DIR="${BANYAN_INSTALL_DIR:-/Applications}"
 INSTALLED_APP="$INSTALL_DIR/Banyan.app"
-APP_VERSION="${BANYAN_VERSION:-0.2.8}"
+APP_VERSION="${BANYAN_VERSION:-0.3.0}"
 
 cd "$ROOT_DIR"
 rm -rf "$ROOT_DIR/.build/arm64-apple-macosx/release/ModuleCache"
