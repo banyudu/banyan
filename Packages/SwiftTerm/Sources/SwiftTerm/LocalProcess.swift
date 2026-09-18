@@ -51,7 +51,9 @@ public protocol LocalProcessDelegate: AnyObject {
  * have your own main loop or a different dispatching system, you will need to pass your own (for example,
  * the `HeadlessTerminal` implementation in the test suite does this.
  *
- * The `terminate` call will send the `SIGTERM` signal to the child process.
+ * The `terminate` call will send the `SIGTERM` signal to the child process, and escalate to
+ * `SIGKILL` if it has not exited once the grace period elapses.   Either way the child is
+ * reaped, so it cannot be left behind as a zombie.
  *
  * The `shellPid` property has the PID for the child process, and this can be used to send signals
  * to it using the `kill` API.
@@ -223,14 +225,12 @@ public class LocalProcess {
     }
     #endif
 
-    func childStopped(cancelProcessMonitor: Bool = true) {
+    /// Marks the client as no longer running. Reaping the child is
+    /// deliberately *not* done here: `ChildReaper` owns that from the moment
+    /// the child is forked, so a caller can stop tracking the process without
+    /// stranding its corpse.
+    func childStopped() {
         running = false
-#if os(macOS)
-        if cancelProcessMonitor {
-            childMonitor?.cancel()
-            childMonitor = nil
-        }
-#endif
     }
 
     /* Total number of bytes read */
@@ -239,7 +239,7 @@ public class LocalProcess {
         guard let data else {
             // Re-schedule the read on transient errors to keep the chain alive
             if !done, running {
-                io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
+                scheduleRead()
             }
             return
         }
@@ -251,9 +251,9 @@ public class LocalProcess {
         if data.count == 0 {
             childfd = -1
             if running {
-                // Keep process monitor alive so the exit event can still deliver
-                // processTerminated to clients when PTY EOF arrives first.
-                childStopped(cancelProcessMonitor: false)
+                // PTY EOF only means the child closed its side; the reaper still
+                // delivers `processTerminated` once the child itself exits.
+                childStopped()
                 // delegate.processTerminated (self, exitCode: nil)
             }
             return
@@ -280,25 +280,40 @@ public class LocalProcess {
                 self.delegate?.dataReceived(slice: b[...])
             }
         }
-        io?.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
+        scheduleRead()
     }
 
-#if os(macOS)
-    var childMonitor: DispatchSourceProcess?
-#endif
+    /// Reads are rescheduled through this rather than by passing the method
+    /// itself as the handler: a bound method reference retains `self`, and the
+    /// chain only ends when the channel closes. A `LocalProcess` whose owner
+    /// dropped it without calling `terminate()` could therefore never be
+    /// deallocated, and so could never bury its child.
+    private func scheduleRead() {
+        io?.read(offset: 0, length: readSize, queue: readQueue) { [weak self] done, data, errno in
+            self?.childProcessRead(done: done, data: data, errno: errno)
+        }
+    }
 
     deinit {
 #if os(macOS)
-        childMonitor?.cancel()
-        childMonitor = nil
+        // Nobody is listening any more, but the child is still ours to bury.
+        // Closing the pty primary would normally hang it up; ask for the full
+        // SIGTERM/SIGKILL escalation anyway so one that survives that is still
+        // collected rather than left behind as a zombie.
+        if shellPid != 0 {
+            ChildReaper.shared.stopListening(pid: shellPid)
+            if running {
+                ChildReaper.shared.terminate(pid: shellPid)
+            }
+        }
 #endif
     }
 
-    func processTerminated ()
+    /// Invoked by `ChildReaper` once the child has actually been collected,
+    /// with the raw wait status it was collected with.
+    func processTerminated (status: Int32)
     {
-        var n: Int32 = 0
-        waitpid (shellPid, &n, WNOHANG)
-        delegate?.processTerminated(self, exitCode: n)
+        delegate?.processTerminated(self, exitCode: status)
         childStopped()
     }
 
@@ -441,20 +456,17 @@ public class LocalProcess {
         }
 
         if let (shellPid, childfd) = PseudoTerminalHelpers.fork(andExec: executable, args: shellArgs, env: env, currentDirectory: currentDirectory, desiredWindowSize: &size) {
-#if os(macOS)
-            childMonitor = DispatchSource.makeProcessSource(identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
-            if let cm = childMonitor {
-                if #available(macOS 10.12, *) {
-                    cm.activate()
-                } else {
-                    // Fallback on earlier versions
-                }
-                cm.setEventHandler(handler: { [weak self] in self?.processTerminated () })
-            }
-#endif
             running = true
             self.childfd = childfd
             self.shellPid = shellPid
+#if os(macOS)
+            // The reaper owns the corpse from here on. It outlives this object,
+            // so `terminate()` and `deinit` can stop the notification below
+            // without ever stranding the child.
+            ChildReaper.shared.adopt(pid: shellPid, notifyOn: dispatchQueue) { [weak self] status in
+                self?.processTerminated(status: status)
+            }
+#endif
             // Capture FD value for cleanup handler to close it safely after DispatchIO is done
             let fdToClose = childfd
             io = DispatchIO(type: .stream, fileDescriptor: childfd, queue: dispatchQueue, cleanupHandler: { _ in
@@ -467,7 +479,7 @@ public class LocalProcess {
             }
             io.setLimit(lowWater: 1)
             io.setLimit(highWater: readSize)
-            io.read(offset: 0, length: readSize, queue: readQueue, ioHandler: childProcessRead)
+            scheduleRead()
         }
     }
 
@@ -493,7 +505,15 @@ public class LocalProcess {
         childfd = -1
 
         if shellPid != 0 {
+#if os(macOS)
+            // An explicit terminate is a detach, and callers distinguish that
+            // from the child dying on its own, so stop listening first. The
+            // reap continues regardless, which is the whole point.
+            ChildReaper.shared.stopListening(pid: shellPid)
+            ChildReaper.shared.terminate(pid: shellPid)
+#else
             kill(shellPid, SIGTERM)
+#endif
         }
 
         childStopped()

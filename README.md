@@ -380,7 +380,8 @@ purple
 ## Terminal Rendering
 
 Banyan embeds [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (MIT
-licensed, vendored under `Packages/SwiftTerm` with local rendering patches), so
+licensed, vendored under `Packages/SwiftTerm` with local rendering and
+child-process-lifecycle patches), so
 terminal applications can use ANSI, 256-color, and truecolor escape sequences
 for syntax highlighting and colorized output. Banyan exposes app theme and
 terminal font controls in Preferences.

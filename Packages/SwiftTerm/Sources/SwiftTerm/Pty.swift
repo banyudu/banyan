@@ -99,6 +99,20 @@ public class PseudoTerminalHelpers {
             return nil
         }
         if pid == 0 {
+            // Signal state survives `fork`, and `SIG_IGN` survives `execve` too.
+            // A host that ignores signals - Foundation ignores `SIGPIPE`, and a
+            // dispatch signal source requires its signal to be ignored - would
+            // otherwise hand every terminal child the same deafness, leaving it
+            // immune to the very signals used to shut it down. Both calls here
+            // are async-signal-safe, which matters between fork and exec.
+            var noSignalsBlocked = sigset_t()
+            sigemptyset(&noSignalsBlocked)
+            sigprocmask(SIG_SETMASK, &noSignalsBlocked, nil)
+            for signalNumber in 1..<NSIG {
+                // `SIGKILL` and `SIGSTOP` refuse to be reset; nothing else can fail.
+                _ = signal(signalNumber, SIG_DFL)
+            }
+
             if let cCurrentDirectory {
                 _ = chdir(cCurrentDirectory)
             }
