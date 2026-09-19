@@ -7,9 +7,10 @@ show `ni 0` / `pri 31`.
 
 Both halves of that are measurable, and neither is Banyan. This note records
 what the numbers actually say, because the claim is easy to re-derive wrongly
-and the wrong fixes (renicing session trees, raising QoS on spawn, moving the
-tmux server out of the app's process tree) all cost real complexity and buy
-nothing.
+and the fixes it suggests (renicing session trees, raising QoS on spawn, moving
+the tmux server out of the app's process tree) all cost real complexity and buy
+nothing. Exactly one mechanism does move CPU between sessions — `PRIO_DARWIN_BG`,
+at the end — and it reallocates rather than adds.
 
 Re-measure with `scripts/scheduling-ab.sh`, run from inside a Banyan pane.
 
@@ -93,9 +94,15 @@ is not scheduled better than Banyan. It was idle.
 Sub-linear scaling with session count is the machine, not a policy Banyan can
 opt out of. Thirty concurrent agents on sixteen cores is oversubscription, and
 at the load averages these reports are filed at (300+) every tree on the system
-is starved. The levers that matter are the ones that reduce concurrent runnable
-work — parking sessions (`banyanctl suspend`, or Suspend in the sidebar) is the
-direct one, and it is why parked sessions also drop out of the supervisor tick.
+is starved.
+
+Parking a session does **not** help with this. `suspend` drops a session from
+the supervisor tick, branch and context refresh, and terminal rendering, but its
+tmux session and the agent inside keep running untouched — that is stated in
+`SessionLifecyclePolicy.participatesInSupervisorTick` and in the README, and it
+is the whole reason a parked row still reads as started. Parking cuts *Banyan's*
+overhead, not the agent's CPU. Nothing in the app currently reduces concurrent
+runnable agent work.
 
 The levers that do not matter, and should not be added:
 
@@ -104,6 +111,46 @@ The levers that do not matter, and should not be added:
 - Re-rooting the tmux server outside the app's tree. Its share tracks the work
   inside it, not which app it hangs off; and the server is already orphaned to
   launchd (`ppid 1`) after tmux daemonizes, with no observable benefit.
+
+## Lowering priority does work, via `PRIO_DARWIN_BG`
+
+The one mechanism that does move this is not `nice` but `PRIO_DARWIN_BG`
+(`sys/resource.h`, public SDK, no entitlement and no root). Eight probes normal
+against eight spawned under `taskpolicy -b`, simultaneous:
+
+| arm | probes | cores/probe | Miters/CPU-sec | relative work done |
+| --- | --- | --- | --- | --- |
+| normal | 8 | 0.916 | 1.52 | 1.00 |
+| `DARWIN_BG` | 8 | 0.382 | 0.54 | 0.15 |
+
+A 6.7x reduction, and it lands twice: less CPU time *and* placement on
+efficiency cores, which is why per-CPU-second throughput drops too.
+
+Unlike nice it is reversible by an unprivileged caller, and it applies to an
+already-running process. One spinner under fixed competing load, flipped
+mid-flight with `taskpolicy -b -p` and then `-B -p`, reporting per 2 s slice:
+
+```
+slice  1-3:  1.60 1.59 1.55   Miters   baseline
+slice  4:    1.20                      -b lands
+slice  5-7:  0.23 0.36 0.44            backgrounded
+slice  8:    0.80                      -B lands
+slice  9-12: 1.64 1.50 1.50 1.59       restored to baseline
+```
+
+Note that `getpriority(PRIO_DARWIN_PROCESS, pid)` reads back `0` whether or not
+the flag is set, so the behaviour is the only reliable check. Inheritance is
+per-process: children forked after the flip get it, pre-existing ones do not, so
+using this on a session means walking its tree — `TmuxPaneSnapshot.rootPID` plus
+the `ps` sweep the supervisor tick already caches.
+
+Two things to weigh before reaching for it. It reallocates CPU rather than
+creating any: backgrounding the sessions the user is not watching is what makes
+the watched one fast, and on a saturated machine the others pay for it in full.
+And `DARWIN_BG` also drops disk I/O to the lowest tier, so a backgrounded
+session running a build loses much more than the CPU figures alone suggest —
+which is why this belongs behind an explicit opt-in rather than in the default
+path of an app whose premise is that unwatched agents keep making progress.
 
 For the related question of which process tree Activity Monitor charges energy
 to, see [energy-impact.md](energy-impact.md).
