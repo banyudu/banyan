@@ -358,7 +358,9 @@ struct ContentView: View {
                     lastAutoScrolledSidebarSessionID = id
                     // Defer one runloop so the List has laid out its rows before jumping.
                     DispatchQueue.main.async {
-                        proxy.scrollTo(id, anchor: .center)
+                        // No anchor: scroll the least amount that reveals the row,
+                        // and stay put when it is already on screen.
+                        proxy.scrollTo(id)
                     }
                 }
                 .onReceive(selection.$selectedSessionID) { id in
@@ -368,7 +370,7 @@ struct ContentView: View {
                     else { return }
                     lastAutoScrolledSidebarSessionID = id
                     withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(id, anchor: .center)
+                        proxy.scrollTo(id)
                     }
                 }
             }
