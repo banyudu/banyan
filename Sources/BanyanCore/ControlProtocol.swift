@@ -238,6 +238,10 @@ public enum ControlRoute: Equatable {
     case close
     case respawn
     case restart
+    /// Restarts sessions whose tmux backing is gone, typically after a reboot.
+    /// With no `id` it recovers every stranded session, the scriptable form of
+    /// the sidebar's **Recover All**.
+    case recover
     case remove
     case screenshot
     case windowState
@@ -265,6 +269,7 @@ public enum ControlRoute: Equatable {
         case ("POST", "/close"): return .close
         case ("POST", "/respawn"): return .respawn
         case ("POST", "/restart"): return .restart
+        case ("POST", "/recover"): return .recover
         case ("POST", "/remove"): return .remove
         case ("POST", "/screenshot"): return .screenshot
         case ("POST", "/tick"): return .tick
@@ -300,7 +305,7 @@ public enum ControlRoute: Equatable {
         switch self {
         case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume,
              .output, .input, .answer: return true
-        case .list, .spawn, .screenshot, .windowState, .tick, .events: return false
+        case .list, .spawn, .screenshot, .windowState, .tick, .events, .recover: return false
         }
     }
 

@@ -74,6 +74,15 @@ import Testing
     try ControlRoute.restart.validate(ControlPayload(apiVersion: "v1", id: "agent"))
 }
 
+@Test func recoverRouteCanTargetOneSessionOrEveryStrandedSession() throws {
+    #expect(ControlRoute.resolve(method: "POST", path: "/recover") == .recover)
+    #expect(ControlRoute.resolve(method: "GET", path: "/recover") == nil)
+
+    // No id is the scriptable "Recover All", so it must not be a 400.
+    try ControlRoute.recover.validate(ControlPayload(apiVersion: "v1", id: nil))
+    try ControlRoute.recover.validate(ControlPayload(apiVersion: "v1", id: "agent"))
+}
+
 @Test func selectRouteRequiresSessionID() throws {
     #expect(ControlRoute.resolve(method: "POST", path: "/select") == .select)
 

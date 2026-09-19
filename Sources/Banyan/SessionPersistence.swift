@@ -8,6 +8,7 @@ struct WorkspaceSnapshot {
     let terminalFontFamily: String
     let terminalFontSize: Double
     let enableCodexAppServerMode: Bool
+    let autoRecoverOnLaunch: Bool
 }
 
 struct LinearIssueListCacheSnapshot: Codable {
@@ -70,7 +71,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             terminalTheme: TerminalTheme.fromPersistedRawValue(state["terminalTheme"]) ?? defaults.terminalTheme,
             terminalFontFamily: state["terminalFontFamily"] ?? defaults.terminalFontFamily,
             terminalFontSize: state["terminalFontSize"].flatMap(Double.init) ?? defaults.terminalFontSize,
-            enableCodexAppServerMode: state["enableCodexAppServerMode"].flatMap(Bool.init) ?? defaults.enableCodexAppServerMode
+            enableCodexAppServerMode: state["enableCodexAppServerMode"].flatMap(Bool.init) ?? defaults.enableCodexAppServerMode,
+            autoRecoverOnLaunch: state["autoRecoverOnLaunch"].flatMap(Bool.init) ?? defaults.autoRecoverOnLaunch
         )
     }
 
@@ -81,7 +83,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             "terminalTheme": workspace.terminalTheme.rawValue,
             "terminalFontFamily": workspace.terminalFontFamily,
             "terminalFontSize": String(workspace.terminalFontSize),
-            "enableCodexAppServerMode": String(workspace.enableCodexAppServerMode)
+            "enableCodexAppServerMode": String(workspace.enableCodexAppServerMode),
+            "autoRecoverOnLaunch": String(workspace.autoRecoverOnLaunch)
         ]
         sessionDatabase.saveState(values)
     }

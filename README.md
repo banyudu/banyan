@@ -234,16 +234,43 @@ process that holds it. Quit that instance, or pass `--force`.
 
 ### Reboot recovery
 
-Cmd+Q leaves the dedicated tmux server and running sessions alive. A machine
+Cmd+Q leaves the dedicated tmux server and running sessions alive, so quitting
+and reopening reattaches live panes with their scrollback intact. A machine
 restart stops that tmux server and its child processes, while Banyan's metadata
-remains in `state.sqlite`. On the next launch, active sessions whose tmux
-backing disappeared are automatically recovered in the background instead of
-silently waiting for one-by-one manual actions. Codex, Claude, and
-opencode-backed sessions (opencode, deepseek, hunyuan, muse-spark, qwen) use
-their saved provider session ID to resume when available; ordinary shells and
-sessions without a resumable provider session recreate their saved launch
-command. Failed recoveries remain available through the selected-session
-**Recover** button, row context menu, or sidebar **Recover All** action.
+remains in `state.sqlite`.
+
+Getting work back after a restart takes two things, both under **Preferences ›
+Startup**:
+
+- **Open Banyan at login** registers Banyan as a macOS login item. macOS's own
+  "reopen windows when logging back in" only relaunches apps that were *running*
+  at shutdown, so it does not cover a deliberate Cmd+Q before a restart. The
+  caption names the bundle that will be launched, which matters because the
+  candidate (`dist/Banyan.app`) and promoted (`/Applications/Banyan.app`)
+  channels share a bundle id. If macOS asks for confirmation, the toggle says so
+  and links to System Settings › General › Login Items.
+- **Recover sessions automatically at launch** (on by default) restarts sessions
+  whose tmux backing disappeared, in the background and a few at a time, without
+  moving the selection. Codex, Claude, and opencode-backed sessions (opencode,
+  deepseek, hunyuan, muse-spark, qwen) use their saved provider session ID to
+  resume when available; ordinary shells and sessions without a resumable
+  provider session recreate their saved launch command. tmux scrollback is not
+  restored in either case — it died with the server.
+
+Two kinds of session are deliberately left out of the automatic pass, because it
+runs while the window is still being restored and nothing in it may block on a
+human: **parked** sessions (parking means "spend nothing on this", and a reboot
+is not the user taking that back) and sessions whose project folder still needs
+a macOS grant or whose worktree was deleted. Those stay in the sidebar's
+**Recover All** banner, alongside the selected-session **Recover** button and
+row context menu, all of which may safely prompt once the window is up.
+
+From a script or a login job, `banyanctl recover` does the same thing:
+
+```sh
+dist/bin/banyanctl session recover-all   # every stranded session
+dist/bin/banyanctl recover --id TASK-123 # just one
+```
 
 Check which build an install is: `defaults read /Applications/Banyan.app/Contents/Info CFBundleVersion`.
 
@@ -341,11 +368,13 @@ swift run banyanctl suspend --id TASK-123
 swift run banyanctl resume --id TASK-123
 swift run banyanctl close --id TASK-123
 swift run banyanctl respawn --id TASK-123
+swift run banyanctl recover --id TASK-123
+swift run banyanctl session recover-all
 swift run banyanctl remove --id TASK-123
 swift run banyanctl list
 ```
 
-`session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. A spawn issued from inside a Banyan session nests under it by default: `banyanctl` takes `--parent` from `$BANYAN_PARENT_SESSION_ID` / `$BANYAN_SESSION_ID` (every tmux session Banyan creates carries `BANYAN_SESSION_ID`), or from the enclosing `banyan-<id>` tmux session otherwise — so `workit ENG-123` run from a session pane lands as its child with no extra flags. Pass `--parent ID` for a different parent, or `--no-parent` for a top-level session. `suspend` parks a session: Banyan drops it from the supervisor tick, branch/context refresh, and terminal rendering, while its tmux session and any agent inside keep running untouched — so the app's idle cost tracks the sessions you are actually watching rather than every session you have open. `resume` puts it back, keeping the status it had when it was parked. Neither one signals or terminates the agent. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
+`session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. A spawn issued from inside a Banyan session nests under it by default: `banyanctl` takes `--parent` from `$BANYAN_PARENT_SESSION_ID` / `$BANYAN_SESSION_ID` (every tmux session Banyan creates carries `BANYAN_SESSION_ID`), or from the enclosing `banyan-<id>` tmux session otherwise — so `workit ENG-123` run from a session pane lands as its child with no extra flags. Pass `--parent ID` for a different parent, or `--no-parent` for a top-level session. `suspend` parks a session: Banyan drops it from the supervisor tick, branch/context refresh, and terminal rendering, while its tmux session and any agent inside keep running untouched — so the app's idle cost tracks the sessions you are actually watching rather than every session you have open. `resume` puts it back, keeping the status it had when it was parked. Neither one signals or terminates the agent. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `recover` restarts sessions whose tmux backing is gone — what a machine restart leaves behind — resuming the agent conversation where the provider supports it; with no `--id` it recovers every stranded session, which is what `session recover-all` spells out. Neither form moves the window's selection. `remove` is destructive and kills the backing tmux session.
 
 The control API uses a versioned JSON schema (`apiVersion: "v1"`) and a local shared token stored at:
 

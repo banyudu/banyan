@@ -122,6 +122,9 @@ struct ContentView: View {
             store.refreshImportedHistory(spawnDefaultIfEmpty: true)
             store.startControlServer()
             store.startSupervisor()
+            // After the window and control server are up: recovery starts
+            // processes and must not run while SwiftUI is restoring the window.
+            store.autoRecoverSessionsIfNeeded()
         }
         .onChange(of: store.commandPaletteRequestID) {
             showingCommandPalette = true

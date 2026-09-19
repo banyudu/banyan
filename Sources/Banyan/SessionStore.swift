@@ -218,6 +218,28 @@ final class SessionStore: ObservableObject {
             saveWorkspace()
         }
     }
+    /// Whether launch puts sessions whose tmux backing disappeared back to work
+    /// without being asked. See `autoRecoverSessionsIfNeeded`.
+    @Published var autoRecoverOnLaunch = true {
+        didSet {
+            saveWorkspace()
+        }
+    }
+    /// Mirrors the macOS login-item registration. Deliberately not in the
+    /// workspace snapshot: the registration lives in LaunchServices, and a copy
+    /// in `state.sqlite` would only be a second source of truth that drifts once
+    /// the user changes it in System Settings.
+    @Published var launchAtLogin = LoginItem.isRequested {
+        didSet {
+            guard !isApplyingLaunchAtLogin, launchAtLogin != oldValue else { return }
+            applyLaunchAtLogin()
+        }
+    }
+    /// Why the last `launchAtLogin` change did not take, shown under the toggle.
+    @Published private(set) var launchAtLoginDiagnostic: String?
+    private var isApplyingLaunchAtLogin = false
+    private var didAutoRecoverAtLaunch = false
+    private var autoRecoveryTask: Task<Void, Never>?
     @Published private var pendingCloseSessionID: String?
     /// Per-project last-used "new session" kind, keyed by project group ID. Drives
     /// the project header's split "+" button so it reopens whatever was launched
@@ -434,7 +456,8 @@ final class SessionStore: ObservableObject {
                 terminalTheme: defaultTheme,
                 terminalFontFamily: defaultFontFamily,
                 terminalFontSize: defaultFontSize,
-                enableCodexAppServerMode: false
+                enableCodexAppServerMode: false,
+                autoRecoverOnLaunch: true
             )
         )
         selectedSessionID = workspace.selectedSessionID
@@ -443,6 +466,7 @@ final class SessionStore: ObservableObject {
         terminalFontFamily = workspace.terminalFontFamily
         terminalFontSize = workspace.terminalFontSize
         enableCodexAppServerMode = workspace.enableCodexAppServerMode
+        autoRecoverOnLaunch = workspace.autoRecoverOnLaunch
         terminalRenderer = TerminalRendererPreference.resolvedDefault
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
             projectLaunchByGroup = stored
@@ -1865,9 +1889,53 @@ final class SessionStore: ObservableObject {
         session.markAgentSessionID(match.sourceID)
     }
 
-    func recoverAll(selectRecoveredSession: Bool = true) {
+    @discardableResult
+    func recoverAll(selectRecoveredSession: Bool = true) -> [String] {
+        var recovered: [String] = []
         for session in recoverySessions {
-            try? recover(id: session.id, select: selectRecoveredSession)
+            guard (try? recover(id: session.id, select: selectRecoveredSession)) != nil else { continue }
+            recovered.append(session.id)
+        }
+        return recovered
+    }
+
+    /// Puts sessions a reboot stranded back to work, once per launch.
+    ///
+    /// Deliberately not folded into `loadPersistedSessionsIfNeeded`: recovery
+    /// starts processes, and a session whose project folder still needs a macOS
+    /// grant would raise `NSOpenPanel` while SwiftUI is restoring the window,
+    /// which can deadlock the renderer. A folder that is already readable cannot
+    /// prompt, so those sessions start here and everything else stays in the
+    /// recovery banner, which the user presses when the window is up.
+    func autoRecoverSessionsIfNeeded() {
+        guard autoRecoverOnLaunch, !didAutoRecoverAtLaunch else { return }
+        didAutoRecoverAtLaunch = true
+
+        let eligible = recoverySessions.filter { session in
+            SessionAutoRecoveryPolicy.canAutoRecover(
+                needsRecovery: session.needsRecovery,
+                isImportedHistory: session.isImportedHistory,
+                isSuspended: session.isSuspended,
+                hasProjectFolderAccess: ProjectFolderAccess.evaluate(for: session.cwd) == .available
+            )
+        }
+        guard !eligible.isEmpty else { return }
+
+        let batches = SessionAutoRecoveryPolicy.batches(eligible.map(\.id))
+        let batchDelay = UInt64(SessionAutoRecoveryPolicy.batchInterval * 1_000_000_000)
+        autoRecoveryTask = Task { @MainActor [weak self] in
+            for (index, batch) in batches.enumerated() {
+                if index > 0 {
+                    try? await Task.sleep(nanoseconds: batchDelay)
+                }
+                guard !Task.isCancelled, let self else { return }
+                for id in batch {
+                    // A launch pass must not move the user's selection, and a row
+                    // the user already recovered by hand simply no longer matches.
+                    try? self.recover(id: id, select: false)
+                }
+            }
+            self?.autoRecoveryTask = nil
         }
     }
 
@@ -3455,6 +3523,27 @@ final class SessionStore: ObservableObject {
         scratchSession?.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize)
     }
 
+    /// Writes the toggle through to LaunchServices, then makes the toggle agree
+    /// with whatever macOS actually recorded — registration can fail outright, or
+    /// "succeed" into a state the user still has to approve in System Settings.
+    private func applyLaunchAtLogin() {
+        do {
+            try LoginItem.setEnabled(launchAtLogin)
+            launchAtLoginDiagnostic = nil
+            return
+        } catch {
+            launchAtLoginDiagnostic = error.localizedDescription
+        }
+        // Read back only after a failure. `status` can lag a successful
+        // `register()` by a moment, and flipping the switch back under a change
+        // that did work is worse than trusting the call that did not throw.
+        let recorded = LoginItem.isRequested
+        guard recorded != launchAtLogin else { return }
+        isApplyingLaunchAtLogin = true
+        launchAtLogin = recorded
+        isApplyingLaunchAtLogin = false
+    }
+
     /// Reads the resolved preference rather than the published one so an
     /// environment pin keeps winning over the picker.
     private func applyTerminalRenderer() {
@@ -3508,7 +3597,8 @@ final class SessionStore: ObservableObject {
             terminalTheme: terminalTheme,
             terminalFontFamily: terminalFontFamily,
             terminalFontSize: terminalFontSize,
-            enableCodexAppServerMode: enableCodexAppServerMode
+            enableCodexAppServerMode: enableCodexAppServerMode,
+            autoRecoverOnLaunch: autoRecoverOnLaunch
         )
     }
 

@@ -272,6 +272,22 @@ final class ControlServer {
                 }
                 return respond(.ok(["session": summary(session)]))
 
+            case .recover:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                // Never selects: the caller is a script or a boot-time job, and
+                // stealing the window's selection is not what either one asked for.
+                if let id = body.id, !id.isEmpty {
+                    try store.recover(id: id, select: false)
+                    guard let session = store.sessions.first(where: { $0.id == id }) else {
+                        throw ControlError.notFound(id)
+                    }
+                    return respond(.ok(["sessions": [summary(session)]]))
+                }
+                let recovered = Set(store.recoverAll(selectRecoveredSession: false))
+                let sessions = store.sessions.filter { recovered.contains($0.id) }
+                return respond(.ok(["sessions": sessions.map(summary)]))
+
             case .suspend, .resume:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)

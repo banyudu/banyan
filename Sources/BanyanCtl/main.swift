@@ -53,6 +53,8 @@ struct BanyanCtl {
                 try post("/respawn", payload: parsePayload(Array(arguments.dropFirst())))
             case "restart":
                 try post("/restart", payload: parsePayload(Array(arguments.dropFirst())))
+            case "recover":
+                try post("/recover", payload: parsePayload(Array(arguments.dropFirst())))
             case "remove":
                 try post("/remove", payload: parsePayload(Array(arguments.dropFirst())))
             case "screenshot":
@@ -132,6 +134,13 @@ struct BanyanCtl {
             try post("/suspend", payload: parsePayload(Array(args.dropFirst())))
         case "resume":
             try post("/resume", payload: parsePayload(Array(args.dropFirst())))
+        case "recover":
+            try post("/recover", payload: parsePayload(Array(args.dropFirst())))
+        case "recover-all":
+            guard args.count == 1 else {
+                throw CLIError.message("session recover-all takes no arguments")
+            }
+            try post("/recover", payload: [:])
         default:
             throw CLIError.message("unknown session subcommand '\(subcommand)'")
         }
@@ -664,6 +673,8 @@ struct BanyanCtl {
           banyanctl close  --id ID
           banyanctl respawn --id ID
           banyanctl restart --id ID
+          banyanctl recover [--id ID]
+          banyanctl session recover-all
           banyanctl remove --id ID
           banyanctl screenshot --output PATH
           banyanctl perf report [--since 7d] [--json]
@@ -676,6 +687,13 @@ struct BanyanCtl {
         its tmux session and any agent inside keep running. resume is lossless and
         keeps the status the session had when it was parked. Neither one signals or
         terminates the agent. `banyanctl session suspend|resume --id ID` are aliases.
+
+        recover restarts sessions whose tmux backing is gone — what a machine
+        restart leaves behind. With no --id it recovers every stranded session,
+        the scriptable form of the sidebar's Recover All; `banyanctl session
+        recover-all` is an alias. Banyan already does this at launch for sessions
+        whose project folder it can read without asking; this covers the rest, or
+        a run from a login script.
 
         Reading and answering a blocked agent:
           banyanctl output --id ID [--lines N]

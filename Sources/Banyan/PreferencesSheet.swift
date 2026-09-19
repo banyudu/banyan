@@ -20,6 +20,31 @@ struct PreferencesSheet: View {
                 .help("Close")
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Startup")
+                    .font(.headline)
+
+                Toggle("Open Banyan at login", isOn: $store.launchAtLogin)
+                Toggle("Recover sessions automatically at launch", isOn: $store.autoRecoverOnLaunch)
+
+                Text(startupDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let diagnostic = store.launchAtLoginDiagnostic {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(diagnostic)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Button("Open Login Items…") {
+                            LoginItem.openLoginItemsSettings()
+                        }
+                        .buttonStyle(.banyanBorderless)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("Appearance")
                     .font(.headline)
@@ -87,8 +112,20 @@ struct PreferencesSheet: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 440, height: 500)
+        .frame(width: 440, height: 620)
         .accessibilityIdentifier(AccessibilityID.preferencesSheet)
+    }
+
+    /// Says what the two toggles cover together, because neither is much use
+    /// alone: a reboot only restores work if the app comes back *and* recovers.
+    private var startupDescription: String {
+        guard store.autoRecoverOnLaunch else {
+            return "Sessions a restart stranded wait for the sidebar's Recover All."
+        }
+        return "A restart stops tmux and strands every active session. Banyan restarts them in the "
+            + "background at launch and resumes the agent conversation where the provider supports it. "
+            + "Parked sessions, and folders macOS has not granted yet, wait for Recover All.\n"
+            + "Login opens \(LoginItem.registeredBundlePath)."
     }
 
     private var isRendererPinnedByEnvironment: Bool {
