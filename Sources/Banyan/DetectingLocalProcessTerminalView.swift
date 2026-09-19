@@ -396,6 +396,18 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         super.insertText(string, replacementRange: replacementRange)
     }
 
+    /// Paste bypasses the two-argument `insertText(_:replacementRange:)` above:
+    /// `MacTerminalView.paste(_:)` calls the three-argument
+    /// `insertText(_:replacementRange:isPaste:)` directly, so without this the
+    /// submitted-input buffer (and its prompt title) would miss every pasted
+    /// prompt — the common case for long first prompts.
+    override func paste(_ sender: Any) {
+        if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
+            onCommittedInput?(text)
+        }
+        super.paste(sender)
+    }
+
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         isTextComposing = true
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)

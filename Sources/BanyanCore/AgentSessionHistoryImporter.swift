@@ -526,11 +526,34 @@ public enum AgentSessionHistoryImporter {
     }
 
     private static func codexUserPrompt(_ object: [String: Any]) -> String? {
-        guard object["type"] as? String == "event_msg",
-              let payload = object["payload"] as? [String: Any],
-              payload["type"] as? String == "user_message",
-              let message = payload["message"] as? String else { return nil }
-        return sanitizedBody(message)
+        guard let type = object["type"] as? String,
+              let payload = object["payload"] as? [String: Any] else { return nil }
+        if type == "event_msg",
+           payload["type"] as? String == "user_message",
+           let message = payload["message"] as? String {
+            return sanitizedBody(message)
+        }
+        // Newer Codex rollouts record prompts as `response_item` messages
+        // (`payload.type == "message"`, `role == "user"`) instead of
+        // `event_msg` / `user_message`. The first such message is the injected
+        // AGENTS.md bundle, not a user prompt, so it must be skipped or every
+        // new session would title itself after the instructions header.
+        if type == "response_item",
+           payload["type"] as? String == "message",
+           (payload["role"] as? String)?.lowercased() == "user",
+           let text = plainText(from: payload["content"]),
+           !isCodexAgentsMDInstructions(text) {
+            return sanitizedBody(text)
+        }
+        return nil
+    }
+
+    private static func isCodexAgentsMDInstructions(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("# AGENTS.md") { return true }
+        if trimmed.contains("<INSTRUCTIONS>") { return true }
+        if trimmed.contains("Treat `~/.agents` as the source of truth") { return true }
+        return false
     }
 
     private static func claudePreviewLine(_ object: [String: Any]) -> String? {

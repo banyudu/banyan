@@ -87,15 +87,71 @@ public enum SessionTitleGenerator {
     public static func titleFromPrompt(_ prompt: String) -> String? {
         let normalized = normalizePromptForTitle(prompt)
         var title = sanitizeTitle(firstSentence(in: normalized)) ?? ""
-        for prefix in ["please ", "can you ", "could you ", "i want to ", "help me "] {
-            if title.lowercased().hasPrefix(prefix) {
-                title = String(title.dropFirst(prefix.count))
-                break
+        title = stripLeadingPromptMarkers(title)
+        var stripped = true
+        while stripped {
+            stripped = false
+            for prefix in politePromptPrefixes {
+                if title.lowercased().hasPrefix(prefix) {
+                    title = String(title.dropFirst(prefix.count))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    title = stripLeadingPromptMarkers(title)
+                    stripped = true
+                    break
+                }
             }
         }
         title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return nil }
         return truncate(title, limit: 56)
+    }
+
+    /// Leading terminal prompt glyphs and quote/bullet punctuation that leak
+    /// into captured input (e.g. `› `, `❯ `, `> `, `- `, `"`) must not block
+    /// polite-prefix stripping (`› I want to …` should still drop `I want to`)
+    /// nor appear in the final title. `<` is deliberately excluded so the
+    /// `<url>` / `<image>` placeholders survive a leading position.
+    public static func stripLeadingPromptMarkers(_ value: String) -> String {
+        var result = value
+        let markers = CharacterSet(charactersIn: "›❯❱▸▶»>$#*+-–—•·:;,.!?\"'“”‘’()[]{}")
+        while true {
+            let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let first = trimmed.unicodeScalars.first,
+                  markers.contains(first) else {
+                return trimmed
+            }
+            result = String(trimmed.dropFirst())
+        }
+    }
+
+    private static let politePromptPrefixes = [
+        "please ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "i want to ",
+        "i'd like to ",
+        "i’d like to ",
+        "i need to ",
+        "help me ",
+        "let's ",
+        "lets ",
+    ]
+
+    /// Remainder shown after the linked issue ID in a sidebar row. Only a
+    /// leading issue-ID token is deduped (the link already shows it); IDs
+    /// elsewhere in the title are left alone so `Fix ENG-123 bug` keeps its
+    /// identifier instead of degrading to `Fix bug`.
+    public static func linkedTitleRemainder(displayTitle: String, issueID: String) -> String {
+        let tokens = displayTitle.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !tokens.isEmpty else { return "" }
+        var remainder = tokens
+        if let first = remainder.first,
+           first.trimmingCharacters(in: .punctuationCharacters)
+               .caseInsensitiveCompare(issueID) == .orderedSame {
+            remainder.removeFirst()
+        }
+        return remainder.joined(separator: " ")
     }
 
     public static func isGenericTitle(_ value: String) -> Bool {
@@ -193,7 +249,7 @@ public enum SessionTitleGenerator {
         }
         var result = prompt
         result = replacingURLs(in: result, with: "<url>")
-        result = replacingImagePlaceholders(in: result, with: "<img>")
+        result = replacingImagePlaceholders(in: result, with: "<image>")
         return result
     }
 

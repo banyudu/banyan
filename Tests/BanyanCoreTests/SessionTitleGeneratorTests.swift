@@ -61,3 +61,46 @@ import Testing
     let title = SessionTitleGenerator.titleFromPrompt("work on TASK-123")
     #expect(title == "work on TASK-123")
 }
+
+@Test func titleFromPromptStripsLeadingMarkerBeforePolitePrefix() {
+    let title = SessionTitleGenerator.titleFromPrompt("› I want to limit our dev/lab environment to be only accessible")
+    #expect(title != nil)
+    #expect(!title!.lowercased().hasPrefix("i want to"))
+    #expect(title!.lowercased().hasPrefix("limit our dev/lab"))
+    #expect(!title!.contains("›"))
+}
+
+@Test func titleFromPromptStripsPolitePrefix() {
+    let title = SessionTitleGenerator.titleFromPrompt("I want to limit our dev/lab environment to be only accessible")
+    #expect(title == "limit our dev/lab environment to be only accessible")
+}
+
+@Test func titleFromPromptReplacesURLWithPlaceholder() {
+    let title = SessionTitleGenerator.titleFromPrompt("check this slack msg https://example.com/abc it seems broken")
+    #expect(title != nil)
+    #expect(title!.contains("<url>"))
+    #expect(!title!.contains("example.com"))
+}
+
+@Test func titleFromPromptReplacesImageWithImagePlaceholder() {
+    let title = SessionTitleGenerator.titleFromPrompt("check this chart [Image #1] it looks off")
+    #expect(title != nil)
+    #expect(title!.contains("<image>"))
+    #expect(!title!.contains("[Image"))
+}
+
+@Test func titleFromPromptPreservesLinearIDFromURL() {
+    let title = SessionTitleGenerator.titleFromPrompt("fix https://linear.app/acme/issue/ENG-1234/some-slug now")
+    #expect(title != nil)
+    #expect(title!.contains("ENG-1234"))
+    #expect(!title!.contains("linear.app"))
+}
+
+@Test func linkedRemainderKeepsMiddleIssueID() {
+    #expect(SessionTitleGenerator.linkedTitleRemainder(displayTitle: "Fix ENG-123 bug", issueID: "ENG-123") == "Fix ENG-123 bug")
+}
+
+@Test func linkedRemainderDedupesLeadingIssueID() {
+    #expect(SessionTitleGenerator.linkedTitleRemainder(displayTitle: "ENG-123 fix bug", issueID: "ENG-123") == "fix bug")
+    #expect(SessionTitleGenerator.linkedTitleRemainder(displayTitle: "ENG-123", issueID: "ENG-123") == "")
+}

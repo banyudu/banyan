@@ -2264,13 +2264,7 @@ private struct SessionRow: View {
     }
 
     private func linkedTitleRemainder(issueID: String) -> String {
-        displayTitle
-            .split(whereSeparator: \.isWhitespace)
-            .filter { token in
-                token.trimmingCharacters(in: .punctuationCharacters)
-                    .caseInsensitiveCompare(issueID) != .orderedSame
-            }
-            .joined(separator: " ")
+        SessionTitleGenerator.linkedTitleRemainder(displayTitle: displayTitle, issueID: issueID)
     }
 
     private func setRowHovered(_ isHovered: Bool) {

@@ -33,6 +33,28 @@ import Testing
     #expect(session.cwd == "/tmp/banyan-codex")
 }
 
+@Test func importsCodexResponseItemPromptSkippingAgentsMD() throws {
+    let home = try makeTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let id = "01a0b94a-ed77-7b33-856e-c74ef053ac17"
+    let sessionDirectory = home.appendingPathComponent(".codex/sessions/2026/09/19")
+    try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+    try write(
+        [
+            #"{"timestamp":"2026-09-19T10:51:30.000Z","type":"session_meta","payload":{"session_id":"\#(id)","cwd":"/tmp/banyan-codex","timestamp":"2026-09-19T10:51:30.000Z"}}"#,
+            ##"{"timestamp":"2026-09-19T10:52:13.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/banyan-codex\n\n<INSTRUCTIONS>shared"}]}}"##,
+            ##"{"timestamp":"2026-09-19T10:52:14.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"I want to limit our dev/lab environment to be only accessible"}]}}"##,
+        ].joined(separator: "\n"),
+        to: sessionDirectory.appendingPathComponent("rollout-2026-09-19T18-51-30-\(id).jsonl")
+    )
+
+    let imported = AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10)
+
+    let session = try #require(imported.first { $0.id == "history-codex-\(id)" })
+    #expect(session.segmentPromptTitle == "I want to limit our dev/lab environment to be only accessible")
+}
+
 @Test func importsRecentCodexTranscriptWhenIndexIsMissing() throws {
     let home = try makeTemporaryHome()
     defer { try? FileManager.default.removeItem(at: home) }
