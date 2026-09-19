@@ -282,6 +282,10 @@ Important metrics include `session_switch.total`, `session_switch.to_terminal_re
 For Energy Impact attribution, including the tmux and agent-process limitations,
 see [docs/energy-impact.md](docs/energy-impact.md).
 
+For why session processes show `nice +5`, and why per-session CPU throughput
+falls as session count rises, see [docs/cpu-scheduling.md](docs/cpu-scheduling.md).
+Re-measure it with `scripts/scheduling-ab.sh` from inside a Banyan pane.
+
 To turn the collected report into a targeted agent task:
 
 ```sh
