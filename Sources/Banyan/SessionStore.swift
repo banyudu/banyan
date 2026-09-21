@@ -224,6 +224,22 @@ final class SessionStore: ObservableObject {
     /// last for that project. Persisted in `UserDefaults`.
     @Published private var projectLaunchByGroup: [String: String] = [:]
     @Published private(set) var sessionLaunchProfiles = NewSessionLaunch.builtInDefaults
+    /// The command palette's picked agent profile. `nil` is Auto: actions fall
+    /// back to their default (e.g. New Session copies the current session).
+    /// Persisted in `UserDefaults` so the pick survives relaunches.
+    @Published var paletteAgentProfileID: String? {
+        didSet {
+            if let paletteAgentProfileID {
+                UserDefaults.standard.set(
+                    paletteAgentProfileID,
+                    forKey: Self.paletteAgentProfileDefaultsKey
+                )
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.paletteAgentProfileDefaultsKey)
+            }
+        }
+    }
+    private static let paletteAgentProfileDefaultsKey = "commandPaletteAgentProfile"
     @Published private(set) var sessionLaunchConfigurationDiagnostic: String?
     @Published private(set) var paletteCommands: [PaletteCommand] = []
     @Published private(set) var paletteConfigurationDiagnostic: String?
@@ -449,6 +465,7 @@ final class SessionStore: ObservableObject {
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
             projectLaunchByGroup = stored
         }
+        paletteAgentProfileID = defaults.string(forKey: Self.paletteAgentProfileDefaultsKey)
         if let collapsed = defaults.array(forKey: Self.collapsedParentsDefaultsKey) as? [String] {
             collapsedParentIDs = Set(collapsed)
         }
@@ -461,6 +478,7 @@ final class SessionStore: ObservableObject {
         )
         sessionLaunchProfiles = launchConfiguration.profiles
         sessionLaunchConfigurationDiagnostic = launchConfiguration.diagnostic
+        coercePaletteAgentProfile()
         let paletteConfiguration = PaletteCommandLoader.load(
             homeDirectory: host.homeDirectory
         )
@@ -1648,6 +1666,43 @@ final class SessionStore: ObservableObject {
             codexLaunchMode: codexLaunchMode
         )
         return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
+    }
+
+    /// Agent entries of the launch profiles (plain shell excluded): the command
+    /// palette's agent picker loops these, with Auto (nil) as the default.
+    var paletteAgentProfiles: [NewSessionLaunch] {
+        sessionLaunchProfiles.filter { $0.provider != nil }
+    }
+
+    /// The palette's picked agent profile, or nil for Auto / unknown IDs.
+    /// A shared accessor for palette actions: commands that have no use for
+    /// an agent simply ignore it.
+    var paletteAgentLaunch: NewSessionLaunch? {
+        guard let id = paletteAgentProfileID else { return nil }
+        return paletteAgentProfiles.first { $0.id == id }
+    }
+
+    /// Drops a persisted pick that no longer names an agent profile (e.g. the
+    /// config changed since it was stored), falling back to Auto.
+    private func coercePaletteAgentProfile() {
+        guard paletteAgentProfileID != nil, paletteAgentLaunch == nil else { return }
+        paletteAgentProfileID = nil
+    }
+
+    /// Spawns the palette's picked agent as a sibling of the selected session.
+    /// Falls back to copying the current session's runtime when the picker is
+    /// on Auto — the same command `spawnSiblingSession` produces.
+    @discardableResult
+    func spawnPaletteAgentSession() -> BanyanSession {
+        if let launch = paletteAgentLaunch {
+            let cwd = selectedSession?.cwd ?? homeDirectory
+            return spawn(
+                cwd: cwd,
+                command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
+                parentSessionID: selectedSession?.parentSessionID
+            )
+        }
+        return spawnSiblingSession()
     }
 
     /// Spawn a sibling using the selected session's coding-agent runtime when it

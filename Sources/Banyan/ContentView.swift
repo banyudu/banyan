@@ -166,7 +166,9 @@ struct ContentView: View {
                     paletteCommands: store.paletteCommands,
                     onRunPaletteCommand: { command, target, query in
                         store.runPaletteCommand(command, target: target, query: query)
-                    }
+                    },
+                    agentProfiles: store.paletteAgentProfiles,
+                    selectedAgentID: $store.paletteAgentProfileID
                 )
             }
         }
@@ -184,9 +186,9 @@ struct ContentView: View {
                 id: "session.new",
                 category: "Session",
                 title: "New Session",
-                detail: "Create a sibling session",
+                detail: store.paletteAgentLaunch.map { "New \($0.label) session" } ?? "Create a sibling session",
                 shortcut: "⌘N",
-                action: { _ = store.spawnSiblingSession() }
+                action: { _ = store.spawnPaletteAgentSession() }
             ),
             CommandPaletteItem(
                 id: "terminal.new",
@@ -2454,7 +2456,7 @@ private struct ProjectNewSessionButton: View {
     }
 }
 
-private struct NewSessionLaunchIcon: View {
+struct NewSessionLaunchIcon: View {
     let launch: NewSessionLaunch
     var size: CGFloat = 14
 

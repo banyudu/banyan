@@ -84,6 +84,12 @@ struct CommandPaletteView: View {
     let fallbackPullRequestURL: URL?
     let paletteCommands: [PaletteCommand]
     let onRunPaletteCommand: (PaletteCommand, String?, String) -> Void
+    /// Agent profiles the picker's Tab key loops (plain shell excluded).
+    /// A shared palette-level method: commands with no use for an agent
+    /// simply ignore the selection.
+    let agentProfiles: [NewSessionLaunch]
+    /// Picked agent profile ID, or nil for Auto. Tab/Shift-Tab cycle it.
+    @Binding var selectedAgentID: String?
 
     @State private var query = ""
     @State private var selectedIndex = 0
@@ -184,8 +190,7 @@ struct CommandPaletteView: View {
 
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
+                    agentPickerMenu
                     TextField("Type a command or open a Linear/GitHub target", text: $query)
                         .textFieldStyle(.plain)
                         .font(.system(size: 16))
@@ -256,11 +261,11 @@ struct CommandPaletteView: View {
             tabTrap?.stop()
             tabTrap = nil
         }
-        .onReceive(NotificationCenter.default.publisher(for: .commandPaletteCycleNext)) { _ in
-            moveSelection(for: .down)
+        .onReceive(NotificationCenter.default.publisher(for: .commandPaletteAgentNext)) { _ in
+            cycleAgent(for: .down)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .commandPaletteCyclePrevious)) { _ in
-            moveSelection(for: .up)
+        .onReceive(NotificationCenter.default.publisher(for: .commandPaletteAgentPrevious)) { _ in
+            cycleAgent(for: .up)
         }
         .onChange(of: query) { _, _ in
             selectedIndex = 0
@@ -277,19 +282,93 @@ struct CommandPaletteView: View {
             return .handled
         }
         .onKeyPress(phases: .down) { press in
-            // Tab would otherwise advance the window's key-view loop and drop
-            // focus out of the palette (e.g. back into the terminal), after
-            // which Up/Down go to the agent input instead of the option list.
-            // Keep focus trapped: Tab cycles forward, Shift-Tab cycles back.
+            // Tab is the palette's agent-loop key: it must never advance the
+            // window's key-view loop out of the palette into the terminal.
+            // (The event-monitor trap normally swallows it first; this is the
+            // fallback.) Tab cycles forward, Shift-Tab cycles back.
             guard press.key == .tab else { return .ignored }
-            moveSelection(for: press.modifiers.contains(.shift) ? .up : .down)
+            cycleAgent(for: press.modifiers.contains(.shift) ? .up : .down)
             isSearchFocused = true
             return .handled
         }
     }
 
+    /// The picker's current profile, or nil for Auto / unknown IDs.
+    private var selectedLaunch: NewSessionLaunch? {
+        guard let selectedAgentID else { return nil }
+        return agentProfiles.first { $0.id == selectedAgentID }
+    }
+
+    /// Agent picker replacing the search icon: click picks directly from a
+    /// menu, Tab/Shift-Tab loop. Auto shows the magnifier, preserving the
+    /// palette's previous look when no agent is picked.
+    private var agentPickerMenu: some View {
+        Menu {
+            Button {
+                selectedAgentID = nil
+            } label: {
+                Label("Auto", systemImage: "magnifyingglass")
+            }
+            ForEach(agentProfiles) { launch in
+                Button {
+                    selectedAgentID = launch.id
+                } label: {
+                    Label {
+                        Text(launch.label)
+                    } icon: {
+                        launch.menuIconImage
+                    }
+                }
+            }
+        } label: {
+            Group {
+                if let selectedLaunch {
+                    NewSessionLaunchIcon(launch: selectedLaunch, size: 16)
+                } else {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(selectedLaunch.map { "Agent: \($0.label) — click to change, Tab cycles" } ?? "Agent: Auto — click to pick, Tab cycles")
+        .accessibilityIdentifier("banyan.commandPalette.agentPicker")
+    }
+
+    /// Steps the picked agent, wrapping around Auto and every profile so Tab
+    /// loops instead of stopping.
+    private func cycleAgent(for direction: MoveCommandDirection) {
+        selectedAgentID = Self.nextAgentID(
+            selectedID: selectedAgentID,
+            agents: agentProfiles,
+            direction: direction
+        )
+    }
+
+    /// Loop order is Auto (nil), then each agent profile in order, wrapping
+    /// at either end. Unknown IDs are treated as Auto.
+    static func nextAgentID(
+        selectedID: String?,
+        agents: [NewSessionLaunch],
+        direction: MoveCommandDirection
+    ) -> String? {
+        let ids: [String?] = [nil] + agents.map(\.id)
+        let current = ids.firstIndex(where: { $0 == selectedID }) ?? 0
+        switch direction {
+        case .down:
+            return ids[(current + 1) % ids.count]
+        case .up:
+            return ids[(current + ids.count - 1) % ids.count]
+        default:
+            return selectedID
+        }
+    }
+
     /// Steps the highlighted row, wrapping around at either end so Up/Down
-    /// (and Tab/Shift-Tab) loop through the options instead of stopping.
+    /// loop through the options instead of stopping. (Tab cycles the agent
+    /// picker, not the options.)
     private func moveSelection(for direction: MoveCommandDirection) {
         selectedIndex = Self.nextSelectedIndex(
             selectedIndex: selectedIndex,
@@ -425,11 +504,11 @@ enum CommandPaletteTargetResolver {
 
 extension Notification.Name {
     /// Posted when the palette's Tab trap swallows a Tab keystroke: step the
-    /// highlighted option down (wrapping).
-    static let commandPaletteCycleNext = Notification.Name("banyan.commandPalette.cycleNext")
+    /// picked agent forward (wrapping through Auto and every profile).
+    static let commandPaletteAgentNext = Notification.Name("banyan.commandPalette.agentNext")
     /// Posted when the palette's Tab trap swallows a Shift-Tab keystroke:
-    /// step the highlighted option up (wrapping).
-    static let commandPaletteCyclePrevious = Notification.Name("banyan.commandPalette.cyclePrevious")
+    /// step the picked agent back.
+    static let commandPaletteAgentPrevious = Notification.Name("banyan.commandPalette.agentPrevious")
 }
 
 /// Swallows plain Tab / Shift-Tab while the command palette is open so focus
@@ -438,8 +517,8 @@ extension Notification.Name {
 /// A focused single-line search field hands Tab to AppKit's key-view loop via
 /// the field editor (`insertTab:`), which consumes the keystroke before
 /// SwiftUI's `.onKeyPress` ever sees it — so the trap has to be an event
-/// monitor, which runs before dispatch. Swallowed keystrokes become option
-/// cycling instead: Tab steps down, Shift-Tab steps up.
+/// monitor, which runs before dispatch. Swallowed keystrokes become agent
+/// cycling instead: Tab steps to the next agent, Shift-Tab to the previous.
 final class CommandPaletteTabTrap {
     private var monitor: Any?
 
@@ -456,8 +535,8 @@ final class CommandPaletteTabTrap {
             let name: Notification.Name = event.modifierFlags
                 .intersection(.deviceIndependentFlagsMask)
                 .contains(.shift)
-                ? .commandPaletteCyclePrevious
-                : .commandPaletteCycleNext
+                ? .commandPaletteAgentPrevious
+                : .commandPaletteAgentNext
             NotificationCenter.default.post(name: name, object: nil)
             return nil
         }

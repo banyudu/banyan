@@ -106,3 +106,31 @@ private func navigationItems() -> [CommandPaletteItem] {
     #expect(!CommandPaletteTabTrap.matches(keyCode: 48, modifiers: [], isRepeat: true))
     #expect(!CommandPaletteTabTrap.matches(keyCode: 49, modifiers: [], isRepeat: false))
 }
+
+private func paletteAgentFixtures() -> [NewSessionLaunch] {
+    [
+        NewSessionLaunch(id: "claude", label: "Claude", providerName: "claude", iconName: nil, command: "claude"),
+        NewSessionLaunch(id: "codex", label: "Codex", providerName: "codex", iconName: nil, command: "codex")
+    ]
+}
+
+@Test func commandPaletteAgentLoopStepsThroughAutoAndProfiles() {
+    let agents = paletteAgentFixtures()
+    #expect(CommandPaletteView.nextAgentID(selectedID: nil, agents: agents, direction: .down) == "claude")
+    #expect(CommandPaletteView.nextAgentID(selectedID: "claude", agents: agents, direction: .down) == "codex")
+    #expect(CommandPaletteView.nextAgentID(selectedID: "codex", agents: agents, direction: .up) == "claude")
+    #expect(CommandPaletteView.nextAgentID(selectedID: "claude", agents: agents, direction: .up) == nil)
+}
+
+@Test func commandPaletteAgentLoopWrapsAroundAtEitherEnd() {
+    let agents = paletteAgentFixtures()
+    #expect(CommandPaletteView.nextAgentID(selectedID: "codex", agents: agents, direction: .down) == nil)
+    #expect(CommandPaletteView.nextAgentID(selectedID: nil, agents: agents, direction: .up) == "codex")
+}
+
+@Test func commandPaletteAgentLoopHandlesEdgeCases() {
+    let agents = paletteAgentFixtures()
+    #expect(CommandPaletteView.nextAgentID(selectedID: "stale-id", agents: agents, direction: .down) == "claude")
+    #expect(CommandPaletteView.nextAgentID(selectedID: nil, agents: [], direction: .down) == nil)
+    #expect(CommandPaletteView.nextAgentID(selectedID: "claude", agents: [], direction: .up) == nil)
+}
