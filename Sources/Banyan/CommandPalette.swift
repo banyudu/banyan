@@ -87,6 +87,7 @@ struct CommandPaletteView: View {
 
     @State private var query = ""
     @State private var selectedIndex = 0
+    @State private var tabTrap: CommandPaletteTabTrap?
     @FocusState private var isSearchFocused: Bool
 
     private var resolvedItems: [CommandPaletteItem] {
@@ -244,23 +245,72 @@ struct CommandPaletteView: View {
         }
         .onAppear {
             selectedIndex = 0
+            let trap = CommandPaletteTabTrap()
+            tabTrap = trap
+            trap.start()
             DispatchQueue.main.async {
                 isSearchFocused = true
             }
+        }
+        .onDisappear {
+            tabTrap?.stop()
+            tabTrap = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .commandPaletteCycleNext)) { _ in
+            moveSelection(for: .down)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .commandPaletteCyclePrevious)) { _ in
+            moveSelection(for: .up)
         }
         .onChange(of: query) { _, _ in
             selectedIndex = 0
         }
         .onMoveCommand { direction in
-            guard !filteredItems.isEmpty else { return }
-            switch direction {
-            case .down:
-                selectedIndex = min(selectedIndex + 1, filteredItems.count - 1)
-            case .up:
-                selectedIndex = max(selectedIndex - 1, 0)
-            default:
-                break
-            }
+            moveSelection(for: direction)
+        }
+        .onKeyPress(.upArrow) {
+            moveSelection(for: .up)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            moveSelection(for: .down)
+            return .handled
+        }
+        .onKeyPress(phases: .down) { press in
+            // Tab would otherwise advance the window's key-view loop and drop
+            // focus out of the palette (e.g. back into the terminal), after
+            // which Up/Down go to the agent input instead of the option list.
+            // Keep focus trapped: Tab cycles forward, Shift-Tab cycles back.
+            guard press.key == .tab else { return .ignored }
+            moveSelection(for: press.modifiers.contains(.shift) ? .up : .down)
+            isSearchFocused = true
+            return .handled
+        }
+    }
+
+    /// Steps the highlighted row, wrapping around at either end so Up/Down
+    /// (and Tab/Shift-Tab) loop through the options instead of stopping.
+    private func moveSelection(for direction: MoveCommandDirection) {
+        selectedIndex = Self.nextSelectedIndex(
+            selectedIndex: selectedIndex,
+            count: filteredItems.count,
+            direction: direction
+        )
+    }
+
+    static func nextSelectedIndex(
+        selectedIndex: Int,
+        count: Int,
+        direction: MoveCommandDirection
+    ) -> Int {
+        guard count > 0 else { return 0 }
+        switch direction {
+        case .down:
+            return (selectedIndex + 1) % count
+        case .up:
+            return (selectedIndex + count - 1) % count
+        default:
+            return min(max(selectedIndex, 0), count - 1)
         }
     }
 
@@ -370,5 +420,65 @@ enum CommandPaletteTargetResolver {
         guard url.host?.lowercased() == "github.com" else { return false }
         let parts = url.path.split(separator: "/")
         return parts.count >= 4 && parts[2].lowercased() == "pull" && Int(parts[3]) != nil
+    }
+}
+
+extension Notification.Name {
+    /// Posted when the palette's Tab trap swallows a Tab keystroke: step the
+    /// highlighted option down (wrapping).
+    static let commandPaletteCycleNext = Notification.Name("banyan.commandPalette.cycleNext")
+    /// Posted when the palette's Tab trap swallows a Shift-Tab keystroke:
+    /// step the highlighted option up (wrapping).
+    static let commandPaletteCyclePrevious = Notification.Name("banyan.commandPalette.cyclePrevious")
+}
+
+/// Swallows plain Tab / Shift-Tab while the command palette is open so focus
+/// can never tab out of the palette into the terminal behind it.
+///
+/// A focused single-line search field hands Tab to AppKit's key-view loop via
+/// the field editor (`insertTab:`), which consumes the keystroke before
+/// SwiftUI's `.onKeyPress` ever sees it — so the trap has to be an event
+/// monitor, which runs before dispatch. Swallowed keystrokes become option
+/// cycling instead: Tab steps down, Shift-Tab steps up.
+final class CommandPaletteTabTrap {
+    private var monitor: Any?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard Self.matches(
+                keyCode: event.keyCode,
+                modifiers: event.modifierFlags,
+                isRepeat: event.isARepeat
+            ) else {
+                return event
+            }
+            let name: Notification.Name = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask)
+                .contains(.shift)
+                ? .commandPaletteCyclePrevious
+                : .commandPaletteCycleNext
+            NotificationCenter.default.post(name: name, object: nil)
+            return nil
+        }
+    }
+
+    func stop() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+
+    /// Plain Tab or Shift-Tab only (keyCode 48, no Command/Control/Option, not
+    /// a repeat). System chords like ⌘⇥ (app switcher) must pass through.
+    static func matches(
+        keyCode: UInt16,
+        modifiers: NSEvent.ModifierFlags,
+        isRepeat: Bool
+    ) -> Bool {
+        guard !isRepeat, keyCode == 48 else { return false }
+        let relevant = modifiers.intersection([.command, .control, .option, .shift])
+        return relevant == [] || relevant == [.shift]
     }
 }

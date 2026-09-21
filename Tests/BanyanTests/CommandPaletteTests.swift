@@ -80,3 +80,29 @@ private func navigationItems() -> [CommandPaletteItem] {
     #expect(CommandPaletteTargetResolver.pullRequestURL(in: "banyudu/banyan", fallback: nil) == nil)
     #expect(CommandPaletteTargetResolver.pullRequestURL(in: "https://example.com/pr/1", fallback: nil) == nil)
 }
+
+@Test func commandPaletteSelectionStepsThroughOptions() {
+    #expect(CommandPaletteView.nextSelectedIndex(selectedIndex: 0, count: 3, direction: .down) == 1)
+    #expect(CommandPaletteView.nextSelectedIndex(selectedIndex: 1, count: 3, direction: .up) == 0)
+}
+
+@Test func commandPaletteSelectionLoopsAroundAtEitherEnd() {
+    #expect(CommandPaletteView.nextSelectedIndex(selectedIndex: 2, count: 3, direction: .down) == 0)
+    #expect(CommandPaletteView.nextSelectedIndex(selectedIndex: 0, count: 3, direction: .up) == 2)
+}
+
+@Test func commandPaletteSelectionHandlesEdgeCases() {
+    #expect(CommandPaletteView.nextSelectedIndex(selectedIndex: 0, count: 1, direction: .down) == 0)
+    #expect(CommandPaletteView.nextSelectedIndex(selectedIndex: 0, count: 1, direction: .up) == 0)
+    #expect(CommandPaletteView.nextSelectedIndex(selectedIndex: 0, count: 0, direction: .down) == 0)
+}
+
+@Test func commandPaletteTabTrapMatchesPlainTabOnly() {
+    #expect(CommandPaletteTabTrap.matches(keyCode: 48, modifiers: [], isRepeat: false))
+    #expect(CommandPaletteTabTrap.matches(keyCode: 48, modifiers: [.shift], isRepeat: false))
+    #expect(!CommandPaletteTabTrap.matches(keyCode: 48, modifiers: [.command], isRepeat: false))
+    #expect(!CommandPaletteTabTrap.matches(keyCode: 48, modifiers: [.control], isRepeat: false))
+    #expect(!CommandPaletteTabTrap.matches(keyCode: 48, modifiers: [.option], isRepeat: false))
+    #expect(!CommandPaletteTabTrap.matches(keyCode: 48, modifiers: [], isRepeat: true))
+    #expect(!CommandPaletteTabTrap.matches(keyCode: 49, modifiers: [], isRepeat: false))
+}
