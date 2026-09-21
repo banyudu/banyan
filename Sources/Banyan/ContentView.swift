@@ -2035,7 +2035,6 @@ private struct SessionRow: View {
             } else if let provider = session.displayAgentProvider {
                 AgentProviderIcon(provider: provider, size: 18, helpText: session.agentRuntimeIdentityLabel)
                     .accessibilityLabel(provider.displayName)
-                PeakPriceBadge(provider: provider)
             } else if !session.isImportedHistory {
                 ShellSessionIcon()
             }
@@ -2384,7 +2383,7 @@ private struct ProjectNewSessionButton: View {
 
     var body: some View {
         // Time-of-use pricing flips at most a few times a day, so a
-        // once-a-minute refresh is sufficient to keep the Peak suffix fresh.
+        // once-a-minute refresh is sufficient to keep the pricing help fresh.
         // Polling here is unavoidable: there is no push source for wall-clock
         // pricing boundaries.
         TimelineView(.everyMinute) { context in
@@ -2395,7 +2394,7 @@ private struct ProjectNewSessionButton: View {
                         store.spawnSession(inProjectGroup: groupID, launch: launch)
                     } label: {
                         Label {
-                            Text(peakAwareLabel(for: launch, at: context.date))
+                            Text(launch.label)
                         } icon: {
                             launch.menuIconImage
                         }
@@ -2413,15 +2412,6 @@ private struct ProjectNewSessionButton: View {
             .help(peakAwareHelp(for: current, at: context.date))
             .accessibilityIdentifier(AccessibilityID.projectAddSession(groupID))
         }
-    }
-
-    private func peakAwareLabel(for launch: NewSessionLaunch, at date: Date) -> String {
-        guard let provider = launch.provider,
-              PeakPricingPolicy.isPeak(at: date, for: provider)
-        else {
-            return launch.label
-        }
-        return "\(launch.label) · Peak 2x"
     }
 
     private func peakAwareHelp(for launch: NewSessionLaunch, at date: Date) -> String {
@@ -2669,29 +2659,6 @@ private struct AgentProviderIcon: View {
                 "/Applications/OpenCode.app",
                 "\(home)/Applications/OpenCode.app"
             ]
-        }
-    }
-}
-
-/// Text badge for time-sensitive pricing. The icon dot alone is not enough —
-/// color can't carry the price signal for VoiceOver or colorblind users.
-private struct PeakPriceBadge: View {
-    let provider: CodingAgentProvider
-
-    var body: some View {
-        if PeakPricingPolicy.hasTimeSensitivePricing(provider) {
-            TimelineView(.everyMinute) { context in
-                if PeakPricingPolicy.isPeak(at: context.date, for: provider) {
-                    Text("Peak 2x")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.orange))
-                        .help(PeakPricingPolicy.helpText(for: provider, at: context.date) ?? "Peak pricing")
-                        .accessibilityLabel("Peak pricing, twice off-peak price")
-                }
-            }
         }
     }
 }
