@@ -203,6 +203,35 @@ the parsing diagnostic in Preferences. An old remembered profile ID that is no
 longer configured falls back to the `zsh` profile, or the first profile when
 no `zsh` profile is configured.
 
+## Custom palette commands
+
+The same `~/.banyan/config.yml` can define `palette_commands:` for the ⌘P
+palette. Commands are personal workflows (for example `~/bin/workit` or
+`~/bin/verify-linear`), so they live in config — never as builtins.
+
+```yaml
+palette_commands:
+  - id: work
+    title: "Work on {{target}}"
+    command: "~/bin/workit {{target}}"
+    run: session      # spawn a visible Banyan session
+    when: issue       # promote when the query has a Linear/GitHub target
+  - id: verify
+    title: "Verify {{target}}"
+    command: "~/bin/verify-linear {{target}}"
+    run: background   # run detached like banyan-worktree, then refresh
+    when: linear
+```
+
+`id`, `title`, and `command` are required. `run` is `session` (default) or
+`background`. `when` is `always` (default), `issue`, `linear`, or `github`.
+`{{target}}` (aliases `{{id}}`, `{{issue}}`) expands to the Linear ID or
+GitHub issue URL detected in the palette query, falling back to the selected
+Linear issue / session for static rows; `{{query}}` expands to the raw query.
+Typing `ENG-123` promotes matching commands above the built-in quick-open
+rows. Parse errors clear custom commands and show a diagnostic in
+Preferences. There is no JSON config for this — YAML only.
+
 ## Dev / Stable Builds
 
 Two channels, never running at the same time (they share control port 7842 and `state.sqlite`):

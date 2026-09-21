@@ -162,7 +162,11 @@ struct ContentView: View {
                     },
                     onStartLinearIssue: store.startLinearIssueSession,
                     onOpenPullRequest: { url in NSWorkspace.shared.open(url) },
-                    fallbackPullRequestURL: store.selectedPullRequestURL
+                    fallbackPullRequestURL: store.selectedPullRequestURL,
+                    paletteCommands: store.paletteCommands,
+                    onRunPaletteCommand: { command, target, query in
+                        store.runPaletteCommand(command, target: target, query: query)
+                    }
                 )
             }
         }
@@ -297,6 +301,22 @@ struct ContentView: View {
             action: { store.sidebarMode = .sessions }
         ))
 
+        let fallbackTarget = paletteFallbackTarget
+        for paletteCommand in store.paletteCommands {
+            let title = paletteCommand.expandedTitle(target: fallbackTarget, query: nil)
+            let detail = paletteCommand.expandedCommand(target: fallbackTarget, query: nil)
+            items.append(CommandPaletteItem(
+                id: "custom.\(paletteCommand.id)",
+                category: "Custom",
+                title: title,
+                detail: detail.isEmpty ? nil : detail,
+                shortcut: nil,
+                action: { [weak store = store] in
+                    store?.runPaletteCommand(paletteCommand, target: fallbackTarget, query: nil)
+                }
+            ))
+        }
+
         for (index, item) in store.sidebarSessions.enumerated() {
             let shortcut = JumpOverlayMonitor.shortcutDisplay(for: index + 1)
             items.append(CommandPaletteItem(
@@ -310,6 +330,15 @@ struct ContentView: View {
         }
 
         return items
+    }
+
+    /// Target used for static custom-command rows: the selected Linear issue,
+    /// else a Linear ID detected in the selected session's title.
+    private var paletteFallbackTarget: String? {
+        if let issueID = store.selectedLinearListIssueID {
+            return issueID
+        }
+        return LinearIssueReference.issueID(in: store.selectedSession?.displayTitle)
     }
 
     private var sidebar: some View {

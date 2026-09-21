@@ -225,6 +225,8 @@ final class SessionStore: ObservableObject {
     @Published private var projectLaunchByGroup: [String: String] = [:]
     @Published private(set) var sessionLaunchProfiles = NewSessionLaunch.builtInDefaults
     @Published private(set) var sessionLaunchConfigurationDiagnostic: String?
+    @Published private(set) var paletteCommands: [PaletteCommand] = []
+    @Published private(set) var paletteConfigurationDiagnostic: String?
     private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
     /// Parents whose child rows are manually collapsed. Persisted in
     /// `UserDefaults`; the effective collapsed set also auto-collapses parents
@@ -459,6 +461,11 @@ final class SessionStore: ObservableObject {
         )
         sessionLaunchProfiles = launchConfiguration.profiles
         sessionLaunchConfigurationDiagnostic = launchConfiguration.diagnostic
+        let paletteConfiguration = PaletteCommandLoader.load(
+            homeDirectory: host.homeDirectory
+        )
+        paletteCommands = paletteConfiguration.commands
+        paletteConfigurationDiagnostic = paletteConfiguration.diagnostic
         isHandoffAvailable = Self.resolveHandoffCommand(
             environment: host.environment,
             homeDirectory: host.homeDirectory.path
@@ -1336,6 +1343,95 @@ final class SessionStore: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Run a user-configured palette command. `target` is the Linear/GitHub
+    /// ID detected in the palette query (or the selected session's issue).
+    func runPaletteCommand(_ paletteCommand: PaletteCommand, target: String?, query: String? = nil) {
+        let expandedCommand = paletteCommand.expandedCommand(target: target, query: query)
+        let expandedTitle = paletteCommand.expandedTitle(target: target, query: query)
+        guard !expandedCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        switch paletteCommand.run {
+        case .session:
+            let cwd = selectedSession?.cwd ?? homeDirectory
+            _ = spawn(
+                title: expandedTitle,
+                cwd: cwd,
+                command: expandedCommand,
+                parentSessionID: selectedSession?.parentSessionID
+            )
+        case .background:
+            linearIssueListLoadState = .loading
+            let cwd = selectedSession?.cwd ?? homeDirectory
+            let environment = self.environment
+            let homeDirectory = self.homeDirectory
+            Task.detached(priority: .userInitiated) { [environment, homeDirectory] in
+                let errorMessage = Self.runPaletteBackgroundCommand(
+                    shellCommand: expandedCommand,
+                    cwd: cwd,
+                    homeDirectory: homeDirectory,
+                    environment: environment
+                )
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    if let errorMessage {
+                        self.linearIssueListLoadState = .failed("\(expandedTitle): \(errorMessage)")
+                    } else {
+                        self.sidebarMode = .sessions
+                        self.linearIssueListLoadState = .loaded
+                        self.runHistoryImport()
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated private static func runPaletteBackgroundCommand(
+        shellCommand: String,
+        cwd: String,
+        homeDirectory: String,
+        environment: [String: String]
+    ) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-l", "-c", shellCommand]
+        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        process.environment = AppProcessEnvironment.make(
+            base: environment,
+            shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment),
+            pathAdditions: [
+            "\(homeDirectory)/bin",
+            "\(homeDirectory)/.bun/bin",
+            "\(homeDirectory)/.local/bin",
+            "\(homeDirectory)/.cargo/bin",
+            "\(homeDirectory)/go/bin",
+            "\(homeDirectory)/.nix-profile/bin",
+            "/nix/var/nix/profiles/default/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"
+        ])
+
+        let stderr = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = stderr
+        defer { stderr.closeBothEnds() }
+
+        do {
+            try process.run()
+        } catch {
+            return "Unable to start custom command"
+        }
+
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let data = stderr.fileHandleForReading.readDataToEndOfFile()
+            let message = String(decoding: data, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return message.isEmpty ? "custom command failed (exit \(process.terminationStatus))" : message
+        }
+        return nil
     }
 
     func startControlServer() {

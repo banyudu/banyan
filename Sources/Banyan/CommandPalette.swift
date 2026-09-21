@@ -82,6 +82,8 @@ struct CommandPaletteView: View {
     let onStartLinearIssue: (String) -> Void
     let onOpenPullRequest: (URL) -> Void
     let fallbackPullRequestURL: URL?
+    let paletteCommands: [PaletteCommand]
+    let onRunPaletteCommand: (PaletteCommand, String?, String) -> Void
 
     @State private var query = ""
     @State private var selectedIndex = 0
@@ -89,6 +91,27 @@ struct CommandPaletteView: View {
 
     private var resolvedItems: [CommandPaletteItem] {
         var items = items
+        // Custom commands matching the query target surface first so typing
+        // ENG-123 offers "Work on ENG-123" / "Verify ENG-123" above builtins.
+        if let target = PaletteCommandTarget.detect(in: query) {
+            for paletteCommand in paletteCommands.reversed()
+            where paletteCommand.matches(target: target) {
+                let captured = paletteCommand
+                let value = target.value
+                let rawQuery = query
+                items.insert(
+                    CommandPaletteItem(
+                        id: "custom.quick.\(captured.id).\(value)",
+                        category: "Custom · Quick Run",
+                        title: captured.expandedTitle(target: value, query: rawQuery),
+                        detail: captured.expandedCommand(target: value, query: rawQuery),
+                        shortcut: "↩",
+                        action: { onRunPaletteCommand(captured, value, rawQuery) }
+                    ),
+                    at: 0
+                )
+            }
+        }
         if let linearID = CommandPaletteTargetResolver.linearIssueID(in: query) {
             items.insert(
                 CommandPaletteItem(
