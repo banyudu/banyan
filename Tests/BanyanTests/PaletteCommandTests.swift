@@ -103,3 +103,76 @@ import Testing
         """)
     }
 }
+
+private func paletteTestHome() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-palette-tests-\(UUID().uuidString)")
+}
+
+private func writePaletteTestFile(home: URL, name: String, contents: String) {
+    let dir = home.appendingPathComponent(".banyan")
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try! contents.write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+}
+
+@Test func paletteCommandsLoadFromDedicatedPaletteFile() {
+    let home = paletteTestHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    writePaletteTestFile(home: home, name: "palette.yml", contents: """
+    palette_commands:
+      - id: work
+        title: "Work on {{target}}"
+        command: "~/bin/workit {{target}}"
+        run: background
+        when: issue
+    """)
+
+    let result = PaletteCommandLoader.load(homeDirectory: home)
+
+    #expect(result.commands.map(\.id) == ["work"])
+    #expect(result.diagnostic == nil)
+}
+
+@Test func paletteCommandsMergeConfigFileAfterDedicatedFile() {
+    let home = paletteTestHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    writePaletteTestFile(home: home, name: "palette.yml", contents: """
+    palette_commands:
+      - id: work
+        title: Work
+        command: echo work
+    """)
+    writePaletteTestFile(home: home, name: "config.yml", contents: """
+    palette_commands:
+      - id: verify
+        title: Verify
+        command: echo verify
+    """)
+
+    let result = PaletteCommandLoader.load(homeDirectory: home)
+
+    #expect(result.commands.map(\.id) == ["work", "verify"])
+    #expect(result.diagnostic == nil)
+}
+
+@Test func paletteCommandsPreferDedicatedFileOnDuplicateIDs() {
+    let home = paletteTestHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    writePaletteTestFile(home: home, name: "palette.yml", contents: """
+    palette_commands:
+      - id: work
+        title: Work local
+        command: echo local
+    """)
+    writePaletteTestFile(home: home, name: "config.yml", contents: """
+    palette_commands:
+      - id: work
+        title: Work config
+        command: echo config
+    """)
+
+    let result = PaletteCommandLoader.load(homeDirectory: home)
+
+    #expect(result.commands.map(\.title) == ["Work local"])
+    #expect(result.diagnostic?.contains("Duplicate palette command id 'work'") == true)
+}

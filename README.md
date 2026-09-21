@@ -205,8 +205,11 @@ no `zsh` profile is configured.
 
 ## Custom palette commands
 
-The same `~/.banyan/config.yml` can define `palette_commands:` for the ⌘P
-palette. Commands are personal workflows (for example `~/bin/workit` or
+The ⌘P palette supports user-defined commands from `~/.banyan/palette.yml`
+(preferred) or the `palette_commands:` section of `~/.banyan/config.yml`.
+Prefer `palette.yml`: `config.yml` is rewritten by `workit sync`, which would
+drop a hand-added section. When both define the same `id`, the `palette.yml`
+entry wins. Commands are personal workflows (for example `~/bin/workit` or
 `~/bin/verify-linear`), so they live in config — never as builtins.
 
 ```yaml

@@ -119,14 +119,43 @@ enum PaletteCommandLoader {
         homeDirectory.appendingPathComponent(".banyan/config.yml")
     }
 
-    /// Load from the standard config path. A missing file or a file without
-    /// `palette_commands:` yields no commands and no diagnostic — the section
-    /// is optional, unlike `session_launches:` handling for profiles.
+    /// Dedicated palette file. `~/.banyan/config.yml` is rewritten by
+    /// `workit sync`, so hand-maintained custom commands live here instead.
+    static func paletteURL(homeDirectory: URL) -> URL {
+        homeDirectory.appendingPathComponent(".banyan/palette.yml")
+    }
+
+    /// Load from `~/.banyan/palette.yml` first, then the `palette_commands:`
+    /// section of `~/.banyan/config.yml`. Both are optional; a missing file or
+    /// section yields no commands and no diagnostic. Duplicate IDs across the
+    /// two files keep the `palette.yml` entry and report a diagnostic.
     static func load(
         homeDirectory: URL,
         fileManager: FileManager = .default
     ) -> PaletteCommandLoadResult {
-        let url = configURL(homeDirectory: homeDirectory)
+        let fromPalette = loadFile(at: paletteURL(homeDirectory: homeDirectory), fileManager: fileManager)
+        let fromConfig = loadFile(at: configURL(homeDirectory: homeDirectory), fileManager: fileManager)
+        var seen = Set<String>()
+        var commands: [PaletteCommand] = []
+        var diagnostics: [String] = []
+        for command in fromPalette.commands + fromConfig.commands {
+            if seen.insert(command.id).inserted {
+                commands.append(command)
+            } else {
+                diagnostics.append("Duplicate palette command id '\(command.id)'; keeping the first definition.")
+            }
+        }
+        for diagnostic in [fromPalette.diagnostic, fromConfig.diagnostic].compactMap({ $0 }) {
+            diagnostics.append(diagnostic)
+        }
+        let combined = diagnostics.isEmpty ? nil : diagnostics.joined(separator: " ")
+        return PaletteCommandLoadResult(commands: commands, diagnostic: combined)
+    }
+
+    private static func loadFile(
+        at url: URL,
+        fileManager: FileManager
+    ) -> PaletteCommandLoadResult {
         guard fileManager.fileExists(atPath: url.path) else {
             return PaletteCommandLoadResult(commands: [], diagnostic: nil)
         }
