@@ -1363,12 +1363,51 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// The session a palette command should nest under, or nil for a top-level
+    /// session. `root` is deliberately not "sibling of the selected session":
+    /// the app inherits `BANYAN_SESSION_ID` from the pane it was launched in,
+    /// so anything short of an explicit nil keeps landing in that subtree.
+    private func paletteParentSessionID(for parent: PaletteCommand.Parent) -> String? {
+        switch parent {
+        case .root: return nil
+        case .current: return selectedSession?.id
+        }
+    }
+
+    /// Environment edits for an out-of-process helper (`~/bin/workit`,
+    /// `~/bin/banyan-worktree`, a palette command), so it resolves the intended
+    /// parent instead of the session the Banyan app itself happens to run in.
+    ///
+    /// The identity keys always go: `banyanctl` falls back to the enclosing
+    /// tmux session (`enclosingTmuxSessionID`), so `BANYAN_SESSION_ID` alone
+    /// is not enough — `TMUX` / `TMUX_PANE` have to go with it when no
+    /// explicit parent is being set.
+    nonisolated static func helperSpawnEnvironmentEdits(
+        parentSessionID: String?
+    ) -> (removeKeys: Set<String>, overrides: [String: String]) {
+        var removeKeys: Set<String> = [
+            BanyanSessionEnvironment.sessionIDKey,
+            BanyanSessionEnvironment.parentSessionIDKey
+        ]
+        var overrides: [String: String] = [:]
+        if let parentSessionID {
+            // An explicit parent wins over both the env fallback and the tmux
+            // fallback, so `TMUX` can stay and the command keeps its context.
+            overrides[BanyanSessionEnvironment.parentSessionIDKey] = parentSessionID
+        } else {
+            removeKeys.insert("TMUX")
+            removeKeys.insert("TMUX_PANE")
+        }
+        return (removeKeys, overrides)
+    }
+
     /// Run a user-configured palette command. `target` is the Linear/GitHub
     /// ID detected in the palette query (or the selected session's issue).
     func runPaletteCommand(_ paletteCommand: PaletteCommand, target: String?, query: String? = nil) {
         let expandedCommand = paletteCommand.expandedCommand(target: target, query: query)
         let expandedTitle = paletteCommand.expandedTitle(target: target, query: query)
         guard !expandedCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let parentSessionID = paletteParentSessionID(for: paletteCommand.parent)
         switch paletteCommand.run {
         case .session:
             let cwd = selectedSession?.cwd ?? homeDirectory
@@ -1376,7 +1415,7 @@ final class SessionStore: ObservableObject {
                 title: expandedTitle,
                 cwd: cwd,
                 command: expandedCommand,
-                parentSessionID: selectedSession?.parentSessionID
+                parentSessionID: parentSessionID
             )
         case .background:
             linearIssueListLoadState = .loading
@@ -1388,7 +1427,8 @@ final class SessionStore: ObservableObject {
                     shellCommand: expandedCommand,
                     cwd: cwd,
                     homeDirectory: homeDirectory,
-                    environment: environment
+                    environment: environment,
+                    parentSessionID: parentSessionID
                 )
                 await MainActor.run { [weak self] in
                     guard let self else { return }
@@ -1408,12 +1448,14 @@ final class SessionStore: ObservableObject {
         shellCommand: String,
         cwd: String,
         homeDirectory: String,
-        environment: [String: String]
+        environment: [String: String],
+        parentSessionID: String?
     ) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-l", "-c", shellCommand]
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        let spawnEdits = helperSpawnEnvironmentEdits(parentSessionID: parentSessionID)
         process.environment = AppProcessEnvironment.make(
             base: environment,
             shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment),
@@ -1429,7 +1471,10 @@ final class SessionStore: ObservableObject {
             "/usr/local/bin",
             "/usr/bin",
             "/bin"
-        ])
+        ],
+            removeKeys: spawnEdits.removeKeys,
+            overrides: spawnEdits.overrides
+        )
 
         let stderr = Pipe()
         process.standardOutput = FileHandle.nullDevice
@@ -4313,6 +4358,7 @@ final class SessionStore: ObservableObject {
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = ["--banyan", issueID]
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        // The built-in "Start Session for <ID>" row always lands top-level.
         process.environment = AppProcessEnvironment.make(
             base: environment,
             shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment),
@@ -4328,7 +4374,9 @@ final class SessionStore: ObservableObject {
             "/usr/local/bin",
             "/usr/bin",
             "/bin"
-        ])
+        ],
+            removeKeys: helperSpawnEnvironmentEdits(parentSessionID: nil).removeKeys
+        )
 
         let stderr = Pipe()
         process.standardOutput = FileHandle.nullDevice

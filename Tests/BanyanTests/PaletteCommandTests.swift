@@ -37,6 +37,52 @@ import Testing
     #expect(commands.count == 1)
     #expect(commands[0].run == .session)
     #expect(commands[0].when == .always)
+    #expect(commands[0].parent == .root)
+}
+
+@Test func paletteCommandsDefaultToRootAndParseCurrent() throws {
+    let commands = try PaletteCommandLoader.parse("""
+    palette_commands:
+      - id: work
+        title: "Work on {{target}}"
+        command: "~/bin/workit {{target}}"
+        parent: current
+      - id: verify
+        title: "Verify {{target}}"
+        command: "~/bin/verify-linear {{target}}"
+    """)
+
+    #expect(commands[0].parent == .current)
+    #expect(commands[1].parent == .root)
+}
+
+@Test func unknownPaletteCommandParentThrows() {
+    #expect(throws: Error.self) {
+        try PaletteCommandLoader.parse("""
+        palette_commands:
+          - id: work
+            title: Work
+            command: echo a
+            parent: sibling
+        """)
+    }
+}
+
+@Test func helperSpawnEnvironmentEditsClearInheritedSessionIdentity() {
+    // A root spawn must drop `TMUX` as well: `banyanctl` falls back to the
+    // enclosing tmux session, which would re-parent to the session the Banyan
+    // app itself was launched from.
+    let root = SessionStore.helperSpawnEnvironmentEdits(parentSessionID: nil)
+    #expect(root.removeKeys == [
+        "BANYAN_SESSION_ID", "BANYAN_PARENT_SESSION_ID", "TMUX", "TMUX_PANE"
+    ])
+    #expect(root.overrides.isEmpty)
+
+    // An explicit parent wins over both fallbacks, so `TMUX` can stay and the
+    // helper keeps its context.
+    let current = SessionStore.helperSpawnEnvironmentEdits(parentSessionID: "session-42")
+    #expect(current.removeKeys == ["BANYAN_SESSION_ID", "BANYAN_PARENT_SESSION_ID"])
+    #expect(current.overrides == ["BANYAN_PARENT_SESSION_ID": "session-42"])
 }
 
 @Test func paletteCommandsCoexistWithSessionLaunches() throws {

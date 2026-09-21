@@ -219,6 +219,7 @@ palette_commands:
     command: "~/bin/workit {{target}}"
     run: session      # spawn a visible Banyan session
     when: issue       # promote when the query has a Linear/GitHub target
+    parent: root      # root-level session (default); `current` nests under the selection
   - id: verify
     title: "Verify {{target}}"
     command: "~/bin/verify-linear {{target}}"
@@ -228,12 +229,22 @@ palette_commands:
 
 `id`, `title`, and `command` are required. `run` is `session` (default) or
 `background`. `when` is `always` (default), `issue`, `linear`, or `github`.
+`parent` is `root` (default) or `current`.
 `{{target}}` (aliases `{{id}}`, `{{issue}}`) expands to the Linear ID or
 GitHub issue URL detected in the palette query, falling back to the selected
 Linear issue / session for static rows; `{{query}}` expands to the raw query.
 Typing `ENG-123` promotes matching commands above the built-in quick-open
 rows. Parse errors clear custom commands and show a diagnostic in
 Preferences. There is no JSON config for this — YAML only.
+
+`parent` defaults to `root` because the Banyan app inherits
+`BANYAN_SESSION_ID` (and `TMUX`) from whatever pane launched it. Handing that
+environment to a helper like `workit` unchanged makes the new session a child
+of that pane's session — a stale, unrelated id that may since have closed, in
+which case the spawn is rejected outright. `root` clears that inherited
+identity so the session lands at the top level; `current` instead parents it to
+the session selected at launch time. The built-in quick-open
+"Start Session for `<ID>`" row always lands top-level.
 
 ## Dev / Stable Builds
 

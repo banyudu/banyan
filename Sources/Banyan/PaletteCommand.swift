@@ -20,18 +20,40 @@ struct PaletteCommand: Identifiable, Hashable, Codable {
         case github
     }
 
+    /// Where the session this command spawns lands in the sidebar tree.
+    ///
+    /// Defaults to `.root` because the Banyan app inherits `BANYAN_SESSION_ID`
+    /// (and `TMUX` / `TMUX_PANE`) from whatever pane launched it, so a
+    /// palette-launched command would otherwise be parented to that stale,
+    /// unrelated session — or fail outright when it has since closed.
+    enum Parent: String, Codable {
+        /// Top-level session, regardless of which session is selected.
+        case root
+        /// Child of the currently selected session.
+        case current
+    }
+
     let id: String
     let title: String
     let command: String
     let run: RunMode
     let when: When
+    let parent: Parent
 
-    init(id: String, title: String, command: String, run: RunMode = .session, when: When = .always) {
+    init(
+        id: String,
+        title: String,
+        command: String,
+        run: RunMode = .session,
+        when: When = .always,
+        parent: Parent = .root
+    ) {
         self.id = id
         self.title = title
         self.command = command
         self.run = run
         self.when = when
+        self.parent = parent
     }
 
     /// Expand `{{target}}` (plus `{{id}}` / `{{issue}}` aliases) and `{{query}}`.
@@ -244,14 +266,23 @@ enum PaletteCommandLoader {
             } else {
                 when = .always
             }
-            return PaletteCommand(id: id, title: title, command: command, run: run, when: when)
+            let parent: PaletteCommand.Parent
+            if let raw = item["parent"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !raw.isEmpty {
+                guard let parsed = PaletteCommand.Parent(rawValue: raw) else {
+                    throw ParseError(index + 1, "unknown parent '\(raw)' (expected root or current)")
+                }
+                parent = parsed
+            } else {
+                parent = .root
+            }
+            return PaletteCommand(id: id, title: title, command: command, run: run, when: when, parent: parent)
         }
     }
 
     private static func parseField(_ line: String, lineNumber: Int) throws -> [String: String] {
         guard let separator = line.firstIndex(of: ":") else { throw ParseError(lineNumber, "expected key: value") }
         let key = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
-        guard ["id", "title", "command", "run", "when"].contains(key) else { throw ParseError(lineNumber, "unknown field '\(key)'") }
+        guard ["id", "title", "command", "run", "when", "parent"].contains(key) else { throw ParseError(lineNumber, "unknown field '\(key)'") }
         let value = try scalar(String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces), lineNumber: lineNumber)
         return [key: value]
     }
