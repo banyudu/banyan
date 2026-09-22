@@ -338,6 +338,9 @@ final class SessionStore: ObservableObject {
     /// Watches Codex's session index so a thread renamed mid-conversation
     /// reaches the sidebar without waiting for the next launch.
     private var codexTitleWatcher: CodexSessionIndexWatcher?
+    /// Watches the agent-list sources (`~/.banyan/config.yml` and
+    /// `~/.agents/agents.yml`) so picker edits apply without a restart.
+    private var launchConfigWatcher: LaunchConfigWatcher?
     private var isHistoryImportRunning = false
     private var isHistoryImportPending = false
     @Published private(set) var pendingRespawnRecoveryIDs = Set<String>()
@@ -507,6 +510,7 @@ final class SessionStore: ObservableObject {
         }
 
         installLinearIssueListRefreshTimer()
+        installLaunchConfigWatcher()
     }
 
     /// Performance events are buffered in memory and written in batches, so quitting
@@ -1017,6 +1021,48 @@ final class SessionStore: ObservableObject {
         }
         watcher.start()
         codexTitleWatcher = watcher
+    }
+
+    /// Watches the launch-config sources so agent-list edits apply without a
+    /// restart. The picker, project "+" menu, and palette agent profiles all
+    /// read `sessionLaunchProfiles`, so republishing it updates every consumer.
+    private func installLaunchConfigWatcher() {
+        guard launchConfigWatcher == nil else { return }
+        let home = host.homeDirectory
+        let watcher = LaunchConfigWatcher(
+            homeDirectory: home,
+            watchedFiles: [
+                SessionLaunchProfileLoader.configURL(homeDirectory: home),
+                PaletteCommandLoader.paletteURL(homeDirectory: home),
+                SessionLaunchProfileLoader.agentsURL(homeDirectory: home),
+            ]
+        ) { [weak self] in
+            self?.reloadLaunchConfiguration()
+        }
+        watcher.start()
+        launchConfigWatcher = watcher
+    }
+
+    /// Re-reads the launch and palette configs after a file-system event.
+    /// Equality-checked so a no-op save does not churn SwiftUI; a dropped
+    /// palette pick (removed agent) falls back to Auto via the existing coerce.
+    func reloadLaunchConfiguration() {
+        let home = host.homeDirectory
+        let launchConfiguration = SessionLaunchProfileLoader.load(homeDirectory: home)
+        if launchConfiguration.profiles != sessionLaunchProfiles {
+            sessionLaunchProfiles = launchConfiguration.profiles
+        }
+        if launchConfiguration.diagnostic != sessionLaunchConfigurationDiagnostic {
+            sessionLaunchConfigurationDiagnostic = launchConfiguration.diagnostic
+        }
+        coercePaletteAgentProfile()
+        let paletteConfiguration = PaletteCommandLoader.load(homeDirectory: home)
+        if paletteConfiguration.commands != paletteCommands {
+            paletteCommands = paletteConfiguration.commands
+        }
+        if paletteConfiguration.diagnostic != paletteConfigurationDiagnostic {
+            paletteConfigurationDiagnostic = paletteConfiguration.diagnostic
+        }
     }
 
     /// Installs, retimes, or tears down the branch-refresh timer for how visible the
@@ -1726,6 +1772,9 @@ final class SessionStore: ObservableObject {
                 self?.rescheduleBranchRefreshTimer()
                 self?.refreshBranchContextsIfNeeded(force: true)
                 self?.refreshSelectedLinearIssueStatus()
+                // Safety net for config edits the file watcher may have missed
+                // (e.g. while suspended): three small YAML reads, no-ops skipped.
+                self?.reloadLaunchConfiguration()
             }
         }
         let onResign = center.addObserver(
