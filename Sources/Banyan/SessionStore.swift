@@ -1462,8 +1462,11 @@ final class SessionStore: ObservableObject {
     /// a palette-command failure routed through it was invisible — and wiped by
     /// the list's own refresh the moment the user went looking for it.
     func runPaletteCommand(_ paletteCommand: PaletteCommand, target: String?, query: String? = nil) {
-        let expandedCommand = paletteCommand.expandedCommand(target: target, query: query)
-        let expandedTitle = paletteCommand.expandedTitle(target: target, query: query)
+        // The palette's agent picker only reaches a command that opts in with
+        // `{{agent}}` / `{{agentFlag}}`; nil (Auto) expands both away.
+        let agent = paletteAgentLaunch?.id
+        let expandedCommand = paletteCommand.expandedCommand(target: target, query: query, agent: agent)
+        let expandedTitle = paletteCommand.expandedTitle(target: target, query: query, agent: agent)
         guard !expandedCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let parentSessionID = paletteParentSessionID(for: paletteCommand.parent)
         let cwd = selectedSession?.cwd ?? homeDirectory

@@ -216,7 +216,7 @@ entry wins. Commands are personal workflows (for example `~/bin/workit` or
 palette_commands:
   - id: work
     title: "Work on {{target}}"
-    command: "~/bin/workit {{target}}"
+    command: "~/bin/workit {{target}} {{agentFlag}}"
     run: session      # spawn a visible Banyan session
     when: issue       # promote when the query has a Linear/GitHub target
     parent: root      # root-level session (default); `current` nests under the selection
@@ -233,8 +233,14 @@ palette_commands:
 `{{target}}` (aliases `{{id}}`, `{{issue}}`) expands to the Linear ID or
 GitHub issue URL detected in the palette query, falling back to the selected
 Linear issue / session for static rows; `{{query}}` expands to the raw query.
-Typing `ENG-123` promotes matching commands above the built-in quick-open
-rows. Parse errors clear custom commands and show a diagnostic in
+`{{agentFlag}}` expands to `--agent <id>` when an agent is picked in the
+palette's agent picker (Tab cycles it) and to nothing on Auto, so a helper
+keeps its own weighted default rather than receiving a dangling flag;
+`{{agent}}` expands to the bare id. Both are opt-in — add them only for
+commands whose helper accepts `--agent` (for example `workit` and
+`review-linear`), and note the helper may restrict the name to its own tag
+pool. Typing `ENG-123` promotes matching commands above the built-in
+quick-open rows. Parse errors clear custom commands and show a diagnostic in
 Preferences. There is no JSON config for this — YAML only.
 
 `parent` defaults to `root` because the Banyan app inherits

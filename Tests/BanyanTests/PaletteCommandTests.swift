@@ -22,8 +22,65 @@ import Testing
     #expect(commands[0].when == .issue)
     #expect(commands[1].run == .background)
     #expect(commands[1].when == .linear)
-    #expect(commands[0].expandedTitle(target: "ENG-123", query: nil) == "Work on ENG-123")
-    #expect(commands[0].expandedCommand(target: "ENG-123", query: nil) == "~/bin/workit ENG-123")
+    #expect(commands[0].expandedTitle(target: "ENG-123", query: nil, agent: nil) == "Work on ENG-123")
+    #expect(commands[0].expandedCommand(target: "ENG-123", query: nil, agent: nil) == "~/bin/workit ENG-123")
+}
+
+@Test func paletteCommandAgentFlagExpandsOnlyWhenPicked() throws {
+    let commands = try PaletteCommandLoader.parse("""
+    palette_commands:
+      - id: work
+        title: "Work on {{target}}"
+        command: "~/bin/workit {{target}} {{agentFlag}}"
+    """)
+    let command = commands[0]
+
+    // Auto: the flag disappears so workit keeps its own weighted pick instead of
+    // receiving a dangling `--agent`.
+    #expect(command.expandedCommand(target: "ENG-123", query: nil, agent: nil) == "~/bin/workit ENG-123 ")
+
+    // Picked: the picker id is the registry key `--agent` resolves.
+    #expect(command.expandedCommand(target: "ENG-123", query: nil, agent: "dpsk-flash")
+        == "~/bin/workit ENG-123 --agent dpsk-flash")
+}
+
+@Test func paletteCommandBareAgentExpandsToTheID() throws {
+    let commands = try PaletteCommandLoader.parse("""
+    palette_commands:
+      - id: review
+        title: "Review {{target}}"
+        command: "review-linear {{target}} --runner cli {{agent}}"
+    """)
+
+    #expect(commands[0].expandedCommand(target: "ENG-1", query: nil, agent: "muse")
+        == "review-linear ENG-1 --runner cli muse")
+    #expect(commands[0].expandedCommand(target: "ENG-1", query: nil, agent: nil)
+        == "review-linear ENG-1 --runner cli ")
+}
+
+@Test func paletteCommandAgentPlaceholdersTrimAndTreatBlankAsAuto() throws {
+    let commands = try PaletteCommandLoader.parse("""
+    palette_commands:
+      - id: work
+        title: Work
+        command: "workit {{agentFlag}}"
+    """)
+
+    #expect(commands[0].expandedCommand(target: nil, query: nil, agent: "  dpsk-flash ")
+        == "workit --agent dpsk-flash")
+    #expect(commands[0].expandedCommand(target: nil, query: nil, agent: "   ") == "workit ")
+}
+
+/// A command that does not mention the placeholders stays opaque to the picker.
+@Test func paletteCommandWithoutAgentPlaceholdersIgnoresThePick() throws {
+    let commands = try PaletteCommandLoader.parse("""
+    palette_commands:
+      - id: work
+        title: Work
+        command: "workit {{target}}"
+    """)
+
+    #expect(commands[0].expandedCommand(target: "ENG-1", query: nil, agent: "muse") == "workit ENG-1")
 }
 
 @Test func paletteCommandsDefaultToSessionAndAlways() throws {

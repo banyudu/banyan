@@ -110,8 +110,8 @@ struct CommandPaletteView: View {
                     CommandPaletteItem(
                         id: "custom.quick.\(captured.id).\(value)",
                         category: "Custom · Quick Run",
-                        title: captured.expandedTitle(target: value, query: rawQuery),
-                        detail: captured.expandedCommand(target: value, query: rawQuery),
+                        title: captured.expandedTitle(target: value, query: rawQuery, agent: selectedAgentID),
+                        detail: captured.expandedCommand(target: value, query: rawQuery, agent: selectedAgentID),
                         shortcut: "↩",
                         action: { onRunPaletteCommand(captured, value, rawQuery) }
                     ),

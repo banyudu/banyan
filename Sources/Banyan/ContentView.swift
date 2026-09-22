@@ -315,8 +315,16 @@ struct ContentView: View {
 
         let fallbackTarget = paletteFallbackTarget
         for paletteCommand in store.paletteCommands {
-            let title = paletteCommand.expandedTitle(target: fallbackTarget, query: nil)
-            let detail = paletteCommand.expandedCommand(target: fallbackTarget, query: nil)
+            let title = paletteCommand.expandedTitle(
+                target: fallbackTarget,
+                query: nil,
+                agent: store.paletteAgentLaunch?.id
+            )
+            let detail = paletteCommand.expandedCommand(
+                target: fallbackTarget,
+                query: nil,
+                agent: store.paletteAgentLaunch?.id
+            )
             items.append(CommandPaletteItem(
                 id: "custom.\(paletteCommand.id)",
                 category: "Custom",

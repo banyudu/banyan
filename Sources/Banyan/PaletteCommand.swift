@@ -56,16 +56,23 @@ struct PaletteCommand: Identifiable, Hashable, Codable {
         self.parent = parent
     }
 
-    /// Expand `{{target}}` (plus `{{id}}` / `{{issue}}` aliases) and `{{query}}`.
-    func expandedTitle(target: String?, query: String?) -> String {
-        Self.expand(template: title, target: target, query: query)
+    /// Expand `{{target}}` (plus `{{id}}` / `{{issue}}` aliases), `{{query}}`, and
+    /// the agent placeholders.
+    ///
+    /// `{{agentFlag}}` becomes `--agent <id>` when an agent is picked and nothing
+    /// on Auto, so a command that takes `--agent` keeps the helper's own weighted
+    /// default instead of receiving a dangling flag. `{{agent}}` is the bare id,
+    /// for commands whose flag is not `--agent`. Both are opt-in: a command
+    /// without them is unaffected by the palette's agent picker.
+    func expandedTitle(target: String?, query: String?, agent: String?) -> String {
+        Self.expand(template: title, target: target, query: query, agent: agent)
     }
 
-    func expandedCommand(target: String?, query: String?) -> String {
-        Self.expand(template: command, target: target, query: query)
+    func expandedCommand(target: String?, query: String?, agent: String?) -> String {
+        Self.expand(template: command, target: target, query: query, agent: agent)
     }
 
-    static func expand(template: String, target: String?, query: String?) -> String {
+    static func expand(template: String, target: String?, query: String?, agent: String?) -> String {
         var result = template
         let targetValue = target ?? ""
         for placeholder in ["{{target}}", "{{id}}", "{{issue}}"] {
@@ -74,6 +81,14 @@ struct PaletteCommand: Identifiable, Hashable, Codable {
         if let query {
             result = result.replacingOccurrences(of: "{{query}}", with: query)
         }
+        // `{{agentFlag}}` goes first: it is the longer token, and expanding it
+        // yields `--agent <id>`, which the bare `{{agent}}` pass must not touch.
+        let agentValue = agent?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        result = result.replacingOccurrences(
+            of: "{{agentFlag}}",
+            with: agentValue.isEmpty ? "" : "--agent \(agentValue)"
+        )
+        result = result.replacingOccurrences(of: "{{agent}}", with: agentValue)
         return result
     }
 
