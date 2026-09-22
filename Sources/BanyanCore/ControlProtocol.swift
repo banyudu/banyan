@@ -126,6 +126,18 @@ public struct ControlPayload: Codable {
     public let footprint: String?
     /// `/events`: the highest cursor the client has already seen.
     public let since: LenientInt?
+    /// `/suggest`: why the suggestion is worth attention, shown under the title.
+    public let detail: String?
+    /// `/suggest`: the idempotency key. Absent falls back to `target`, then to
+    /// the command.
+    public let key: String?
+    /// `/suggest`: the opaque subject (issue id, URL) the suggestion is about.
+    public let target: String?
+    /// `/suggest`: `session` or `background`, matching a palette command's `run`.
+    public let run: String?
+    /// `/suggest`: how many seconds the suggestion stays live, holding the
+    /// pending slot and suppressing its own key.
+    public let ttl: LenientInt?
 
     public init(
         apiVersion: String? = ControlProtocol.version,
@@ -147,7 +159,12 @@ public struct ControlPayload: Codable {
         choice: String? = nil,
         confirm: Bool? = nil,
         footprint: String? = nil,
-        since: Int? = nil
+        since: Int? = nil,
+        detail: String? = nil,
+        key: String? = nil,
+        target: String? = nil,
+        run: String? = nil,
+        ttl: Int? = nil
     ) {
         self.apiVersion = apiVersion
         self.id = id
@@ -169,6 +186,11 @@ public struct ControlPayload: Codable {
         self.confirm = confirm.map(LenientBool.init(value:))
         self.footprint = footprint
         self.since = since.map(LenientInt.init(value:))
+        self.detail = detail
+        self.key = key
+        self.target = target
+        self.run = run
+        self.ttl = ttl.map(LenientInt.init(value:))
     }
 }
 
@@ -252,6 +274,8 @@ public enum ControlRoute: Equatable {
     case answer
     /// Long-polls for status transitions.
     case events
+    /// Parks a proposal in the app's UI, to run only if a human approves it.
+    case suggest
 
     public static func resolve(method: String, path: String) -> ControlRoute? {
         switch (method, ControlRoute.normalizedPath(path)) {
@@ -272,6 +296,7 @@ public enum ControlRoute: Equatable {
         case ("POST", "/resume"): return .resume
         case ("POST", "/input"): return .input
         case ("POST", "/answer"): return .answer
+        case ("POST", "/suggest"): return .suggest
         default: return nil
         }
     }
@@ -300,7 +325,7 @@ public enum ControlRoute: Equatable {
         switch self {
         case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume,
              .output, .input, .answer: return true
-        case .list, .spawn, .screenshot, .windowState, .tick, .events: return false
+        case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest: return false
         }
     }
 
@@ -318,6 +343,16 @@ public enum ControlRoute: Equatable {
         if self == .answer, payload.footprint?.isEmpty != false {
             throw ControlValidationError.missingFootprint
         }
+        if self == .suggest {
+            // A suggestion the human cannot read, or that proposes nothing, is
+            // worse than no suggestion: it occupies the one pending slot.
+            if payload.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                throw ControlValidationError.missingTitle
+            }
+            if payload.command?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                throw ControlValidationError.missingCommand
+            }
+        }
     }
 }
 
@@ -326,6 +361,8 @@ public enum ControlValidationError: LocalizedError, Equatable {
     case missingPath
     case missingInput
     case missingFootprint
+    case missingTitle
+    case missingCommand
 
     public var errorDescription: String? {
         switch self {
@@ -333,6 +370,8 @@ public enum ControlValidationError: LocalizedError, Equatable {
         case .missingPath: return "request requires path"
         case .missingInput: return "request requires keys, text or submit"
         case .missingFootprint: return "request requires the footprint from a preceding /output"
+        case .missingTitle: return "request requires title"
+        case .missingCommand: return "request requires command"
         }
     }
 }

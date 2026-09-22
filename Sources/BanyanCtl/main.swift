@@ -65,6 +65,8 @@ struct BanyanCtl {
                 try postJSON("/answer", payload: parseAnswerPayload(Array(arguments.dropFirst())))
             case "events":
                 try get("/events", query: parseEventsOptions(Array(arguments.dropFirst())), timeout: 35)
+            case "suggest":
+                try post("/suggest", payload: parseSuggestPayload(Array(arguments.dropFirst())))
             case "list":
                 try get("/list")
             case "window-state":
@@ -465,6 +467,53 @@ struct BanyanCtl {
         return payload
     }
 
+    /// `suggest` proposes a command instead of running one: the app parks it in
+    /// its sidebar and only runs it if the human approves.
+    ///
+    /// Required fields are checked here so a scheduled picker gets a usage error
+    /// naming the missing flag, rather than a 400 from the far side of a socket.
+    private func parseSuggestPayload(_ args: [String]) throws -> [String: String] {
+        var result: [String: String] = [:]
+        var index = 0
+        while index < args.count {
+            let token = args[index]
+            guard token.hasPrefix("--") else {
+                throw CLIError.message("unexpected argument '\(token)'")
+            }
+            let rawKey = String(token.dropFirst(2))
+            guard index + 1 < args.count else {
+                throw CLIError.message("missing value for \(token)")
+            }
+            let value = args[index + 1]
+            switch rawKey {
+            case "title", "detail", "target", "key", "command", "run", "ttl":
+                result[rawKey] = value
+            case "cmd":
+                result["command"] = value
+            case "cwd":
+                result["cwd"] = NSString(string: value).expandingTildeInPath
+            default:
+                throw CLIError.message("unknown suggest option '\(token)'")
+            }
+            index += 2
+        }
+        guard result["title"]?.isEmpty == false else {
+            throw CLIError.message("suggest requires --title TEXT")
+        }
+        guard result["command"]?.isEmpty == false else {
+            throw CLIError.message("suggest requires --command CMD")
+        }
+        if let run = result["run"], CommandRunMode(rawValue: run) == nil {
+            throw CLIError.message(
+                "--run must be one of: \(CommandRunMode.allCases.map(\.rawValue).joined(separator: ", "))"
+            )
+        }
+        if let ttl = result["ttl"], Int(ttl) == nil {
+            throw CLIError.message("--ttl must be a whole number of seconds")
+        }
+        return result
+    }
+
     private func parseScreenshotPayload(_ args: [String]) throws -> [String: String] {
         var result = try parsePayload(args)
         if let output = result.removeValue(forKey: "output") {
@@ -677,6 +726,22 @@ struct BanyanCtl {
         keeps the status the session had when it was parked. Neither one signals or
         terminates the agent. `banyanctl session suspend|resume --id ID` are aliases.
 
+        Suggesting work instead of starting it:
+          banyanctl suggest --title TEXT --command CMD [--detail TEXT] [--target ID] [--key KEY] [--cwd PATH] [--run session|background] [--ttl SECONDS]
+
+        `suggest` pushes a proposal into the app's sidebar and returns. Nothing
+        runs until the human presses Run; Dismiss drops it. The command and
+        --target are opaque to Banyan, so the policy behind a suggestion — which
+        issue has gone stale, whose review is overdue — stays in the script that
+        computes it. A suggestion is live for --ttl seconds (default 3600, min 60,
+        max 86400): while it is live it holds the single pending slot, and its
+        --key is refused, so a picker on a short cron cannot raise the same nudge
+        twice. --key defaults to --target, then to the command. Answering frees
+        the slot but keeps the key suppressed for the rest of the TTL. A refused
+        suggestion exits 75 (temporary failure), not 64 — a scheduled picker
+        should skip that tick and try again. With the app not running, `suggest`
+        exits 69 like every other command, which is the fail-closed skip.
+
         Reading and answering a blocked agent:
           banyanctl output --id ID [--lines N]
           banyanctl send   --id ID [--key Enter]... [--text "…"] [--submit]
@@ -739,6 +804,9 @@ enum CLIError: LocalizedError {
             if statusCode == 404 {
                 return ExitCode.notFound
             }
+            if statusCode == 409 {
+                return ExitCode.temporaryFailure
+            }
             return ExitCode.badInput
         case .serverUnavailable: return ExitCode.serverUnavailable
         }
@@ -750,4 +818,9 @@ enum ExitCode {
     static let badInput: Int32 = 64
     static let notFound: Int32 = 66
     static let serverUnavailable: Int32 = 69
+    /// EX_TEMPFAIL: the request was well-formed but refused for now — a
+    /// suggestion whose key is still suppressed, or one that arrived while
+    /// another is waiting for a decision. Scheduled callers should skip and
+    /// retry rather than treat it as a broken invocation.
+    static let temporaryFailure: Int32 = 75
 }

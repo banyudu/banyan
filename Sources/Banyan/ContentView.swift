@@ -372,7 +372,19 @@ struct ContentView: View {
 
             // Deliberately outside the mode switch: a palette command's result
             // must be visible from either sidebar, because the command may have
-            // run from either one.
+            // run from either one. The same goes for an inbound suggestion,
+            // which arrives from outside the app and belongs to neither mode. It
+            // sits above the run banner so the decision that is still open reads
+            // as newer than the run that already happened.
+            if let suggestion = store.pendingSuggestion {
+                Divider()
+                SuggestionBanner(
+                    suggestion: suggestion,
+                    onApprove: { store.approvePendingSuggestion() },
+                    onDismiss: { store.dismissPendingSuggestion() }
+                )
+            }
+
             if let run = store.paletteCommandRun {
                 Divider()
                 PaletteCommandRunBanner(
@@ -2105,6 +2117,77 @@ private struct PaletteCommandRunBanner: View {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         }
+    }
+}
+
+/// Presents one inbound suggestion and the two things the human can do with it.
+///
+/// This is the whole of Banyan's half of the suggestion channel: the policy that
+/// decided this issue was worth raising lives in whatever script called
+/// `banyanctl suggest`. The command is shown verbatim rather than summarised,
+/// because approving runs it — the user should be able to read what they are
+/// agreeing to before they agree to it.
+private struct SuggestionBanner: View {
+    let suggestion: InboundSuggestion
+    let onApprove: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "lightbulb.fill")
+                    .foregroundStyle(.yellow)
+                    .frame(width: 16, height: 16)
+
+                Text(suggestion.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(2)
+
+                Spacer(minLength: 4)
+
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.banyanPlain)
+                .accessibilityIdentifier(AccessibilityID.sidebarSuggestionDismiss)
+                .help("Dismiss")
+            }
+
+            if let detail = suggestion.detail {
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text(suggestion.command)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            HStack(spacing: 6) {
+                Button("Run", action: onApprove)
+                    .accessibilityIdentifier(AccessibilityID.sidebarSuggestionApprove)
+                if let target = suggestion.target {
+                    Text(target)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+            }
+            .buttonStyle(.banyanBordered)
+            .controlSize(.small)
+            .font(.system(size: 11))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier(AccessibilityID.sidebarSuggestion)
     }
 }
 

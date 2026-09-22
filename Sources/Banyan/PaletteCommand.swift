@@ -8,10 +8,9 @@ import Foundation
 /// (e.g. `~/bin/workit`, `~/bin/verify-linear`) in config preserves the
 /// repo's shareable-content rule: no personal paths or binaries are baked in.
 struct PaletteCommand: Identifiable, Hashable, Codable {
-    enum RunMode: String, Codable {
-        case session
-        case background
-    }
+    /// Defined in `BanyanCore` because an approved `/suggest` payload runs as a
+    /// synthetic palette command and has to name the same two behaviours.
+    typealias RunMode = CommandRunMode
 
     enum When: String, Codable {
         case always

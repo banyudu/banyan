@@ -204,3 +204,50 @@ import Testing
         _ = try request.decode(ControlPayload.self)
     }
 }
+
+@Test func suggestRouteIsAPostAndNeedsNoSessionID() {
+    #expect(ControlRoute.resolve(method: "POST", path: "/suggest") == .suggest)
+    #expect(ControlRoute.resolve(method: "GET", path: "/suggest") == nil)
+    #expect(ControlRoute.suggest.requiresID == false)
+}
+
+@Test func suggestPayloadDecodesItsOwnFields() throws {
+    let body = #"""
+    {"apiVersion":"v1","title":"TASK-123 has no reviewer","detail":"In Review for 6 days","target":"TASK-123","key":"stale-review:TASK-123","command":"workit TASK-123","cwd":"/Users/example/dev/my-project","run":"background","ttl":900}
+    """#
+    let raw = "POST /suggest HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
+    let request = try #require(HTTPControlRequest(data: Data(raw.utf8)))
+
+    let payload = try request.decode(ControlPayload.self)
+    #expect(payload.title == "TASK-123 has no reviewer")
+    #expect(payload.detail == "In Review for 6 days")
+    #expect(payload.target == "TASK-123")
+    #expect(payload.key == "stale-review:TASK-123")
+    #expect(payload.command == "workit TASK-123")
+    #expect(payload.cwd == "/Users/example/dev/my-project")
+    #expect(payload.run == "background")
+    #expect(payload.ttl?.value == 900)
+}
+
+@Test func suggestTTLAlsoDecodesFromItsStringSpelling() throws {
+    // `banyanctl` posts a flat string dictionary, so `--ttl 900` arrives quoted.
+    let body = #"{"apiVersion":"v1","title":"t","command":"c","ttl":"900"}"#
+    let raw = "POST /suggest HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
+    let request = try #require(HTTPControlRequest(data: Data(raw.utf8)))
+
+    #expect(try request.decode(ControlPayload.self).ttl?.value == 900)
+}
+
+@Test func suggestRequiresATitleAndACommand() {
+    #expect(throws: ControlValidationError.missingTitle) {
+        try ControlRoute.suggest.validate(ControlPayload(title: "  ", command: "workit TASK-123"))
+    }
+    #expect(throws: ControlValidationError.missingCommand) {
+        try ControlRoute.suggest.validate(ControlPayload(title: "TASK-123 is stale"))
+    }
+    #expect(throws: Never.self) {
+        try ControlRoute.suggest.validate(
+            ControlPayload(title: "TASK-123 is stale", command: "workit TASK-123")
+        )
+    }
+}

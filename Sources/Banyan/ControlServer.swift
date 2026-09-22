@@ -319,6 +319,30 @@ final class ControlServer {
                 let body = try payload(for: request)
                 try validateVersion(body.apiVersion)
                 return waitForEvents(store: store, since: body.since?.value, respond: respond)
+
+            case .suggest:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let suggestion = InboundSuggestion(
+                    key: body.key,
+                    title: body.title!,
+                    detail: body.detail,
+                    target: body.target,
+                    command: body.command!,
+                    cwd: body.cwd,
+                    run: try body.run.map(parseRunMode) ?? .session,
+                    ttl: body.ttl.map { TimeInterval($0.value) }
+                )
+                switch store.offerSuggestion(suggestion) {
+                case .accepted(let accepted):
+                    return respond(.ok(["suggestion": suggestionBody(accepted)]))
+                case .rejected(let rejection):
+                    // 409, not 400: the caller did nothing wrong, the slot is
+                    // simply taken or this nudge was already raised. A scheduled
+                    // picker is meant to skip and try again next tick.
+                    return respond(.failure(409, rejection.rawValue, rejection.message))
+                }
             }
         } catch let error as ControlError {
             return respond(.failure(error.httpStatus, error.code, error.localizedDescription))
@@ -569,6 +593,29 @@ final class ControlServer {
             throw ControlError.badRequest("unknown status '\(raw)'")
         }
         return status
+    }
+
+    private func parseRunMode(_ raw: String) throws -> CommandRunMode {
+        guard let run = CommandRunMode(rawValue: raw) else {
+            throw ControlError.badRequest(
+                "unknown run '\(raw)'; allowed: \(CommandRunMode.allCases.map(\.rawValue).joined(separator: ", "))"
+            )
+        }
+        return run
+    }
+
+    private func suggestionBody(_ suggestion: InboundSuggestion) -> [String: Any] {
+        [
+            "key": suggestion.key,
+            "title": suggestion.title,
+            "detail": suggestion.detail ?? "",
+            "target": suggestion.target ?? "",
+            "command": suggestion.command,
+            "cwd": suggestion.cwd ?? "",
+            "run": suggestion.run.rawValue,
+            "receivedAt": ISO8601DateFormatter().string(from: suggestion.receivedAt),
+            "expiresAt": ISO8601DateFormatter().string(from: suggestion.expiresAt)
+        ]
     }
 
     private func parseTone(_ raw: String) throws -> SessionTone {
