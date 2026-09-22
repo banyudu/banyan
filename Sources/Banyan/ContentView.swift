@@ -191,6 +191,16 @@ struct ContentView: View {
                 action: { _ = store.spawnPaletteAgentSession() }
             ),
             CommandPaletteItem(
+                id: "session.new-project",
+                category: "Session",
+                title: "New Session in Project Root",
+                detail: store.paletteAgentLaunch.map {
+                    "Open \($0.label) at the project root"
+                } ?? "Open a session at the project root",
+                shortcut: nil,
+                action: { _ = store.spawnPaletteAgentSessionInProjectRoot() }
+            ),
+            CommandPaletteItem(
                 id: "terminal.new",
                 category: "Terminal",
                 title: "New Terminal",

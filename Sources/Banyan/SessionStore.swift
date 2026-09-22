@@ -1879,6 +1879,33 @@ final class SessionStore: ObservableObject {
         return spawnSiblingSession()
     }
 
+    /// Spawns the palette's picked agent in the project root instead of the
+    /// selected session's own directory. The root is the main checkout of the
+    /// repository containing the selected session, so a session in a worktree or
+    /// a subdirectory opens at `<repo>`; a path outside any repository stays put.
+    /// On Auto the runtime mirrors the current session, like the sibling command.
+    @discardableResult
+    func spawnPaletteAgentSessionInProjectRoot() -> BanyanSession {
+        let cwd = SessionDisplayLabel.workspaceRoot(
+            cwd: selectedSession?.cwd ?? homeDirectory,
+            environment: environment
+        )
+        if let launch = paletteAgentLaunch {
+            return spawn(
+                cwd: cwd,
+                command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
+                parentSessionID: selectedSession?.parentSessionID
+            )
+        }
+        let command = NewSessionLaunch.siblingCommand(
+            sessionCommand: selectedSession?.command,
+            provider: selectedSession?.agentProvider,
+            profiles: sessionLaunchProfiles,
+            codexLaunchMode: codexLaunchMode
+        )
+        return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
+    }
+
     /// Spawn a sibling using the selected session's coding-agent runtime when it
     /// is one of the runtimes supported by the quick new-session shortcut.
     @discardableResult
