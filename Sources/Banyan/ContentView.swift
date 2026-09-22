@@ -2102,6 +2102,29 @@ private struct PaletteCommandRunBanner: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier(AccessibilityID.sidebarPaletteCommandRun)
+        // The countdown lives here rather than in the store so it can see the
+        // output panel: a success that the user has opened up to read is a
+        // success they are still using, and it waits. Keying on the run and the
+        // armed flag together restarts the countdown when a run settles, and
+        // cancels it the moment the banner goes away.
+        .task(id: AutoDismissKey(runID: run.id, isArmed: isAutoDismissArmed)) {
+            guard isAutoDismissArmed else { return }
+            try? await Task.sleep(nanoseconds: UInt64(PaletteCommandRun.autoDismissDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            onDismiss()
+        }
+    }
+
+    /// A settled success clears itself, unless the user has expanded its output.
+    private var isAutoDismissArmed: Bool {
+        run.autoDismisses && !isOutputExpanded
+    }
+
+    /// Restarting the countdown needs both halves: the run it belongs to, and
+    /// whether it is armed at all.
+    private struct AutoDismissKey: Equatable {
+        let runID: UUID
+        let isArmed: Bool
     }
 
     @ViewBuilder
