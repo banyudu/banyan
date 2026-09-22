@@ -249,6 +249,11 @@ final class SessionStore: ObservableObject {
     /// (`workit`, `review-linear`), and a failed launch used to be
     /// indistinguishable from a command that did nothing at all.
     @Published private(set) var paletteCommandRun: PaletteCommandRun?
+    /// The one inbound suggestion waiting on a decision, pushed in through
+    /// `POST /suggest`. Nothing in it runs until the human approves it.
+    @Published private(set) var pendingSuggestion: InboundSuggestion?
+    /// Owns the pending slot and the dedup window behind `pendingSuggestion`.
+    private var suggestionInbox = SuggestionInbox()
     private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
     /// Parents whose child rows are manually collapsed. Persisted in
     /// `UserDefaults`; the effective collapsed set also auto-collapses parents
@@ -1456,12 +1461,21 @@ final class SessionStore: ObservableObject {
     /// Run a user-configured palette command. `target` is the Linear/GitHub
     /// ID detected in the palette query (or the selected session's issue).
     ///
+    /// Also the path an approved inbound suggestion takes, as a synthetic
+    /// command: the spawn, the background runner, the log file and the result
+    /// banner are the same either way.
+    ///
     /// The run is recorded in `paletteCommandRun` either way. It deliberately no
     /// longer writes to `linearIssueListLoadState`: that state belongs to the
     /// Linear issue list, and it is only rendered inside the Linear sidebar, so
     /// a palette-command failure routed through it was invisible — and wiped by
     /// the list's own refresh the moment the user went looking for it.
-    func runPaletteCommand(_ paletteCommand: PaletteCommand, target: String?, query: String? = nil) {
+    func runPaletteCommand(
+        _ paletteCommand: PaletteCommand,
+        target: String?,
+        query: String? = nil,
+        cwd overrideCWD: String? = nil
+    ) {
         // The palette's agent picker only reaches a command that opts in with
         // `{{agent}}` / `{{agentFlag}}`; nil (Auto) expands both away.
         let agent = paletteAgentLaunch?.id
@@ -1469,7 +1483,9 @@ final class SessionStore: ObservableObject {
         let expandedTitle = paletteCommand.expandedTitle(target: target, query: query, agent: agent)
         guard !expandedCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let parentSessionID = paletteParentSessionID(for: paletteCommand.parent)
-        let cwd = selectedSession?.cwd ?? homeDirectory
+        // An inbound suggestion may name its own directory; a palette command
+        // never does, and keeps the selected session's.
+        let cwd = overrideCWD ?? selectedSession?.cwd ?? homeDirectory
         let startedAt = Date()
         switch paletteCommand.run {
         case .session:
@@ -1546,6 +1562,57 @@ final class SessionStore: ObservableObject {
     /// Clears the palette-command banner. The run's log file stays on disk.
     func dismissPaletteCommandRun() {
         paletteCommandRun = nil
+    }
+
+    // MARK: - Inbound suggestions
+
+    /// Offers an inbound suggestion the pending slot, and republishes whatever
+    /// the inbox holds afterwards — an offer that is refused can still have
+    /// cleared an expired banner on its way through.
+    func offerSuggestion(_ suggestion: InboundSuggestion) -> SuggestionInbox.Outcome {
+        let outcome = suggestionInbox.offer(suggestion)
+        pendingSuggestion = suggestionInbox.pending
+        return outcome
+    }
+
+    /// Runs the pending suggestion, through exactly the path a palette command
+    /// takes: the same spawn, the same background runner, the same log file and
+    /// the same result banner. The suggestion channel adds the human gate in
+    /// front of that path and nothing behind it.
+    func approvePendingSuggestion() {
+        guard let suggestion = pendingSuggestion else { return }
+        suggestionInbox.resolve(id: suggestion.id)
+        pendingSuggestion = suggestionInbox.pending
+        runPaletteCommand(
+            Self.paletteCommand(for: suggestion),
+            target: suggestion.target,
+            cwd: suggestion.cwd
+        )
+    }
+
+    /// Declines the pending suggestion. Its key stays suppressed for the rest of
+    /// its TTL, so the picker that raised it does not raise it again on its next
+    /// tick.
+    func dismissPendingSuggestion() {
+        guard let suggestion = pendingSuggestion else { return }
+        suggestionInbox.resolve(id: suggestion.id)
+        pendingSuggestion = suggestionInbox.pending
+    }
+
+    /// The synthetic palette command an approved suggestion runs as.
+    ///
+    /// The id is derived from the suggestion key so the run's log file is named
+    /// after the nudge that caused it. `parent` is always `.root`: an
+    /// out-of-process suggester has no view of what is selected, and a session
+    /// opened from a nudge belongs at the top level.
+    nonisolated static func paletteCommand(for suggestion: InboundSuggestion) -> PaletteCommand {
+        PaletteCommand(
+            id: "suggestion.\(SessionIdentityPolicy.sanitizedID(suggestion.key))",
+            title: suggestion.title,
+            command: suggestion.command,
+            run: suggestion.run,
+            parent: .root
+        )
     }
 
     /// Runs one `run: background` palette command. Internal rather than private

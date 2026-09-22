@@ -10,7 +10,8 @@ This repository provides three products over one shared runtime:
 - **Banyan** — native macOS SwiftUI app with embedded SwiftTerm terminals.
 - **BanyanTUI** — terminal frontend for Linux and macOS.
 - **`banyanctl`** — local CLI for creating, selecting, marking, closing,
-  recovering, and inspecting sessions.
+  recovering, and inspecting sessions, and for suggesting work a human approves
+  before it starts.
 
 > Early preview: Banyan is under active development and is not yet a polished
 > signed/notarized product. Expect interface and command changes.
@@ -392,9 +393,79 @@ swift run banyanctl close --id TASK-123
 swift run banyanctl respawn --id TASK-123
 swift run banyanctl remove --id TASK-123
 swift run banyanctl list
+swift run banyanctl suggest --title "TASK-123 is stale" --target TASK-123 --command "workit TASK-123"
 ```
 
 `session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. A spawn issued from inside a Banyan session nests under it by default: `banyanctl` takes `--parent` from `$BANYAN_PARENT_SESSION_ID` / `$BANYAN_SESSION_ID` (every tmux session Banyan creates carries `BANYAN_SESSION_ID`), or from the enclosing `banyan-<id>` tmux session otherwise — so `workit ENG-123` run from a session pane lands as its child with no extra flags. Pass `--parent ID` for a different parent, or `--no-parent` for a top-level session. `suspend` parks a session: Banyan drops it from the supervisor tick, branch/context refresh, and terminal rendering, while its tmux session and any agent inside keep running untouched — so the app's idle cost tracks the sessions you are actually watching rather than every session you have open. `resume` puts it back, keeping the status it had when it was parked. Neither one signals or terminates the agent. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
+
+### Suggesting Work Instead Of Starting It
+
+Every command above acts the moment it is called. `suggest` is the one that
+waits: it pushes a proposal into the app's sidebar, and the command runs only if
+a human presses **Run**.
+
+```sh
+swift run banyanctl suggest \
+  --title "TASK-123 has been in review for 6 days" \
+  --detail "No reviewer assigned; SLA breaches tomorrow" \
+  --target TASK-123 \
+  --key "stale-review:TASK-123" \
+  --command "workit TASK-123"
+```
+
+Banyan owns only the interaction — render it, capture the decision, run the
+command on approval. The *policy* behind a nudge stays outside: which issue has
+gone stale, whose review is overdue, whose due date is about to breach. `--target`
+and `--command` are opaque to the app, so a picker can suggest an issue today and
+a pull request tomorrow without Banyan learning either. Approving runs the command
+through the same path a custom palette command takes, so `{{target}}`,
+`{{agent}}` and `{{agentFlag}}` expand the same way and the result appears in the
+same sidebar banner, log file included.
+
+| Flag | Meaning |
+| --- | --- |
+| `--title` | Required. The headline the human reads. |
+| `--command` | Required. The shell command to run on approval, and at no other time. |
+| `--detail` | Why this is worth attention. |
+| `--target` | Opaque subject (issue id, URL), expanded into the command's `{{target}}`. |
+| `--key` | Idempotency key. Defaults to `--target`, then to the command. |
+| `--cwd` | Where to run. Defaults to the selected session's directory. |
+| `--run` | `session` (default) or `background`, like a palette command's `run:`. |
+| `--ttl` | Seconds the suggestion stays live. Default 3600, min 60, max 86400. |
+
+One suggestion is shown at a time, and a scheduled picker must not raise the same
+nudge on every tick, so the TTL governs both: while a suggestion is live it holds
+the single pending slot, and its `--key` is refused. Answering it frees the slot
+immediately but keeps the key suppressed for the rest of the TTL — acting on a
+nudge should not invite the next tick to repeat it. Key on `<kind>:<issue>` when
+the same issue can earn different kinds of nudge; keying on the issue alone
+collapses them into one.
+
+Exit codes make this usable from `cron` or `launchd` without parsing output:
+
+```sh
+#!/bin/sh
+# Pick one issue worth attention and offer it. Policy lives here, not in the app.
+issue=$(my-issue-picker) || exit 0
+
+banyanctl suggest \
+  --title "$issue needs a reviewer" \
+  --target "$issue" \
+  --key "stale-review:$issue" \
+  --command "workit $issue"
+
+case $? in
+  0)  ;;   # delivered
+  75) ;;   # refused for now: already pending, or this key is still suppressed
+  69) ;;   # Banyan is not running; skip this tick
+  *)  exit 1 ;;
+esac
+```
+
+75 is `EX_TEMPFAIL` — the request was fine, the slot was simply taken. 69 is the
+same "app is not running" code every other `banyanctl` command returns, which is
+the fail-closed skip a scheduled picker wants. Nothing is queued while the app is
+closed; the next tick offers again.
 
 The control API uses a versioned JSON schema (`apiVersion: "v1"`) and a local shared token stored at:
 
