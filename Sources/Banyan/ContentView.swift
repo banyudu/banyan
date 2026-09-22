@@ -351,9 +351,34 @@ struct ContentView: View {
             case .linear:
                 linearSidebar
             }
+
+            // Deliberately outside the mode switch: a palette command's result
+            // must be visible from either sidebar, because the command may have
+            // run from either one.
+            if let run = store.paletteCommandRun {
+                Divider()
+                PaletteCommandRunBanner(
+                    run: run,
+                    onRevealLog: { revealPaletteCommandLogs() },
+                    onDismiss: { store.dismissPaletteCommandRun() }
+                )
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier(AccessibilityID.sidebar)
+    }
+
+    /// Opens the palette-command logs: the last run's file when there is one,
+    /// otherwise the directory they accumulate in.
+    private func revealPaletteCommandLogs() {
+        let directory = PaletteCommandRunLog.directoryURL(host: store.host)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if let logURL = store.paletteCommandRun?.logURL,
+           FileManager.default.fileExists(atPath: logURL.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([logURL])
+        } else {
+            NSWorkspace.shared.open(directory)
+        }
     }
 
     private var sidebarModeSwitcher: some View {
@@ -444,6 +469,12 @@ struct ContentView: View {
                     Divider()
                     Toggle("Show finished children", isOn: $store.showFinishedChildren)
                         .help("Reveal completed child sessions in the sidebar")
+                    Divider()
+                    Button("Reveal Command Logs") {
+                        revealPaletteCommandLogs()
+                    }
+                    .accessibilityIdentifier(AccessibilityID.sidebarRevealCommandLogs)
+                    .help("Open the output of palette commands in Finder")
                 } label: {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                 }
@@ -1949,6 +1980,113 @@ private struct RecoverySessionsView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .accessibilityIdentifier("banyan.sidebar.recovery")
+    }
+}
+
+/// Reports the last palette command the app ran.
+///
+/// This is the visible half of the fix for "the Review command did nothing":
+/// background commands write their output to a log rather than a terminal, so
+/// without this the only signal was a session appearing (or not) some seconds
+/// later. Failures keep the command's own last line and the log location on
+/// screen until dismissed.
+private struct PaletteCommandRunBanner: View {
+    let run: PaletteCommandRun
+    let onRevealLog: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var isOutputExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                statusIcon
+                    .frame(width: 16, height: 16)
+
+                Text(run.headline)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(2)
+
+                Spacer(minLength: 4)
+
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.banyanPlain)
+                .accessibilityIdentifier(AccessibilityID.sidebarPaletteCommandRunDismiss)
+                .help("Dismiss")
+            }
+
+            if !run.command.isEmpty {
+                Text(run.command)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            if let detail = run.failureDetail, !isOutputExpanded {
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            if isOutputExpanded {
+                ScrollView {
+                    Text(run.outputTail)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 180)
+                .padding(6)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                .accessibilityIdentifier(AccessibilityID.sidebarPaletteCommandRunOutput)
+            }
+
+            HStack(spacing: 6) {
+                if run.hasOutput {
+                    Button(isOutputExpanded ? "Hide Output" : "Show Output") {
+                        isOutputExpanded.toggle()
+                    }
+                    .accessibilityIdentifier(AccessibilityID.sidebarPaletteCommandRunToggleOutput)
+                }
+                if run.logURL != nil {
+                    Button("Reveal Log", action: onRevealLog)
+                        .accessibilityIdentifier(AccessibilityID.sidebarPaletteCommandRunRevealLog)
+                }
+                if run.isOutputTruncated {
+                    Text("earlier output trimmed")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .buttonStyle(.banyanBordered)
+            .controlSize(.small)
+            .font(.system(size: 11))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier(AccessibilityID.sidebarPaletteCommandRun)
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        if run.isRunning {
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.65)
+        } else if run.isFailure {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        } else {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        }
     }
 }
 

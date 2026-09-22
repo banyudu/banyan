@@ -222,3 +222,187 @@ private func writePaletteTestFile(home: URL, name: String, contents: String) {
     #expect(result.commands.map(\.title) == ["Work local"])
     #expect(result.diagnostic?.contains("Duplicate palette command id 'work'") == true)
 }
+
+// MARK: - Palette command run reporting
+
+/// Runs one palette command the way `SessionStore` does, from a temporary
+/// environment.
+///
+/// `SHELL` deliberately points at a stub: `AppProcessEnvironment` caches its
+/// shell dump per shell path, and `ShellEnvironmentLoadingTests` asserts against
+/// the `/bin/zsh` entry, so a background command sharing that key would race
+/// with it (and would otherwise read the developer's login files).
+private func runPaletteTestCommand(
+    _ shellCommand: String
+) throws -> (outcome: PaletteCommandOutcome, logURL: URL) {
+    let stub = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-palette-test-shell-\(UUID().uuidString)")
+    try "#!/bin/sh\nexit 0\n".write(to: stub, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+    defer { try? FileManager.default.removeItem(at: stub) }
+
+    let logURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-palette-bg-\(UUID().uuidString).log")
+
+    let outcome = SessionStore.runPaletteBackgroundCommand(
+        shellCommand: shellCommand,
+        cwd: "/tmp",
+        homeDirectory: NSHomeDirectory(),
+        environment: [
+            "SHELL": stub.path,
+            "HOME": NSHomeDirectory(),
+            "PATH": "/usr/bin:/bin",
+            "TERM": "dumb"
+        ],
+        parentSessionID: nil,
+        logURL: logURL
+    )
+    return (outcome, logURL)
+}
+
+@Test func paletteBackgroundCommandCapturesBothStreamsAndTheExitStatus() throws {
+    let (outcome, logURL) = try runPaletteTestCommand("echo to-stdout; echo to-stderr 1>&2; exit 3")
+    defer { try? FileManager.default.removeItem(at: logURL) }
+
+    guard case .finished(let exitCode, let output) = outcome else {
+        Issue.record("expected a finished run, got \(outcome)")
+        return
+    }
+    #expect(exitCode == 3)
+    // Both streams used to be discarded (stdout) or kept only for a failure
+    // (stderr); the log is what makes "it did nothing" explainable.
+    #expect(output.text.contains("to-stdout"))
+    #expect(output.text.contains("to-stderr"))
+    #expect(FileManager.default.fileExists(atPath: logURL.path))
+}
+
+@Test func paletteBackgroundCommandReportsASuccessfulRun() throws {
+    let (outcome, logURL) = try runPaletteTestCommand("echo all-good")
+    defer { try? FileManager.default.removeItem(at: logURL) }
+
+    guard case .finished(let exitCode, let output) = outcome else {
+        Issue.record("expected a finished run, got \(outcome)")
+        return
+    }
+    #expect(exitCode == 0)
+    #expect(output.text.contains("all-good"))
+}
+
+/// A `run: background` command's only explanation is its output, so the tail
+/// has to survive whatever the command printed.
+@Test func paletteRunLogTailKeepsTheLastLinesAndFlagsTruncation() {
+    let output = PaletteCommandRunLog.truncating(
+        (1...10).map { "line \($0)" }.joined(separator: "\n"),
+        maxBytes: 4096,
+        maxLines: 3
+    )
+
+    #expect(output.text == "line 8\nline 9\nline 10")
+    #expect(output.isTruncated)
+}
+
+@Test func paletteRunLogTailDropsAPartialLeadingLine() {
+    let output = PaletteCommandRunLog.truncating(
+        "aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc",
+        maxBytes: 15,
+        maxLines: 10
+    )
+
+    // The byte cap cuts into `bbbb…`, so the tail starts at the first whole line.
+    #expect(output.text == "cccccccccc")
+    #expect(output.isTruncated)
+}
+
+@Test func paletteRunLogTailDropsABrokenMultibyteCharacter() {
+    let text = "ok\n" + String(repeating: "é", count: 200)
+    let output = PaletteCommandRunLog.truncating(text, maxBytes: 21, maxLines: 60)
+
+    // 21 bytes lands mid-`é`, so the tail is the whole characters that remain.
+    #expect(!output.text.unicodeScalars.contains("\u{FFFD}"))
+    #expect(output.text == String(repeating: "é", count: 10))
+    #expect(output.isTruncated)
+}
+
+@Test func paletteRunLogTailIsUnchangedWhenItFits() {
+    let output = PaletteCommandRunLog.truncating("review-linear: done", maxBytes: 4096, maxLines: 60)
+
+    #expect(output.text == "review-linear: done")
+    #expect(!output.isTruncated)
+}
+
+@Test func paletteRunLogReadsTheEndOfAFile() throws {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-palette-run-\(UUID().uuidString).log")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try (1...20).map { "line \($0)" }.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+
+    let output = PaletteCommandRunLog.tail(of: url, maxBytes: 4096, maxLines: 2)
+
+    #expect(output.text == "line 19\nline 20")
+    #expect(output.isTruncated)
+    // A run whose log was never written still has an exit status to report.
+    #expect(PaletteCommandRunLog.tail(of: url.appendingPathExtension("missing")) == .empty)
+}
+
+@Test func paletteRunLogFileNameIsTimestampedAndSanitized() {
+    let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+    let name = PaletteCommandRunLog.fileName(commandID: "review issue/ENG-123", startedAt: startedAt)
+
+    #expect(name.hasSuffix("-review-issue-ENG-123"))
+    #expect(!name.contains("/"))
+    #expect(!name.contains(" "))
+}
+
+@Test func paletteRunLogFileURLAvoidsCollisionsWithinTheSameSecond() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-palette-run-dir-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+
+    let first = PaletteCommandRunLog.fileURL(in: directory, commandID: "review", startedAt: startedAt)
+    #expect(first.lastPathComponent.hasSuffix("-review.log"))
+
+    try Data().write(to: first)
+    let second = PaletteCommandRunLog.fileURL(in: directory, commandID: "review", startedAt: startedAt)
+    #expect(second.lastPathComponent.hasSuffix("-review-2.log"))
+    #expect(second != first)
+}
+
+@Test func paletteCommandRunHeadlinesAndFailureDetailCoverEveryStatus() {
+    let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+    func run(_ status: PaletteCommandRun.Status, outputTail: String = "") -> PaletteCommandRun {
+        PaletteCommandRun(
+            commandID: "review",
+            title: "Review ENG-123",
+            command: "~/bin/review-linear ENG-123",
+            startedAt: startedAt,
+            status: status,
+            outputTail: outputTail
+        )
+    }
+
+    let running = run(.running)
+    #expect(running.headline == "Running Review ENG-123…")
+    #expect(running.isRunning)
+    #expect(!running.isFailure)
+
+    let succeeded = run(.succeeded)
+    #expect(succeeded.headline == "Review ENG-123 finished")
+    #expect(!succeeded.isFailure)
+
+    let failed = run(.failed(exitCode: 1), outputTail: "review-linear: agent-run not found\n")
+    #expect(failed.headline == "Review ENG-123 failed (exit 1)")
+    #expect(failed.isFailure)
+    #expect(failed.failureDetail == "review-linear: agent-run not found")
+
+    let couldNotStart = run(.couldNotStart, outputTail: "Unable to start custom command")
+    #expect(couldNotStart.headline == "Review ENG-123 could not start")
+    #expect(couldNotStart.isFailure)
+
+    let launched = run(.launchedSession(id: "ENG-123"))
+    #expect(launched.headline == "Review ENG-123 → session ENG-123")
+    #expect(!launched.isFailure)
+    // No output at all is not a failure detail; the banner shows the headline only.
+    #expect(run(.failed(exitCode: 2)).failureDetail == nil)
+}

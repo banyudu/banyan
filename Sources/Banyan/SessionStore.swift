@@ -243,6 +243,12 @@ final class SessionStore: ObservableObject {
     @Published private(set) var sessionLaunchConfigurationDiagnostic: String?
     @Published private(set) var paletteCommands: [PaletteCommand] = []
     @Published private(set) var paletteConfigurationDiagnostic: String?
+    /// The most recent palette command this app ran, so the sidebar can show
+    /// that it happened, how it ended, and where its output went. Palette
+    /// commands are how sessions get opened for worktrees/verification
+    /// (`workit`, `review-linear`), and a failed launch used to be
+    /// indistinguishable from a command that did nothing at all.
+    @Published private(set) var paletteCommandRun: PaletteCommandRun?
     private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
     /// Parents whose child rows are manually collapsed. Persisted in
     /// `UserDefaults`; the effective collapsed set also auto-collapses parents
@@ -1403,54 +1409,107 @@ final class SessionStore: ObservableObject {
 
     /// Run a user-configured palette command. `target` is the Linear/GitHub
     /// ID detected in the palette query (or the selected session's issue).
+    ///
+    /// The run is recorded in `paletteCommandRun` either way. It deliberately no
+    /// longer writes to `linearIssueListLoadState`: that state belongs to the
+    /// Linear issue list, and it is only rendered inside the Linear sidebar, so
+    /// a palette-command failure routed through it was invisible — and wiped by
+    /// the list's own refresh the moment the user went looking for it.
     func runPaletteCommand(_ paletteCommand: PaletteCommand, target: String?, query: String? = nil) {
         let expandedCommand = paletteCommand.expandedCommand(target: target, query: query)
         let expandedTitle = paletteCommand.expandedTitle(target: target, query: query)
         guard !expandedCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let parentSessionID = paletteParentSessionID(for: paletteCommand.parent)
+        let cwd = selectedSession?.cwd ?? homeDirectory
+        let startedAt = Date()
         switch paletteCommand.run {
         case .session:
-            let cwd = selectedSession?.cwd ?? homeDirectory
-            _ = spawn(
+            let session = spawn(
                 title: expandedTitle,
                 cwd: cwd,
                 command: expandedCommand,
                 parentSessionID: parentSessionID
             )
+            paletteCommandRun = PaletteCommandRun(
+                commandID: paletteCommand.id,
+                title: expandedTitle,
+                command: expandedCommand,
+                startedAt: startedAt,
+                status: .launchedSession(id: session.id),
+                finishedAt: startedAt
+            )
         case .background:
-            linearIssueListLoadState = .loading
-            let cwd = selectedSession?.cwd ?? homeDirectory
+            let logURL = PaletteCommandRunLog.fileURL(
+                host: host,
+                commandID: paletteCommand.id,
+                startedAt: startedAt
+            )
+            let run = PaletteCommandRun(
+                commandID: paletteCommand.id,
+                title: expandedTitle,
+                command: expandedCommand,
+                startedAt: startedAt,
+                status: .running,
+                logURL: logURL
+            )
+            paletteCommandRun = run
+            let runID = run.id
             let environment = self.environment
             let homeDirectory = self.homeDirectory
             Task.detached(priority: .userInitiated) { [environment, homeDirectory] in
-                let errorMessage = Self.runPaletteBackgroundCommand(
+                let outcome = Self.runPaletteBackgroundCommand(
                     shellCommand: expandedCommand,
                     cwd: cwd,
                     homeDirectory: homeDirectory,
                     environment: environment,
-                    parentSessionID: parentSessionID
+                    parentSessionID: parentSessionID,
+                    logURL: logURL
                 )
                 await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    if let errorMessage {
-                        self.linearIssueListLoadState = .failed("\(expandedTitle): \(errorMessage)")
-                    } else {
-                        self.sidebarMode = .sessions
-                        self.linearIssueListLoadState = .loaded
-                        self.runHistoryImport()
-                    }
+                    self?.finishPaletteCommandRun(runID: runID, outcome: outcome)
                 }
             }
         }
     }
 
-    nonisolated private static func runPaletteBackgroundCommand(
+    /// Records a finished background run. A run that has already been replaced
+    /// (the user launched another command meanwhile) is dropped rather than
+    /// overwriting the newer run's banner.
+    private func finishPaletteCommandRun(runID: UUID, outcome: PaletteCommandOutcome) {
+        guard var run = paletteCommandRun, run.id == runID else { return }
+        run.finishedAt = Date()
+        switch outcome {
+        case .finished(let exitCode, let output):
+            run.status = exitCode == 0 ? .succeeded : .failed(exitCode: exitCode)
+            run.outputTail = output.text
+            run.isOutputTruncated = output.isTruncated
+        case .couldNotStart(let message):
+            run.status = .couldNotStart
+            run.outputTail = message
+            run.isOutputTruncated = false
+        }
+        paletteCommandRun = run
+        if run.status == .succeeded {
+            runHistoryImport()
+        }
+    }
+
+    /// Clears the palette-command banner. The run's log file stays on disk.
+    func dismissPaletteCommandRun() {
+        paletteCommandRun = nil
+    }
+
+    /// Runs one `run: background` palette command. Internal rather than private
+    /// so tests can drive the real spawn (output capture, exit status, log file)
+    /// without a full `SessionStore`.
+    nonisolated static func runPaletteBackgroundCommand(
         shellCommand: String,
         cwd: String,
         homeDirectory: String,
         environment: [String: String],
-        parentSessionID: String?
-    ) -> String? {
+        parentSessionID: String?,
+        logURL: URL
+    ) -> PaletteCommandOutcome {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-l", "-c", shellCommand]
@@ -1475,26 +1534,47 @@ final class SessionStore: ObservableObject {
             removeKeys: spawnEdits.removeKeys,
             overrides: spawnEdits.overrides
         )
+        // A GUI app has no usable stdin. Inheriting it can park a command on a
+        // read that never returns, and a closed descriptor makes `Process.run()`
+        // throw before the command ever starts. Palette commands are configured
+        // with their arguments; they do not read prompts from a terminal.
+        process.standardInput = FileHandle.nullDevice
 
-        let stderr = Pipe()
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = stderr
-        defer { stderr.closeBothEnds() }
+        // Both streams go to one file. A pipe would need a concurrent drain to
+        // keep a chatty command from filling the buffer and deadlocking, and the
+        // file is what the user can read after the banner is gone.
+        let logHandle: FileHandle
+        do {
+            try FileManager.default.createDirectory(
+                at: logURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            guard let handle = try? FileHandle(forWritingTo: logURL) else {
+                return .couldNotStart("Unable to open the command log at \(logURL.path)")
+            }
+            logHandle = handle
+        } catch {
+            return .couldNotStart(
+                "Unable to open the command log at \(logURL.path): \(error.localizedDescription)"
+            )
+        }
+        process.standardOutput = logHandle
+        process.standardError = logHandle
 
         do {
             try process.run()
         } catch {
-            return "Unable to start custom command"
+            try? logHandle.close()
+            return .couldNotStart("Unable to start custom command: \(error.localizedDescription)")
         }
 
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let data = stderr.fileHandleForReading.readDataToEndOfFile()
-            let message = String(decoding: data, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return message.isEmpty ? "custom command failed (exit \(process.terminationStatus))" : message
-        }
-        return nil
+        try? logHandle.close()
+        return .finished(
+            exitCode: process.terminationStatus,
+            output: PaletteCommandRunLog.tail(of: logURL)
+        )
     }
 
     func startControlServer() {
