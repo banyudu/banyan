@@ -56,3 +56,38 @@ import Testing
             == "workit TASK-123 --agent codex"
     )
 }
+
+/// Only settled successes clear themselves. A failure is the case the banner was
+/// added for, so it waits to be acknowledged.
+@Test func onlySettledSuccessesAutoDismiss() {
+    func run(_ status: PaletteCommandRun.Status) -> PaletteCommandRun {
+        PaletteCommandRun(
+            commandID: "c",
+            title: "t",
+            command: "echo hi",
+            startedAt: Date(),
+            status: status
+        )
+    }
+
+    #expect(run(.succeeded).autoDismisses)
+    #expect(run(.launchedSession(id: "s1")).autoDismisses)
+    #expect(!run(.running).autoDismisses)
+    #expect(!run(.failed(exitCode: 1)).autoDismisses)
+    #expect(!run(.couldNotStart).autoDismisses)
+}
+
+@Test func autoDismissNeverAppliesToAFailure() {
+    // The two properties must not disagree: anything that reports itself as a
+    // failure has to stay on screen.
+    for status: PaletteCommandRun.Status in [.running, .succeeded, .failed(exitCode: 2), .couldNotStart, .launchedSession(id: "s")] {
+        let candidate = PaletteCommandRun(
+            commandID: "c",
+            title: "t",
+            command: "echo hi",
+            startedAt: Date(),
+            status: status
+        )
+        #expect(!(candidate.isFailure && candidate.autoDismisses))
+    }
+}

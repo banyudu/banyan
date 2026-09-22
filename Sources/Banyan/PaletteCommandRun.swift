@@ -84,6 +84,25 @@ struct PaletteCommandRun: Identifiable, Equatable {
         !outputTail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// How long a self-clearing banner stays on screen: long enough to read a
+    /// headline, short enough that it is gone before it becomes furniture.
+    static let autoDismissDelay: TimeInterval = 6
+
+    /// Whether this run's banner clears itself instead of waiting to be
+    /// dismissed.
+    ///
+    /// Only settled successes do. A failure is the case this banner exists for
+    /// — it used to be silent — so it stays until the user acknowledges it, and
+    /// a run still in flight has not said anything worth clearing yet. A
+    /// success has already told the user everything it has to say, and the
+    /// session it opened or the log it wrote is the durable record.
+    var autoDismisses: Bool {
+        switch status {
+        case .succeeded, .launchedSession: return true
+        case .running, .failed, .couldNotStart: return false
+        }
+    }
+
     /// The one-line status the banner leads with.
     var headline: String {
         switch status {

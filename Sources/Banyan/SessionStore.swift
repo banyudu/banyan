@@ -1474,7 +1474,8 @@ final class SessionStore: ObservableObject {
         _ paletteCommand: PaletteCommand,
         target: String?,
         query: String? = nil,
-        cwd overrideCWD: String? = nil
+        cwd overrideCWD: String? = nil,
+        select: Bool = true
     ) {
         // The palette's agent picker only reaches a command that opts in with
         // `{{agent}}` / `{{agentFlag}}`; nil (Auto) expands both away.
@@ -1493,7 +1494,8 @@ final class SessionStore: ObservableObject {
                 title: expandedTitle,
                 cwd: cwd,
                 command: expandedCommand,
-                parentSessionID: parentSessionID
+                parentSessionID: parentSessionID,
+                select: select
             )
             paletteCommandRun = PaletteCommandRun(
                 commandID: paletteCommand.id,
@@ -1586,7 +1588,13 @@ final class SessionStore: ObservableObject {
         runPaletteCommand(
             Self.paletteCommand(for: suggestion),
             target: suggestion.target,
-            cwd: suggestion.cwd
+            cwd: suggestion.cwd,
+            // A suggestion is answered in passing, not as a deliberate context
+            // switch, so approving one must not yank the user out of whatever
+            // they were reading. This is the same rule an inbound `/spawn`
+            // follows: take focus only when there is nothing to take it from,
+            // which keeps the detail pane from sitting empty.
+            select: selectedSessionID == nil
         )
     }
 
