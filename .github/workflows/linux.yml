@@ -22,11 +22,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes tmux
 
       - name: Run portable tests
-        # SubprocessRunner's descriptor-regression tests sample the entire test
-        # process, so concurrent test functions make their before/after counts
-        # nondeterministic. Keep the leak budget strict; run this portable suite
-        # serially so it measures only the process work it owns.
-        run: swift test --no-parallel
+        run: swift test
 
       - name: Build Linux TUI
         run: swift build --product BanyanTUI
