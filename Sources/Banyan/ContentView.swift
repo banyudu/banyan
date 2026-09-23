@@ -2150,10 +2150,18 @@ private struct PaletteCommandRunBanner: View {
 /// `banyanctl suggest`. The command is shown verbatim rather than summarised,
 /// because approving runs it — the user should be able to read what they are
 /// agreeing to before they agree to it.
+///
+/// While the banner is on screen the pending decision can also be answered from
+/// the keyboard (`SuggestionShortcuts`): the banner owns the monitor, so the
+/// chords are live exactly as long as there is something to answer.
 private struct SuggestionBanner: View {
     let suggestion: InboundSuggestion
     let onApprove: () -> Void
     let onDismiss: () -> Void
+
+    /// Installed on appear and torn down on disappear, matching the lifetime of
+    /// the pending suggestion this banner is showing.
+    @State private var shortcutMonitor: SuggestionShortcutMonitor?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2173,7 +2181,7 @@ private struct SuggestionBanner: View {
                 }
                 .buttonStyle(.banyanPlain)
                 .accessibilityIdentifier(AccessibilityID.sidebarSuggestionDismiss)
-                .help("Dismiss")
+                .help("Dismiss this suggestion (\(SuggestionShortcuts.dismissDisplay))")
             }
 
             if let detail = suggestion.detail {
@@ -2192,8 +2200,10 @@ private struct SuggestionBanner: View {
                 .textSelection(.enabled)
 
             HStack(spacing: 6) {
-                Button("Run", action: onApprove)
+                Button("Run \(SuggestionShortcuts.approveDisplay)", action: onApprove)
                     .accessibilityIdentifier(AccessibilityID.sidebarSuggestionApprove)
+                    .accessibilityLabel("Run")
+                    .help("Run this suggestion (\(SuggestionShortcuts.approveDisplay))")
                 if let target = suggestion.target {
                     Text(target)
                         .font(.system(size: 10, design: .monospaced))
@@ -2211,6 +2221,92 @@ private struct SuggestionBanner: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier(AccessibilityID.sidebarSuggestion)
+        .onAppear {
+            let monitor = SuggestionShortcutMonitor()
+            shortcutMonitor = monitor
+            monitor.start()
+        }
+        .onDisappear {
+            shortcutMonitor?.stop()
+            shortcutMonitor = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .suggestionApprove)) { _ in
+            onApprove()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .suggestionDismiss)) { _ in
+            onDismiss()
+        }
+    }
+}
+
+/// The two ways to answer a pending suggestion from the keyboard, defined once
+/// so the monitor that swallows the chord and the tooltip that advertises it
+/// cannot drift apart.
+enum SuggestionShortcuts {
+    static let approveDisplay = "⌘⇧↩"
+    static let dismissDisplay = "⌘⇧⌫"
+
+    enum Match {
+        case approve
+        case dismiss
+    }
+
+    /// `⌘⇧↩` or `⌘⇧⌫` with no other modifiers, and not an auto-repeat. Return
+    /// and keypad Enter are treated alike, as are the two Delete keys.
+    static func match(_ event: NSEvent) -> Match? {
+        matches(keyCode: event.keyCode, modifiers: event.modifierFlags, isRepeat: event.isARepeat)
+    }
+
+    static func matches(
+        keyCode: UInt16,
+        modifiers: NSEvent.ModifierFlags,
+        isRepeat: Bool
+    ) -> Match? {
+        guard !isRepeat else { return nil }
+        let relevant = modifiers.intersection([.command, .shift, .control, .option])
+        guard relevant == [.command, .shift] else { return nil }
+        switch keyCode {
+        case 36, 76: return .approve
+        case 51, 117: return .dismiss
+        default: return nil
+        }
+    }
+}
+
+extension Notification.Name {
+    /// Posted when the suggestion banner's shortcut monitor swallows `⌘⇧↩`.
+    static let suggestionApprove = Notification.Name("banyan.suggestion.approve")
+    /// Posted when the suggestion banner's shortcut monitor swallows `⌘⇧⌫`.
+    static let suggestionDismiss = Notification.Name("banyan.suggestion.dismiss")
+}
+
+/// Swallows `⌘⇧↩` / `⌘⇧⌫` while a suggestion banner is on screen so the pending
+/// decision can be answered without reaching for the mouse.
+///
+/// A focused terminal consumes keystrokes before SwiftUI's key equivalents run,
+/// so this has to be an event monitor rather than a `.keyboardShortcut` on the
+/// buttons. It is installed only for as long as the banner is visible, so the
+/// chords are never hijacked when there is nothing to answer.
+final class SuggestionShortcutMonitor {
+    private var monitor: Any?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard let match = SuggestionShortcuts.match(event) else { return event }
+            NotificationCenter.default.post(
+                name: match == .approve ? .suggestionApprove : .suggestionDismiss,
+                object: nil
+            )
+            return nil
+        }
+    }
+
+    func stop() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
     }
 }
 
