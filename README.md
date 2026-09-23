@@ -341,6 +341,41 @@ dist/bin/banyanctl perf fix --since 7d --agent codex --cwd "$PWD"
 
 `perf fix` does not silently rewrite the running app. It creates a Banyan-native coding-agent session with the local telemetry report as evidence, so fixes still go through normal code review and test flow.
 
+## Session Retention
+
+Closed sessions used to stay in `state.sqlite` forever, and that history is not
+free: the restore path resolves repository context once per *distinct* working
+directory, on the main thread, before the first window appears. A database
+carrying years of dead worktrees therefore makes a cold start scale with
+directories nobody will reopen rather than with the sessions you actually have.
+
+Preferences → Sessions sets how long a closed session is kept. The default is 30
+days; pick **Never** to keep everything. Banyan applies the window once at
+launch, before it builds any session from the database, and never from the save
+path the supervisor runs on every tick.
+
+A row is removed only when all of these hold, so a prune can never cut a live
+session or orphan one:
+
+- its status is `closed`
+- it has not been updated inside the retention window
+- it is not the selected session
+- it is not an ancestor of a session that stays
+
+"Clean Up Now" in the same section applies the window immediately and reports
+what it removed. From a script:
+
+```sh
+dist/bin/banyanctl prune --dry-run               # how many rows would go
+dist/bin/banyanctl prune                         # apply the configured window
+dist/bin/banyanctl prune --older-than 90         # apply 90 days just this once
+```
+
+`prune` drives the running app rather than the database file, because the app
+rewrites the whole `sessions` table on its next supervisor tick — rows deleted
+behind its back would simply come back. `--older-than` does not change the
+stored setting.
+
 ## Package
 
 ```sh
@@ -393,10 +428,11 @@ swift run banyanctl close --id TASK-123
 swift run banyanctl respawn --id TASK-123
 swift run banyanctl remove --id TASK-123
 swift run banyanctl list
+swift run banyanctl prune --dry-run
 swift run banyanctl suggest --title "TASK-123 is stale" --target TASK-123 --command "workit TASK-123"
 ```
 
-`session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. A spawn issued from inside a Banyan session nests under it by default: `banyanctl` takes `--parent` from `$BANYAN_PARENT_SESSION_ID` / `$BANYAN_SESSION_ID` (every tmux session Banyan creates carries `BANYAN_SESSION_ID`), or from the enclosing `banyan-<id>` tmux session otherwise — so `workit ENG-123` run from a session pane lands as its child with no extra flags. Pass `--parent ID` for a different parent, or `--no-parent` for a top-level session. `suspend` parks a session: Banyan drops it from the supervisor tick, branch/context refresh, and terminal rendering, while its tmux session and any agent inside keep running untouched — so the app's idle cost tracks the sessions you are actually watching rather than every session you have open. `resume` puts it back, keeping the status it had when it was parked. Neither one signals or terminates the agent. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session.
+`session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. A spawn issued from inside a Banyan session nests under it by default: `banyanctl` takes `--parent` from `$BANYAN_PARENT_SESSION_ID` / `$BANYAN_SESSION_ID` (every tmux session Banyan creates carries `BANYAN_SESSION_ID`), or from the enclosing `banyan-<id>` tmux session otherwise — so `workit ENG-123` run from a session pane lands as its child with no extra flags. Pass `--parent ID` for a different parent, or `--no-parent` for a top-level session. `suspend` parks a session: Banyan drops it from the supervisor tick, branch/context refresh, and terminal rendering, while its tmux session and any agent inside keep running untouched — so the app's idle cost tracks the sessions you are actually watching rather than every session you have open. `resume` puts it back, keeping the status it had when it was parked. Neither one signals or terminates the agent. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session. `prune` drops closed sessions that aged out of the retention window — see [Session Retention](#session-retention).
 
 ### Suggesting Work Instead Of Starting It
 

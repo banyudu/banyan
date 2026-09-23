@@ -251,3 +251,34 @@ import Testing
         )
     }
 }
+
+@Test func pruneRouteIsAPostAndNeedsNoSessionID() {
+    #expect(ControlRoute.resolve(method: "POST", path: "/prune") == .prune)
+    #expect(ControlRoute.resolve(method: "GET", path: "/prune") == nil)
+    #expect(ControlRoute.prune.requiresID == false)
+    #expect(throws: Never.self) {
+        try ControlRoute.prune.validate(ControlPayload())
+    }
+}
+
+@Test func prunePayloadDecodesItsWindowAndDryRunFromEitherSpelling() throws {
+    // banyanctl posts a flat string dictionary; a bridge written against the
+    // documented JSON shape sends real numbers and booleans.
+    for body in [
+        #"{"apiVersion":"v1","days":"7","dryRun":"true"}"#,
+        #"{"apiVersion":"v1","days":7,"dryRun":true}"#
+    ] {
+        let raw = "POST /prune HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
+        let request = try #require(HTTPControlRequest(data: Data(raw.utf8)))
+        let payload = try request.decode(ControlPayload.self)
+
+        #expect(payload.days?.value == 7)
+        #expect(payload.dryRun?.value == true)
+    }
+
+    // Absent means "use the app's configured window", not zero.
+    let empty = try #require(HTTPControlRequest(data: Data("POST /prune HTTP/1.1\r\nContent-Length: 0\r\n\r\n".utf8)))
+    let payload = try empty.decode(ControlPayload.self)
+    #expect(payload.days == nil)
+    #expect(payload.dryRun == nil)
+}

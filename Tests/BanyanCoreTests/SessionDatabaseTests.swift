@@ -151,3 +151,105 @@ private func legacySessionsTable(at url: URL) throws {
         }
     }
 }
+
+@Test func sessionDatabasePrunesOnlyClosedRowsPastTheRetentionWindow() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    database.save([
+        retentionSnapshot(id: "ancient", status: .closed, updatedAt: now, ageDays: 400, in: directory),
+        retentionSnapshot(id: "recent", status: .closed, updatedAt: now, ageDays: 3, in: directory),
+        retentionSnapshot(id: "live", status: .executing, updatedAt: now, ageDays: 400, in: directory),
+        retentionSnapshot(id: "held-parent", status: .closed, updatedAt: now, ageDays: 400, in: directory),
+        retentionSnapshot(
+            id: "held-child",
+            status: .needInput,
+            updatedAt: now,
+            ageDays: 400,
+            parentSessionID: "held-parent",
+            in: directory
+        )
+    ])
+
+    #expect(database.pruneExpiredSessions(retentionDays: 30, now: now) == 1)
+    #expect(database.load().map(\.id) == ["recent", "live", "held-parent", "held-child"])
+
+    // Idempotent: a second sweep over the same window has nothing left to do.
+    #expect(database.pruneExpiredSessions(retentionDays: 30, now: now) == 0)
+}
+
+@Test func sessionDatabasePruneSparesTheStoredSelectedSession() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    database.save([
+        retentionSnapshot(id: "selected", status: .closed, updatedAt: now, ageDays: 400, in: directory),
+        retentionSnapshot(id: "other", status: .closed, updatedAt: now, ageDays: 400, in: directory)
+    ])
+    // The prune also runs with no app attached, so the guard reads the selection
+    // out of `workspace_state` rather than out of a live store.
+    database.saveState(["selectedSessionID": "selected"])
+
+    #expect(database.pruneExpiredSessions(retentionDays: 30, now: now) == 1)
+    #expect(database.load().map(\.id) == ["selected"])
+}
+
+@Test func sessionDatabaseRetentionOffAndSaveItselfNeverPrune() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let ancient = [
+        retentionSnapshot(id: "ancient", status: .closed, updatedAt: now, ageDays: 4000, in: directory)
+    ]
+    database.save(ancient)
+
+    #expect(database.pruneExpiredSessions(retentionDays: 0, now: now) == 0)
+    #expect(database.load().map(\.id) == ["ancient"])
+
+    // The supervisor calls `save` on every tick; retention must never ride along
+    // with it, or the normal persistence path becomes a full-table sweep.
+    database.save(ancient)
+    #expect(database.load().map(\.id) == ["ancient"])
+}
+
+private func retentionSnapshot(
+    id: String,
+    status: SessionStatus,
+    updatedAt now: Date,
+    ageDays: Double,
+    parentSessionID: String? = nil,
+    in directory: URL
+) -> SessionSnapshot {
+    let updatedAt = now.addingTimeInterval(-ageDays * 24 * 60 * 60)
+    return SessionSnapshot(
+        id: id,
+        tmuxSessionName: "banyan-\(id)",
+        title: id,
+        reportedTitle: nil,
+        cwd: directory.path,
+        command: "codex",
+        status: status,
+        tone: .blue,
+        parentSessionID: parentSessionID,
+        createdAt: updatedAt,
+        updatedAt: updatedAt
+    )
+}

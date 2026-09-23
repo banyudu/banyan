@@ -218,6 +218,16 @@ final class SessionStore: ObservableObject {
             saveWorkspace()
         }
     }
+    /// How long a closed session stays in `state.sqlite`, in days. `0` keeps
+    /// everything. Applied at launch before snapshots are built, and on demand
+    /// from Preferences or `banyanctl prune` — never from the save path, which
+    /// runs on every supervisor tick.
+    @Published var sessionRetentionDays = SessionRetentionPolicy.defaultRetentionDays {
+        didSet {
+            guard sessionRetentionDays != oldValue else { return }
+            saveWorkspace()
+        }
+    }
     @Published private var pendingCloseSessionID: String?
     /// Per-project last-used "new session" kind, keyed by project group ID. Drives
     /// the project header's split "+" button so it reopens whatever was launched
@@ -466,7 +476,8 @@ final class SessionStore: ObservableObject {
                 terminalTheme: defaultTheme,
                 terminalFontFamily: defaultFontFamily,
                 terminalFontSize: defaultFontSize,
-                enableCodexAppServerMode: false
+                enableCodexAppServerMode: false,
+                sessionRetentionDays: SessionRetentionPolicy.defaultRetentionDays
             )
         )
         selectedSessionID = workspace.selectedSessionID
@@ -475,6 +486,7 @@ final class SessionStore: ObservableObject {
         terminalFontFamily = workspace.terminalFontFamily
         terminalFontSize = workspace.terminalFontSize
         enableCodexAppServerMode = workspace.enableCodexAppServerMode
+        sessionRetentionDays = SessionRetentionPolicy.normalizedRetentionDays(workspace.sessionRetentionDays)
         terminalRenderer = TerminalRendererPreference.resolvedDefault
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
             projectLaunchByGroup = stored
@@ -820,6 +832,10 @@ final class SessionStore: ObservableObject {
     func loadPersistedSessionsIfNeeded() {
         guard !didLoadPersistedSessions else { return }
         didLoadPersistedSessions = true
+        // Before `load()`, not after: every aged-out row dropped here is a row
+        // whose `cwd` the loop below would otherwise resolve git context for,
+        // and that resolution is what a cold start spends its time on.
+        persistence.pruneExpiredSessions(retentionDays: sessionRetentionDays)
         let snapshots = persistence.load()
         let liveTmuxSessionNames = Set(tmuxBackend.listBanyanSessions())
         var loadedTmuxSessionNames = Set<String>()
@@ -902,6 +918,53 @@ final class SessionStore: ObservableObject {
         refreshSelectedContextInfo(force: true)
         saveSessions()
         retryDegradedDisplayContexts()
+    }
+
+    /// The closed sessions a retention window would drop right now.
+    ///
+    /// Imported history rows can never be candidates — they are rebuilt from the
+    /// agent's own transcripts rather than from `state.sqlite`, exactly as
+    /// `saveSessions` treats them — but they still take part as parents, so a
+    /// persisted row one of them hangs off stays.
+    func expiredSessionIDs(retentionDays: Int) -> [String] {
+        let importedHistoryIDs = Set(sessions.filter(\.isImportedHistory).map(\.id))
+        return SessionRetentionPolicy.expiredSessionIDs(
+            rows: sessions.map {
+                SessionRetentionPolicy.Row(
+                    id: $0.id,
+                    parentSessionID: $0.parentSessionID,
+                    status: $0.status,
+                    updatedAt: $0.updatedAt
+                )
+            },
+            cutoff: SessionRetentionPolicy.cutoff(retentionDays: retentionDays),
+            selectedSessionID: selectedSessionID
+        )
+        .filter { !importedHistoryIDs.contains($0) }
+    }
+
+    var expiredSessionCount: Int {
+        expiredSessionIDs(retentionDays: sessionRetentionDays).count
+    }
+
+    /// Drops aged-out closed sessions from the sidebar, which `saveSessions`
+    /// then writes through to `state.sqlite`. Returns how many went.
+    ///
+    /// Nothing is signalled or killed. A closed session's tmux backing is
+    /// already reaped at every launch — `staleTmuxSessionNames` only spares the
+    /// names of rows that came back non-closed — so there is nothing left here
+    /// for a prune to tear down, and a row that somehow still has one is better
+    /// left alone than killed behind the user's back.
+    @discardableResult
+    func pruneExpiredSessions(retentionDays: Int) -> Int {
+        let expired = Set(expiredSessionIDs(retentionDays: retentionDays))
+        guard !expired.isEmpty else { return 0 }
+        sessions.removeAll { expired.contains($0.id) }
+        saveSessions()
+        // Same follow-up `remove` does: a pruned row may have been shadowing an
+        // agent transcript that now belongs back in the History list.
+        refreshImportedHistory()
+        return expired.count
     }
 
     /// Re-resolves repository context for sessions whose git lookups failed to
@@ -3938,7 +4001,8 @@ final class SessionStore: ObservableObject {
             terminalTheme: terminalTheme,
             terminalFontFamily: terminalFontFamily,
             terminalFontSize: terminalFontSize,
-            enableCodexAppServerMode: enableCodexAppServerMode
+            enableCodexAppServerMode: enableCodexAppServerMode,
+            sessionRetentionDays: sessionRetentionDays
         )
     }
 

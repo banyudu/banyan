@@ -8,6 +8,8 @@ struct WorkspaceSnapshot {
     let terminalFontFamily: String
     let terminalFontSize: Double
     let enableCodexAppServerMode: Bool
+    /// How long a closed session stays in `state.sqlite`. `0` keeps everything.
+    let sessionRetentionDays: Int
 }
 
 struct LinearIssueListCacheSnapshot: Codable {
@@ -33,6 +35,11 @@ struct GitHubReferenceCacheSnapshot: Codable {
 /// macOS-specific facade for the shared session database. It owns only the
 /// serialization policy for workspace preferences and Linear cache data.
 protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
+    /// Deletes closed sessions older than the retention window, returning how
+    /// many went. Separate from `save` on purpose — see
+    /// `SessionDatabase.pruneExpiredSessions`.
+    @discardableResult
+    func pruneExpiredSessions(retentionDays: Int) -> Int
     func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot
     func saveWorkspace(_ workspace: WorkspaceSnapshot)
     func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot?
@@ -62,6 +69,11 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
         sessionDatabase.save(snapshots)
     }
 
+    @discardableResult
+    func pruneExpiredSessions(retentionDays: Int) -> Int {
+        sessionDatabase.pruneExpiredSessions(retentionDays: retentionDays)
+    }
+
     func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot {
         let state = sessionDatabase.loadState()
         return WorkspaceSnapshot(
@@ -70,7 +82,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             terminalTheme: TerminalTheme.fromPersistedRawValue(state["terminalTheme"]) ?? defaults.terminalTheme,
             terminalFontFamily: state["terminalFontFamily"] ?? defaults.terminalFontFamily,
             terminalFontSize: state["terminalFontSize"].flatMap(Double.init) ?? defaults.terminalFontSize,
-            enableCodexAppServerMode: state["enableCodexAppServerMode"].flatMap(Bool.init) ?? defaults.enableCodexAppServerMode
+            enableCodexAppServerMode: state["enableCodexAppServerMode"].flatMap(Bool.init) ?? defaults.enableCodexAppServerMode,
+            sessionRetentionDays: state["sessionRetentionDays"].flatMap(Int.init) ?? defaults.sessionRetentionDays
         )
     }
 
@@ -81,7 +94,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             "terminalTheme": workspace.terminalTheme.rawValue,
             "terminalFontFamily": workspace.terminalFontFamily,
             "terminalFontSize": String(workspace.terminalFontSize),
-            "enableCodexAppServerMode": String(workspace.enableCodexAppServerMode)
+            "enableCodexAppServerMode": String(workspace.enableCodexAppServerMode),
+            "sessionRetentionDays": String(workspace.sessionRetentionDays)
         ]
         sessionDatabase.saveState(values)
     }

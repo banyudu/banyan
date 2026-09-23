@@ -67,6 +67,8 @@ struct BanyanCtl {
                 try get("/events", query: parseEventsOptions(Array(arguments.dropFirst())), timeout: 35)
             case "suggest":
                 try post("/suggest", payload: parseSuggestPayload(Array(arguments.dropFirst())))
+            case "prune":
+                try post("/prune", payload: parsePrunePayload(Array(arguments.dropFirst())))
             case "list":
                 try get("/list")
             case "window-state":
@@ -266,6 +268,34 @@ struct BanyanCtl {
         let name = String(decoding: output.standardOutput, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return BanyanSessionEnvironment.sessionID(fromTmuxSessionName: name)
+    }
+
+    /// `prune` drives the running app rather than the database file: the app
+    /// rewrites the whole `sessions` table on its next supervisor tick, so rows
+    /// deleted behind its back would simply come back.
+    private func parsePrunePayload(_ args: [String]) throws -> [String: String] {
+        var payload: [String: String] = [:]
+        var index = 0
+        while index < args.count {
+            let token = args[index]
+            switch token {
+            case "--dry-run":
+                payload["dryRun"] = "true"
+                index += 1
+            case "--older-than":
+                guard index + 1 < args.count else {
+                    throw CLIError.message("missing value for \(token)")
+                }
+                guard let days = SessionRetentionPolicy.retentionDays(fromDurationArgument: args[index + 1]) else {
+                    throw CLIError.message("\(token) must be a non-negative number of days, like 30 or 30d")
+                }
+                payload["days"] = String(days)
+                index += 2
+            default:
+                throw CLIError.message("unknown prune option '\(token)'")
+            }
+        }
+        return payload
     }
 
     private func parsePerfReportOptions(_ args: [String]) throws -> (since: Date, json: Bool) {
@@ -715,6 +745,7 @@ struct BanyanCtl {
           banyanctl restart --id ID
           banyanctl remove --id ID
           banyanctl screenshot --output PATH
+          banyanctl prune  [--older-than DAYS] [--dry-run]
           banyanctl perf report [--since 7d] [--json]
           banyanctl perf prompt [--since 7d]
           banyanctl perf fix [--since 7d] [--agent codex|claude] [--cwd PATH]
@@ -725,6 +756,13 @@ struct BanyanCtl {
         its tmux session and any agent inside keep running. resume is lossless and
         keeps the status the session had when it was parked. Neither one signals or
         terminates the agent. `banyanctl session suspend|resume --id ID` are aliases.
+
+        `prune` drops closed sessions that aged out of the retention window set
+        in Preferences (default 30 days), which Banyan also applies at launch.
+        --older-than overrides the window for this run without changing the
+        setting, and --dry-run reports how many rows would go without touching
+        any. A session is only ever removed when it is closed, older than the
+        window, not selected, and not the parent of a session that stays.
 
         Suggesting work instead of starting it:
           banyanctl suggest --title TEXT --command CMD [--detail TEXT] [--target ID] [--key KEY] [--cwd PATH] [--run session|background] [--ttl SECONDS]
