@@ -153,12 +153,7 @@ struct ContentView: View {
                     items: commandPaletteItems,
                     onDismiss: dismissCommandPalette,
                     onOpenLinearIssue: { issueID in
-                        if let url = URL(string: LinearIssueReference.issueURL(
-                            for: issueID,
-                            environment: store.host.environment
-                        )) {
-                            NSWorkspace.shared.open(url)
-                        }
+                        openLinearIssue(issueID)
                     },
                     onStartLinearIssue: store.startLinearIssueSession,
                     onOpenPullRequest: { url in NSWorkspace.shared.open(url) },
@@ -178,6 +173,18 @@ struct ContentView: View {
     private func dismissCommandPalette() {
         showingCommandPalette = false
         store.focusSelectedTerminal()
+    }
+
+    /// Opens a Linear issue in the browser, resolving the URL from the host
+    /// environment so a configured base URL or org is honored. Shared by the
+    /// command palette and the sidebar suggestion banner so an issue id means
+    /// the same destination wherever it is clicked.
+    private func openLinearIssue(_ issueID: String) {
+        guard let url = URL(string: LinearIssueReference.issueURL(
+            for: issueID,
+            environment: store.host.environment
+        )) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private var commandPaletteItems: [CommandPaletteItem] {
@@ -381,7 +388,8 @@ struct ContentView: View {
                 SuggestionBanner(
                     suggestion: suggestion,
                     onApprove: { store.approvePendingSuggestion() },
-                    onDismiss: { store.dismissPendingSuggestion() }
+                    onDismiss: { store.dismissPendingSuggestion() },
+                    onOpenIssue: { issueID in openLinearIssue(issueID) }
                 )
             }
 
@@ -2158,10 +2166,15 @@ private struct SuggestionBanner: View {
     let suggestion: InboundSuggestion
     let onApprove: () -> Void
     let onDismiss: () -> Void
+    /// Opens a Linear issue id in the browser. The banner renders the ids it is
+    /// given (`suggestion.title`, `suggestion.target`) as links into this.
+    let onOpenIssue: (String) -> Void
 
     /// Installed on appear and torn down on disappear, matching the lifetime of
     /// the pending suggestion this banner is showing.
     @State private var shortcutMonitor: SuggestionShortcutMonitor?
+    @State private var isTitleLinkHovered = false
+    @State private var isTargetLinkHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2170,9 +2183,7 @@ private struct SuggestionBanner: View {
                     .foregroundStyle(.yellow)
                     .frame(width: 16, height: 16)
 
-                Text(suggestion.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(2)
+                titleLabel
 
                 Spacer(minLength: 4)
 
@@ -2205,11 +2216,19 @@ private struct SuggestionBanner: View {
                     .accessibilityLabel("Run")
                     .help("Run this suggestion (\(SuggestionShortcuts.approveDisplay))")
                 if let target = suggestion.target {
-                    Text(target)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    Button { onOpenIssue(target) } label: {
+                        Text(target)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .underline(isTargetLinkHovered)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .buttonStyle(.plain)
+                    .banyanButtonHoverEffect(.labelOnly) { isTargetLinkHovered = $0 }
+                    .accessibilityIdentifier(AccessibilityID.sidebarSuggestionTarget)
+                    .accessibilityLabel("Open \(target) in Linear")
+                    .help("Open \(target) in Linear")
                 }
                 Spacer(minLength: 0)
             }
@@ -2236,6 +2255,46 @@ private struct SuggestionBanner: View {
         .onReceive(NotificationCenter.default.publisher(for: .suggestionDismiss)) { _ in
             onDismiss()
         }
+    }
+
+    /// The title, with a leading issue id (`ENG-12355: …`) rendered as a link
+    /// into Linear. Titles that do not lead with an id stay plain text.
+    @ViewBuilder
+    private var titleLabel: some View {
+        if let split = leadingIssueID {
+            HStack(spacing: 0) {
+                Button { onOpenIssue(split.id) } label: {
+                    Text(split.id)
+                        .font(.system(size: 12, weight: .medium))
+                        .underline(isTitleLinkHovered)
+                }
+                .buttonStyle(.plain)
+                .banyanButtonHoverEffect(.labelOnly) { isTitleLinkHovered = $0 }
+                .accessibilityLabel("Open \(split.id) in Linear")
+                .help("Open \(split.id) in Linear")
+
+                Text(split.remainder)
+                    .font(.system(size: 12, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .lineLimit(2)
+        } else {
+            Text(suggestion.title)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(2)
+        }
+    }
+
+    /// Splits a title like `ENG-12355: Design proposal` into the leading issue
+    /// id and the text that follows it, so only the id becomes a link. Returns
+    /// nil when the title has no id, or the id is not at the start.
+    private var leadingIssueID: (id: String, remainder: String)? {
+        guard let id = LinearIssueReference.issueID(in: suggestion.title),
+              let range = suggestion.title.range(of: id),
+              range.lowerBound == suggestion.title.startIndex else {
+            return nil
+        }
+        return (id, String(suggestion.title[range.upperBound...]))
     }
 }
 

@@ -42,6 +42,7 @@ enum AccessibilityID {
     static let sidebarSuggestion = "banyan.sidebar.suggestion"
     static let sidebarSuggestionApprove = "banyan.sidebar.suggestion.approve"
     static let sidebarSuggestionDismiss = "banyan.sidebar.suggestion.dismiss"
+    static let sidebarSuggestionTarget = "banyan.sidebar.suggestion.target"
     static let sidebarRevealCommandLogs = "banyan.sidebar.reveal-command-logs"
     static let sidebarModePicker = "banyan.sidebar.mode"
     static let linearIssueList = "banyan.sidebar.linear-list"
