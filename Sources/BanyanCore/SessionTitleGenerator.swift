@@ -244,12 +244,15 @@ public enum SessionTitleGenerator {
     private static func normalizePromptForTitle(_ prompt: String) -> String {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return prompt }
-        if isSingleURLPrompt(trimmed) || isSingleImagePrompt(trimmed) {
+        if isSingleURLPrompt(trimmed) {
             return prompt
         }
+        if isSingleImagePrompt(trimmed) {
+            return "<image>"
+        }
         var result = prompt
-        result = replacingURLs(in: result, with: "<url>")
         result = replacingImagePlaceholders(in: result, with: "<image>")
+        result = replacingURLs(in: result, with: "<url>")
         return result
     }
 
@@ -263,6 +266,11 @@ public enum SessionTitleGenerator {
 
     private static func isSingleImagePrompt(_ prompt: String) -> Bool {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tagPattern = "^<image(?=[ \\t>])[^>\\r\\n]*>$"
+        if let regex = try? NSRegularExpression(pattern: tagPattern, options: .caseInsensitive),
+           regex.firstMatch(in: trimmed, options: [], range: NSRange(trimmed.startIndex..., in: trimmed)) != nil {
+            return true
+        }
         let imagePattern = "^\\[Image[^\\]]*\\]$"
         if let regex = try? NSRegularExpression(pattern: imagePattern, options: .caseInsensitive),
            regex.firstMatch(in: trimmed, options: [], range: NSRange(trimmed.startIndex..., in: trimmed)) != nil {
@@ -315,6 +323,15 @@ public enum SessionTitleGenerator {
 
     private static func replacingImagePlaceholders(in text: String, with placeholder: String) -> String {
         var result = text
+        let tagPattern = "<image(?=[ \\t>])[^>\\r\\n]*>"
+        if let regex = try? NSRegularExpression(pattern: tagPattern, options: .caseInsensitive) {
+            let ns = result as NSString
+            let matches = regex.matches(in: result, options: [], range: NSRange(location: 0, length: ns.length))
+            for match in matches.reversed() {
+                guard let range = Range(match.range, in: result) else { continue }
+                result.replaceSubrange(range, with: placeholder)
+            }
+        }
         let bracketPattern = "\\[Image[^\\]]*\\]"
         if let regex = try? NSRegularExpression(pattern: bracketPattern, options: .caseInsensitive) {
             let ns = result as NSString
