@@ -82,6 +82,8 @@ final class TerminalSwitcherContainer: NSView {
     private var windowLifecycleObservers: [NSObjectProtocol] = []
     private var projectGroupBySessionID: [String: String] = [:]
     private var deferredProjectSwitch: DeferredProjectSwitch?
+    private var inactiveDetachWorkItems: [String: (token: UUID, workItem: DispatchWorkItem)] = [:]
+    var inactiveClientDetachDelay: TimeInterval = 30
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -89,6 +91,9 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     deinit {
+        for pending in inactiveDetachWorkItems.values {
+            pending.workItem.cancel()
+        }
         for observer in windowLifecycleObservers {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -233,6 +238,7 @@ final class TerminalSwitcherContainer: NSView {
 
         // Remove containers for sessions that no longer exist
         for (id, container) in containers where !liveIDs.contains(id) {
+            cancelInactiveDetach(for: id)
             container.removeFromSuperviewWithoutNeedingDisplay()
             containers.removeValue(forKey: id)
             initializedSessions.remove(id)
@@ -342,7 +348,7 @@ final class TerminalSwitcherContainer: NSView {
         }
 
         if let newID = selectedSessionID, let newContainer = containers[newID] {
-            if newContainer.superview !== self {
+            if newContainer.superview !== self || newContainer.isHidden {
                 if selectionChanged, let startedAt = clickAt ?? selectionChangedAt ?? switchRequestedAt {
                     newContainer.measureNextSwitchPaint(
                         startedAt: startedAt,
@@ -455,11 +461,15 @@ final class TerminalSwitcherContainer: NSView {
             sourceContainer.autoresizingMask = deferred.sourceAutoresizingMask
             resizeContainerToBounds(sourceContainer)
         }
+        if let targetContainer = containers[deferred.targetID], targetContainer.isHidden {
+            scheduleInactiveDetach(for: deferred.targetID, container: targetContainer)
+        }
     }
 
     private func hideFrozenSource(for deferred: DeferredProjectSwitch) {
         guard let sourceContainer = containers[deferred.sourceID] else { return }
         sourceContainer.isHidden = true
+        scheduleInactiveDetach(for: deferred.sourceID, container: sourceContainer)
         sourceContainer.autoresizingMask = deferred.sourceAutoresizingMask
         // Restoring the mask alone only re-enables *future* autoresizing: every
         // resize that happened while the source was frozen — the contextual issue
@@ -501,6 +511,9 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     private func attachHidden(_ container: TerminalContainerView) {
+        cancelInactiveDetach(for: container.session.id)
+        container.terminalView.displayUpdatesEnabled = true
+        container.session.resumeInactiveTerminalClientIfNeeded()
         if container.superview !== self {
             container.translatesAutoresizingMaskIntoConstraints = true
             container.autoresizingMask = [.width, .height]
@@ -518,6 +531,31 @@ final class TerminalSwitcherContainer: NSView {
     private func hideActiveContainer() {
         guard let activeSessionID, let activeContainer = containers[activeSessionID] else { return }
         activeContainer.isHidden = true
+        scheduleInactiveDetach(for: activeSessionID, container: activeContainer)
+    }
+
+    private func cancelInactiveDetach(for sessionID: String) {
+        inactiveDetachWorkItems.removeValue(forKey: sessionID)?.workItem.cancel()
+    }
+
+    private func scheduleInactiveDetach(for sessionID: String, container: TerminalContainerView) {
+        cancelInactiveDetach(for: sessionID)
+        container.terminalView.displayUpdatesEnabled = false
+        // One delayed action per transition avoids client churn during rapid
+        // switches while ending sustained output parsing on hidden panes.
+        let token = UUID()
+        let workItem = DispatchWorkItem { [weak self, weak container] in
+            guard let self, let container,
+                  self.inactiveDetachWorkItems[sessionID]?.token == token,
+                  self.containers[sessionID] === container,
+                  self.activeSessionID != sessionID,
+                  self.deferredProjectSwitch?.targetID != sessionID,
+                  container.isHidden else { return }
+            self.inactiveDetachWorkItems.removeValue(forKey: sessionID)
+            container.session.detachInactiveTerminalClient()
+        }
+        inactiveDetachWorkItems[sessionID] = (token, workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + inactiveClientDetachDelay, execute: workItem)
     }
 
     private func installWindowLifecycleObservers() {
@@ -551,6 +589,9 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     private func attach(_ container: TerminalContainerView) {
+        cancelInactiveDetach(for: container.session.id)
+        container.terminalView.displayUpdatesEnabled = true
+        container.session.resumeInactiveTerminalClientIfNeeded()
         if container.superview !== self {
             container.translatesAutoresizingMaskIntoConstraints = true
             container.autoresizingMask = [.width, .height]

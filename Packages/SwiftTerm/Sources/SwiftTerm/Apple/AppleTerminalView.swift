@@ -1715,6 +1715,9 @@ extension TerminalView {
     func updateDisplay (notifyAccessibility: Bool)
     {
         defer { pendingDisplay = false }
+#if os(macOS)
+        guard displayUpdatesEnabled else { return }
+#endif
         updateCursorPosition()
         guard let (reportedStart, reportedEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
@@ -1863,6 +1866,9 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
+#if os(macOS)
+        guard displayUpdatesEnabled else { return }
+#endif
         // throttle
         if !pendingDisplay {
             let fps60 = 16670000

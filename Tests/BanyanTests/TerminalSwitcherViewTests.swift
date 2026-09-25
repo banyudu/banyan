@@ -36,6 +36,50 @@ import Testing
 }
 
 @MainActor
+@Test func terminalSwitcherDetachesHiddenClientAfterGrace() async {
+    let first = makeSwitcherSession(id: "first")
+    let second = makeSwitcherSession(id: "second")
+    let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    switcher.inactiveClientDetachDelay = 0.03
+    let focusRequestID = UUID()
+
+    update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
+    first.terminalView.startProcess(executable: "/bin/cat", environment: [])
+    first.isProcessStarted = true
+    #expect(first.terminalView.process.running)
+
+    update(switcher, sessions: [first, second], selectedID: second.id, focusRequestID: focusRequestID)
+    #expect(!first.terminalView.displayUpdatesEnabled)
+    try? await Task.sleep(for: .milliseconds(100))
+
+    #expect(!first.terminalView.process.running)
+    #expect(first.isInactiveTerminalClientDetached)
+    #expect(first.isProcessStarted)
+}
+
+@MainActor
+@Test func terminalSwitcherCancelsDetachWhenReturningDuringGrace() async {
+    let first = makeSwitcherSession(id: "first")
+    let second = makeSwitcherSession(id: "second")
+    let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    switcher.inactiveClientDetachDelay = 0.03
+    let focusRequestID = UUID()
+
+    update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
+    first.terminalView.startProcess(executable: "/bin/cat", environment: [])
+    defer { first.terminalView.terminate() }
+    first.isProcessStarted = true
+
+    update(switcher, sessions: [first, second], selectedID: second.id, focusRequestID: focusRequestID)
+    update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
+    try? await Task.sleep(for: .milliseconds(100))
+
+    #expect(first.terminalView.process.running)
+    #expect(!first.isInactiveTerminalClientDetached)
+    #expect(first.terminalView.displayUpdatesEnabled)
+}
+
+@MainActor
 @Test func terminalSwitcherForwardsHistorySelectionWithoutWaitingForTerminalPaint() async {
     let live = makeSwitcherSession(id: "live")
     let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 800, height: 600))

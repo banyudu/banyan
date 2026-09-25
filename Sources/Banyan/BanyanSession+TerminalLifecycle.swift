@@ -220,6 +220,7 @@ extension BanyanSession {
 
     func reattachTerminalClient(resetBlankRecoveryAttempt: Bool = true) {
         guard !isImportedHistory else { return }
+        isInactiveTerminalClientDetached = false
         let startedAt = DispatchTime.now()
         terminalRefreshTask?.cancel()
         if terminalView.process.running {
@@ -393,6 +394,7 @@ extension BanyanSession {
 
     private func stopTerminalClient() {
         terminalRefreshTask?.cancel()
+        isInactiveTerminalClientDetached = false
         isDetachingTerminalClient = false
         loadedTerminalView?.terminate()
         isProcessStarted = false
@@ -401,6 +403,7 @@ extension BanyanSession {
 
     func detachTerminalClient() {
         guard status != .closed else { return }
+        isInactiveTerminalClientDetached = false
         if let terminalView = loadedTerminalView, terminalView.process.running {
             isDetachingTerminalClient = true
             terminalView.terminate()
@@ -408,6 +411,40 @@ extension BanyanSession {
         isProcessStarted = false
         isRestored = false
         touch()
+    }
+
+    /// Drop only the display client of a hidden session. Its tmux pane remains
+    /// live and supervised, so agent status can still update in the sidebar.
+    func detachInactiveTerminalClient() {
+        guard !isImportedHistory, !isSuspended, status != .closed,
+              let terminalView = loadedTerminalView, terminalView.process.running else { return }
+        terminalRefreshTask?.cancel()
+        isInactiveTerminalClientDetached = true
+        isDetachingTerminalClient = true
+        terminalView.terminate()
+        telemetry.recordDuration("terminal.inactive_detach", durationMS: 1, sessionID: id)
+    }
+
+    /// The backing tmux pane was never stopped, so reconnect directly without
+    /// the synchronous ensure/probe path used for missing sessions.
+    func resumeInactiveTerminalClientIfNeeded() {
+        guard isInactiveTerminalClientDetached, !isSuspended, status != .closed else { return }
+        let startedAt = DispatchTime.now()
+        isInactiveTerminalClientDetached = false
+        isDetachingTerminalClient = false
+        terminalView.resetForNewProcess()
+        terminalView.beginInitialScreenSynchronization(restarting: true)
+        terminalView.startProcess(
+            executable: "/usr/bin/env",
+            args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path] + tmuxBackend.attachArguments(for: tmuxSessionName),
+            environment: terminalEnvironment(),
+            currentDirectory: cwd
+        )
+        telemetry.recordDuration(
+            "terminal.inactive_reattach",
+            durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+            sessionID: id
+        )
     }
 
     /// Parks the session: Banyan stops observing and rendering it, while its tmux

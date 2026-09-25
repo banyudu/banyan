@@ -169,6 +169,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     var externalTitleSignature: String?
     var externalTitleTask: Task<Void, Never>?
     var isDetachingTerminalClient = false
+    var isInactiveTerminalClientDetached = false
     var attemptedBlankTerminalRecovery = false
     var titleURLWasAutoDetected = false
     var terminalRefreshTask: Task<Void, Never>?
@@ -296,12 +297,15 @@ final class BanyanSession: ObservableObject, Identifiable {
         }
         delegate.onTerminate = { [weak self] exitCode in
             guard let self else { return }
-            self.isProcessStarted = false
             if self.isDetachingTerminalClient {
                 self.isDetachingTerminalClient = false
+                if !self.isInactiveTerminalClientDetached {
+                    self.isProcessStarted = false
+                }
                 self.touch()
                 return
             }
+            self.isProcessStarted = false
             if self.status != .closed, let onProcessExit = self.onProcessExit {
                 onProcessExit(exitCode)
                 return
