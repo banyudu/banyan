@@ -26,6 +26,14 @@ private final class StreamingHarness {
             backing: .buffered,
             defer: false
         )
+        // The window must be ordered in for the display cycle to run, but it must
+        // never be seen: AppKit keeps every ordered NSWindow alive in `NSApp.windows`
+        // for the rest of the process, so an opaque test window stays on screen —
+        // behind the frontmost app — long after the test that made it finished.
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.isExcludedFromWindowsMenu = true
+        window.collectionBehavior = [.transient, .ignoresCycle]
         window.contentView?.addSubview(view)
         window.orderFront(nil)
     }
