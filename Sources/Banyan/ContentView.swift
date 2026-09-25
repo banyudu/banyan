@@ -2439,6 +2439,22 @@ private struct SessionRow: View {
         selection.selectedSessionID == session.id
     }
 
+    /// Provider whose brand the row shows: the launch profile's when it
+    /// declares an icon identity (Luna, DeepSeek-in-Codex), the detected
+    /// runtime's otherwise. Drives both the icon below and the jump-key tint.
+    private var brandingProvider: CodingAgentProvider? {
+        NewSessionLaunch.brandingProvider(
+            for: launchProfile,
+            detectedProvider: session.displayAgentProvider
+        )
+    }
+
+    /// Whether that brand came from the launch profile rather than the
+    /// detected runtime, which decides whether the profile's own icon is drawn.
+    private var isBrandedByLaunchProfile: Bool {
+        launchProfile?.hasIconIdentity == true && session.displayAgentProvider != nil
+    }
+
     /// When the handoff affordance is showing, it already occupies the row's
     /// trailing edge. The hover close button is suppressed there so it can't shift
     /// the handoff button or be clicked by accident in its place.
@@ -2470,14 +2486,14 @@ private struct SessionRow: View {
                 }
             }
 
-            JumpKeyBadge(label: jumpKeyLabel, provider: session.displayAgentProvider)
+            JumpKeyBadge(label: jumpKeyLabel, provider: brandingProvider)
 
             // A plain-shell profile (the built-in `zsh`) matches every session
             // whose command is empty, including one that later became an agent
             // session. Only let a profile brand the row when it declares an
             // icon identity; otherwise the detected provider wins, so an agent
             // started by hand inside a shell is still recognized.
-            if let launchProfile, launchProfile.hasIconIdentity, session.displayAgentProvider != nil {
+            if isBrandedByLaunchProfile, let launchProfile {
                 NewSessionLaunchIcon(launch: launchProfile, size: 18)
                     .accessibilityLabel(launchProfile.label)
             } else if let provider = session.displayAgentProvider {
@@ -3434,14 +3450,7 @@ private struct JumpKeyBadge: View {
     let provider: CodingAgentProvider?
 
     private var tint: Color {
-        switch provider {
-        case .claude:
-            return .orange
-        case .codex:
-            return .cyan
-        case .none, .deepseek, .gemini, .hunyuan, .minimax, .muse, .opencode, .qwen, .xiaomiMiMo, .zai:
-            return .secondary
-        }
+        provider?.brandTint ?? .secondary
     }
 
     var body: some View {

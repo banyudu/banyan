@@ -87,6 +87,28 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
         return SessionLaunchPolicy.siblingRuntimeCommand(for: provider)
     }
 
+    /// Provider whose brand a sidebar row shows for a session, given the
+    /// profile that launched it and the runtime the supervisor detected.
+    ///
+    /// A profile that declares an icon identity owns the row: the detected
+    /// runtime only sees the executable (`codex`), which cannot tell a DeepSeek
+    /// launch from a plain one, so a DeepSeek-under-Codex profile keeps its
+    /// DeepSeek identity instead of falling back to Codex. A provider-less
+    /// profile — the built-in `zsh`, or a wrapper with only an icon — must not
+    /// shadow the runtime, otherwise an agent started by hand inside a shell
+    /// would lose its icon. Nothing is branded without a live agent.
+    ///
+    /// Callers pair this with the row icon so the two cannot disagree; see
+    /// `SessionRow.brandingProvider`.
+    static func brandingProvider(
+        for profile: NewSessionLaunch?,
+        detectedProvider: CodingAgentProvider?
+    ) -> CodingAgentProvider? {
+        guard let detectedProvider else { return nil }
+        guard let profile, profile.hasIconIdentity else { return detectedProvider }
+        return profile.provider ?? detectedProvider
+    }
+
     /// A leaf `Image` for a native menu item, which renders only plain images.
     var menuIconImage: Image {
         if let customIconImage {
