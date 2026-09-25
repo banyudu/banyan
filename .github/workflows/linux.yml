@@ -9,14 +9,37 @@ jobs:
   build-and-test:
     runs-on: ubuntu-22.04
 
+    env:
+      SWIFT_VERSION: 6.3.3
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
-        with:
-          swift-version: "6.3.3"
+      # Swift ships signed Linux toolchains, so the toolchain is installed
+      # straight from swift.org rather than through swift-actions/setup-swift:
+      # its v2 line cannot install anything newer than 6.2, and v3.0.0-beta.1
+      # never imports these keys, so it fails verification of the toolchain it
+      # downloads (swift-actions/setup-swift#798).
+      - name: Import Swift signing keys
+        run: curl -fsSL --compressed https://swift.org/keys/all-keys.asc | gpg --batch --import
+
+      - name: Install Swift toolchain
+        run: |
+          set -euo pipefail
+          suffix=""
+          if [ "$(uname -m)" != "x86_64" ]; then
+            suffix="-$(uname -m)"
+          fi
+          archive="swift-${SWIFT_VERSION}-RELEASE-ubuntu22.04${suffix}.tar.gz"
+          url="https://download.swift.org/swift-${SWIFT_VERSION}-release/ubuntu2204/swift-${SWIFT_VERSION}-RELEASE/${archive}"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" "$url"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive.sig" "$url.sig"
+          gpg --batch --verify "$RUNNER_TEMP/$archive.sig" "$RUNNER_TEMP/$archive"
+          mkdir -p "$HOME/swift"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$HOME/swift" --strip-components 1
+          "$HOME/swift/usr/bin/swift" --version
+          echo "$HOME/swift/usr/bin" >> "$GITHUB_PATH"
 
       - name: Install TUI runtime dependency
         run: sudo apt-get update && sudo apt-get install --yes tmux
