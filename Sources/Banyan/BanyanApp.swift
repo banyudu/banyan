@@ -10,6 +10,21 @@ struct BanyanApp: App {
         homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
         currentDirectory: FileManager.default.currentDirectoryPath
     )
+    /// Host-owned native Codex transport. It starts on the first native client
+    /// operation and is stopped before Banyan exits; terminal sessions keep
+    /// their existing launch path until the native session UI is integrated.
+    static let codexAppServer: CodexAppServerClient = {
+        let environment = Self.host.environment
+        return CodexAppServerClient(
+            environmentProvider: {
+                AppProcessEnvironment.make(
+                    base: environment,
+                    shellEnvironment: AppProcessEnvironment.shellEnvironment(environment: environment)
+                )
+            },
+            clientVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        )
+    }()
     private static let tmuxBackend = TmuxBackend(
         environment: Self.host.environment,
         workingDirectory: Self.host.homeDirectory.path
@@ -294,6 +309,14 @@ struct BanyanApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task {
+            await BanyanApp.codexAppServer.stop()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
