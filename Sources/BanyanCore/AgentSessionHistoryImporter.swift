@@ -4,17 +4,20 @@ public enum AgentSessionHistoryImporter {
     public static func load(
         homeDirectory: URL,
         maxPerProvider: Int = 10,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        cache: AgentSessionHistoryImportCache? = nil
     ) -> [ImportedAgentSession] {
         let codex = loadCodexHistory(
             homeDirectory: homeDirectory,
             maxSessions: maxPerProvider,
-            fileManager: fileManager
+            fileManager: fileManager,
+            cache: cache
         )
         let claude = loadClaudeHistory(
             homeDirectory: homeDirectory,
             maxSessions: maxPerProvider,
-            fileManager: fileManager
+            fileManager: fileManager,
+            cache: cache
         )
         let opencode = OpenCodeHistory.load(
             homeDirectory: homeDirectory,
@@ -246,7 +249,8 @@ public enum AgentSessionHistoryImporter {
     private static func loadCodexHistory(
         homeDirectory: URL,
         maxSessions: Int,
-        fileManager: FileManager
+        fileManager: FileManager,
+        cache: AgentSessionHistoryImportCache?
     ) -> [ImportedAgentSession] {
         let codexDirectory = homeDirectory.appendingPathComponent(".codex")
         let indexURL = codexDirectory.appendingPathComponent("session_index.jsonl")
@@ -266,14 +270,25 @@ public enum AgentSessionHistoryImporter {
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(maxSessions)
         let recentFileRows = sessionFiles
-            .map { CodexSessionCandidate(id: $0.id, transcriptURL: $0.url, threadName: nil, updatedAt: $0.modifiedAt) }
+            .map {
+                CodexSessionCandidate(
+                    id: $0.id,
+                    transcriptURL: $0.url,
+                    threadName: nil,
+                    updatedAt: $0.modifiedAt,
+                    modifiedAt: $0.modifiedAt,
+                    fileSize: $0.fileSize
+                )
+            }
         let indexedRows = indexRows.compactMap { row -> CodexSessionCandidate? in
             guard let file = sessionFilesByID[row.id] else { return nil }
             return CodexSessionCandidate(
                 id: row.id,
                 transcriptURL: file.url,
                 threadName: row.threadName,
-                updatedAt: row.updatedAt
+                updatedAt: row.updatedAt,
+                modifiedAt: file.modifiedAt,
+                fileSize: file.fileSize
             )
         }
         let candidates = Dictionary((indexedRows + recentFileRows).map { ($0.id, $0) }) { indexed, _ in indexed }
@@ -281,8 +296,13 @@ public enum AgentSessionHistoryImporter {
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(maxSessions)
 
-        return candidates.compactMap { candidate in
-            let metadata = parseCodexMetadata(from: candidate.transcriptURL)
+        let result = candidates.compactMap { candidate -> ImportedAgentSession? in
+            let metadata = cache?.codexMetadata(
+                for: candidate.transcriptURL,
+                modifiedAt: candidate.modifiedAt,
+                fileSize: candidate.fileSize
+            ) { parseCodexMetadata(from: candidate.transcriptURL) }
+                ?? parseCodexMetadata(from: candidate.transcriptURL)
             let cwd = metadata.cwd ?? homeDirectory.path
             // Codex names its own threads a few seconds after the first prompt.
             // That name beats anything derived from the prompt text, so prefer
@@ -305,23 +325,26 @@ public enum AgentSessionHistoryImporter {
                 updatedAt: candidate.updatedAt
             )
         }
+        cache?.retainCodex(Set(candidates.map(\.transcriptURL)))
+        return result
     }
 
     private static func loadClaudeHistory(
         homeDirectory: URL,
         maxSessions: Int,
-        fileManager: FileManager
+        fileManager: FileManager,
+        cache: AgentSessionHistoryImportCache?
     ) -> [ImportedAgentSession] {
         let projectsDirectory = homeDirectory.appendingPathComponent(".claude/projects")
         guard let enumerator = fileManager.enumerator(
             at: projectsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey],
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         ) else {
             return []
         }
 
-        var candidates: [(url: URL, modifiedAt: Date)] = []
+        var candidates: [(url: URL, modifiedAt: Date, fileSize: Int?)] = []
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
             // Claude stores subagent workflow journals and transcripts beneath
             // the project directory too. They are implementation artifacts,
@@ -334,21 +357,39 @@ public enum AgentSessionHistoryImporter {
                   url.lastPathComponent != "journal.jsonl" else {
                 continue
             }
-            let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-                ?? Date.distantPast
-            candidates.append((url, modifiedAt))
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            candidates.append((
+                url,
+                values?.contentModificationDate ?? .distantPast,
+                values?.contentModificationDate == nil ? nil : values?.fileSize
+            ))
         }
 
-        return candidates
+        let recent = candidates
             .sorted { $0.modifiedAt > $1.modifiedAt }
             .prefix(maxSessions)
-            .compactMap { candidate in
-                parseClaudeSession(
-                    from: candidate.url,
-                    fallbackUpdatedAt: candidate.modifiedAt,
-                    homeDirectory: homeDirectory
-                )
+        let result = recent.compactMap { candidate in
+            if let cache {
+                return cache.claudeSession(
+                    for: candidate.url,
+                    modifiedAt: candidate.modifiedAt,
+                    fileSize: candidate.fileSize
+                ) {
+                    parseClaudeSession(
+                        from: candidate.url,
+                        fallbackUpdatedAt: candidate.modifiedAt,
+                        homeDirectory: homeDirectory
+                    )
+                }
             }
+            return parseClaudeSession(
+                from: candidate.url,
+                fallbackUpdatedAt: candidate.modifiedAt,
+                homeDirectory: homeDirectory
+            )
+        }
+        cache?.retainClaude(Set(recent.map(\.url)))
+        return result
     }
 
     private static func parseCodexIndexLine(_ line: String) -> CodexIndexRow? {
@@ -371,7 +412,7 @@ public enum AgentSessionHistoryImporter {
     ) -> [CodexSessionFile] {
         guard let enumerator = fileManager.enumerator(
             at: directory,
-            includingPropertiesForKeys: [.contentModificationDateKey],
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         ) else {
             return []
@@ -383,14 +424,18 @@ public enum AgentSessionHistoryImporter {
             guard let id = stem.split(separator: "-").suffix(5).map(String.init).joined(separator: "-").nilIfEmpty else {
                 continue
             }
-            let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-                ?? Date.distantPast
-            result.append(CodexSessionFile(id: id, url: url, modifiedAt: modifiedAt))
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            result.append(CodexSessionFile(
+                id: id,
+                url: url,
+                modifiedAt: values?.contentModificationDate ?? .distantPast,
+                fileSize: values?.contentModificationDate == nil ? nil : values?.fileSize
+            ))
         }
         return Array(result.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(maxSessions))
     }
 
-    private static func parseCodexMetadata(from url: URL) -> (cwd: String?, createdAt: Date?, promptTitle: String?, segmentTitle: String?, segmentWasCleared: Bool) {
+    private static func parseCodexMetadata(from url: URL) -> CodexTranscriptMetadata {
         var cwd: String?
         var createdAt: Date?
         var titleTracker = PromptTitleTracker()
@@ -414,7 +459,13 @@ public enum AgentSessionHistoryImporter {
 
         }
 
-        return (cwd, createdAt, titleTracker.resolvedTitle, titleTracker.segmentTitle, titleTracker.segmentWasCleared)
+        return CodexTranscriptMetadata(
+            cwd: cwd,
+            createdAt: createdAt,
+            promptTitle: titleTracker.resolvedTitle,
+            segmentTitle: titleTracker.segmentTitle,
+            segmentWasCleared: titleTracker.segmentWasCleared
+        )
     }
 
     private static func parseClaudeSession(
@@ -715,17 +766,13 @@ public enum AgentSessionHistoryImporter {
         while data.count < maxBytes, newlineCount < maxLines {
             let chunk = handle.readData(ofLength: min(64 * 1024, maxBytes - data.count))
             if chunk.isEmpty { break }
-            newlineCount += chunk.reduce(0) { count, byte in
-                byte == 10 ? count + 1 : count
+            newlineCount += chunk.withUnsafeBytes { bytes in
+                bytes.reduce(0) { count, byte in count + (byte == 0x0A ? 1 : 0) }
             }
             data.append(chunk)
         }
 
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        return text
-            .split(whereSeparator: \.isNewline)
-            .prefix(maxLines)
-            .map(String.init)
+        return jsonLines(in: data, maxLines: maxLines, takeSuffix: false)
     }
 
     private static func readFirstLine(from url: URL, maxBytes: Int) -> String? {
@@ -761,12 +808,39 @@ public enum AgentSessionHistoryImporter {
             return []
         }
         let data = handle.readDataToEndOfFile()
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        var lines = text.split(whereSeparator: \.isNewline).map(String.init)
-        if offset > 0, !lines.isEmpty {
-            lines.removeFirst()
+        return jsonLines(in: data, maxLines: maxLines, takeSuffix: true, dropFirstLine: offset > 0)
+    }
+
+    /// JSONL records are separated by ASCII LF. Scan bytes before decoding:
+    /// splitting a multi-megabyte Swift String walks Unicode graphemes across
+    /// every record, even though only a few lines at either end are retained.
+    /// A suffix read can start inside a UTF-8 scalar, so discard its first
+    /// partial record before decoding any selected lines.
+    private static func jsonLines(
+        in data: Data,
+        maxLines: Int,
+        takeSuffix: Bool,
+        dropFirstLine: Bool = false
+    ) -> [String] {
+        guard maxLines > 0 else { return [] }
+        return data.withUnsafeBytes { bytes in
+            var ranges: [Range<Int>] = []
+            var lineStart = 0
+            for index in bytes.indices where bytes[index] == 0x0A {
+                if index > lineStart {
+                    ranges.append(lineStart..<index)
+                }
+                lineStart = index + 1
+            }
+            if lineStart < bytes.count {
+                ranges.append(lineStart..<bytes.count)
+            }
+            if dropFirstLine, !ranges.isEmpty {
+                ranges.removeFirst()
+            }
+            let selected = takeSuffix ? ranges.suffix(maxLines) : ranges.prefix(maxLines)
+            return selected.compactMap { String(bytes: bytes[$0], encoding: .utf8) }
         }
-        return Array(lines.suffix(maxLines))
     }
 
     private static func jsonObject(from line: String) -> [String: Any]? {
@@ -808,6 +882,7 @@ private struct CodexSessionFile {
     let id: String
     let url: URL
     let modifiedAt: Date
+    let fileSize: Int?
 }
 
 private struct CodexSessionCandidate {
@@ -815,6 +890,103 @@ private struct CodexSessionCandidate {
     let transcriptURL: URL
     let threadName: String?
     let updatedAt: Date
+    let modifiedAt: Date
+    let fileSize: Int?
+}
+
+private struct CodexTranscriptMetadata {
+    let cwd: String?
+    let createdAt: Date?
+    let promptTitle: String?
+    let segmentTitle: String?
+    let segmentWasCleared: Bool
+}
+
+/// Keeps parsed metadata for the bounded set of recent transcript files.
+/// Index-title changes can reuse these entries; an appended or replaced
+/// transcript changes its size or modification date and is parsed again.
+public final class AgentSessionHistoryImportCache: @unchecked Sendable {
+    private struct Signature: Equatable {
+        let modifiedAt: Date
+        let fileSize: Int
+    }
+
+    private struct Entry<Value> {
+        let signature: Signature
+        let value: Value
+    }
+
+    private let lock = NSLock()
+    private var codex: [URL: Entry<CodexTranscriptMetadata>] = [:]
+    private var claude: [URL: Entry<ImportedAgentSession>] = [:]
+    private var parseCount = 0
+
+    public init() {}
+
+    /// A diagnostic counter used by import tests to prove cache hits avoid I/O.
+    var parsedTranscriptCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return parseCount
+    }
+
+    fileprivate func codexMetadata(
+        for url: URL,
+        modifiedAt: Date,
+        fileSize: Int?,
+        parse: () -> CodexTranscriptMetadata
+    ) -> CodexTranscriptMetadata {
+        let signature = fileSize.map { Signature(modifiedAt: modifiedAt, fileSize: $0) }
+        lock.lock()
+        let cached = codex[url]
+        lock.unlock()
+        if let signature, cached?.signature == signature, let cached {
+            return cached.value
+        }
+        let parsed = parse()
+        lock.lock()
+        parseCount += 1
+        if let signature {
+            codex[url] = Entry(signature: signature, value: parsed)
+        }
+        lock.unlock()
+        return parsed
+    }
+
+    fileprivate func claudeSession(
+        for url: URL,
+        modifiedAt: Date,
+        fileSize: Int?,
+        parse: () -> ImportedAgentSession?
+    ) -> ImportedAgentSession? {
+        let signature = fileSize.map { Signature(modifiedAt: modifiedAt, fileSize: $0) }
+        lock.lock()
+        let cached = claude[url]
+        lock.unlock()
+        if let signature, cached?.signature == signature, let cached {
+            return cached.value
+        }
+        let parsed = parse()
+        lock.lock()
+        parseCount += 1
+        if let signature, let parsed {
+            claude[url] = Entry(signature: signature, value: parsed)
+        }
+        lock.unlock()
+        return parsed
+    }
+
+    fileprivate func retainCodex(_ urls: Set<URL>) {
+        lock.lock()
+        codex = codex.filter { urls.contains($0.key) }
+        lock.unlock()
+    }
+
+    fileprivate func retainClaude(_ urls: Set<URL>) {
+        lock.lock()
+        claude = claude.filter { urls.contains($0.key) }
+        lock.unlock()
+    }
 }
 
 private extension String {

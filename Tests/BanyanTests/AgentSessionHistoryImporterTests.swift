@@ -157,6 +157,38 @@ import Testing
     #expect(session.segmentWasCleared == false)
 }
 
+@Test func codexTranscriptImportHandlesSuffixStartingInsideUTF8Scalar() throws {
+    let home = try makeTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let id = "019efe8d-0514-72a2-ad62-daea0b976cab"
+    let directory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let transcript = directory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    let metadata = #"{"type":"session_meta","payload":{"cwd":"/tmp/example"}}"#
+    let firstPrompt = #"{"type":"event_msg","payload":{"type":"user_message","message":"Old title"}}"#
+    let clearPrompt = #"{"type":"event_msg","payload":{"type":"user_message","message":"/clear"}}"#
+    let latestPrompt = #"{"type":"event_msg","payload":{"type":"user_message","message":"Latest title"}}"#
+    var contents = Data("\(metadata)\n\(firstPrompt)\n".utf8)
+    let fillerStart = contents.count
+    contents.append(Data(String(repeating: "é", count: 2_100_000).utf8))
+    let ending = Data("\n\(clearPrompt)\n\(latestPrompt)\n".utf8)
+    // Make the 4 MB tail read start on the second byte of an é.
+    let initialOffset = contents.count + ending.count - 4_000_000
+    if (initialOffset - fillerStart) % 2 == 0 {
+        contents.append(0x78)
+    }
+    contents.append(ending)
+    let suffixOffset = contents.count - 4_000_000
+    #expect(suffixOffset > fillerStart)
+    #expect((suffixOffset - fillerStart) % 2 == 1)
+    try contents.write(to: transcript)
+
+    let imported = AgentSessionHistoryImporter.load(homeDirectory: home, maxPerProvider: 10)
+    let session = try #require(imported.first { $0.sourceID == id })
+    #expect(session.segmentPromptTitle == "Latest title")
+}
+
 @Test func importsClaudeProjectLogsFromFirstHumanPrompt() throws {
     let home = try makeTemporaryHome()
     defer { try? FileManager.default.removeItem(at: home) }

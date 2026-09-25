@@ -119,7 +119,7 @@ struct ContentView: View {
         }
         .onAppear {
             store.loadPersistedSessionsIfNeeded()
-            store.refreshImportedHistory(spawnDefaultIfEmpty: true)
+            store.spawnDefaultSessionIfEmpty()
             store.startControlServer()
             store.startSupervisor()
         }

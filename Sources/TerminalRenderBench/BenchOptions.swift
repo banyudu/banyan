@@ -16,6 +16,7 @@ struct BenchOptions {
     /// Mirrors Banyan's adaptive invalidation coalescing. On by default because
     /// the question is what Banyan would ship, not what SwiftTerm does bare.
     var coalesce = true
+    var highlightDetectedLinks = true
     var workload = WorkloadGenerator.Kind.stream
     /// Metal only: `perRowPersistent` caches per-row GPU buffers,
     /// `perFrameAggregated` rebuilds one buffer set per frame.
@@ -57,6 +58,7 @@ struct BenchOptions {
             case "--font-size": options.fontSize = Double(value(argument)) ?? options.fontSize
             case "--label": options.label = value(argument)
             case "--no-coalesce": options.coalesce = false
+            case "--no-highlight-links": options.highlightDetectedLinks = false
             case "--workload":
                 let raw = value(argument)
                 guard let kind = WorkloadGenerator.Kind(rawValue: raw) else {
@@ -95,6 +97,7 @@ struct BenchOptions {
       --width/--height PT   Terminal surface size in points (default 1280x800)
       --font-size PT        Terminal font size (default 13)
       --no-coalesce         Drop Banyan's adaptive invalidation coalescing
+      --no-highlight-links  Resolve implicit links only on Cmd-hover
       --workload stream|static  Scrolling agent output, or in-place alternate-screen repaints (default stream)
       --metal-buffering perRow|perFrame  Metal buffering mode (default perRow)
       --label TEXT          Free-form label echoed into the JSON

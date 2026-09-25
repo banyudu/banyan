@@ -97,6 +97,28 @@ private func detectedRanges(after text: String, in view: DetectingLocalProcessTe
 }
 
 @MainActor
+@Test func implicitLinkStillHighlightsOnCommandHoverWithoutAlwaysOnScanning() {
+    let view = makeTerminalView()
+    view.highlightDetectedLinks = false
+    view.linkHighlightMode = .hoverWithModifier
+    TerminalTheme.dark.apply(to: view)
+    view.feed(text: "see https://example.com/path now")
+
+    let match = view.terminal.linkMatch(
+        at: .buffer(Position(col: 8, row: 0)),
+        mode: .explicitAndImplicit
+    )
+    #expect(match?.text == "https://example.com/path")
+    #expect(renderedRuns(of: view).first { $0.text.contains("https://example.com/path") }?.underlined == false)
+
+    view.commandActive = true
+    view.linkHighlightRange = match?.rowRanges
+    let link = renderedRuns(of: view).first { $0.text == "https://example.com/path" }
+    #expect(link?.underlined == true)
+    #expect(link?.color == TerminalTheme.dark.linkColor)
+}
+
+@MainActor
 @Test func detectedReferenceRendersInLinkColor() {
     let view = makeTerminalView()
     TerminalTheme.dark.apply(to: view)

@@ -54,6 +54,7 @@ public extension SessionHistoryBackend {
 
 public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
     private let homeDirectory: URL
+    private let importCache = AgentSessionHistoryImportCache()
 
     public init(homeDirectory: URL) {
         self.homeDirectory = homeDirectory
@@ -62,7 +63,8 @@ public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
     public func load(maxPerProvider limit: Int) -> [ImportedAgentSession] {
         AgentSessionHistoryImporter.load(
             homeDirectory: homeDirectory,
-            maxPerProvider: limit
+            maxPerProvider: limit,
+            cache: importCache
         )
     }
 

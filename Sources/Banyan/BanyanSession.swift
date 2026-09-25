@@ -234,7 +234,8 @@ final class BanyanSession: ObservableObject, Identifiable {
             // and anything else was chosen deliberately by the caller.
             let wasAutoDetected = titleURLWasAutoDetected
                 ?? (normalizedTitleURL == detectedReference?.url)
-            if wasAutoDetected && !resolvedDisplayContext.gitLookupDegraded {
+            if wasAutoDetected && !resolvedDisplayContext.gitLookupDegraded
+                && !(isRestored && status == .closed) {
                 // Repository-derived bindings describe the current checkout, not a
                 // permanent choice. Reconcile persisted rows immediately so a branch
                 // switched while Banyan was stopped cannot revive a stale issue chip.
@@ -331,9 +332,11 @@ final class BanyanSession: ObservableObject, Identifiable {
         // its modifier-aware mode previews/opens them on Cmd-click. Keep plain
         // clicks available for normal terminal selection and input.
         view.linkHighlightMode = .hoverWithModifier
-        // Detected URLs stay colored and underlined without hovering; opening one
-        // still needs Cmd-click, so a stray click cannot launch a browser.
-        view.highlightDetectedLinks = true
+        // Keep implicit links available on Cmd-hover and Cmd-click, but do not
+        // scan every changed terminal row during painting just to color links.
+        // Full-screen agents rewrite most rows per frame, and the implicit-link
+        // ICU regex dominated live draw samples even with per-row caching.
+        view.highlightDetectedLinks = false
         pendingTheme.apply(to: view, fontFamily: pendingFontFamily, fontSize: pendingFontSize)
         appliedTheme = pendingTheme
         appliedFontFamily = pendingFontFamily

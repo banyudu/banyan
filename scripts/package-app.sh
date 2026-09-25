@@ -116,7 +116,20 @@ if [[ -z "$SIGNING_IDENTITY" ]]; then
   SIGNING_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
     | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)"
 fi
-if [[ -n "$SIGNING_IDENTITY" ]] && codesign --force --sign "$SIGNING_IDENTITY" "$APP_DIR" >/dev/null 2>&1; then
+signed_with_developer_id=0
+if [[ -n "$SIGNING_IDENTITY" ]]; then
+  # A keychain identity can be temporarily unavailable immediately after a
+  # build. Retry before falling back to ad-hoc: that fallback changes the
+  # designated requirement and can make macOS forget existing app permissions.
+  for attempt in 1 2 3; do
+    if codesign --force --sign "$SIGNING_IDENTITY" "$APP_DIR" >/dev/null 2>&1; then
+      signed_with_developer_id=1
+      break
+    fi
+    if [[ "$attempt" -lt 3 ]]; then sleep 1; fi
+  done
+fi
+if [[ "$signed_with_developer_id" == "1" ]]; then
   echo "Signed with: $SIGNING_IDENTITY"
 else
   # No certificate configured or available: still produce a working local build.

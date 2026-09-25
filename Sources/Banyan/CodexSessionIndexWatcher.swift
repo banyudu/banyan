@@ -75,9 +75,9 @@ final class CodexSessionIndexWatcher {
     }
 
     /// Codex writes the placeholder and the generated name as two separate
-    /// appends seconds apart. Coalescing bursts keeps one rename from costing
-    /// two history imports; the read that lands on the placeholder is a no-op
-    /// because an untitled thread reports no title at all.
+    /// appends seconds apart. Coalescing bursts avoids redundant title refreshes;
+    /// the read that lands on the placeholder is a no-op because an untitled
+    /// thread reports no generated title yet.
     private func scheduleNotification() {
         pendingNotification?.cancel()
         pendingNotification = Task { [weak self, debounce] in

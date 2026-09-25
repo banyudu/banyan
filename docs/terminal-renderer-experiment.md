@@ -56,10 +56,16 @@ window, and times every frame:
   included in that number, which is why process-level CPU counters are reported
   alongside it.
 
-The harness turns on the same link detection and highlighting Banyan uses, and
-mirrors Banyan's adaptive invalidation coalescing so the CoreGraphics arm
-measures what Banyan ships. Both arms replay byte-identical input from the same
-seed, so each one performs the same amount of terminal work.
+The original harness run turned on the always-on link highlighting Banyan used
+at the time, and mirrored Banyan's adaptive invalidation coalescing. Both arms
+replayed byte-identical input from the same seed, so each one performed the same
+amount of terminal work.
+
+These renderer results were measured with always-on implicit-link highlighting.
+After a later live sample found its regex dominated full-screen draws, Banyan
+switched to Cmd-hover link highlighting. The benchmark now accepts
+`--no-highlight-links` to compare that behavior; the renderer numbers below
+remain a record of the earlier configuration.
 
 Two workloads:
 
@@ -194,4 +200,3 @@ Verified by reading the code, not by running it:
 None of this was verified visually in the running app: capturing the screen is
 not available to a CLI process here, and the decision above does not depend on
 it. Anyone turning the picker on should re-check these by eye.
-

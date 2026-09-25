@@ -16,6 +16,24 @@ public struct SessionProjectContext: Equatable {
 }
 
 public enum SessionDisplayLabel {
+    /// Closed sessions are historical records. Their current checkout state is
+    /// irrelevant to restoration, and asking git for thousands of old worktrees
+    /// can block startup for tens of seconds. Use their saved directory as a
+    /// stable display fallback without launching subprocesses.
+    public static func historicalContext(cwd: String, homeDirectory: String) -> SessionProjectContext {
+        let path = standardizedPath(cwd)
+        let project = projectName(path, homeDirectory: homeDirectory)
+        return SessionProjectContext(
+            project: project,
+            branch: nil,
+            groupID: "path:\(path)",
+            groupTitle: project,
+            isGitWorktree: false,
+            isDefaultBranch: false,
+            gitLookupDegraded: false
+        )
+    }
+
     public static func context(
         cwd: String,
         homeDirectory: String,
