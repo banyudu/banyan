@@ -87,6 +87,38 @@ import Testing
     #expect(database.load().first?.status == .executing)
 }
 
+@Test func savingOneSessionPreservesOtherHistoryRowsAndOrdering() {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-delta-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+    func snapshot(_ id: String, title: String) -> SessionSnapshot {
+        SessionSnapshot(
+            id: id,
+            tmuxSessionName: nil,
+            title: title,
+            reportedTitle: nil,
+            cwd: "/Users/example/dev/my-project",
+            command: "codex",
+            status: .closed,
+            tone: .blue,
+            createdAt: createdAt,
+            updatedAt: createdAt
+        )
+    }
+    let old = snapshot("old", title: "Old history")
+    let live = snapshot("live", title: "First title")
+    database.save([old, live])
+
+    let renamed = snapshot("live", title: "Updated title")
+    database.saveSession(renamed, sortOrder: 1)
+    #expect(database.load() == [old, renamed])
+}
+
 @Test func sessionDatabaseDefaultsSuspensionOffForRowsWrittenBeforeTheColumnExisted() throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)

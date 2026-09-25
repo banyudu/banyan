@@ -303,6 +303,7 @@ final class SessionStore: ObservableObject {
     /// Last snapshot set written to disk; lets `saveSessions()` skip the frequent
     /// no-op saves (e.g. every supervisor tick) that re-serialized unchanged state.
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
+    private var lastSavedSnapshotIndexByID: [String: Int] = [:]
     private let detector: AgentStateDetector
     /// Internal rather than private so the pane-input routes in
     /// `SessionStore+AgentInput.swift` can hand it to their off-main work.
@@ -2779,9 +2780,7 @@ final class SessionStore: ObservableObject {
     func absorb(_ reading: SessionPaneReading, for id: String) {
         answerLedger.note(sessionID: id, observedFootprint: reading.prompt?.footprint)
         guard let observation = reading.observation else { return }
-        if applySupervisorResults([observation]) {
-            saveSessions()
-        }
+        applySupervisorResults([observation])
     }
 
     func decideAnswer(id: String, request: AgentAnswerRequest, reading: SessionPaneReading) -> AgentAnswerDecision {
@@ -3843,7 +3842,7 @@ final class SessionStore: ObservableObject {
         session.onDidChange = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                self.saveSessions()
+                self.saveChangedSession(session)
                 if self.selectedSessionID == session.id {
                     self.refreshSelectedContextInfo()
                 }
@@ -3973,11 +3972,32 @@ final class SessionStore: ObservableObject {
         // "Application Not Responding" freezes.
         guard snapshots != lastSavedSessionSnapshots else { return }
         lastSavedSessionSnapshots = snapshots
+        lastSavedSnapshotIndexByID = Dictionary(
+            uniqueKeysWithValues: snapshots.enumerated().map { ($0.element.id, $0.offset) }
+        )
         let persistence = persistence
         // Perform the actual open+migrate+DELETE+re-insert off the main thread so a
         // real change never blocks the UI; the serial queue preserves write order.
         sessionPersistenceQueue.async {
             persistence.save(snapshots)
+        }
+    }
+
+    private func saveChangedSession(_ session: BanyanSession) {
+        guard !session.isImportedHistory else { return }
+        guard let index = lastSavedSnapshotIndexByID[session.id],
+              lastSavedSessionSnapshots?.indices.contains(index) == true,
+              lastSavedSessionSnapshots?[index].id == session.id else {
+            // The first save and any structural change still need the full set.
+            saveSessions()
+            return
+        }
+        let snapshot = session.persistenceSnapshot
+        guard lastSavedSessionSnapshots?[index] != snapshot else { return }
+        lastSavedSessionSnapshots?[index] = snapshot
+        let persistence = persistence
+        sessionPersistenceQueue.async {
+            persistence.saveSession(snapshot, sortOrder: index)
         }
     }
 
@@ -4222,16 +4242,13 @@ final class SessionStore: ObservableObject {
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                let didChangePersistentState = self.applySupervisorResults(results)
+                self.applySupervisorResults(results)
                 self.updateSupervisorObservationStates(
                     for: inputs,
                     results: results,
                     observedAt: Date()
                 )
                 self.isSupervisorTickRunning = false
-                if didChangePersistentState {
-                    self.saveSessions()
-                }
                 self.refreshSelectedContextInfoIfStale()
                 self.rescheduleSupervisor()
             }
@@ -4586,21 +4603,26 @@ final class SessionStore: ObservableObject {
                   ) else {
                 continue
             }
+            var didChangeSession = false
             if reconciliation.providerChanged {
                 session.markDetectedAgentProvider(result.provider)
                 didUpdateProvider = true
-                didChangePersistentState = true
+                didChangeSession = true
             }
             if reconciliation.modelChanged {
                 session.markDetectedAgentModel(result.modelID, isExact: result.modelIDIsExact)
             }
             if reconciliation.currentPathChanged, let currentPath = result.currentPath {
                 session.updateCurrentDirectory(currentPath)
-                didChangePersistentState = true
+                didChangeSession = true
             }
             if reconciliation.runtimeStateChanged {
                 session.mark(status: result.status, tone: result.tone)
+                didChangeSession = true
+            }
+            if didChangeSession {
                 didChangePersistentState = true
+                saveChangedSession(session)
             }
         }
         if didUpdateProvider {

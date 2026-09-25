@@ -40,6 +40,13 @@ parsed Codex and Claude transcript metadata while file size and modification
 date are unchanged. Codex title-index notifications update known session titles
 directly, without importing transcripts.
 
+Routine live-session changes persist only that session's SQLite row. Previously
+each title/status update rebuilt snapshots for every closed session on the main
+thread, then deleted and reinserted the entire sessions table in the background.
+With thousands of closed sessions, a live process sample showed both operations
+consuming substantial CPU. Full-table saves remain for structural changes such
+as adding, removing, or reordering sessions.
+
 Restoration also avoids Git subprocesses for closed history rows. A large local
 history can contain thousands of old working directories; resolving each one
 before starting the control server delayed launch and caused a CPU spike.

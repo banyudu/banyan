@@ -33,6 +33,7 @@ struct GitHubReferenceCacheSnapshot: Codable {
 /// macOS-specific facade for the shared session database. It owns only the
 /// serialization policy for workspace preferences and Linear cache data.
 protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
+    func saveSession(_ snapshot: SessionSnapshot, sortOrder: Int)
     func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot
     func saveWorkspace(_ workspace: WorkspaceSnapshot)
     func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot?
@@ -60,6 +61,10 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
 
     func save(_ snapshots: [SessionSnapshot]) {
         sessionDatabase.save(snapshots)
+    }
+
+    func saveSession(_ snapshot: SessionSnapshot, sortOrder: Int) {
+        sessionDatabase.saveSession(snapshot, sortOrder: sortOrder)
     }
 
     func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot {

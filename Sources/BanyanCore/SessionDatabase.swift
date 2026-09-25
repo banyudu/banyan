@@ -96,6 +96,19 @@ public struct SessionDatabase: Sendable {
         }
     }
 
+    /// Update one existing session without rewriting thousands of closed history
+    /// rows when a live session changes status, title, or activity time.
+    public func saveSession(_ snapshot: SessionSnapshot, sortOrder: Int) {
+        do {
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+            try upsert(snapshot, sortOrder: sortOrder, database: database)
+        } catch {
+            NSLog("Banyan failed to persist session to SQLite: \(error.localizedDescription)")
+        }
+    }
+
     public func loadState() -> [String: String] {
         do {
             let database = try openDatabase()
