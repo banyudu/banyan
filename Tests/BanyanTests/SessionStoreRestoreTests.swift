@@ -7,6 +7,33 @@ import Testing
     #expect(SessionLifecyclePolicy.restoredStatus(snapshotStatus: .closed) == .closed)
 }
 
+@MainActor
+@Test func closedHistoryRestoresWithoutGitAndKeepsItsHistoricalIssueLink() {
+    let home = "/Users/example"
+    let cwd = home + "/dev/my-project/old-worktree"
+    let context = SessionDisplayLabel.historicalContext(cwd: cwd, homeDirectory: home)
+    #expect(context.groupID == "path:\(cwd)")
+    #expect(context.branch == nil)
+
+    let session = BanyanSession(
+        id: "closed-history",
+        title: "TASK-123 historical work",
+        titleURL: "https://tracker.example/issue/TASK-123",
+        titleURLWasAutoDetected: true,
+        cwd: cwd,
+        command: "codex",
+        status: .closed,
+        isRestored: true,
+        displayContext: context,
+        theme: .system,
+        tmuxBackend: banyanTestTmuxBackend,
+        telemetry: banyanTestTelemetry,
+        host: banyanTestHost
+    )
+    #expect(session.titleURL == "https://tracker.example/issue/TASK-123")
+    #expect(session.projectGroupID == "path:\(cwd)")
+}
+
 @Test func missingBackingTmuxSessionRequiresRecoveryForActiveSnapshot() {
     #expect(SessionLifecyclePolicy.shouldMarkForRecovery(
         status: .running,

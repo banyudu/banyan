@@ -77,7 +77,7 @@ private final class ChangeCounter {
     }
 
     #expect(await waitFor { counter.count > 0 })
-    // The burst lands inside one debounce window, so it costs one import.
+    // The burst lands inside one debounce window, so it triggers one refresh.
     #expect(counter.count == 1)
 }
 

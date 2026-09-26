@@ -97,7 +97,7 @@ struct TerminalHostView: NSViewRepresentable {
 
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
-    private let session: BanyanSession
+    let session: BanyanSession
     private let paintProbe = TerminalPaintProbeView()
     var onLayout: (() -> Void)?
     var onUserSubmittedInput: ((String?) -> Void)?

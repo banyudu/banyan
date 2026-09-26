@@ -313,6 +313,7 @@ final class SessionStore: ObservableObject {
     /// Last snapshot set written to disk; lets `saveSessions()` skip the frequent
     /// no-op saves (e.g. every supervisor tick) that re-serialized unchanged state.
     private var lastSavedSessionSnapshots: [SessionSnapshot]?
+    private var lastSavedSnapshotIndexByID: [String: Int] = [:]
     private let detector: AgentStateDetector
     /// Internal rather than private so the pane-input routes in
     /// `SessionStore+AgentInput.swift` can hand it to their off-main work.
@@ -364,6 +365,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var worktreeRecoveryErrors: [String: WorktreeRecovery.Failure] = [:]
     @Published private(set) var historyResumeErrors: [String: String] = [:]
     private var latestImportedHistory: [ImportedAgentSession] = []
+    private var lastCodexGeneratedTitles: [String: String] = [:]
     private var selectedContextTask: Task<Void, Never>?
     private var displayContextRetryTask: Task<Void, Never>?
     private var displayContextRetryAttempts = 0
@@ -850,7 +852,12 @@ final class SessionStore: ObservableObject {
                 liveTmuxSessionNames: liveTmuxSessionNames
             )
             let displayContext: SessionProjectContext
-            if let cached = displayContextsByCWD[snapshot.cwd] {
+            if restorationPlan.status == .closed {
+                displayContext = SessionDisplayLabel.historicalContext(
+                    cwd: snapshot.cwd,
+                    homeDirectory: homeDirectory
+                )
+            } else if let cached = displayContextsByCWD[snapshot.cwd] {
                 displayContext = cached
             } else {
                 let resolved = SessionDisplayLabel.cachedContext(
@@ -1082,13 +1089,62 @@ final class SessionStore: ObservableObject {
 
     private func installCodexTitleWatcherIfNeeded() {
         guard codexTitleWatcher == nil else { return }
+        lastCodexGeneratedTitles = CodexSessionTitleIndex.generatedTitles(homeDirectory: host.homeDirectory)
         let watcher = CodexSessionIndexWatcher(
             url: CodexSessionTitleIndex.indexURL(homeDirectory: host.homeDirectory)
         ) { [weak self] in
-            self?.runHistoryImport()
+            self?.refreshCodexTitlesFromIndex()
         }
         watcher.start()
         codexTitleWatcher = watcher
+    }
+
+    /// A generated Codex title is a small index-file update. Apply it to the
+    /// sessions we already know instead of rescanning every provider transcript.
+    /// A new Banyan session without a Codex thread ID still needs one import to
+    /// establish that identity; unchanged transcripts come from the cache.
+    private func refreshCodexTitlesFromIndex() {
+        let titles = CodexSessionTitleIndex.generatedTitles(homeDirectory: host.homeDirectory)
+        let changed = titles.filter { lastCodexGeneratedTitles[$0.key] != $0.value }
+        lastCodexGeneratedTitles = titles
+        guard !changed.isEmpty else { return }
+
+        var updatedHistory = false
+        latestImportedHistory = latestImportedHistory.map { imported in
+            guard imported.provider == .codex,
+                  !imported.segmentWasCleared,
+                  let title = changed[imported.sourceID] else {
+                return imported
+            }
+            updatedHistory = true
+            return ImportedAgentSession(
+                id: imported.id,
+                provider: imported.provider,
+                sourceID: imported.sourceID,
+                title: title,
+                segmentPromptTitle: imported.segmentPromptTitle,
+                segmentWasCleared: imported.segmentWasCleared,
+                agentGeneratedTitle: title,
+                cwd: imported.cwd,
+                transcriptURL: imported.transcriptURL,
+                createdAt: imported.createdAt,
+                updatedAt: imported.updatedAt
+            )
+        }
+        if updatedHistory {
+            refreshLiveAgentTitles(from: latestImportedHistory)
+        }
+        for session in sessions where session.status != .closed && session.agentProvider == .codex {
+            guard session.lastConversationResetAt == nil,
+                  let sourceID = session.agentSessionID,
+                  let title = changed[sourceID] else { continue }
+            session.markAgentGeneratedTitle(title)
+        }
+        if sessions.contains(where: {
+            $0.status != .closed && $0.agentProvider == .codex && $0.agentSessionID == nil
+        }) {
+            runHistoryImport()
+        }
     }
 
     /// Watches the launch-config sources so agent-list edits apply without a
@@ -1161,6 +1217,15 @@ final class SessionStore: ObservableObject {
 
     func refreshImportedHistory(spawnDefaultIfEmpty: Bool = false) {
         runHistoryImport(spawnDefaultIfEmpty: spawnDefaultIfEmpty)
+    }
+
+    /// Restore the normal first-launch behavior without importing every agent
+    /// transcript merely because the main window appeared. Persisted sessions
+    /// already carry their titles and provider IDs; provider imports are still
+    /// available to workflows that actually need new transcript metadata.
+    func spawnDefaultSessionIfEmpty() {
+        guard visibleSessions.isEmpty else { return }
+        spawn(cwd: homeDirectory)
     }
 
     func transcriptPreview(
@@ -2778,9 +2843,7 @@ final class SessionStore: ObservableObject {
     func absorb(_ reading: SessionPaneReading, for id: String) {
         answerLedger.note(sessionID: id, observedFootprint: reading.prompt?.footprint)
         guard let observation = reading.observation else { return }
-        if applySupervisorResults([observation]) {
-            saveSessions()
-        }
+        applySupervisorResults([observation])
     }
 
     func decideAnswer(id: String, request: AgentAnswerRequest, reading: SessionPaneReading) -> AgentAnswerDecision {
@@ -3249,12 +3312,15 @@ final class SessionStore: ObservableObject {
         } else {
             session.killBackingSession()
         }
+        // Closing is a deliberate history event. The normal activity timestamp
+        // is coalesced, so stamp it here to put this row first even if the
+        // session produced output in the preceding two seconds.
+        session.updatedAt = Date()
         promoteChildrenToParentSlot(closingID: id, promotedChildIDs: promotedChildIDs, removingParent: false)
         if selectedSessionID == id {
             selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
         saveSessions()
-        refreshImportedHistory()
     }
 
     func remove(id: String) throws {
@@ -3269,18 +3335,17 @@ final class SessionStore: ObservableObject {
             if selectedSessionID == id {
                 selectedSessionID = replacementID ?? visibleSessions.first?.id
             }
-            refreshImportedHistory()
             return
         }
         let parentSessionID = sessions[index].parentSessionID
         let promotedChildIDs = detachChildren(of: id, to: parentSessionID)
         sessions[index].killBackingSession()
+        sessions[index].updatedAt = Date()
         promoteChildrenToParentSlot(closingID: id, promotedChildIDs: promotedChildIDs, removingParent: true)
         if selectedSessionID == id {
             selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
         saveSessions()
-        refreshImportedHistory()
     }
 
     @discardableResult
@@ -3840,7 +3905,7 @@ final class SessionStore: ObservableObject {
         session.onDidChange = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
-                self.saveSessions()
+                self.saveChangedSession(session)
                 if self.selectedSessionID == session.id {
                     self.refreshSelectedContextInfo()
                 }
@@ -3970,11 +4035,32 @@ final class SessionStore: ObservableObject {
         // "Application Not Responding" freezes.
         guard snapshots != lastSavedSessionSnapshots else { return }
         lastSavedSessionSnapshots = snapshots
+        lastSavedSnapshotIndexByID = Dictionary(
+            uniqueKeysWithValues: snapshots.enumerated().map { ($0.element.id, $0.offset) }
+        )
         let persistence = persistence
         // Perform the actual open+migrate+DELETE+re-insert off the main thread so a
         // real change never blocks the UI; the serial queue preserves write order.
         sessionPersistenceQueue.async {
             persistence.save(snapshots)
+        }
+    }
+
+    private func saveChangedSession(_ session: BanyanSession) {
+        guard !session.isImportedHistory else { return }
+        guard let index = lastSavedSnapshotIndexByID[session.id],
+              lastSavedSessionSnapshots?.indices.contains(index) == true,
+              lastSavedSessionSnapshots?[index].id == session.id else {
+            // The first save and any structural change still need the full set.
+            saveSessions()
+            return
+        }
+        let snapshot = session.persistenceSnapshot
+        guard lastSavedSessionSnapshots?[index] != snapshot else { return }
+        lastSavedSessionSnapshots?[index] = snapshot
+        let persistence = persistence
+        sessionPersistenceQueue.async {
+            persistence.saveSession(snapshot, sortOrder: index)
         }
     }
 
@@ -4032,8 +4118,15 @@ final class SessionStore: ObservableObject {
         }
         isHistoryImportRunning = true
         let historyBackend = historyBackend
+        let telemetry = telemetry
         Task.detached(priority: .utility) {
+            let startedAt = DispatchTime.now()
             let imported = historyBackend.load(maxPerProvider: SessionHistoryPresentation.recoveryImportLimit)
+            telemetry.recordDurationLocalIfSlow(
+                "history.import",
+                durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
+                detail: "sessions=\(imported.count)"
+            )
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.applyImportedHistory(imported)
@@ -4213,16 +4306,13 @@ final class SessionStore: ObservableObject {
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                let didChangePersistentState = self.applySupervisorResults(results)
+                self.applySupervisorResults(results)
                 self.updateSupervisorObservationStates(
                     for: inputs,
                     results: results,
                     observedAt: Date()
                 )
                 self.isSupervisorTickRunning = false
-                if didChangePersistentState {
-                    self.saveSessions()
-                }
                 self.refreshSelectedContextInfoIfStale()
                 self.rescheduleSupervisor()
             }
@@ -4577,21 +4667,26 @@ final class SessionStore: ObservableObject {
                   ) else {
                 continue
             }
+            var didChangeSession = false
             if reconciliation.providerChanged {
                 session.markDetectedAgentProvider(result.provider)
                 didUpdateProvider = true
-                didChangePersistentState = true
+                didChangeSession = true
             }
             if reconciliation.modelChanged {
                 session.markDetectedAgentModel(result.modelID, isExact: result.modelIDIsExact)
             }
             if reconciliation.currentPathChanged, let currentPath = result.currentPath {
                 session.updateCurrentDirectory(currentPath)
-                didChangePersistentState = true
+                didChangeSession = true
             }
             if reconciliation.runtimeStateChanged {
                 session.mark(status: result.status, tone: result.tone)
+                didChangeSession = true
+            }
+            if didChangeSession {
                 didChangePersistentState = true
+                saveChangedSession(session)
             }
         }
         if didUpdateProvider {

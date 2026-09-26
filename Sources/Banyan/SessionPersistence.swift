@@ -40,6 +40,7 @@ protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
     /// `SessionDatabase.pruneExpiredSessions`.
     @discardableResult
     func pruneExpiredSessions(retentionDays: Int) -> Int
+    func saveSession(_ snapshot: SessionSnapshot, sortOrder: Int)
     func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot
     func saveWorkspace(_ workspace: WorkspaceSnapshot)
     func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot?
@@ -72,6 +73,10 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
     @discardableResult
     func pruneExpiredSessions(retentionDays: Int) -> Int {
         sessionDatabase.pruneExpiredSessions(retentionDays: retentionDays)
+    }
+
+    func saveSession(_ snapshot: SessionSnapshot, sortOrder: Int) {
+        sessionDatabase.saveSession(snapshot, sortOrder: sortOrder)
     }
 
     func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot {

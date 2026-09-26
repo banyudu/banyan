@@ -89,6 +89,36 @@ import Testing
     #expect(!title!.contains("[Image"))
 }
 
+@Test func titleFromPromptCollapsesLoneImageTag() {
+    let title = SessionTitleGenerator.titleFromPrompt("<image name=[Image #1] path=\"/tmp/example.png\">")
+    #expect(title == "<image>")
+}
+
+@Test func titleFromPromptCollapsesLeadingImageTagAndKeepsText() {
+    let title = SessionTitleGenerator.titleFromPrompt("<image name=[Image #1] path=\"/tmp/example.png\"> explain this chart")
+    #expect(title == "<image> explain this chart")
+}
+
+@Test func titleFromPromptCollapsesUppercaseImageTag() {
+    let title = SessionTitleGenerator.titleFromPrompt("<IMAGE name=[Image #1] path=\"/tmp/example.png\"> explain this chart")
+    #expect(title == "<image> explain this chart")
+}
+
+@Test func titleFromPromptCollapsesImageTagBeforeReplacingURL() {
+    let title = SessionTitleGenerator.titleFromPrompt("<image name=[Image #1] path=\"https://example.com/example.png\"> explain this chart")
+    #expect(title == "<image> explain this chart")
+}
+
+@Test func titleFromPromptKeepsOtherImageLikeTags() {
+    let title = SessionTitleGenerator.titleFromPrompt("<image-preview> explain this chart")
+    #expect(title == "<image-preview> explain this chart")
+}
+
+@Test func titleFromPromptCollapsesLoneBracketAndMarkdownImages() {
+    #expect(SessionTitleGenerator.titleFromPrompt("[Image #1]") == "<image>")
+    #expect(SessionTitleGenerator.titleFromPrompt("![chart](/tmp/example.png)") == "<image>")
+}
+
 @Test func titleFromPromptPreservesLinearIDFromURL() {
     let title = SessionTitleGenerator.titleFromPrompt("fix https://linear.app/acme/issue/ENG-1234/some-slug now")
     #expect(title != nil)

@@ -162,7 +162,8 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// When draws are slow, the flush is additionally spaced from the last
     /// completed draw so bursts collapse into fewer repaints: at most ~30fps,
     /// and at most ~half the main thread (spacing scales with the last draw's
-    /// own cost, capped so the worst-case added latency stays under 100ms).
+    /// own cost). A draw already taking hundreds of milliseconds must earn
+    /// comparable idle time; a fixed 100ms cap defeats that limit.
     /// Chunks arriving during the wait only extend the accumulated rect, so
     /// intermediate frames are skipped and the screen always shows the latest
     /// state. Idle single echoes are unaffected: with no recent slow draw the
@@ -195,10 +196,11 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// repaint contract tests can pin it without depending on wall-clock timing.
     static func coalesceDelay(now: TimeInterval, lastDrawMS: Double, lastDrawUptime: TimeInterval) -> TimeInterval {
         guard lastDrawMS > 12 else { return 0 }
-        // Half-duty cap: a draw costing D ms earns at least 2*D ms before the
-        // next one, so draws saturate at ~50% of main come what may. At most
-        // ~30fps, and the added latency never exceeds 100ms.
-        let spacing = max(1.0 / 30.0, min((lastDrawMS / 1000.0) * 2, 0.1))
+        // Measure from the completed draw: one draw costing D ms needs at
+        // least D ms idle before the next draw to stay at or below half duty.
+        // Keep the existing 30fps floor and 2*D spacing for modest draws.
+        let drawSeconds = lastDrawMS / 1000.0
+        let spacing = max(1.0 / 30.0, min(drawSeconds * 2, 0.1), drawSeconds)
         return max(0, spacing - (now - lastDrawUptime))
     }
 

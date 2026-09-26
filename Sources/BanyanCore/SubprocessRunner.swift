@@ -186,6 +186,17 @@ public enum SubprocessRunner {
 
         if isCancelled() || signal.isCancelled { throw RunError.cancelled }
 
+        // On Linux, Foundation's `Process.run()` leaks two of its internal
+        // descriptors when its working directory does not exist. Validate the
+        // caller-owned path before entering that failed-launch path instead.
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw RunError.launchFailed(
+                underlying: CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: cwd])
+            )
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = arguments

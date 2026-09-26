@@ -17,6 +17,8 @@ particular:
   selected cadence.
 - `supervisor.session` is retained only when one tmux/process inspection takes
   at least 150 ms; it includes the Banyan session ID to identify a slow pane.
+- `history.import` measures a full local agent-history refresh. It is retained
+  when the refresh takes at least 500 ms and includes the imported session count.
 - `terminal.draw` is retained only when a draw takes at least 16 ms. Fast draws
   are deliberately not written to SQLite so telemetry cannot create persistent
   background I/O during output-heavy sessions. Its detail carries `renderer=cg`
@@ -29,6 +31,38 @@ The supervisor invokes `ps` once and batches pane metadata for all started
 sessions into one tmux command per tick. It still captures visible text only for
 sessions with a live coding agent, because that text is needed for status
 detection.
+
+Closing a Banyan session moves its existing in-memory row into History and
+updates its recency; it does not import provider transcripts. The history
+sidebar projection is cached and invalidates when that row changes. Full
+imports run only when a workflow requests fresh transcript metadata. They reuse
+parsed Codex and Claude transcript metadata while file size and modification
+date are unchanged. Codex title-index notifications update known session titles
+directly, without importing transcripts.
+
+Routine live-session changes persist only that session's SQLite row. Previously
+each title/status update rebuilt snapshots for every closed session on the main
+thread, then deleted and reinserted the entire sessions table in the background.
+With thousands of closed sessions, a live process sample showed both operations
+consuming substantial CPU. Full-table saves remain for structural changes such
+as adding, removing, or reordering sessions.
+
+Restoration also avoids Git subprocesses for closed history rows. A large local
+history can contain thousands of old working directories; resolving each one
+before starting the control server delayed launch and caused a CPU spike.
+Closed rows use their saved path for display and retain their historical issue
+link. Active rows still resolve the current checkout. The main window also
+stops launching a full external-agent transcript import on every startup;
+persisted sessions already contain their titles and provider IDs. Other
+workflows can request an import when they need fresh transcript metadata.
+
+Live samples after the history fix found a second draw cost: CoreGraphics
+rebuilt most rows in full-screen agent panes, then spent most of that draw time
+running implicit-link detection's ICU regex. Per-row caching cannot help when
+the pane rewrites those rows. Banyan now resolves plain-text links when the
+user Cmd-hovers or Cmd-clicks them, instead of coloring every detected link on
+every frame. Links remain clickable and highlight under the pointer, while
+ordinary output avoids regex work during drawing.
 
 ## Idle behavior and background throttling
 

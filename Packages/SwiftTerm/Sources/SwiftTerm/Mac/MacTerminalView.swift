@@ -113,6 +113,16 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+    /// Hidden clients still parse output, but need no cursor, accessibility, or
+    /// drawing updates until their surface becomes visible again.
+    public var displayUpdatesEnabled = true {
+        didSet {
+            guard displayUpdatesEnabled, !oldValue else { return }
+            terminal.updateFullScreen()
+            resetPaintedContentTracking()
+            queuePendingDisplay()
+        }
+    }
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?

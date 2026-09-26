@@ -24,6 +24,66 @@ import Testing
     #expect(session.cwd == "/tmp/banyan-codex")
 }
 
+@Test func historyImportReusesUnchangedTranscriptsAndRefreshesChangedOnes() throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-history-cache-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: home) }
+    let codexDirectory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    let claudeDirectory = home.appendingPathComponent(".claude/projects/project-a")
+    try FileManager.default.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: claudeDirectory, withIntermediateDirectories: true)
+
+    let id = "019efe8d-0514-72a2-ad62-daea0b976cab"
+    let codexURL = codexDirectory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    let claudeURL = claudeDirectory.appendingPathComponent("session-a.jsonl")
+    let indexURL = home.appendingPathComponent(".codex/session_index.jsonl")
+    try [
+        #"{"type":"session_meta","payload":{"cwd":"/tmp/example"}}"#,
+        #"{"type":"event_msg","payload":{"type":"user_message","message":"First Codex title"}}"#
+    ].joined(separator: "\n").write(to: codexURL, atomically: true, encoding: .utf8)
+    try #"{"type":"user","cwd":"/tmp/example","message":{"content":"First Claude title"}}"#
+        .write(to: claudeURL, atomically: true, encoding: .utf8)
+    let cache = AgentSessionHistoryImportCache()
+
+    func load() -> [ImportedAgentSession] {
+        AgentSessionHistoryImporter.load(homeDirectory: home, cache: cache)
+    }
+    #expect(load().count == 2)
+    #expect(cache.parsedTranscriptCount == 2)
+    #expect(load().count == 2)
+    #expect(cache.parsedTranscriptCount == 2)
+
+    try [
+        #"{"id":"\#(id)","thread_name":"First Codex title","updated_at":"2026-07-01T10:00:00Z"}"#,
+        #"{"id":"\#(id)","thread_name":"Generated Codex title","updated_at":"2026-07-01T10:00:01Z"}"#
+    ].joined(separator: "\n").write(to: indexURL, atomically: true, encoding: .utf8)
+    let renamed = load()
+    #expect(renamed.first { $0.sourceID == id }?.title == "Generated Codex title")
+    #expect(cache.parsedTranscriptCount == 2)
+
+    let codexHandle = try FileHandle(forWritingTo: codexURL)
+    try codexHandle.seekToEnd()
+    try codexHandle.write(contentsOf: Data((
+        "\n" + #"{"type":"event_msg","payload":{"type":"user_message","message":"/clear"}}"#
+        + "\n" + #"{"type":"event_msg","payload":{"type":"user_message","message":"Next Codex title"}}"#
+    ).utf8))
+    try codexHandle.close()
+    let codexUpdated = load()
+    #expect(codexUpdated.first { $0.sourceID == id }?.segmentPromptTitle == "Next Codex title")
+    #expect(cache.parsedTranscriptCount == 3)
+
+    let claudeHandle = try FileHandle(forWritingTo: claudeURL)
+    try claudeHandle.seekToEnd()
+    try claudeHandle.write(contentsOf: Data((
+        "\n" + #"{"type":"user","cwd":"/tmp/example","message":{"content":"/clear"}}"#
+        + "\n" + #"{"type":"user","cwd":"/tmp/example","message":{"content":"Next Claude title"}}"#
+    ).utf8))
+    try claudeHandle.close()
+    let claudeUpdated = load()
+    #expect(claudeUpdated.first { $0.provider == .claude }?.title == "Next Claude title")
+    #expect(cache.parsedTranscriptCount == 4)
+}
+
 @Test func sharedHistoryImporterIgnoresClaudeWorkflowJournals() throws {
     let home = FileManager.default.temporaryDirectory
         .appendingPathComponent("banyan-history-" + UUID().uuidString)

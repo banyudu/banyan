@@ -52,10 +52,9 @@ final class BenchRunner: NSObject, NSApplicationDelegate {
         )
         view.coalesceInvalidations = options.coalesce
         view.configureNativeColors()
-        // Banyan runs with implicit link detection and highlighting on, which is
-        // a large part of what a line costs to build. Match it.
+        // Compare always-on implicit link highlighting with hover-only lookup.
         view.linkHighlightMode = .hoverWithModifier
-        view.highlightDetectedLinks = true
+        view.highlightDetectedLinks = options.highlightDetectedLinks
         window.contentView = view
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
