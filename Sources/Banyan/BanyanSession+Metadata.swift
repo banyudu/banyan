@@ -41,6 +41,7 @@ extension BanyanSession {
     func markAgentSessionID(_ sessionID: String?) {
         guard let sessionID, !sessionID.isEmpty, agentSessionID != sessionID else { return }
         agentSessionID = sessionID
+        agentTitleImportAttempts = 0
         touch()
     }
 

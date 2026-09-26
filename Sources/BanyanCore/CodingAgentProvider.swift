@@ -201,6 +201,8 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             return nil
         }
 
+        let resolvedProvider = expectedProvider ?? provider(forExecutable: tokens[providerIndex])
+        let valueOptions = optionsTakingValue(for: resolvedProvider)
         var arguments = Array(tokens.dropFirst(providerIndex + 1))
         // The DeepSeek picker launches OpenCode with an environment marker so
         // the session keeps its DeepSeek identity even though the executable is
@@ -217,7 +219,7 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
             }
             if token.hasPrefix("-") {
                 let optionName = String(token.split(separator: "=", maxSplits: 1).first ?? "")
-                if !token.contains("="), optionsTakingValue.contains(optionName), !arguments.isEmpty {
+                if !token.contains("="), valueOptions.contains(optionName), !arguments.isEmpty {
                     arguments.removeFirst()
                 }
                 continue
@@ -287,7 +289,11 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         ExecutablePath.lowercasedName(token).hasPrefix("banyan_agent_provider=")
     }
 
-    private static let optionsTakingValue: Set<String> = [
+    /// Value-taking flags every supported agent shares. Anything missed here
+    /// leaks its value into `promptCandidate`, and that value becomes the
+    /// session title — which is how `codex -p <profile>` sessions ended up
+    /// named after the profile instead of their first prompt.
+    private static let sharedOptionsTakingValue: Set<String> = [
         "-C",
         "-c",
         "-m",
@@ -304,6 +310,37 @@ public enum CodingAgentProvider: String, CaseIterable, Codable, Equatable, Ident
         "--sandbox-mode",
         "--system-prompt"
     ]
+
+    /// Value-taking flags whose short form collides between agents: Codex's
+    /// `-p` is `--profile` and consumes a value, while Claude's `-p` is print
+    /// mode and consumes none, so the two cannot share one set. OpenCode-backed
+    /// identities (`.deepseek`, `.muse`, `.hunyuan`, `.qwen`) run OpenCode's
+    /// CLI even though they are separate providers.
+    private static let providerOptionsTakingValue: [CodingAgentProvider: Set<String>] = [
+        .codex: ["-p", "-i", "--image"],
+        .claude: [
+            "--effort",
+            "--permission-mode",
+            "--resume",
+            "-r",
+            "--append-system-prompt",
+            "--mcp-config",
+            "--agents",
+            "--settings"
+        ],
+        .opencode: ["--agent", "--session"]
+    ]
+
+    private static func optionsTakingValue(for provider: CodingAgentProvider?) -> Set<String> {
+        guard let provider else { return sharedOptionsTakingValue }
+        if let providerSpecific = providerOptionsTakingValue[provider] {
+            return sharedOptionsTakingValue.union(providerSpecific)
+        }
+        guard provider.isOpencodeBacked, let openCode = providerOptionsTakingValue[.opencode] else {
+            return sharedOptionsTakingValue
+        }
+        return sharedOptionsTakingValue.union(openCode)
+    }
 
     private static let promptSubcommands: Set<String> = [
         "agent",

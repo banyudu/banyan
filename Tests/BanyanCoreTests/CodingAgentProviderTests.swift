@@ -54,6 +54,46 @@ import Testing
     #expect(prompt == nil)
 }
 
+@Test func promptCandidateSkipsACodexProfileValue() {
+    // `codex -p <profile>` (--profile) is launch metadata. Reading the profile
+    // as the prompt titled every such session after the profile name.
+    #expect(CodingAgentProvider.promptCandidate(in: "codex -p opencode-go", provider: .codex) == nil)
+    #expect(CodingAgentProvider.promptCandidate(in: "codex -p luna-fast", provider: .codex) == nil)
+    #expect(
+        CodingAgentProvider.promptCandidate(
+            in: #"codex -p opencode-go --image "/tmp/shot.png" "fix the sidebar""#,
+            provider: .codex
+        ) == "fix the sidebar"
+    )
+}
+
+@Test func promptCandidateKeepsClaudePrintModePrompt() {
+    // `-p` takes a value for Codex (--profile) and none for Claude (--print), so
+    // the two agents cannot share one value-taking flag set.
+    #expect(
+        CodingAgentProvider.promptCandidate(in: #"claude -p "summarize the diff""#, provider: .claude)
+            == "summarize the diff"
+    )
+}
+
+@Test func promptCandidateSkipsOpenCodeAgentAndSessionValues() {
+    #expect(CodingAgentProvider.promptCandidate(in: "opencode --agent muse-spark", provider: .muse) == nil)
+    #expect(CodingAgentProvider.promptCandidate(in: "opencode --session ses_abc123", provider: .opencode) == nil)
+    #expect(
+        CodingAgentProvider.promptCandidate(
+            in: "opencode run --agent muse-spark --model opencode-go/muse add tests",
+            provider: .opencode
+        ) == "add tests"
+    )
+}
+
+@Test func promptCandidateSkipsAClaudeEffortValue() {
+    #expect(
+        CodingAgentProvider.promptCandidate(in: "claude --model sonnet --effort max", provider: .claude)
+            == nil
+    )
+}
+
 @Test func promptCandidatePreservesQuotedPromptText() {
     let prompt = CodingAgentProvider.promptCandidate(
         in: AgentLaunchCommand.command(
@@ -99,6 +139,22 @@ import Testing
     ))
 
     #expect(title == "pull the latest code.")
+}
+
+@Test func titleGeneratorIgnoresACodexProfileNameAsThePrompt() {
+    let title = SessionTitleGenerator.automaticTitle(for: SessionTitleContext(
+        id: "session-7",
+        baseTitle: "banyan",
+        isTitlePinned: false,
+        cwd: "/Users/example/dev/yudu/banyan",
+        project: "banyan",
+        branch: "main",
+        command: "codex -p opencode-go",
+        reportedTitle: nil,
+        provider: .codex
+    ))
+
+    #expect(title == "Codex session-7")
 }
 
 @Test func titleGeneratorUsesCompactProviderAndIDWhenPromptIsMissing() {

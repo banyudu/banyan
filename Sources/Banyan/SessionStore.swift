@@ -359,6 +359,16 @@ final class SessionStore: ObservableObject {
     private var launchConfigWatcher: LaunchConfigWatcher?
     private var isHistoryImportRunning = false
     private var isHistoryImportPending = false
+    /// Coalesces the one-shot import requested when a live agent turn starts;
+    /// see `scheduleAgentTitleImportIfNeeded`.
+    private var agentTitleImportTask: Task<Void, Never>?
+    /// How long after a turn begins the agent's transcript read waits. Enough
+    /// for the prompt to be on disk, short enough that the sidebar titles the
+    /// session while the turn is still running.
+    private static let agentTitleImportDelay: Duration = .seconds(4)
+    /// Cap per session so an agent that publishes no transcript at all cannot
+    /// turn every later turn into a history scan.
+    private static let agentTitleImportAttemptLimit = 3
     @Published private(set) var pendingRespawnRecoveryIDs = Set<String>()
     /// Sessions whose deleted worktree is being recreated before their attach.
     @Published private(set) var pendingWorktreeRecoveryIDs = Set<String>()
@@ -1107,6 +1117,16 @@ final class SessionStore: ObservableObject {
         let titles = CodexSessionTitleIndex.generatedTitles(homeDirectory: host.homeDirectory)
         let changed = titles.filter { lastCodexGeneratedTitles[$0.key] != $0.value }
         lastCodexGeneratedTitles = titles
+        // The import cannot hang off a rename. A thread only appears here once
+        // Codex records a name for it, and many sessions — a profile running a
+        // model on a custom gateway, say — never get one at all, so its row
+        // never arrives to trigger the scan. A live codex session without a
+        // transcript stays the honest reason to rescan, whatever changed.
+        if sessions.contains(where: {
+            $0.status != .closed && $0.agentProvider == .codex && $0.agentSessionID == nil
+        }) {
+            runHistoryImport()
+        }
         guard !changed.isEmpty else { return }
 
         var updatedHistory = false
@@ -1140,10 +1160,52 @@ final class SessionStore: ObservableObject {
                   let title = changed[sourceID] else { continue }
             session.markAgentGeneratedTitle(title)
         }
-        if sessions.contains(where: {
-            $0.status != .closed && $0.agentProvider == .codex && $0.agentSessionID == nil
-        }) {
-            runHistoryImport()
+    }
+
+    /// A live agent row whose transcript Banyan has not located yet. Both its
+    /// title and its resume id come from a provider-history import, so an import
+    /// is worth its cost exactly while one of these exists.
+    private var hasUnmatchedLiveAgentSession: Bool {
+        sessions.contains { session in
+            !session.isImportedHistory
+                && session.status != .closed
+                && session.agentProvider != nil
+                && session.agentSessionID == nil
+        }
+    }
+
+    /// The launch import used to rescan every provider transcript on the chance
+    /// a sidebar row needed one. Do that only when it does: a restored, already
+    /// matched sidebar needs no history read at all.
+    func refreshImportedHistoryIfNeeded() {
+        guard hasUnmatchedLiveAgentSession else { return }
+        runHistoryImport()
+    }
+
+    /// A turn that just started is the moment the agent's transcript gains the
+    /// prompt Banyan titles the session from. Agents that name their own threads
+    /// announce that in the Codex session index, but a session the agent never
+    /// names — a profile running a model on a custom gateway, for instance —
+    /// never touches that file, leaving the transcript as the only source and
+    /// the index watcher silent. Read it once, a beat after the turn begins,
+    /// instead of polling for it.
+    private func scheduleAgentTitleImportIfNeeded(for session: BanyanSession) {
+        guard !session.isImportedHistory,
+              session.status != .closed,
+              session.agentProvider != nil,
+              session.agentSessionID == nil,
+              session.reportedTitle == nil else {
+            return
+        }
+        guard session.agentTitleImportAttempts < Self.agentTitleImportAttemptLimit else { return }
+        session.agentTitleImportAttempts += 1
+        guard agentTitleImportTask == nil else { return }
+        agentTitleImportTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.agentTitleImportDelay)
+            guard let self, !Task.isCancelled else { return }
+            self.agentTitleImportTask = nil
+            guard self.hasUnmatchedLiveAgentSession else { return }
+            self.runHistoryImport()
         }
     }
 
@@ -3916,13 +3978,19 @@ final class SessionStore: ObservableObject {
             telemetry.noteSessionFirstOutput(sessionID: session.id)
             self.detectAttention(in: text, for: session)
         }
-        session.onUserSubmittedInput = { [weak self, weak session] _ in
+        session.onUserSubmittedInput = { [weak self, weak session] submittedInput in
             guard let self, let session else { return }
             // A plain shell can become a coding-agent session without a picker
             // launch command. Its status/provider do not change until the next
             // supervisor observation, so user input must invalidate any quiet
             // session backoff that was built while the shell was idle.
             self.resetSupervisorObservationBackoff(for: session.id)
+            // A submitted prompt is the other half of the turn-start signal: it
+            // marks the session executing directly, so the supervisor never gets
+            // to report the transition `applySupervisorResults` watches for.
+            if SessionInputPolicy.submittedPromptTitle(from: submittedInput) != nil {
+                self.scheduleAgentTitleImportIfNeeded(for: session)
+            }
         }
         session.onStatusSignal = { [weak self, weak session] status in
             guard let self, let session else { return }
@@ -4680,9 +4748,17 @@ final class SessionStore: ObservableObject {
                 session.updateCurrentDirectory(currentPath)
                 didChangeSession = true
             }
+            var didStartAgentTurn = false
             if reconciliation.runtimeStateChanged {
+                // Read the old status first: a turn that has just begun is the
+                // moment the transcript gains the first prompt, which is the
+                // only thing that can title a session the agent never names.
+                didStartAgentTurn = result.status == .executing && session.status != .executing
                 session.mark(status: result.status, tone: result.tone)
                 didChangeSession = true
+            }
+            if didStartAgentTurn {
+                scheduleAgentTitleImportIfNeeded(for: session)
             }
             if didChangeSession {
                 didChangePersistentState = true

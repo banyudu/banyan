@@ -140,6 +140,10 @@ final class BanyanSession: ObservableObject, Identifiable {
         let detectedProvider: CodingAgentProvider?
     }
 
+    /// How many provider-history imports this session has asked for while
+    /// looking for its transcript. Bounds the cost for an agent that publishes
+    /// no transcript at all; reset whenever one is matched.
+    var agentTitleImportAttempts = 0
     var displayTitleCache: (key: DisplayTitleKey, value: String)?
     var titleLinkLabelCache: (key: TitleLinkLabelKey, value: String?)?
     var agentProviderCache: (key: AgentProviderKey, value: CodingAgentProvider?)?
