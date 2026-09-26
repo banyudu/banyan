@@ -175,15 +175,20 @@ struct ContentView: View {
         store.focusSelectedTerminal()
     }
 
-    /// Opens a Linear issue in the browser, resolving the URL from the host
-    /// environment so a configured base URL or org is honored. Shared by the
-    /// command palette and the sidebar suggestion banner so an issue id means
-    /// the same destination wherever it is clicked.
-    private func openLinearIssue(_ issueID: String) {
-        guard let url = URL(string: LinearIssueReference.issueURL(
+    /// Resolves a Linear issue id to the URL this host opens it at, honoring a
+    /// configured base URL or org. Shared by the command palette and the sidebar
+    /// suggestion banner so an issue id means the same destination wherever it
+    /// is clicked.
+    private func linearIssueURL(_ issueID: String) -> URL? {
+        URL(string: LinearIssueReference.issueURL(
             for: issueID,
             environment: store.host.environment
-        )) else { return }
+        ))
+    }
+
+    /// Opens a Linear issue in the browser.
+    private func openLinearIssue(_ issueID: String) {
+        guard let url = linearIssueURL(issueID) else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -389,7 +394,7 @@ struct ContentView: View {
                     suggestion: suggestion,
                     onApprove: { store.approvePendingSuggestion() },
                     onDismiss: { store.dismissPendingSuggestion() },
-                    onOpenIssue: { issueID in openLinearIssue(issueID) }
+                    issueURL: { issueID in linearIssueURL(issueID) }
                 )
             }
 
@@ -2166,15 +2171,19 @@ private struct SuggestionBanner: View {
     let suggestion: InboundSuggestion
     let onApprove: () -> Void
     let onDismiss: () -> Void
-    /// Opens a Linear issue id in the browser. The banner renders the ids it is
-    /// given (`suggestion.title`, `suggestion.target`) as links into this.
-    let onOpenIssue: (String) -> Void
+    /// Resolves a Linear issue id to the URL the host opens it at. The banner
+    /// renders the ids it is given (`suggestion.title`, `suggestion.target`) as
+    /// links through this, so an id means the same destination it does in the
+    /// command palette.
+    let issueURL: (String) -> URL?
 
     /// Installed on appear and torn down on disappear, matching the lifetime of
     /// the pending suggestion this banner is showing.
     @State private var shortcutMonitor: SuggestionShortcutMonitor?
     @State private var isTitleLinkHovered = false
     @State private var isTargetLinkHovered = false
+
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2216,7 +2225,9 @@ private struct SuggestionBanner: View {
                     .accessibilityLabel("Run")
                     .help("Run this suggestion (\(SuggestionShortcuts.approveDisplay))")
                 if let target = suggestion.target {
-                    Button { onOpenIssue(target) } label: {
+                    Button {
+                        if let url = issueURL(target) { openURL(url) }
+                    } label: {
                         Text(target)
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary)
@@ -2259,30 +2270,40 @@ private struct SuggestionBanner: View {
 
     /// The title, with a leading issue id (`ENG-12355: …`) rendered as a link
     /// into Linear. Titles that do not lead with an id stay plain text.
+    ///
+    /// The id and the text after it are one `Text` rather than a link beside a
+    /// label, because two sibling views wrap independently: the label would
+    /// wrap inside its own, narrower frame, starting every line after the first
+    /// indented under the id instead of back at the card's leading edge.
     @ViewBuilder
     private var titleLabel: some View {
         if let split = leadingIssueID {
-            HStack(spacing: 0) {
-                Button { onOpenIssue(split.id) } label: {
-                    Text(split.id)
-                        .font(.system(size: 12, weight: .medium))
-                        .underline(isTitleLinkHovered)
-                }
-                .buttonStyle(.plain)
-                .banyanButtonHoverEffect(.labelOnly) { isTitleLinkHovered = $0 }
-                .accessibilityLabel("Open \(split.id) in Linear")
-                .help("Open \(split.id) in Linear")
-
-                Text(split.remainder)
-                    .font(.system(size: 12, weight: .medium))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .lineLimit(2)
+            Text(linkedTitle(split))
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .onHover { isTitleLinkHovered = $0 }
         } else {
             Text(suggestion.title)
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// The title with its leading id linked into Linear, so a click on the id
+    /// opens the issue while the rest of the title stays inert text. The id
+    /// keeps the title's own colour instead of taking the link tint, and
+    /// underlines on hover like the card's other link — that hover is the whole
+    /// title's, since a `Text` cannot report which run the pointer is over.
+    private func linkedTitle(_ split: (id: String, remainder: String)) -> AttributedString {
+        var idRun = AttributedString(split.id)
+        idRun.link = issueURL(split.id)
+        idRun.foregroundColor = .primary
+        if isTitleLinkHovered {
+            idRun.underlineStyle = .single
+        }
+        return idRun + AttributedString(split.remainder)
     }
 
     /// Splits a title like `ENG-12355: Design proposal` into the leading issue
