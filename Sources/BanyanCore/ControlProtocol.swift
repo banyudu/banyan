@@ -138,6 +138,11 @@ public struct ControlPayload: Codable {
     /// `/suggest`: how many seconds the suggestion stays live, holding the
     /// pending slot and suppressing its own key.
     public let ttl: LenientInt?
+    /// `/prune`: the retention window to apply, in days. Absent uses the app's
+    /// configured one; `0` keeps everything.
+    public let days: LenientInt?
+    /// `/prune`: report what would be removed and remove nothing.
+    public let dryRun: LenientBool?
 
     public init(
         apiVersion: String? = ControlProtocol.version,
@@ -164,7 +169,9 @@ public struct ControlPayload: Codable {
         key: String? = nil,
         target: String? = nil,
         run: String? = nil,
-        ttl: Int? = nil
+        ttl: Int? = nil,
+        days: Int? = nil,
+        dryRun: Bool? = nil
     ) {
         self.apiVersion = apiVersion
         self.id = id
@@ -191,6 +198,8 @@ public struct ControlPayload: Codable {
         self.target = target
         self.run = run
         self.ttl = ttl.map(LenientInt.init(value:))
+        self.days = days.map(LenientInt.init(value:))
+        self.dryRun = dryRun.map(LenientBool.init(value:))
     }
 }
 
@@ -276,6 +285,9 @@ public enum ControlRoute: Equatable {
     case events
     /// Parks a proposal in the app's UI, to run only if a human approves it.
     case suggest
+    /// Drops closed sessions that aged out of the retention window, or reports
+    /// how many would go.
+    case prune
 
     public static func resolve(method: String, path: String) -> ControlRoute? {
         switch (method, ControlRoute.normalizedPath(path)) {
@@ -297,6 +309,7 @@ public enum ControlRoute: Equatable {
         case ("POST", "/input"): return .input
         case ("POST", "/answer"): return .answer
         case ("POST", "/suggest"): return .suggest
+        case ("POST", "/prune"): return .prune
         default: return nil
         }
     }
@@ -325,7 +338,8 @@ public enum ControlRoute: Equatable {
         switch self {
         case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume,
              .output, .input, .answer: return true
-        case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest: return false
+        case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest,
+             .prune: return false
         }
     }
 

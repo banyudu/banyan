@@ -1,8 +1,13 @@
+import BanyanCore
 import SwiftUI
 
 struct PreferencesSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: SessionStore
+    /// How many rows the last "Clean Up Now" removed. Replaces the candidate
+    /// count until the window changes, so the button confirms what it did
+    /// instead of dropping straight back to "nothing to remove".
+    @State private var lastCleanUpCount: Int?
     private let fontFamilies = ["Menlo", "SF Mono", "Monaco", "Andale Mono", "Courier New"]
 
     var body: some View {
@@ -64,6 +69,37 @@ struct PreferencesSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
+                Text("Sessions")
+                    .font(.headline)
+
+                Picker("Keep closed sessions", selection: $store.sessionRetentionDays) {
+                    ForEach(retentionChoices, id: \.self) { days in
+                        Text(SessionRetentionPolicy.label(retentionDays: days)).tag(days)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier(AccessibilityID.preferencesSessionRetention)
+
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(retentionDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("Clean Up Now") {
+                        lastCleanUpCount = store.pruneExpiredSessions(
+                            retentionDays: store.sessionRetentionDays
+                        )
+                    }
+                    .disabled(store.expiredSessionCount == 0)
+                    .accessibilityIdentifier(AccessibilityID.preferencesSessionCleanUp)
+                }
+            }
+            .onChange(of: store.sessionRetentionDays) {
+                lastCleanUpCount = nil
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Codex")
                     .font(.headline)
 
@@ -97,8 +133,32 @@ struct PreferencesSheet: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 440, height: 500)
+        .frame(width: 440, height: 560)
         .accessibilityIdentifier(AccessibilityID.preferencesSheet)
+    }
+
+    /// Keeps the menu honest if the stored window is not one Banyan offers, so
+    /// a hand-edited value shows as itself rather than as an empty picker.
+    private var retentionChoices: [Int] {
+        let choices = SessionRetentionPolicy.retentionDayChoices
+        guard !choices.contains(store.sessionRetentionDays) else { return choices }
+        return (choices.filter { $0 > 0 } + [store.sessionRetentionDays]).sorted() + [0]
+    }
+
+    private var retentionDescription: String {
+        if store.sessionRetentionDays <= 0 {
+            return "Closed sessions are kept forever. A long history makes every cold start slower: Banyan resolves repository context once per directory it restores."
+        }
+        if let lastCleanUpCount {
+            return lastCleanUpCount == 0
+                ? "Nothing to remove."
+                : "Removed \(lastCleanUpCount) closed \(lastCleanUpCount == 1 ? "session" : "sessions")."
+        }
+        let expired = store.expiredSessionCount
+        guard expired > 0 else {
+            return "No closed sessions have aged out yet. Banyan removes them at launch."
+        }
+        return "\(expired) closed \(expired == 1 ? "session is" : "sessions are") older than \(SessionRetentionPolicy.label(retentionDays: store.sessionRetentionDays)). Banyan removes them at the next launch."
     }
 
     private var isRendererPinnedByEnvironment: Bool {

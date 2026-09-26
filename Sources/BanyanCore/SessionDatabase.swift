@@ -96,6 +96,51 @@ public struct SessionDatabase: Sendable {
         }
     }
 
+    /// Deletes closed sessions that aged out of the retention window, and
+    /// returns how many rows went.
+    ///
+    /// Called once at launch, *before* `load()`: every row dropped here is a row
+    /// whose `cwd` the restore pass would otherwise resolve git context for.
+    /// Deliberately not called from `save()` — that already rewrites the whole
+    /// table on every supervisor tick, and folding a retention sweep into it
+    /// would make each tick a full scan for a cutoff that moves once a day.
+    ///
+    /// `retentionDays <= 0` keeps everything.
+    @discardableResult
+    public func pruneExpiredSessions(retentionDays: Int, now: Date = Date()) -> Int {
+        guard let cutoff = SessionRetentionPolicy.cutoff(retentionDays: retentionDays, now: now) else {
+            return 0
+        }
+        do {
+            let database = try openDatabase()
+            defer { sqlite3_close(database) }
+            try migrate(database)
+
+            let expiredIDs = SessionRetentionPolicy.expiredSessionIDs(
+                rows: try retentionRows(database),
+                cutoff: cutoff,
+                // This also runs with no app attached, so the guard has to read
+                // the selection the app is about to restore rather than one held
+                // in memory.
+                selectedSessionID: try stateValue("selectedSessionID", database)
+            )
+            guard !expiredIDs.isEmpty else { return 0 }
+
+            try execute(database, "BEGIN IMMEDIATE TRANSACTION")
+            do {
+                try delete(sessionIDs: expiredIDs, database: database)
+                try execute(database, "COMMIT")
+            } catch {
+                try? execute(database, "ROLLBACK")
+                throw error
+            }
+            return expiredIDs.count
+        } catch {
+            NSLog("Banyan failed to prune expired sessions from SQLite: \(error.localizedDescription)")
+            return 0
+        }
+    }
+
     /// Update one existing session without rewriting thousands of closed history
     /// rows when a live session changes status, title, or activity time.
     public func saveSession(_ snapshot: SessionSnapshot, sortOrder: Int) {
@@ -275,6 +320,63 @@ public struct SessionDatabase: Sendable {
         sqlite3_bind_int(statement, 18, snapshot.isSuspended ? 1 : 0)
 
         guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
+    }
+
+    private func retentionRows(_ database: OpaquePointer) throws -> [SessionRetentionPolicy.Row] {
+        let sql = "SELECT id, parent_session_id, status, updated_at FROM sessions"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw databaseError(database)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var rows: [SessionRetentionPolicy.Row] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            // A row this cannot read is one `load()` already drops rather than
+            // guessing at, so the prune skips it too: it never becomes a
+            // candidate, and guessing `closed` here would delete it for good.
+            guard
+                let id = columnText(statement, 0),
+                let status = columnText(statement, 2).flatMap(SessionStatus.init(rawValue:)),
+                let updatedAt = decodeDate(columnText(statement, 3))
+            else { continue }
+            rows.append(SessionRetentionPolicy.Row(
+                id: id,
+                parentSessionID: columnText(statement, 1),
+                status: status,
+                updatedAt: updatedAt
+            ))
+        }
+        return rows
+    }
+
+    /// One prepared statement rebound per ID. A pruned history runs to thousands
+    /// of rows, which is well past the bound-parameter ceiling an `IN (?, ?, …)`
+    /// would need.
+    private func delete(sessionIDs: [String], database: OpaquePointer) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "DELETE FROM sessions WHERE id = ?", -1, &statement, nil) == SQLITE_OK else {
+            throw databaseError(database)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        for id in sessionIDs {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
+            bindText(statement, 1, id)
+            guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
+        }
+    }
+
+    private func stateValue(_ key: String, _ database: OpaquePointer) throws -> String? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT value FROM workspace_state WHERE key = ?", -1, &statement, nil) == SQLITE_OK else {
+            throw databaseError(database)
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, 1, key)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return columnText(statement, 0)
     }
 
     private func execute(_ database: OpaquePointer, _ sql: String) throws {

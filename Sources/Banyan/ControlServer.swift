@@ -320,6 +320,26 @@ final class ControlServer {
                 try validateVersion(body.apiVersion)
                 return waitForEvents(store: store, since: body.since?.value, respond: respond)
 
+            case .prune:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let retentionDays = SessionRetentionPolicy.normalizedRetentionDays(
+                    body.days?.value ?? store.sessionRetentionDays
+                )
+                let candidates = store.expiredSessionIDs(retentionDays: retentionDays)
+                // Report first, delete on a second call: a prune is not
+                // reversible, so `--dry-run` has to answer with the same numbers
+                // the real run would act on.
+                let isDryRun = body.dryRun?.value ?? false
+                let removed = isDryRun ? 0 : store.pruneExpiredSessions(retentionDays: retentionDays)
+                return respond(.ok([
+                    "retentionDays": retentionDays,
+                    "candidates": candidates.count,
+                    "removed": removed,
+                    "dryRun": isDryRun
+                ]))
+
             case .suggest:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
