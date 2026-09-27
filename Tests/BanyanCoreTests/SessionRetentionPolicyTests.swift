@@ -9,13 +9,15 @@ private func row(
     _ id: String,
     status: SessionStatus = .closed,
     parent: String? = nil,
-    ageDays: Double
+    ageDays: Double,
+    agentSessionID: String? = nil
 ) -> SessionRetentionPolicy.Row {
     SessionRetentionPolicy.Row(
         id: id,
         parentSessionID: parent,
         status: status,
-        updatedAt: now.addingTimeInterval(-ageDays * 24 * 60 * 60)
+        updatedAt: now.addingTimeInterval(-ageDays * 24 * 60 * 60),
+        agentSessionID: agentSessionID
     )
 }
 
@@ -57,6 +59,32 @@ private func expired(
         .map { row("live-\($0.rawValue)", status: $0, ageDays: 400) }
 
     #expect(expired(live + [row("gone", ageDays: 400)]) == ["gone"])
+}
+
+@Test func retentionSparesAClosedSessionThatStillNamesAnAgentThread() {
+    // Closed and long past the window, but the row is still the only pointer
+    // back to a conversation the agent can resume, so it is work rather than a
+    // shell. Absent and empty both mean "no thread" and stay prunable.
+    let rows = [
+        row("resumable", ageDays: 400, agentSessionID: "01a0767c-5b04-7e51-aa5b-5e26679ba023"),
+        row("no-thread", ageDays: 400),
+        row("blank-thread", ageDays: 400, agentSessionID: "")
+    ]
+
+    #expect(expired(rows) == ["no-thread", "blank-thread"])
+}
+
+@Test func retentionKeepsTheAncestorsOfAResumableClosedSession() {
+    // A resumable row survives on its own terms, so the chain that explains
+    // where it came from survives with it — the same walk that protects a live
+    // child.
+    let rows = [
+        row("grandparent", ageDays: 400),
+        row("parent", parent: "grandparent", ageDays: 400),
+        row("resumable", parent: "parent", ageDays: 400, agentSessionID: "thread")
+    ]
+
+    #expect(expired(rows).isEmpty)
 }
 
 @Test func retentionKeepsTheParentOfASessionThatSurvives() {

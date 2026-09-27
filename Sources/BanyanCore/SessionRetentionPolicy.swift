@@ -10,7 +10,8 @@ import Foundation
 ///
 /// The rule is deliberately conservative. Deleting a session row is not
 /// reversible, so a row goes only when it is closed, older than the window, not
-/// the selected session, and not holding up a row that survives.
+/// the selected session, not holding up a row that survives, and not still
+/// pointing at an agent thread the user could resume.
 public enum SessionRetentionPolicy {
     /// A month is long enough to reopen last week's work and short enough to
     /// keep the restore pass proportional to the sessions a user actually has.
@@ -20,7 +21,7 @@ public enum SessionRetentionPolicy {
     /// the escape hatch for anyone who treats the sidebar as an archive.
     public static let retentionDayChoices = [7, 14, 30, 90, 180, 0]
 
-    /// The four columns the policy needs, rather than a whole `SessionSnapshot`.
+    /// The five columns the policy needs, rather than a whole `SessionSnapshot`.
     /// The prune runs *before* snapshots are built, and reading only this much
     /// is what keeps it that way.
     public struct Row: Sendable, Equatable {
@@ -28,17 +29,22 @@ public enum SessionRetentionPolicy {
         public let parentSessionID: String?
         public let status: SessionStatus
         public let updatedAt: Date
+        /// The Codex/Claude conversation this session can be reopened into, when
+        /// it has one. Empty and `nil` mean the same thing here: no thread.
+        public let agentSessionID: String?
 
         public init(
             id: String,
             parentSessionID: String? = nil,
             status: SessionStatus,
-            updatedAt: Date
+            updatedAt: Date,
+            agentSessionID: String? = nil
         ) {
             self.id = id
             self.parentSessionID = parentSessionID
             self.status = status
             self.updatedAt = updatedAt
+            self.agentSessionID = agentSessionID
         }
     }
 
@@ -76,8 +82,9 @@ public enum SessionRetentionPolicy {
     /// The IDs safe to delete, in the order they were given.
     ///
     /// A row survives when it is not closed, is the selected session, is newer
-    /// than the cutoff, or is an ancestor of a row that survives for one of
-    /// those reasons. The ancestor walk is transitive on purpose: a closed,
+    /// than the cutoff, still names an agent thread, or is an ancestor of a row
+    /// that survives for one of those reasons. The ancestor walk is transitive
+    /// on purpose: a closed,
     /// aged-out grandparent whose child is equally closed and aged out still has
     /// to stay when a live grandchild hangs off that child, or the sidebar loses
     /// the chain that explains where the grandchild came from.
@@ -107,6 +114,13 @@ public enum SessionRetentionPolicy {
     }
 
     private static func isExpired(_ row: Row, cutoff: Date, selectedSessionID: String?) -> Bool {
-        row.status == .closed && row.updatedAt < cutoff && row.id != selectedSessionID
+        guard row.status == .closed, row.updatedAt < cutoff, row.id != selectedSessionID else {
+            return false
+        }
+        // A closed session that still names its agent thread is not history: the
+        // row is the only pointer back to a conversation that can be resumed, so
+        // ageing it out would delete work rather than a shell.
+        guard (row.agentSessionID ?? "").isEmpty else { return false }
+        return true
     }
 }

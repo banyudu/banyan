@@ -942,7 +942,9 @@ final class SessionStore: ObservableObject {
     /// Imported history rows can never be candidates — they are rebuilt from the
     /// agent's own transcripts rather than from `state.sqlite`, exactly as
     /// `saveSessions` treats them — but they still take part as parents, so a
-    /// persisted row one of them hangs off stays.
+    /// persisted row one of them hangs off stays. Neither can a closed session
+    /// that still names an agent thread: that row is how the conversation is
+    /// resumed, so it is not the prune's to delete.
     func expiredSessionIDs(retentionDays: Int) -> [String] {
         let importedHistoryIDs = Set(sessions.filter(\.isImportedHistory).map(\.id))
         return SessionRetentionPolicy.expiredSessionIDs(
@@ -951,7 +953,8 @@ final class SessionStore: ObservableObject {
                     id: $0.id,
                     parentSessionID: $0.parentSessionID,
                     status: $0.status,
-                    updatedAt: $0.updatedAt
+                    updatedAt: $0.updatedAt,
+                    agentSessionID: $0.agentSessionID
                 )
             },
             cutoff: SessionRetentionPolicy.cutoff(retentionDays: retentionDays),
@@ -1113,7 +1116,7 @@ final class SessionStore: ObservableObject {
     /// sessions we already know instead of rescanning every provider transcript.
     /// A new Banyan session without a Codex thread ID still needs one import to
     /// establish that identity; unchanged transcripts come from the cache.
-    private func refreshCodexTitlesFromIndex() {
+    func refreshCodexTitlesFromIndex() {
         let titles = CodexSessionTitleIndex.generatedTitles(homeDirectory: host.homeDirectory)
         let changed = titles.filter { lastCodexGeneratedTitles[$0.key] != $0.value }
         lastCodexGeneratedTitles = titles
@@ -1918,9 +1921,15 @@ final class SessionStore: ObservableObject {
     /// still spawn every subprocess its timers ask for, just later. So the app reads
     /// the same signal the OS reads and throttles itself.
     private var supervisorActivityLevel: SupervisorActivityLevel {
-        if NSApp.isActive { return .active }
-        if NSApp.isHidden { return .hidden }
-        return NSApp.occlusionState.contains(.visible) ? .backgroundVisible : .hidden
+        // `NSApp` is nil outside a GUI process — a store under test, for one —
+        // and reading through the implicitly unwrapped optional traps. Not
+        // being able to ask is not the same as being hidden: the middle
+        // cadence is the honest answer, and the app itself always has an
+        // `NSApplication` by the time a store exists.
+        guard let app = NSApp else { return .backgroundVisible }
+        if app.isActive { return .active }
+        if app.isHidden { return .hidden }
+        return app.occlusionState.contains(.visible) ? .backgroundVisible : .hidden
     }
 
     /// Adaptive cadence for the supervisor poll. Each tick spawns `/bin/ps`, one
@@ -2453,7 +2462,15 @@ final class SessionStore: ObservableObject {
                CodexAppServerLaunch.isAppServerCommand(session.command) {
                 return CodexAppServerLaunch.resumeCommand(sourceID: agentSessionID, cwd: session.cwd)
             }
-            return directCommand
+            // Recover rebuilds the command itself, so it needs the same profile
+            // hand-off as `preferredResumeCommand`: without it a recovered
+            // `-p opencode-go` session resumes, fails to resolve the provider
+            // recorded in its transcript, and exits — and the profile-less
+            // command is written back to the row, so the next attempt cannot
+            // recover it either.
+            return directCommand.map {
+                AgentSessionHistory.applyingCodexProfile(fromCommand: session.command, to: $0)
+            }
         }
 
         session.recoverFromMissingBackingSessionInBackground(command: recoveryCommand)
@@ -3437,7 +3454,8 @@ final class SessionStore: ObservableObject {
                 sourceID: plan.sourceID,
                 cwd: history.cwd,
                 prompt: prompt,
-                directCommand: plan.command
+                directCommand: plan.command,
+                previousCommand: history.command
             ),
             tone: .blue
         )
@@ -3457,6 +3475,7 @@ final class SessionStore: ObservableObject {
         let cwd = history.cwd
         let title = history.displayTitle
         let transcriptURL = history.historyTranscriptURL
+        let previousCommand = history.command
         let historyBackend = historyBackend
         Task.detached(priority: .userInitiated) {
             let plan = SessionResumePolicy.plan(
@@ -3486,7 +3505,8 @@ final class SessionStore: ObservableObject {
                         sourceID: plan.sourceID,
                         cwd: cwd,
                         prompt: prompt,
-                        directCommand: plan.command
+                        directCommand: plan.command,
+                        previousCommand: previousCommand
                     ),
                     tone: .blue
                 )
@@ -4172,11 +4192,17 @@ final class SessionStore: ObservableObject {
         directCommand: String,
         previousCommand: String? = nil
     ) -> String {
-        guard provider == .codex,
-              enableCodexAppServerMode || previousCommand.map(CodexAppServerLaunch.isAppServerCommand) == true else {
-            return directCommand
+        let command: String
+        if provider == .codex,
+           enableCodexAppServerMode || previousCommand.map(CodexAppServerLaunch.isAppServerCommand) == true {
+            command = CodexAppServerLaunch.resumeCommand(sourceID: sourceID, cwd: cwd, prompt: prompt)
+        } else {
+            command = directCommand
         }
-        return CodexAppServerLaunch.resumeCommand(sourceID: sourceID, cwd: cwd, prompt: prompt)
+        // Codex replays the provider recorded in the transcript, so a resume that
+        // lost the `-p <profile>` its session launched with dies at startup with
+        // "Model provider … not found" and takes the recovered session with it.
+        return AgentSessionHistory.applyingCodexProfile(fromCommand: previousCommand, to: command)
     }
 
     private func runHistoryImport(spawnDefaultIfEmpty: Bool = false) {

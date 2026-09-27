@@ -238,6 +238,32 @@ private func legacySessionsTable(at url: URL) throws {
     #expect(database.load().map(\.id) == ["selected"])
 }
 
+@Test func sessionDatabasePruneSparesRowsThatStillNameAnAgentThread() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    database.save([
+        retentionSnapshot(
+            id: "resumable",
+            status: .closed,
+            updatedAt: now,
+            ageDays: 400,
+            agentSessionID: "01a0767c-5b04-7e51-aa5b-5e26679ba023",
+            in: directory
+        ),
+        retentionSnapshot(id: "plain", status: .closed, updatedAt: now, ageDays: 400, in: directory)
+    ])
+
+    #expect(database.pruneExpiredSessions(retentionDays: 30, now: now) == 1)
+    #expect(database.load().map(\.id) == ["resumable"])
+}
+
 @Test func sessionDatabaseRetentionOffAndSaveItselfNeverPrune() throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
@@ -268,6 +294,7 @@ private func retentionSnapshot(
     updatedAt now: Date,
     ageDays: Double,
     parentSessionID: String? = nil,
+    agentSessionID: String? = nil,
     in directory: URL
 ) -> SessionSnapshot {
     let updatedAt = now.addingTimeInterval(-ageDays * 24 * 60 * 60)
@@ -281,6 +308,7 @@ private func retentionSnapshot(
         status: status,
         tone: .blue,
         parentSessionID: parentSessionID,
+        agentSessionID: agentSessionID,
         createdAt: updatedAt,
         updatedAt: updatedAt
     )

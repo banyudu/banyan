@@ -15,7 +15,16 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         }
     }
 
+    /// The tmux server Banyan owns. Every session the app launches lives on this
+    /// socket, and so does the launch reap that clears sessions nothing points
+    /// at any more — which is exactly why nothing else may reach it: a test run
+    /// sharing this socket can list every live session and, seeing none of them
+    /// in its own fixture database, kill them all.
     public static let socketName = "banyan"
+
+    /// The socket *this* backend talks to. The app takes the default; tests pass
+    /// their own so a `swift test` run cannot see, let alone kill, a live session.
+    public let socketName: String
 
     /// TERM the SwiftTerm-hosted `tmux attach` client runs with. tmux gates several
     /// capabilities (hyperlinks, RGB) on this name, so both sides must agree.
@@ -28,21 +37,28 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
     public init(
         executableURL: URL,
         workingDirectory: String,
-        environment: [String: String]
+        environment: [String: String],
+        socketName: String = TmuxBackend.socketName
     ) {
         self.executableURL = executableURL
         self.workingDirectory = workingDirectory
         self.environment = environment
+        self.socketName = socketName
     }
 
-    public init(environment: [String: String], workingDirectory: String) {
+    public init(
+        environment: [String: String],
+        workingDirectory: String,
+        socketName: String = TmuxBackend.socketName
+    ) {
         guard let executableURL = Self.resolveExecutableURL(environment: environment) else {
             fatalError("tmux is required to run Banyan. Install it and make it available in PATH")
         }
         self.init(
             executableURL: executableURL,
             workingDirectory: workingDirectory,
-            environment: environment
+            environment: environment,
+            socketName: socketName
         )
     }
 
@@ -373,7 +389,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
     }
 
     private var baseArguments: [String] {
-        ["-L", Self.socketName]
+        ["-L", socketName]
     }
 
     /// Safety cap so a wedged tmux server can never hang a supervisor tick (or the

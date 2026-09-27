@@ -323,7 +323,7 @@ public struct SessionDatabase: Sendable {
     }
 
     private func retentionRows(_ database: OpaquePointer) throws -> [SessionRetentionPolicy.Row] {
-        let sql = "SELECT id, parent_session_id, status, updated_at FROM sessions"
+        let sql = "SELECT id, parent_session_id, status, updated_at, agent_session_id FROM sessions"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
             throw databaseError(database)
@@ -344,7 +344,8 @@ public struct SessionDatabase: Sendable {
                 id: id,
                 parentSessionID: columnText(statement, 1),
                 status: status,
-                updatedAt: updatedAt
+                updatedAt: updatedAt,
+                agentSessionID: columnText(statement, 4)
             ))
         }
         return rows
