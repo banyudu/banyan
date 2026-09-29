@@ -123,20 +123,20 @@ import Testing
     #expect(!session.isProcessStarted)
 }
 
-/// A `BanyanSession` with a real `tmux -L banyan` session behind it, so tests can
+/// A `TerminalSession` with a real `tmux -L banyan` session behind it, so tests can
 /// assert on what suspension does and does not touch.
 @MainActor
 private struct TmuxBackedSession {
     let tmux: TmuxBackend
     let tmuxSessionName: String
-    let session: BanyanSession
+    let session: TerminalSession
 
     init(idPrefix: String, status: SessionStatus = .running) throws {
         tmux = banyanTestTmuxBackend
         let id = "\(idPrefix)-\(UUID().uuidString.lowercased())"
         tmuxSessionName = TmuxBackend.sessionName(for: id)
         try tmux.ensureSession(named: tmuxSessionName, cwd: "/tmp", command: "")
-        session = BanyanSession(
+        session = TerminalSession(
             id: id,
             tmuxSessionName: tmuxSessionName,
             title: "Parked",

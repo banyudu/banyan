@@ -57,7 +57,11 @@ struct AddSessionSheet: View {
     @State private var id = ""
     @State private var title = ""
     @State private var cwd: String
+    @State private var backend: SessionBackendKind = .terminal
     @State private var command = ""
+    @State private var puckProvider = PuckSessionBinding.providers[0]
+    @State private var puckAccount = ""
+    @State private var puckModel = ""
     @State private var tone: SessionTone = .blue
 
     init(draft: AddSessionDraft) {
@@ -89,7 +93,25 @@ struct AddSessionSheet: View {
                     }
                     .help("Choose working directory")
                 }
-                TextField("Command", text: $command)
+                Picker("Runtime", selection: $backend) {
+                    Text("Terminal").tag(SessionBackendKind.terminal)
+                    Text("Puck").tag(SessionBackendKind.puck)
+                }
+                .pickerStyle(.segmented)
+                switch backend {
+                case .terminal:
+                    TextField("Command", text: $command)
+                case .puck:
+                    Picker("Provider", selection: $puckProvider) {
+                        ForEach(PuckSessionBinding.providers, id: \.self) { provider in
+                            Text(Self.puckProviderLabel(provider)).tag(provider)
+                        }
+                    }
+                    TextField(requiresAccountAndModel ? "API-key account label" : "Account label (optional)",
+                              text: $puckAccount)
+                    TextField(requiresAccountAndModel ? "API model ID" : "Model (optional)",
+                              text: $puckModel)
+                }
                 Picker("Tone", selection: $tone) {
                     ForEach(SessionTone.allCases) { tone in
                         Text(tone.label).tag(tone)
@@ -104,21 +126,51 @@ struct AddSessionSheet: View {
                 }
                 Button("Spawn") {
                     store.spawn(
+                        launch,
+                        cwd: cwd,
+                        parentSessionID: draft.kind.parentSessionID,
                         id: id.isEmpty ? nil : id,
                         title: title.isEmpty ? nil : title,
-                        cwd: cwd,
-                        command: command,
-                        parentSessionID: draft.kind.parentSessionID,
                         tone: tone
                     )
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(launchError != nil)
+                .help(launchError ?? "Start the session")
             }
         }
         .padding(24)
         .frame(width: 520)
         .accessibilityIdentifier(AccessibilityID.addSessionSheet)
+    }
+
+    private var launch: SessionLaunchSpec {
+        switch backend {
+        case .terminal:
+            return .terminal(command: command)
+        case .puck:
+            return .puck(PuckSessionBinding(provider: puckProvider, account: puckAccount, model: puckModel))
+        }
+    }
+
+    private var launchError: String? {
+        guard case .puck(let binding) = launch else { return nil }
+        return binding.validationError
+    }
+
+    private var requiresAccountAndModel: Bool {
+        PuckSessionBinding.requiresAccountAndModel(provider: puckProvider)
+    }
+
+    private static func puckProviderLabel(_ provider: String) -> String {
+        switch provider {
+        case "codex": return "Codex"
+        case "opencode-go": return "OpenCode Go"
+        case "anthropic": return "Anthropic API (billed)"
+        case "gemini": return "Gemini AI Studio API (billed)"
+        default: return provider
+        }
     }
 
     private func chooseDirectory() {

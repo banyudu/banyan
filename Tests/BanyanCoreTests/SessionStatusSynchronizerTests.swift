@@ -111,3 +111,32 @@ private final class SynchronizerBackend: AgentSupervisorBackend, @unchecked Send
 
     func captureVisibleText(paneID: String, lineLimit: Int) -> String { "" }
 }
+
+@Test func statusSynchronizerLeavesPuckSessionsToTheirDaemon() {
+    let backend = SynchronizerBackend()
+    let now = Date(timeIntervalSince1970: 100)
+    let puck = SessionSnapshot(
+        id: "0f6c3a52-8c1e-4d7b-9a55-3b1f1d2e4c10",
+        tmuxSessionName: nil,
+        title: "Puck",
+        reportedTitle: nil,
+        cwd: "/tmp",
+        command: "",
+        status: .needInput,
+        tone: .yellow,
+        createdAt: now,
+        updatedAt: now,
+        backend: .puck,
+        puck: PuckSessionBinding(provider: "codex")
+    )
+    let synchronizer = SessionStatusSynchronizer(
+        backend: backend,
+        processTable: ProcessTable(rows: [])
+    )
+
+    // A puck row has no pane; inspecting its would-be tmux name would find
+    // nothing and mark it dead.
+    #expect(synchronizer.synchronize([puck]) == [puck])
+    #expect(backend.batchRequestedNames.isEmpty)
+    #expect(backend.requestedNames.isEmpty)
+}

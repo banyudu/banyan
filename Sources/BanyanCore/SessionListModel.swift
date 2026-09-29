@@ -55,7 +55,9 @@ public struct SessionListModel: Sendable {
             viewState.clampSelection(rowCount: history.count)
             return
         }
-        sessions = dataSource.loadActiveSessions()
+        // Puck rows come from the daemon below, which is live even when the
+        // app that persisted them is not running.
+        sessions = dataSource.loadActiveSessions().filter { $0.backend == .terminal }
         if puckNeedsReload {
             puckSessions = (try? puckClient?.list()) ?? []
             puckNeedsReload = false

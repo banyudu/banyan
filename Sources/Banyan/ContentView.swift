@@ -27,59 +27,9 @@ private enum LinearIssueSortOption: String, CaseIterable, Identifiable {
     }
 }
 
-struct PuckSidebarProjection {
-    let groups: [SidebarSessionGroup]
-    let sessionsByGroup: [String: [PuckSessionSummary]]
-
-    static func make(
-        terminalGroups: [SidebarSessionGroup],
-        puckSessions: [PuckSessionSummary],
-        projectsBySessionID: [String: PuckSessionProject],
-        query: String
-    ) -> Self {
-        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        var groups = terminalGroups
-        if !query.isEmpty {
-            let matches = puckSessions.filter { session in
-                [session.provider, session.model, session.id, session.workspace]
-                    .contains { $0.localizedStandardContains(query) }
-            }
-            if groups.isEmpty, !matches.isEmpty {
-                groups = [SidebarSessionGroup(id: "search", title: "Search", items: [])]
-            }
-            return Self(groups: groups, sessionsByGroup: ["search": matches])
-        }
-
-        var sessionsByGroup: [String: [PuckSessionSummary]] = [:]
-        var puckOnlyProjects: [String: PuckSessionProject] = [:]
-        let existingGroupIDs = Set(groups.map(\.id))
-        for session in puckSessions {
-            guard let project = projectsBySessionID[session.id] else { continue }
-            sessionsByGroup[project.id, default: []].append(session)
-            if !existingGroupIDs.contains(project.id) {
-                puckOnlyProjects[project.id] = project
-            }
-        }
-        let history = groups.filter { $0.id == "history" }
-        groups.removeAll { $0.id == "history" }
-        groups.append(contentsOf: puckOnlyProjects.values.map {
-            SidebarSessionGroup(id: $0.id, title: $0.title, items: [])
-        })
-        groups.sort {
-            let titleComparison = $0.title.localizedCaseInsensitiveCompare($1.title)
-            return titleComparison == .orderedSame
-                ? $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending
-                : titleComparison == .orderedAscending
-        }
-        groups.append(contentsOf: history)
-        return Self(groups: groups, sessionsByGroup: sessionsByGroup)
-    }
-}
-
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @EnvironmentObject private var updater: AppUpdater
-    @StateObject private var puckBrowser = PuckSessionBrowser()
     private let selection: SessionSelection
     @State private var showingPreferences = false
     @State private var showingCommandPalette = false
@@ -108,9 +58,7 @@ struct ContentView: View {
         }
         .onOpenURL { url in
             guard let id = PuckSessionLink.sessionID(from: url) else { return }
-            store.sidebarMode = .sessions
-            puckBrowser.refresh()
-            puckBrowser.select(id)
+            store.openPuckSession(id: id)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -174,40 +122,18 @@ struct ContentView: View {
                 .environmentObject(store)
         }
         .onAppear {
-            let browser = puckBrowser
-            store.onPuckLaunch = { [weak store, weak browser] launch, workspace, prompt in
-                guard let puck = launch.puck else { return }
-                browser?.create(provider: puck.provider, account: puck.account,
-                                model: puck.model, workspace: workspace, prompt: prompt)
-                store?.sidebarMode = .sessions
-            }
-            store.onPuckSibling = { [weak browser] in browser?.createSibling() }
-            store.puckSelectedWorkspace = { [weak browser] in browser?.selectedSummary?.workspace }
-            store.onPuckCreated = { [weak store, weak browser] id, focus in
-                browser?.refresh()
-                guard focus else { return }
-                store?.sidebarMode = .sessions
-                browser?.select(id)
-            }
             store.loadPersistedSessionsIfNeeded()
             store.spawnDefaultSessionIfEmpty()
             store.refreshImportedHistoryIfNeeded()
             store.startControlServer()
             store.startSupervisor()
         }
-        .onChange(of: puckBrowser.selectedID) { _, id in
-            store.activePuckSessionID = id
-        }
-        .onReceive(selection.$selectedSessionID.dropFirst()) { id in
-            guard id != nil else { return }
-            puckBrowser.detach()
-        }
         .onChange(of: store.commandPaletteRequestID) {
             showingCommandPalette = true
         }
         .alert(Text(closeConfirmationTitle), isPresented: closeConfirmationBinding) {
             Button("Cancel", role: .cancel) {}
-            Button("Close and Kill", role: .destructive) {
+            Button(closeConfirmationAction, role: .destructive) {
                 store.confirmPendingClose()
             }
             .keyboardShortcut(.defaultAction)
@@ -221,13 +147,10 @@ struct ContentView: View {
         } message: {
             Text(store.handoffNotice ?? "")
         }
-        .alert("Puck session error", isPresented: Binding(
-            get: { puckBrowser.creationError != nil },
-            set: { if !$0 { puckBrowser.dismissCreationError() } }
-        )) {
-            Button("OK") { puckBrowser.dismissCreationError() }
+        .alert("Puck session error", isPresented: puckSessionErrorBinding) {
+            Button("OK") { store.puckSessionError = nil }
         } message: {
-            Text(puckBrowser.creationError ?? "")
+            Text(store.puckSessionError ?? "")
         }
         .background(WindowTitleConfigurator(trigger: titlebarConfigurationTrigger))
         .preferredColorScheme(store.terminalTheme.colorScheme)
@@ -465,8 +388,6 @@ struct ContentView: View {
             switch store.sidebarMode {
             case .sessions:
                 sessionsSidebar
-            case .puck:
-                PuckSessionSidebar(browser: puckBrowser)
             case .linear:
                 linearSidebar
             }
@@ -526,34 +447,19 @@ struct ContentView: View {
         .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
     }
 
-    private var puckSidebarProjection: PuckSidebarProjection {
-        PuckSidebarProjection.make(
-            terminalGroups: store.unifiedSidebarGroups,
-            puckSessions: puckBrowser.sessions,
-            projectsBySessionID: puckBrowser.projectsBySessionID,
-            query: store.historyFilterText
-        )
-    }
-
     private var sessionsSidebar: some View {
-        let projection = puckSidebarProjection
-        let groups = projection.groups
+        let groups = store.unifiedSidebarGroups
         let jumpKeyLabels = makeJumpKeyLabels(groups: groups)
         return VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 List {
-                    sidebarSections(
-                        groups,
-                        puckSessionsByGroup: projection.sessionsByGroup,
-                        jumpKeyLabels: jumpKeyLabels
-                    )
+                    sidebarSections(groups, jumpKeyLabels: jumpKeyLabels)
                 }
                 .listStyle(.sidebar)
                 .scrollIndicators(.hidden)
                 .hidesVerticalScroller()
                 .accessibilityIdentifier(AccessibilityID.sidebarList)
                 .onAppear {
-                    puckBrowser.refresh()
                     guard let id = selection.selectedSessionID,
                           id != lastAutoScrolledSidebarSessionID,
                           store.unifiedSidebarGroups.flatMap(\.items).contains(where: { $0.id == id })
@@ -574,17 +480,6 @@ struct ContentView: View {
                         proxy.scrollTo(id, anchor: .center)
                     }
                 }
-                .onChange(of: puckBrowser.selectedID) { _, id in
-                    guard let id else { return }
-                    DispatchQueue.main.async {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo("puck:\(id)", anchor: .center)
-                        }
-                    }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                puckBrowser.refresh()
             }
 
             Spacer(minLength: 0)
@@ -1224,7 +1119,6 @@ struct ContentView: View {
     @ViewBuilder
     private func sidebarSections(
         _ groups: [SidebarSessionGroup],
-        puckSessionsByGroup: [String: [PuckSessionSummary]],
         jumpKeyLabels: [String: String]
     ) -> some View {
         let firstGroupID = groups.first?.id
@@ -1232,7 +1126,6 @@ struct ContentView: View {
             // The history and search groups are not user-reorderable and render
             // their rows dimmed, as a visual separator above the active sessions.
             let isStatic = group.id == "history" || group.id == "search"
-            let puckSessions = puckSessionsByGroup[group.id] ?? []
             // The disclosure gutter is reserved for every row in the group as
             // soon as any row needs it, so same-depth badges line up and a
             // top-level parent never reads as a child of its sibling.
@@ -1264,9 +1157,6 @@ struct ContentView: View {
                         store.moveSidebarSessions(in: group.id, from: source, to: destination)
                     }
                 }
-                ForEach(puckSessions, id: \.id) { session in
-                    puckSidebarRow(session)
-                }
             } header: {
                 HStack(spacing: 4) {
                     Text(group.title)
@@ -1279,8 +1169,7 @@ struct ContentView: View {
 
                         ProjectNewSessionButton(
                             groupID: group.id,
-                            groupTitle: group.title,
-                            puckWorkspace: puckSessions.first?.workspace
+                            groupTitle: group.title
                         )
                     }
                 }
@@ -1299,33 +1188,6 @@ struct ContentView: View {
             }
             .listSectionSeparator(isStatic ? .visible : .hidden, edges: .top)
         }
-    }
-
-    private func puckSidebarRow(_ session: PuckSessionSummary) -> some View {
-        Button {
-            puckBrowser.select(session.id)
-        } label: {
-            HStack {
-                Image(systemName: "sparkles")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Puck · \(session.provider)/\(session.model)").lineLimit(1)
-                    Text(session.id)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Text(session.position)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .buttonStyle(.plain)
-        .listRowBackground(puckBrowser.selectedID == session.id
-            ? Color.accentColor.opacity(0.16) : Color.clear)
-        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
-        .id("puck:\(session.id)")
-        .accessibilityIdentifier("banyan.puckSession.\(session.id)")
     }
 
     private func makeJumpKeyLabels(
@@ -1368,7 +1230,6 @@ struct ContentView: View {
             hiddenChildCount: item.hiddenChildCount,
             jumpKeyLabel: jumpKeyLabel,
             onSelect: {
-                puckBrowser.detach()
                 store.userSelect(id: item.session.id)
             },
             onToggleCollapse: {
@@ -1466,7 +1327,7 @@ struct ContentView: View {
         guard let session = store.pendingCloseSession else {
             return ""
         }
-        var details = ["Closing \(session.displayTitle) will kill its tmux session."]
+        var details = [session.closeConsequence]
         if store.pendingCloseHasOngoingAgent {
             details.append("Any running coding-agent process in that session will be terminated.")
         }
@@ -1487,6 +1348,21 @@ struct ContentView: View {
         )
     }
 
+
+    private var closeConfirmationAction: String {
+        store.pendingCloseSession?.closeEndsAgentWork == false ? "Close" : "Close and Kill"
+    }
+
+    private var puckSessionErrorBinding: Binding<Bool> {
+        Binding(
+            get: { store.puckSessionError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    store.puckSessionError = nil
+                }
+            }
+        )
+    }
 
     private var closeConfirmationTitle: String {
         if store.pendingCloseHasOngoingAgent {
@@ -1523,13 +1399,7 @@ struct ContentView: View {
     private var detail: some View {
         switch store.sidebarMode {
         case .sessions:
-            if puckBrowser.selectedID != nil {
-                PuckSessionDetail(browser: puckBrowser)
-            } else {
-                sessionDetail
-            }
-        case .puck:
-            PuckSessionDetail(browser: puckBrowser)
+            sessionDetail
         case .linear:
             linearDetail
         }
@@ -1541,7 +1411,7 @@ struct ContentView: View {
             ZStack {
                 SelectionAwareTerminalSwitcher(
                     selection: selection,
-                    sessions: store.visibleSessions,
+                    sessions: store.visibleTerminalSessions,
                     theme: store.terminalTheme,
                     fontFamily: store.terminalFontFamily,
                     fontSize: store.terminalFontSize,
@@ -1562,6 +1432,10 @@ struct ContentView: View {
                             Spacer()
                         }
                         .background(.background)
+                    } else if let puck = session as? PuckSession {
+                        PuckSessionDetail(session: puck)
+                            .id(puck.id)
+                            .background(.background)
                     } else if session.needsManualAttach {
                         VStack(spacing: 0) {
                             TerminalReconnectBanner(session: session)
@@ -2552,7 +2426,7 @@ final class SuggestionShortcutMonitor {
 /// of rebuilding the entire navigation split rooted at `ContentView`.
 private struct SelectionAwareTerminalSwitcher: View {
     @ObservedObject var selection: SessionSelection
-    let sessions: [BanyanSession]
+    let sessions: [TerminalSession]
     let theme: TerminalTheme
     let fontFamily: String
     let fontSize: Double
@@ -2687,7 +2561,7 @@ private struct SessionRow: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(width: 16, height: 18)
-                    .help("Parked — Banyan is not supervising or rendering this session. Its tmux session and agent are still running.")
+                    .help("Parked — Banyan is not supervising or rendering this session. Its \(session.backingSessionName) and agent are still running.")
                     .accessibilityLabel("Parked")
                     .accessibilityIdentifier(AccessibilityID.sessionRowSuspendedBadge(session.id))
             }
@@ -2817,8 +2691,10 @@ private struct SessionRow: View {
                 Button(session.isSuspended ? "Resume" : "Suspend") {
                     onToggleSuspended()
                 }
-                Button("Restart") {
-                    onRestart()
+                if session.canRestart {
+                    Button("Restart") {
+                        onRestart()
+                    }
                 }
             }
             Button("Remove") {
@@ -3023,7 +2899,6 @@ private struct ProjectNewSessionButton: View {
     @EnvironmentObject private var store: SessionStore
     let groupID: String
     let groupTitle: String
-    let puckWorkspace: String?
 
     var body: some View {
         // Time-of-use pricing flips at most a few times a day, so a
@@ -3035,8 +2910,7 @@ private struct ProjectNewSessionButton: View {
             Menu {
                 ForEach(store.sessionLaunchProfiles) { launch in
                     Button {
-                        store.spawnSession(inProjectGroup: groupID, launch: launch,
-                                           puckWorkspace: puckWorkspace)
+                        store.spawnSession(inProjectGroup: groupID, launch: launch)
                     } label: {
                         Label {
                             Text(launch.label)
@@ -3048,8 +2922,7 @@ private struct ProjectNewSessionButton: View {
             } label: {
                 NewSessionLaunchIcon(launch: current)
             } primaryAction: {
-                store.spawnSession(inProjectGroup: groupID, launch: current,
-                                   puckWorkspace: puckWorkspace)
+                store.spawnSession(inProjectGroup: groupID, launch: current)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.visible)
@@ -3091,7 +2964,7 @@ struct NewSessionLaunchIcon: View {
     }
 }
 
-private struct AgentProviderIcon: View {
+struct AgentProviderIcon: View {
     let provider: CodingAgentProvider
     var size: CGFloat = 20
     var helpText: String? = nil
@@ -3334,14 +3207,18 @@ private struct ClosedSessionHistoryView: View {
                         .truncationMode(.middle)
                 }
                 Spacer()
-                Button {
-                    reopenTrimmed()
-                } label: {
-                    Image(systemName: "scissors")
+                // Trimming rewrites a local agent transcript; a daemon-owned
+                // session has none to rewrite.
+                if session.matchesAgentTranscripts {
+                    Button {
+                        reopenTrimmed()
+                    } label: {
+                        Image(systemName: "scissors")
+                    }
+                    .buttonStyle(.banyanBorderless)
+                    .controlSize(.small)
+                    .help("Reopen with stale tool output trimmed to save context (experimental)")
                 }
-                .buttonStyle(.banyanBorderless)
-                .controlSize(.small)
-                .help("Reopen with stale tool output trimmed to save context (experimental)")
 
                 if store.isRecoveringHistoryResume(id: session.id) {
                     ProgressView()
@@ -3603,7 +3480,7 @@ private struct SuspendedSessionBanner: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Session is parked")
                     .font(.callout)
-                Text("Banyan stopped supervising and rendering it. Its tmux session and any agent inside are still running.")
+                Text("Banyan stopped supervising and rendering it. Its \(session.backingSessionName) and any agent inside are still running.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

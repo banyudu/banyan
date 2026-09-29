@@ -6,7 +6,7 @@ import SwiftTerm
 /// Creates terminal views only when visited, then keeps their independently
 /// backed layers attached and switches between them with visibility toggles.
 struct TerminalSwitcherView: NSViewRepresentable {
-    let sessions: [BanyanSession]
+    let sessions: [TerminalSession]
     let selectedSessionID: String?
     let theme: TerminalTheme
     let fontFamily: String
@@ -48,7 +48,7 @@ struct TerminalSwitcherView: NSViewRepresentable {
                     return
                 }
                 // Async: `start()`'s tmux ensure blocked the main thread on
-                // first-visit switches. See BanyanSession+TerminalLifecycle.
+                // first-visit switches. See TerminalSession+Lifecycle.
                 session.startAsync()
                 session.refreshTerminalClient(immediately: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
@@ -219,14 +219,14 @@ final class TerminalSwitcherContainer: NSView {
         switchRequestedAt: DispatchTime?,
         selectionChangedAt: DispatchTime?,
         clickAt: DispatchTime?,
-        sessions: [BanyanSession],
+        sessions: [TerminalSession],
         selectedSessionID: String?,
         theme: TerminalTheme,
         fontFamily: String,
         fontSize: Double,
         focusRequestID: UUID,
-        onUserSubmittedInput: @escaping (BanyanSession, String?) -> Void,
-        onTerminalReady: @escaping (BanyanSession) -> Void
+        onUserSubmittedInput: @escaping (TerminalSession, String?) -> Void,
+        onTerminalReady: @escaping (TerminalSession) -> Void
     ) {
         if TerminalEnergyDiagnostics.enabled {
             energyDiagnosticsUpdateCount += 1
@@ -394,8 +394,8 @@ final class TerminalSwitcherContainer: NSView {
     private func prepareDeferredProjectSwitch(
         _ deferred: DeferredProjectSwitch,
         targetContainer: TerminalContainerView,
-        targetSession: BanyanSession,
-        onTerminalReady: @escaping (BanyanSession) -> Void
+        targetSession: TerminalSession,
+        onTerminalReady: @escaping (TerminalSession) -> Void
     ) {
         guard !deferred.isPrepared else { return }
         var prepared = deferred

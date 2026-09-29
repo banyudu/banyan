@@ -200,7 +200,7 @@ struct BanyanApp: App {
                 .keyboardShortcut("f")
                 .disabled(store.sidebarMode == .linear
                     ? false
-                    : store.selectedSession?.isImportedHistory != false)
+                    : !store.canFindInSelectedSession)
             }
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {

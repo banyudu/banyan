@@ -21,7 +21,7 @@ public enum SessionRetentionPolicy {
     /// the escape hatch for anyone who treats the sidebar as an archive.
     public static let retentionDayChoices = [7, 14, 30, 90, 180, 0]
 
-    /// The five columns the policy needs, rather than a whole `SessionSnapshot`.
+    /// The six columns the policy needs, rather than a whole `SessionSnapshot`.
     /// The prune runs *before* snapshots are built, and reading only this much
     /// is what keeps it that way.
     public struct Row: Sendable, Equatable {
@@ -32,19 +32,25 @@ public enum SessionRetentionPolicy {
         /// The Codex/Claude conversation this session can be reopened into, when
         /// it has one. Empty and `nil` mean the same thing here: no thread.
         public let agentSessionID: String?
+        /// Closing the row left its backing session running elsewhere, as a
+        /// puck session stays in `puckd`. The closed row is then the record of
+        /// the user's decision to dismiss it.
+        public let backingOutlivesClose: Bool
 
         public init(
             id: String,
             parentSessionID: String? = nil,
             status: SessionStatus,
             updatedAt: Date,
-            agentSessionID: String? = nil
+            agentSessionID: String? = nil,
+            backingOutlivesClose: Bool = false
         ) {
             self.id = id
             self.parentSessionID = parentSessionID
             self.status = status
             self.updatedAt = updatedAt
             self.agentSessionID = agentSessionID
+            self.backingOutlivesClose = backingOutlivesClose
         }
     }
 
@@ -121,6 +127,10 @@ public enum SessionRetentionPolicy {
         // row is the only pointer back to a conversation that can be resumed, so
         // ageing it out would delete work rather than a shell.
         guard (row.agentSessionID ?? "").isEmpty else { return false }
+        // Dropping a closed puck row would not delete the daemon session, only
+        // Banyan's memory of the close: the next daemon listing would bring the
+        // session back as if it were new.
+        guard !row.backingOutlivesClose else { return false }
         return true
     }
 }

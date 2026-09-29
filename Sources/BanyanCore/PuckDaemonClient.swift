@@ -33,8 +33,34 @@ public struct PuckSessionSummary: Equatable, Sendable {
     public let cwd: String
     public let model: String
     public let position: String
+    /// Items in the saved conversation. Zero means no turn has run yet.
+    public let historyItems: Int
     public let pendingApproval: PuckPendingApproval?
     public let pendingQuestion: PuckPendingQuestion?
+
+    public init(
+        id: String,
+        provider: String,
+        account: String,
+        workspace: String,
+        cwd: String,
+        model: String,
+        position: String,
+        historyItems: Int = 0,
+        pendingApproval: PuckPendingApproval? = nil,
+        pendingQuestion: PuckPendingQuestion? = nil
+    ) {
+        self.id = id
+        self.provider = provider
+        self.account = account
+        self.workspace = workspace
+        self.cwd = cwd
+        self.model = model
+        self.position = position
+        self.historyItems = historyItems
+        self.pendingApproval = pendingApproval
+        self.pendingQuestion = pendingQuestion
+    }
 
     init(_ object: [String: Any]) throws {
         id = try Self.string("id", in: object)
@@ -44,6 +70,7 @@ public struct PuckSessionSummary: Equatable, Sendable {
         cwd = try Self.string("cwd", in: object)
         model = try Self.string("model", in: object)
         position = try Self.string("position", in: object)
+        historyItems = (object["history_items"] as? NSNumber)?.intValue ?? 0
         pendingApproval = try (object["pending_approval"] as? [String: Any]).map(PuckPendingApproval.init)
         pendingQuestion = try (object["pending_question"] as? [String: Any]).map(PuckPendingQuestion.init)
     }
@@ -59,6 +86,13 @@ public struct PuckPendingApproval: Equatable, Sendable {
     public let tool: String
     public let arguments: String
     public let expiresAtMS: UInt64
+
+    public init(callID: String, tool: String, arguments: String, expiresAtMS: UInt64) {
+        self.callID = callID
+        self.tool = tool
+        self.arguments = arguments
+        self.expiresAtMS = expiresAtMS
+    }
 
     init(_ object: [String: Any]) throws {
         guard let callID = object["call_id"] as? String,
@@ -189,6 +223,28 @@ public struct PuckSessionEvent: Sendable {
     public let arguments: String?
     public let output: String?
     public let query: String?
+
+    public init(
+        cursor: UInt64,
+        kind: String,
+        text: String? = nil,
+        message: String? = nil,
+        tool: String? = nil,
+        callID: String? = nil,
+        arguments: String? = nil,
+        output: String? = nil,
+        query: String? = nil
+    ) {
+        self.cursor = cursor
+        self.kind = kind
+        self.text = text
+        self.message = message
+        self.tool = tool
+        self.callID = callID
+        self.arguments = arguments
+        self.output = output
+        self.query = query
+    }
 
     init(_ object: [String: Any]) throws {
         guard let cursor = (object["cursor"] as? NSNumber)?.uint64Value,
@@ -414,6 +470,30 @@ public final class PuckDaemonConnection {
     }
 }
 
+/// What a frontend sees while following one session: the replayed transcript
+/// and summary first, then live events, and a fresh summary whenever an event
+/// changes what the session is waiting on.
+public enum PuckSessionUpdate: Sendable {
+    case attached(PuckSessionSummary, [PuckSessionEvent])
+    case events([PuckSessionEvent])
+    case summary(PuckSessionSummary)
+}
+
+/// The daemon operations Banyan's frontends use. `PuckDaemonClient` talks to
+/// the real socket; tests substitute an in-memory daemon.
+public protocol PuckDaemonService: Sendable {
+    func list() throws -> [PuckSessionSummary]
+    func get(_ id: String) throws -> PuckSessionSummary
+    func create(id: String, provider: String, account: String?, model: String?,
+                workspace: String) throws -> PuckSessionSummary
+    func turn(_ id: String, prompt: String) throws
+    func decide(_ id: String, callID: String, decision: String) throws
+    func answer(_ id: String, callID: String, selections: [PuckQuestionSelection]) throws
+    /// Replays the session, then follows it live until the stream is cancelled.
+    /// Cancelling detaches only this client; a running turn continues.
+    func follow(_ id: String) -> AsyncThrowingStream<PuckSessionUpdate, Error>
+}
+
 public struct PuckDaemonClient: Sendable {
     public let socketPath: String
 
@@ -514,5 +594,92 @@ public struct PuckDaemonClient: Sendable {
             events.append(live)
         }
         return events
+    }
+}
+
+extension PuckDaemonClient: PuckDaemonService {
+    public func create(id: String, provider: String, account: String?, model: String?,
+                       workspace: String) throws -> PuckSessionSummary {
+        try create(id: id, provider: provider, account: account, model: model,
+                   workspace: workspace, settings: ["approval": "ask"])
+    }
+
+    /// Events that change what a session is waiting on, so a follower refreshes
+    /// the summary after one instead of re-deriving it from the event stream.
+    static let summaryEventKinds: Set<String> = [
+        "turn_done", "turn_error", "approval_pending", "approval_decided",
+        "blocked_on_question", "question_answered", "hibernated",
+    ]
+
+    public func follow(_ id: String) -> AsyncThrowingStream<PuckSessionUpdate, Error> {
+        AsyncThrowingStream { continuation in
+            let attachment = PuckFollowAttachment()
+            continuation.onTermination = { _ in attachment.cancel() }
+            // The socket read blocks until the daemon publishes, which can be
+            // minutes for an idle session. A dedicated thread keeps that wait
+            // off the cooperative pool, whose few threads every task shares.
+            let thread = Thread {
+                do {
+                    let (connection, attached) = try attach(id)
+                    guard attachment.adopt(connection) else { return }
+                    let replayed = try replay(id, initial: attached.batch)
+                    continuation.yield(.attached(attached.summary, replayed))
+                    var cursor = replayed.last?.cursor ?? attached.batch.cursor
+                    while let next = try receive(connection, session: id, after: cursor) {
+                        guard let last = next.last else { continue }
+                        cursor = last.cursor
+                        continuation.yield(.events(next))
+                        if next.contains(where: { Self.summaryEventKinds.contains($0.kind) }) {
+                            continuation.yield(.summary(try get(id)))
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    // A cancelled follower closed its own socket; that read
+                    // error is the detach, not a failure worth reporting.
+                    if attachment.isCancelled {
+                        continuation.finish()
+                    } else {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+            thread.name = "puck-follow"
+            thread.start()
+        }
+    }
+}
+
+/// Lets a stream cancelled from any thread close the socket its reader is
+/// blocked on, including one cancelled before the attach finished connecting.
+private final class PuckFollowAttachment: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connection: PuckDaemonConnection?
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    /// Returns false when the follower was already cancelled; the connection is
+    /// closed at once so the daemon drops the subscription.
+    func adopt(_ connection: PuckDaemonConnection) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancelled else {
+            connection.disconnect()
+            return false
+        }
+        self.connection = connection
+        return true
+    }
+
+    func cancel() {
+        lock.lock()
+        defer { lock.unlock() }
+        cancelled = true
+        connection?.disconnect()
     }
 }

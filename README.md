@@ -131,15 +131,26 @@ the companion CLI at `dist/bin/banyanctl`. For iterative development, use
 ## Puck sessions
 
 Start `puckd` after configuring an account with `puck auth login`. In the
-macOS app, daemon sessions appear beside tmux sessions in their project group
-in the main **Sessions** list. Create a session from a configured agent profile,
-or choose **Puck** from the sidebar picker for provider and model controls.
-Create it with a workspace, provider, optional account label and model, then
-send a prompt.
-The Puck view streams daemon events and shows pending approvals. Detach by
-switching views or clicking **Detach**; the turn continues in `puckd`. After a
-Banyan restart, choose the same session from the daemon list. Slack and other
-clients may attach to that session at the same time.
+macOS app, a puck session is a session like any other: it sits in its project
+group in the **Sessions** list with a jump key, a status, and its provider's
+icon and model, and it answers to the same shortcuts. **New Session** (⌘N)
+starts another puck session on the same provider, model, and account; ⌘W
+closes it; rename, suspend, and remove work as they do for terminal sessions.
+Create one from a configured agent profile, or from the sidebar footer's
+**Custom Session...** sheet with the **Puck** runtime, a provider, and an
+optional account label and model.
+
+Selecting a puck session shows its transcript, any pending approval or
+question, and a message field. Banyan follows the daemon's event stream only
+while the session is on screen; the rest are kept current by one daemon
+listing per supervisor tick, because `puckd` has no subscription for its
+session set. Sessions another frontend starts, such as Slack, appear on the
+next listing. Closing a puck session in Banyan stops following it and never
+warns about a running agent, since nothing is killed: the session stays in
+`puckd`, and **Reopen** brings it back. **Remove** also keeps a later listing
+from adding it again. Terminal-only actions — Restart, Find, and
+`banyanctl output`, `send`, and `answer` — do not apply to puck sessions; use
+`banyanctl puck turn`, `decide`, and `answer` for those.
 
 The TUI's `p` view and `banyanctl` use the same local daemon socket:
 
@@ -260,15 +271,15 @@ at an HTTPS origin and set puck's `PUCK_BANYAN_SESSION_URL_TEMPLATE` to
 validates the ID, opens the local app link, and shows a manual button if the
 browser does not open Banyan automatically. No Banyan server or private host is
 required for the redirect page.
-The same session ID also works with `banyanctl session list` and
+The same session ID also works with `banyanctl session list`, which lists a
+puck session once whether or not Banyan is running, and
 `banyanctl puck attach --id SESSION_ID`.
 The project picker, New Session shortcut, and command palette use a profile's
 puck settings. `banyanctl agent run --profile PROFILE_ID` uses the same profile
 when Banyan is running; `--agent codex` resolves the terminal `codex` profile,
 while `--profile codex-puck` selects puck.
-Puck launches accept `--id`, `--cwd`, `--prompt`, and focus/background options.
-Title, tone, and a tmux parent belong to shell sessions and are rejected for
-puck profiles.
+Puck launches accept the same `--id`, `--cwd`, `--prompt`, title, tone,
+parent, and focus/background options as terminal launches.
 
 When this file is absent or omits `session_launches:`, Banyan falls back to
 the shared registry at `~/.agents/agents.yml` (entries with `tags: [banyan]`,

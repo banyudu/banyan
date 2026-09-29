@@ -2,6 +2,12 @@ import AppKit
 import BanyanCore
 import SwiftUI
 
+/// What a new session runs: a command in a terminal, or a puck runtime.
+enum SessionLaunchSpec: Equatable {
+    case terminal(command: String)
+    case puck(PuckSessionBinding)
+}
+
 /// A user-selectable command for creating a session in a project group.
 ///
 /// Profiles live in `~/.banyan/config.yml` (`session_launches:`) with a
@@ -26,6 +32,10 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
             self.provider = provider
             self.model = model
             self.account = account
+        }
+
+        var binding: PuckSessionBinding {
+            PuckSessionBinding(provider: provider, account: account, model: model)
         }
     }
 
@@ -83,6 +93,15 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
             return provider == nil && providerName == nil ? "terminal" : "sparkle"
         }
         return iconName ?? (provider == nil && providerName == nil ? "terminal" : "sparkle")
+    }
+
+    /// What this profile starts: a puck session when it declares puck settings,
+    /// otherwise its command in a terminal.
+    func launchSpec(codexLaunchMode: CodexLaunchMode) -> SessionLaunchSpec {
+        if let puck {
+            return .puck(puck.binding)
+        }
+        return .terminal(command: resolvedCommand(codexLaunchMode: codexLaunchMode))
     }
 
     /// Keep the existing app-server preference working for the built-in Codex
@@ -371,13 +390,13 @@ enum SessionLaunchProfileLoader {
         let model = item["puck_model"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let account = item["puck_account"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard provider != nil || model != nil || account != nil else { return nil }
-        guard let provider, ["codex", "opencode-go", "anthropic", "gemini"].contains(provider) else {
+        guard let provider, PuckSessionBinding.providers.contains(provider) else {
             throw ParseError(lineNumber, "puck_provider must be codex, opencode-go, anthropic, or gemini")
         }
         guard model?.isEmpty != true, account?.isEmpty != true else {
             throw ParseError(lineNumber, "puck_model and puck_account must not be empty")
         }
-        if ["anthropic", "gemini"].contains(provider), model == nil || account == nil {
+        if PuckSessionBinding.requiresAccountAndModel(provider: provider), model == nil || account == nil {
             throw ParseError(lineNumber, "\(provider) puck profiles require puck_model and puck_account")
         }
         return NewSessionLaunch.PuckLaunch(provider: provider, model: model, account: account)

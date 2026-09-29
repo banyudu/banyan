@@ -15,7 +15,7 @@ import Testing
     #expect(context.groupID == "path:\(cwd)")
     #expect(context.branch == nil)
 
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: "closed-history",
         title: "TASK-123 historical work",
         titleURL: "https://tracker.example/issue/TASK-123",
@@ -340,7 +340,7 @@ import Testing
 @MainActor
 @Test func localHistoryIncludesClosedCodexSessionsWithLinearIssueIDs() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: "banyan-session",
         title: "ENG-123 Closed in Banyan",
         cwd: "/tmp/banyan",
@@ -366,7 +366,7 @@ import Testing
 
 @MainActor
 @Test func submittedTerminalInputNotifiesTheSessionActivityHook() {
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: "shell-session",
         title: "Shell",
         cwd: "/tmp/banyan",
@@ -387,7 +387,7 @@ import Testing
 @MainActor
 @Test func localHistoryIncludesClosedClaudeSessionsWithLinearIssueIDs() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: "banyan-session",
         title: "ENG-456 Closed Claude session",
         cwd: "/tmp/banyan",
@@ -414,7 +414,7 @@ import Testing
 @MainActor
 @Test func localHistoryExcludesExternalImportedSessions() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: "history-codex-external",
         title: "External handoff session",
         cwd: "/tmp/banyan",
@@ -442,7 +442,7 @@ import Testing
 @MainActor
 @Test func localHistoryExcludesClosedSessionsWithoutLinearIssueIDs() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: "closed-session",
         title: "Closed without issue id",
         cwd: "/tmp/banyan",
@@ -469,7 +469,7 @@ import Testing
 @MainActor
 @Test func localHistoryExcludesClosedNonCodexClaudeSessions() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: "closed-session",
         title: "ENG-789 Closed shell session",
         cwd: "/tmp/banyan",
@@ -496,7 +496,7 @@ import Testing
 @MainActor
 @Test func localHistoryExcludesActiveBanyanSessions() {
     let base = Date(timeIntervalSince1970: 1_787_500_000)
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: "active-session",
         title: "Still active",
         cwd: "/tmp/banyan",

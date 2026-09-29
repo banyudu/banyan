@@ -164,23 +164,26 @@ struct BanyanCtl {
     }
 
     /// One catalog for shell and daemon sessions. The daemon half remains
-    /// available when the Banyan app is closed.
+    /// available when the Banyan app is closed. The app lists the daemon
+    /// sessions it shows as its own rows, so those appear once, as the app's.
     private func listUnifiedSessions() throws {
         var sessions: [[String: Any]] = []
+        var appSessionIDs: Set<String> = []
         var shellAvailable = false
         var puckAvailable = false
         if let shells = try? loadShellSessions() {
             sessions.append(contentsOf: shells.map { shell in
                 var row = shell
-                row["backend"] = "tmux"
+                row["backend"] = (shell["backend"] as? String) == SessionBackendKind.puck.rawValue ? "puck" : "tmux"
                 return row
             })
+            appSessionIDs = Set(shells.compactMap { $0["id"] as? String })
             shellAvailable = true
         }
         let puckClient = PuckDaemonClient(environment: host.environment,
                                           homeDirectory: host.homeDirectory.path)
         if let puckSessions = try? puckClient.list() {
-            sessions.append(contentsOf: puckSessions.map { session in
+            sessions.append(contentsOf: puckSessions.filter { !appSessionIDs.contains($0.id) }.map { session in
                 ["id": session.id, "backend": "puck", "provider": session.provider,
                  "model": session.model, "account": session.account,
                  "cwd": session.cwd, "workspace": session.workspace,

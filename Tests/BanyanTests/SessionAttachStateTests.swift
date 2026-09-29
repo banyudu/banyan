@@ -310,7 +310,7 @@ import Testing
         tmux.killSession(named: tmuxSessionName)
     }
 
-    let session = BanyanSession(
+    let session = TerminalSession(
         id: id,
         tmuxSessionName: tmuxSessionName,
         title: "Close kills",
@@ -337,8 +337,8 @@ private func makeAttachStateSession(
     status: SessionStatus = .running,
     command: String = "",
     isProcessStarted: Bool = false
-) -> BanyanSession {
-    let session = BanyanSession(
+) -> TerminalSession {
+    let session = TerminalSession(
         id: "attach-state",
         title: "/tmp",
         cwd: "/tmp",
@@ -371,8 +371,8 @@ private func makeIssueBindingSession(
     cwd: String,
     titleURL: String? = nil,
     titleURLWasAutoDetected: Bool? = nil
-) -> BanyanSession {
-    BanyanSession(
+) -> TerminalSession {
+    TerminalSession(
         id: "issue-binding",
         title: "Session",
         titleURL: titleURL,
@@ -392,8 +392,8 @@ private func makeHandoffSession(
     cwd: String,
     command: String,
     status: SessionStatus
-) -> BanyanSession {
-    BanyanSession(
+) -> TerminalSession {
+    TerminalSession(
         id: id,
         title: "Handoff",
         cwd: cwd,

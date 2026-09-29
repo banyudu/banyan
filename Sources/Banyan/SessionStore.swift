@@ -43,7 +43,6 @@ struct SidebarSessionGroup: Identifiable {
 
 enum SidebarMode: String, CaseIterable, Identifiable {
     case sessions
-    case puck
     case linear
 
     var id: String { rawValue }
@@ -51,7 +50,6 @@ enum SidebarMode: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .sessions: return "Sessions"
-        case .puck: return "Puck"
         case .linear: return "Issues"
         }
     }
@@ -107,7 +105,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var terminalFocusRequestID = UUID()
     @Published private(set) var commandPaletteRequestID = UUID()
     @Published private(set) var scratchTerminalFocusRequestID = UUID()
-    @Published private(set) var scratchSession: BanyanSession?
+    @Published private(set) var scratchSession: TerminalSession?
     @Published private(set) var selectedContextInfo: SessionContextInfo? {
         didSet {
             refreshSelectedLinearIssue()
@@ -236,13 +234,30 @@ final class SessionStore: ObservableObject {
     /// last for that project. Persisted in `UserDefaults`.
     @Published private var projectLaunchByGroup: [String: String] = [:]
     @Published private(set) var sessionLaunchProfiles = NewSessionLaunch.builtInDefaults
-    /// The active app window owns the puck presentation while this store owns
-    /// launch policy for toolbar, palette, and project actions.
-    var onPuckLaunch: ((NewSessionLaunch, String, String?) -> Void)?
-    var onPuckSibling: (() -> Void)?
-    var onPuckCreated: ((String, Bool) -> Void)?
-    var puckSelectedWorkspace: (() -> String?)?
-    var activePuckSessionID: String?
+    /// Why the last puck session Banyan tried to create or open is not on screen.
+    @Published var puckSessionError: String?
+    /// The local daemon behind every `PuckSession`.
+    let puckDaemon: any PuckDaemonService
+    private var isPuckSyncRunning = false
+    /// Daemon sessions Banyan is creating. The daemon lists one before its
+    /// create returns, and a listing must not add it as a stranger's session.
+    private var pendingPuckCreationIDs: Set<String> = []
+    /// Bumped whenever Banyan adds a puck row itself. A listing requested
+    /// before then may predate the row, so it says nothing about its absence.
+    private var puckRowEpoch = 0
+    /// Whether the last listing reached `puckd`. While it answers, its sessions
+    /// can change with nothing to tell Banyan, so the supervisor timer that
+    /// carries the listing keeps its base cadence rather than backing off to
+    /// the pace of idle terminals.
+    private var isPuckDaemonReachable = false
+    /// Daemon sessions removed from Banyan. The daemon keeps them, so without
+    /// this the next listing would bring them back as new rows.
+    private var dismissedPuckSessionIDs: Set<String> = [] {
+        didSet {
+            guard dismissedPuckSessionIDs != oldValue else { return }
+            persistence.saveDismissedPuckSessionIDs(dismissedPuckSessionIDs)
+        }
+    }
     /// The command palette's picked agent profile. `nil` is Auto: actions fall
     /// back to their default (e.g. New Session copies the current session).
     /// Persisted in `UserDefaults` so the pick survives relaunches.
@@ -463,8 +478,13 @@ final class SessionStore: ObservableObject {
         detector: AgentStateDetector,
         host: HostRuntimeContext,
         telemetry: PerformanceTelemetry,
-        attentionNotifier: AttentionNotifier
+        attentionNotifier: AttentionNotifier,
+        puckDaemon: (any PuckDaemonService)? = nil
     ) {
+        self.puckDaemon = puckDaemon ?? PuckDaemonClient(
+            environment: host.environment,
+            homeDirectory: host.homeDirectory.path
+        )
         self.persistence = persistence
         self.githubReferenceCache = GitHubReferenceCache(persistence: persistence)
         self.tmuxBackend = tmuxBackend
@@ -520,6 +540,7 @@ final class SessionStore: ObservableObject {
             expandedParentIDs = Set(expanded)
         }
         showFinishedChildren = defaults.bool(forKey: Self.showFinishedChildrenDefaultsKey)
+        dismissedPuckSessionIDs = persistence.loadDismissedPuckSessionIDs()
         let launchConfiguration = SessionLaunchProfileLoader.load(
             homeDirectory: host.homeDirectory
         )
@@ -559,7 +580,7 @@ final class SessionStore: ObservableObject {
 
     /// Blocks until the serial session-persistence queue drains. Safe to call from a
     /// non-isolated context (only touches the immutable, Sendable queue).
-    nonisolated private func flushPendingSessionSaves() {
+    nonisolated func flushPendingSessionSaves() {
         sessionPersistenceQueue.sync {}
     }
 
@@ -575,6 +596,17 @@ final class SessionStore: ObservableObject {
         }
         let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return SessionVisibilityPolicy.visibleIDs(from: items, sortMode: sortMode).compactMap { sessionsByID[$0] }
+    }
+
+    /// The sessions with a tmux pane, for work only a terminal has: pane
+    /// supervision, liveness sweeps, and terminal rendering.
+    var terminalSessions: [TerminalSession] {
+        sessions.compactMap { $0 as? TerminalSession }
+    }
+
+    /// The visible sessions that render in a terminal pane.
+    var visibleTerminalSessions: [TerminalSession] {
+        visibleSessions.compactMap { $0 as? TerminalSession }
     }
 
     var recoverySessions: [BanyanSession] {
@@ -843,7 +875,7 @@ final class SessionStore: ObservableObject {
     }
 
     var pendingCloseHasOngoingAgent: Bool {
-        guard let session = pendingCloseSession else { return false }
+        guard let session = pendingCloseSession, session.closeEndsAgentWork else { return false }
         return SessionLifecyclePolicy.isOngoingCodingAgentSession(
             status: session.status,
             provider: session.agentProvider
@@ -871,7 +903,7 @@ final class SessionStore: ObservableObject {
                 liveTmuxSessionNames: liveTmuxSessionNames
             )
             let displayContext: SessionProjectContext
-            if restorationPlan.status == .closed {
+            if snapshot.status == .closed {
                 displayContext = SessionDisplayLabel.historicalContext(
                     cwd: snapshot.cwd,
                     homeDirectory: homeDirectory
@@ -887,7 +919,42 @@ final class SessionStore: ObservableObject {
                 displayContextsByCWD[snapshot.cwd] = resolved
                 displayContext = resolved
             }
-            let session = BanyanSession(
+            if snapshot.backend == .puck {
+                // A puck row without its runtime cannot be followed, and must
+                // not come back as a shell either.
+                guard let binding = snapshot.puck else { continue }
+                // Status comes back from the daemon on the first listing; until
+                // then the row shows what it last showed.
+                let session = PuckSession(
+                    id: snapshot.id,
+                    binding: binding,
+                    title: SessionRestorationPolicy.restoredTitle(
+                        for: snapshot,
+                        homeDirectory: homeDirectory
+                    ),
+                    titleURL: snapshot.titleURL,
+                    titleURLWasAutoDetected: snapshot.titleURLWasAutoDetected,
+                    reportedTitle: snapshot.reportedTitle,
+                    generatedTitle: snapshot.generatedTitle,
+                    isTitlePinned: snapshot.isTitlePinned,
+                    cwd: snapshot.cwd,
+                    status: snapshot.status,
+                    tone: snapshot.tone,
+                    parentSessionID: snapshot.parentSessionID,
+                    createdAt: snapshot.createdAt,
+                    updatedAt: snapshot.updatedAt,
+                    isSuspended: snapshot.isSuspended,
+                    displayContext: displayContext,
+                    daemon: puckDaemon,
+                    telemetry: telemetry,
+                    host: host,
+                    githubReferenceCache: githubReferenceCache
+                )
+                attach(session)
+                sessions.append(session)
+                continue
+            }
+            let session = TerminalSession(
                 id: uniqueID(snapshot.id, avoidingLiveTmuxSessions: false),
                 tmuxSessionName: restorationPlan.tmuxSessionName,
                 title: SessionRestorationPolicy.restoredTitle(
@@ -963,7 +1030,8 @@ final class SessionStore: ObservableObject {
                     parentSessionID: $0.parentSessionID,
                     status: $0.status,
                     updatedAt: $0.updatedAt,
-                    agentSessionID: $0.agentSessionID
+                    agentSessionID: $0.agentSessionID,
+                    backingOutlivesClose: $0.backendKind != .terminal
                 )
             },
             cutoff: SessionRetentionPolicy.cutoff(retentionDays: retentionDays),
@@ -1135,7 +1203,8 @@ final class SessionStore: ObservableObject {
         // never arrives to trigger the scan. A live codex session without a
         // transcript stays the honest reason to rescan, whatever changed.
         if sessions.contains(where: {
-            $0.status != .closed && $0.agentProvider == .codex && $0.agentSessionID == nil
+            $0.matchesAgentTranscripts
+                && $0.status != .closed && $0.agentProvider == .codex && $0.agentSessionID == nil
         }) {
             runHistoryImport()
         }
@@ -1166,7 +1235,8 @@ final class SessionStore: ObservableObject {
         if updatedHistory {
             refreshLiveAgentTitles(from: latestImportedHistory)
         }
-        for session in sessions where session.status != .closed && session.agentProvider == .codex {
+        for session in sessions where session.matchesAgentTranscripts
+            && session.status != .closed && session.agentProvider == .codex {
             guard session.lastConversationResetAt == nil,
                   let sourceID = session.agentSessionID,
                   let title = changed[sourceID] else { continue }
@@ -1179,7 +1249,8 @@ final class SessionStore: ObservableObject {
     /// is worth its cost exactly while one of these exists.
     private var hasUnmatchedLiveAgentSession: Bool {
         sessions.contains { session in
-            !session.isImportedHistory
+            session.matchesAgentTranscripts
+                && !session.isImportedHistory
                 && session.status != .closed
                 && session.agentProvider != nil
                 && session.agentSessionID == nil
@@ -1202,7 +1273,8 @@ final class SessionStore: ObservableObject {
     /// the index watcher silent. Read it once, a beat after the turn begins,
     /// instead of polling for it.
     private func scheduleAgentTitleImportIfNeeded(for session: BanyanSession) {
-        guard !session.isImportedHistory,
+        guard session.matchesAgentTranscripts,
+              !session.isImportedHistory,
               session.status != .closed,
               session.agentProvider != nil,
               session.agentSessionID == nil,
@@ -1916,6 +1988,7 @@ final class SessionStore: ObservableObject {
         installCodexTitleWatcherIfNeeded()
         guard supervisorTimer == nil else { return }
         rescheduleSupervisor(runImmediately: true)
+        syncPuckSessions()
     }
 
     /// How visible the app is, which decides how fresh its polled state has to be.
@@ -1952,7 +2025,12 @@ final class SessionStore: ObservableObject {
             if session.status != .closed && session.isProcessStarted { count += 1 }
         }
         let activeSessions = sessions.reduce(into: 0) { count, session in
-            guard session.status != .closed, session.isProcessStarted else { return }
+            guard session.status != .closed else { return }
+            // A running puck turn can finish between listings just as a terminal
+            // agent can between inspections. It adds no inspection cost, so it
+            // counts as active work without counting toward the fleet size.
+            let isObserved = session is PuckSession ? !session.isSuspended : session.isProcessStarted
+            guard isObserved else { return }
             if !session.status.isCodingAgentIdle && ![.completed, .failed].contains(session.status) {
                 count += 1
             }
@@ -1979,6 +2057,13 @@ final class SessionStore: ObservableObject {
 
     private var supervisorInterval: TimeInterval {
         let baseInterval = supervisorBaseInterval
+        let terminalInterval = terminalSupervisorInterval(baseInterval: baseInterval)
+        return isPuckDaemonReachable ? min(terminalInterval, baseInterval) : terminalInterval
+    }
+
+    /// The cadence the terminals alone need: the base interval while any of
+    /// them is busy, backing off as they stay quiet.
+    private func terminalSupervisorInterval(baseInterval: TimeInterval) -> TimeInterval {
         let participatingSessions = sessions.filter {
             $0.status != .closed
                 && SessionLifecyclePolicy.participatesInSupervisorTick(
@@ -2039,6 +2124,7 @@ final class SessionStore: ObservableObject {
 
     private func supervisorTimerFired() {
         runSupervisorTick()
+        syncPuckSessions()
         refreshBranchContextsIfNeeded()
         sweepSuspendedSessionLivenessIfNeeded()
         // Focus, thermal, power, or session count may have changed since the timer
@@ -2055,6 +2141,7 @@ final class SessionStore: ObservableObject {
             Task { @MainActor in
                 self?.lastObservedActivityLevel = .active
                 self?.rescheduleSupervisor(runImmediately: true)
+                self?.syncPuckSessions()
                 self?.rescheduleBranchRefreshTimer()
                 self?.refreshBranchContextsIfNeeded(force: true)
                 self?.refreshSelectedLinearIssueStatus()
@@ -2116,25 +2203,27 @@ final class SessionStore: ObservableObject {
         refreshSelectedLinearIssueStatus()
     }
 
+    /// Cmd+N: another session like the selected one — the same command in a
+    /// terminal, or the same provider, model, and account in puck — beside it.
     @discardableResult
     func spawnSiblingSession() -> BanyanSession? {
-        if activePuckSessionID != nil || sidebarMode == .puck {
-            onPuckSibling?()
-            return nil
-        }
-        let cwd = selectedSession?.cwd ?? homeDirectory
-        if let selectedSession,
-           let launch = unambiguousPuckLaunch(for: selectedSession) {
-            onPuckLaunch?(launch, cwd, nil)
-            return nil
-        }
-        let command = NewSessionLaunch.siblingCommand(
-            sessionCommand: selectedSession?.command,
-            provider: selectedSession?.agentProvider,
-            profiles: sessionLaunchProfiles,
-            codexLaunchMode: codexLaunchMode
+        spawn(
+            siblingLaunch(of: selectedSession),
+            cwd: selectedSession?.cwd ?? homeDirectory,
+            parentSessionID: selectedSession?.parentSessionID
         )
-        return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
+    }
+
+    /// What "a session like this one" launches. With nothing selected, a
+    /// plain shell.
+    private func siblingLaunch(of session: BanyanSession?) -> SessionLaunchSpec {
+        session?.siblingLaunch(profiles: sessionLaunchProfiles, codexLaunchMode: codexLaunchMode)
+            ?? .terminal(command: NewSessionLaunch.siblingCommand(
+                sessionCommand: nil,
+                provider: nil,
+                profiles: sessionLaunchProfiles,
+                codexLaunchMode: codexLaunchMode
+            ))
     }
 
     /// Agent entries of the launch profiles (plain shell excluded): the command
@@ -2160,24 +2249,17 @@ final class SessionStore: ObservableObject {
 
     /// Spawns the palette's picked agent as a sibling of the selected session.
     /// Falls back to copying the current session's runtime when the picker is
-    /// on Auto — the same command `spawnSiblingSession` produces.
+    /// on Auto — the same launch `spawnSiblingSession` produces.
     @discardableResult
     func spawnPaletteAgentSession() -> BanyanSession? {
-        if let launch = paletteAgentLaunch {
-            let cwd = sidebarMode == .puck
-                ? (puckSelectedWorkspace?() ?? homeDirectory)
-                : (selectedSession?.cwd ?? homeDirectory)
-            if launch.puck != nil {
-                onPuckLaunch?(launch, cwd, nil)
-                return nil
-            }
-            return spawn(
-                cwd: cwd,
-                command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
-                parentSessionID: selectedSession?.parentSessionID
-            )
+        guard let launch = paletteAgentLaunch else {
+            return spawnSiblingSession()
         }
-        return spawnSiblingSession()
+        return spawn(
+            launch.launchSpec(codexLaunchMode: codexLaunchMode),
+            cwd: selectedSession?.cwd ?? homeDirectory,
+            parentSessionID: selectedSession?.parentSessionID
+        )
     }
 
     /// Spawns the palette's picked agent in the project root instead of the
@@ -2187,39 +2269,13 @@ final class SessionStore: ObservableObject {
     /// On Auto the runtime mirrors the current session, like the sibling command.
     @discardableResult
     func spawnPaletteAgentSessionInProjectRoot() -> BanyanSession? {
-        if activePuckSessionID != nil, paletteAgentLaunch == nil {
-            onPuckSibling?()
-            return nil
-        }
         let cwd = SessionDisplayLabel.workspaceRoot(
-            cwd: sidebarMode == .puck
-                ? (puckSelectedWorkspace?() ?? homeDirectory)
-                : (selectedSession?.cwd ?? homeDirectory),
+            cwd: selectedSession?.cwd ?? homeDirectory,
             environment: environment
         )
-        if let launch = paletteAgentLaunch {
-            if launch.puck != nil {
-                onPuckLaunch?(launch, cwd, nil)
-                return nil
-            }
-            return spawn(
-                cwd: cwd,
-                command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
-                parentSessionID: selectedSession?.parentSessionID
-            )
-        }
-        if let selectedSession,
-           let launch = unambiguousPuckLaunch(for: selectedSession) {
-            onPuckLaunch?(launch, cwd, nil)
-            return nil
-        }
-        let command = NewSessionLaunch.siblingCommand(
-            sessionCommand: selectedSession?.command,
-            provider: selectedSession?.agentProvider,
-            profiles: sessionLaunchProfiles,
-            codexLaunchMode: codexLaunchMode
-        )
-        return spawn(cwd: cwd, command: command, parentSessionID: selectedSession?.parentSessionID)
+        let launch = paletteAgentLaunch?.launchSpec(codexLaunchMode: codexLaunchMode)
+            ?? siblingLaunch(of: selectedSession)
+        return spawn(launch, cwd: cwd, parentSessionID: selectedSession?.parentSessionID)
     }
 
     /// Spawn a sibling using the selected session's coding-agent runtime when it
@@ -2243,20 +2299,11 @@ final class SessionStore: ObservableObject {
     /// Finds the configured profile that launched a session so sidebar rows can
     /// retain a profile-specific label icon (for example, Luna vs. standard Codex).
     func sessionLaunchProfile(for session: BanyanSession) -> NewSessionLaunch? {
-        sessionLaunchProfiles.first { $0.command == session.command }
-    }
-
-    /// A terminal command alone cannot distinguish profiles with different
-    /// puck models or accounts. Only copy a puck launch when the match is unique.
-    private func unambiguousPuckLaunch(for session: BanyanSession) -> NewSessionLaunch? {
-        let matches = sessionLaunchProfiles.filter { $0.command == session.command }
-        guard matches.count == 1, matches[0].puck != nil else { return nil }
-        return matches[0]
+        sessionLaunchProfiles.first { session.matchesLaunchProfile($0) }
     }
 
     @discardableResult
-    func spawnSession(inProjectGroup groupID: String, launch: NewSessionLaunch,
-                      puckWorkspace: String? = nil) -> BanyanSession? {
+    func spawnSession(inProjectGroup groupID: String, launch: NewSessionLaunch) -> BanyanSession? {
         let groupSessions = visibleSessions.filter {
             $0.projectGroupID == groupID && !$0.isImportedHistory
         }
@@ -2264,24 +2311,67 @@ final class SessionStore: ObservableObject {
             for: selectedSessionID,
             in: groupSessions.map(\.id)
         )
-        let representative = groupSessions.first { $0.id == preferredSessionID }
-        guard let cwd = representative?.cwd ?? puckWorkspace else { return nil }
-        rememberProjectLaunch(launch, for: groupID)
-        let workspace = SessionDisplayLabel.workspaceRoot(
-            cwd: cwd, environment: environment
-        )
-        if launch.puck != nil {
-            onPuckLaunch?(launch, workspace, nil)
+        guard let preferredSessionID,
+              let representative = groupSessions.first(where: { $0.id == preferredSessionID }) else {
             return nil
         }
+        rememberProjectLaunch(launch, for: groupID)
         // This is a project-level control, so it opens the repository itself
         // rather than whichever worktree or subdirectory the representative
         // session happens to sit in. `spawnSiblingSession` stays session-level.
-        return spawn(
-            cwd: workspace,
-            command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
-            parentSessionID: representative?.parentSessionID
+        let workspace = SessionDisplayLabel.workspaceRoot(
+            cwd: representative.cwd, environment: environment
         )
+        return spawn(
+            launch.launchSpec(codexLaunchMode: codexLaunchMode),
+            cwd: workspace,
+            parentSessionID: representative.parentSessionID
+        )
+    }
+
+    /// Starts a session from a launch spec. A terminal session is returned at
+    /// once; a puck session appears when the daemon has created it, and a
+    /// failure is reported through `puckSessionError`.
+    @discardableResult
+    func spawn(
+        _ launch: SessionLaunchSpec,
+        cwd: String?,
+        parentSessionID: String?,
+        id: String? = nil,
+        title: String? = nil,
+        tone: SessionTone = .blue,
+        select: Bool = true
+    ) -> BanyanSession? {
+        switch launch {
+        case .terminal(let command):
+            return spawn(
+                id: id,
+                title: title,
+                cwd: cwd,
+                command: command,
+                parentSessionID: parentSessionID,
+                tone: tone,
+                select: select
+            )
+        case .puck(let binding):
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.createPuckSession(
+                        binding: binding,
+                        cwd: cwd,
+                        id: id,
+                        title: title,
+                        parentSessionID: parentSessionID,
+                        tone: tone,
+                        select: select
+                    )
+                } catch {
+                    self.puckSessionError = error.localizedDescription
+                }
+            }
+            return nil
+        }
     }
 
     private func rememberProjectLaunch(_ launch: NewSessionLaunch, for groupID: String) {
@@ -2303,7 +2393,7 @@ final class SessionStore: ObservableObject {
 
         let cwd = selectedSession?.cwd ?? homeDirectory
         let id = uniqueID("scratch", avoidingLiveTmuxSessions: true)
-        let session = BanyanSession(
+        let session = TerminalSession(
             id: id,
             tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
             title: "Scratch",
@@ -2393,7 +2483,7 @@ final class SessionStore: ObservableObject {
         parentSessionID proposedParentSessionID: String? = nil,
         tone: SessionTone = .blue,
         select: Bool = true
-    ) -> BanyanSession {
+    ) -> TerminalSession {
         let command: String?
         if enableCodexAppServerMode, let proposedCommand {
             command = CodexAppServerLaunch.upgradedDirectCommand(proposedCommand) ?? proposedCommand
@@ -2411,12 +2501,12 @@ final class SessionStore: ObservableObject {
             homeDirectory: homeDirectory
         )
         let id = uniqueID(plan.baseID, avoidingLiveTmuxSessions: true)
-        let session = BanyanSession(
+        let session = TerminalSession(
             id: id,
             tmuxSessionName: SessionIdentityPolicy.sessionName(for: id),
             title: plan.title,
             titleURL: plan.titleURL,
-                generatedTitle: nil,
+            generatedTitle: nil,
             isTitlePinned: plan.isTitlePinned,
             cwd: plan.cwd,
             command: plan.command,
@@ -2449,6 +2539,15 @@ final class SessionStore: ObservableObject {
             throw ControlError.notFound(id)
         }
         unparkForAttach(session)
+        // The daemon kept a closed puck session whole, so reopening it is only
+        // a matter of following it again.
+        if let session = session as? PuckSession {
+            session.reopen()
+            selectedSessionID = id
+            saveSessions()
+            syncPuckSessions()
+            return
+        }
         historyResumeErrors.removeValue(forKey: id)
         // A worktree deleted after its branch merged leaves the session pointing
         // at nothing, and every attach re-runs the launch command in a directory
@@ -2477,7 +2576,7 @@ final class SessionStore: ObservableObject {
     }
 
     func recover(id: String, select: Bool = true) throws {
-        guard let session = sessions.first(where: { $0.id == id && $0.needsRecovery }) else {
+        guard let session = sessions.first(where: { $0.id == id && $0.needsRecovery }) as? TerminalSession else {
             throw ControlError.notFound(id)
         }
         unparkForAttach(session)
@@ -2578,7 +2677,10 @@ final class SessionStore: ObservableObject {
     /// normal full `respawn` whenever there's nothing worth trimming or the
     /// transcript can't be prepared. The original transcript is never modified.
     func respawnTrimmed(id: String) {
-        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        guard let session = sessions.first(where: { $0.id == id }) as? TerminalSession else {
+            try? respawn(id: id)
+            return
+        }
         if session.agentSessionID == nil {
             recoverAgentSessionID(for: session)
         }
@@ -2604,7 +2706,7 @@ final class SessionStore: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 guard let plan,
-                      let session = self.sessions.first(where: { $0.id == id }) else {
+                      let session = self.sessions.first(where: { $0.id == id }) as? TerminalSession else {
                     try? self.respawn(id: id)
                     return
                 }
@@ -2631,7 +2733,8 @@ final class SessionStore: ObservableObject {
     /// persisted by an older build) so they can still resume rather than replay.
     @discardableResult
     private func recoverAgentSessionID(for session: BanyanSession) -> Bool {
-        guard let match = AgentSessionMatcher.bestHistoryResumeMatch(
+        guard session.matchesAgentTranscripts,
+              let match = AgentSessionMatcher.bestHistoryResumeMatch(
             sessionCWD: session.cwd,
             sessionCreatedAt: session.createdAt,
             sessionUpdatedAt: session.updatedAt,
@@ -2775,7 +2878,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func respawnAfterHistoryRecovery(id: String) throws {
-        guard let session = sessions.first(where: { $0.id == id }) else {
+        guard let session = sessions.first(where: { $0.id == id }) as? TerminalSession else {
             throw ControlError.notFound(id)
         }
         if let resumePlan = SessionRecoveryPolicy.resumePlan(
@@ -2805,6 +2908,9 @@ final class SessionStore: ObservableObject {
     func restart(id: String) throws {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
+        }
+        guard session.canRestart, let session = session as? TerminalSession else {
+            throw ControlError.badRequest("session '\(id)' has no launch command to restart")
         }
         unparkForAttach(session)
         session.restartBackingSession()
@@ -2856,19 +2962,23 @@ final class SessionStore: ObservableObject {
         let observedStatus = session.status
         let observedTone = session.tone
         session.resume()
-        if !session.needsRecovery, session.loadedTerminalView != nil {
+        if let terminal = session as? TerminalSession,
+           !terminal.needsRecovery, terminal.loadedTerminalView != nil {
             // `onTerminalReady` fires once per container and this session already
             // has one, so nothing else would rebuild the client from the live pane.
-            session.reattachTerminalClient()
-            session.status = observedStatus
-            session.tone = observedTone
-            session.touch()
+            terminal.reattachTerminalClient()
+            terminal.status = observedStatus
+            terminal.tone = observedTone
+            terminal.touch()
         }
         resetSupervisorObservationBackoff(for: id)
         if selectedSessionID == id {
             refreshSelectedContextInfo(force: true)
         }
         runSupervisorTick(sessionID: id)
+        if session is PuckSession {
+            syncPuckSessions()
+        }
         saveSessions()
         rescheduleSupervisor()
     }
@@ -2903,7 +3013,7 @@ final class SessionStore: ObservableObject {
         guard now.timeIntervalSince(lastSuspendedLivenessSweepAt) >= Self.suspendedLivenessSweepInterval else {
             return
         }
-        let parked = sessions.filter { $0.isSuspended && $0.status != .closed && !$0.needsRecovery }
+        let parked = terminalSessions.filter { $0.isSuspended && $0.status != .closed && !$0.needsRecovery }
         guard !parked.isEmpty else { return }
         lastSuspendedLivenessSweepAt = now
 
@@ -2913,7 +3023,7 @@ final class SessionStore: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 var didUpdate = false
-                for session in self.sessions where session.isSuspended && !session.needsRecovery {
+                for session in self.terminalSessions where session.isSuspended && !session.needsRecovery {
                     guard SessionLifecyclePolicy.shouldMarkForRecovery(
                         status: session.status,
                         tmuxSessionName: session.tmuxSessionName,
@@ -2938,13 +3048,224 @@ final class SessionStore: ObservableObject {
         saveSessions()
     }
 
+    // MARK: - Puck sessions
+
+    /// Creates a daemon session and adds it to the session list once `puckd`
+    /// has it. A first prompt starts the first turn; if that fails the session
+    /// still exists and the error says so.
+    @discardableResult
+    func createPuckSession(
+        binding: PuckSessionBinding,
+        cwd proposedCWD: String?,
+        id proposedID: String? = nil,
+        title: String? = nil,
+        titleURL: String? = nil,
+        parentSessionID: String? = nil,
+        tone: SessionTone = .blue,
+        prompt: String? = nil,
+        select: Bool = true
+    ) async throws -> PuckSession {
+        let cwd = WorkingDirectoryPolicy.resolve(
+            proposedDirectory: proposedCWD,
+            currentDirectory: currentDirectory,
+            homeDirectory: homeDirectory
+        )
+        let id = SessionInputPolicy.normalizedOptionalText(proposedID) ?? UUID().uuidString.lowercased()
+        guard !sessions.contains(where: { $0.id == id }), !pendingPuckCreationIDs.contains(id) else {
+            throw ControlError.conflict(code: "session_exists", message: "session '\(id)' already exists")
+        }
+        let daemon = puckDaemon
+        pendingPuckCreationIDs.insert(id)
+        defer { pendingPuckCreationIDs.remove(id) }
+        let summary = try await Task.detached(priority: .userInitiated) {
+            try daemon.create(
+                id: id,
+                provider: binding.provider,
+                account: binding.account,
+                model: binding.model,
+                workspace: cwd
+            )
+        }.value
+        notePuckDaemonReachable(true)
+        // Row IDs must stay unique, and the daemon answers with its own.
+        guard !sessions.contains(where: { $0.id == summary.id }) else {
+            throw ControlError.conflict(code: "session_exists", message: "session '\(summary.id)' already exists")
+        }
+        let explicitTitle = SessionInputPolicy.normalizedOptionalText(title)
+        let session = PuckSession(
+            id: summary.id,
+            binding: PuckSessionBinding(summary: summary),
+            title: explicitTitle ?? PathDisplayName.make(path: summary.cwd, homeDirectory: homeDirectory),
+            titleURL: SessionInputPolicy.normalizedTitleURL(titleURL),
+            isTitlePinned: explicitTitle != nil,
+            cwd: summary.cwd,
+            status: PuckSessionStatusPolicy.status(for: summary),
+            tone: tone,
+            parentSessionID: SessionInputPolicy.normalizedOptionalText(parentSessionID),
+            daemon: daemon,
+            telemetry: telemetry,
+            host: host,
+            githubReferenceCache: githubReferenceCache
+        )
+        dismissedPuckSessionIDs.remove(session.id)
+        attach(session)
+        puckRowEpoch += 1
+        sessions.append(session)
+        session.apply(summary: summary)
+        if select {
+            selectedSessionID = session.id
+            refreshSelectedContextInfo(force: true)
+        }
+        saveSessions()
+        if let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            do {
+                try await session.startTurn(prompt)
+            } catch {
+                throw PuckTurnError(sessionID: session.id, message: error.localizedDescription)
+            }
+        }
+        return session
+    }
+
+    /// Mirrors `puckd` into the session list: status for the sessions Banyan
+    /// knows, and rows for sessions another frontend started. The daemon has no
+    /// subscription for its session set — `session.attach` follows one session
+    /// — so this rides the supervisor's adaptive timer: one local socket round
+    /// trip per tick, however many sessions there are. The session on screen is
+    /// followed live and does not wait for it.
+    func syncPuckSessions() {
+        guard !isPuckSyncRunning else { return }
+        isPuckSyncRunning = true
+        let daemon = puckDaemon
+        let epoch = puckRowEpoch
+        Task.detached(priority: .utility) { [weak self] in
+            let summaries = try? daemon.list()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.isPuckSyncRunning = false
+                // An unreachable daemon says nothing about its sessions; keep
+                // what the rows last showed.
+                if let summaries {
+                    self.applyPuckSummaries(summaries, closingMissing: epoch == self.puckRowEpoch)
+                }
+                // The listing may have started or finished a turn, or found the
+                // daemon gone or back; the timer's cadence depends on both.
+                self.notePuckDaemonReachable(summaries != nil)
+            }
+        }
+    }
+
+    /// Records whether `puckd` answered, and re-evaluates the supervisor
+    /// cadence that carries its listing.
+    private func notePuckDaemonReachable(_ reachable: Bool) {
+        isPuckDaemonReachable = reachable
+        if supervisorTimer != nil {
+            rescheduleSupervisor()
+        }
+    }
+
+    /// `closingMissing` is false for a listing that may predate a row Banyan
+    /// added since, which would otherwise read as the daemon dropping it.
+    func applyPuckSummaries(_ summaries: [PuckSessionSummary], closingMissing: Bool = true) {
+        let summariesByID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var didChangeStructure = false
+        for session in sessions {
+            guard let session = session as? PuckSession else { continue }
+            if let summary = summariesByID[session.id] {
+                session.apply(summary: summary)
+            } else if closingMissing, session.status != .closed {
+                // The daemon answered without it, so there is nothing left to
+                // follow or reopen.
+                session.closeBackingSession()
+                didChangeStructure = true
+            }
+        }
+        let knownIDs = Set(sessions.map(\.id))
+        for summary in summaries where !knownIDs.contains(summary.id)
+            && !dismissedPuckSessionIDs.contains(summary.id)
+            && !pendingPuckCreationIDs.contains(summary.id) {
+            adoptPuckSession(summary)
+            didChangeStructure = true
+        }
+        // A dismissal only has to outlive the daemon's copy of the session.
+        let forgotten = dismissedPuckSessionIDs.filter { summariesByID[$0] == nil }
+        if !forgotten.isEmpty {
+            dismissedPuckSessionIDs.subtract(forgotten)
+        }
+        if didChangeStructure {
+            saveSessions()
+        }
+    }
+
+    /// Opens a `banyan://puck/<id>` link. Following a link is an explicit ask
+    /// to see that session, so it also brings back a closed or removed row,
+    /// and asks the daemon directly instead of waiting for the next listing.
+    func openPuckSession(id: String) {
+        sidebarMode = .sessions
+        dismissedPuckSessionIDs.remove(id)
+        if let session = sessions.first(where: { $0.id == id }) {
+            if session.status == .closed {
+                try? respawn(id: id)
+            } else {
+                userSelect(id: id)
+            }
+            return
+        }
+        let daemon = puckDaemon
+        Task { [weak self] in
+            do {
+                let summary = try await Task.detached(priority: .userInitiated) {
+                    try daemon.get(id)
+                }.value
+                guard let self else { return }
+                if !self.sessions.contains(where: { $0.id == id }) {
+                    self.adoptPuckSession(summary)
+                    self.saveSessions()
+                }
+                self.userSelect(id: id)
+            } catch {
+                self?.puckSessionError = "Could not open puck session \(id): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Adds a row for a daemon session Banyan did not start, such as one
+    /// created from Slack, in the project its workspace belongs to.
+    @discardableResult
+    private func adoptPuckSession(_ summary: PuckSessionSummary) -> PuckSession {
+        let status = PuckSessionStatusPolicy.status(for: summary)
+        let session = PuckSession(
+            id: summary.id,
+            binding: PuckSessionBinding(summary: summary),
+            title: PathDisplayName.make(path: summary.cwd, homeDirectory: homeDirectory),
+            cwd: summary.cwd,
+            status: status,
+            tone: PuckSessionStatusPolicy.tone(for: status),
+            daemon: puckDaemon,
+            telemetry: telemetry,
+            host: host,
+            githubReferenceCache: githubReferenceCache
+        )
+        attach(session)
+        puckRowEpoch += 1
+        sessions.append(session)
+        session.apply(summary: summary)
+        return session
+    }
+
     // MARK: - Pane reading and input
 
     /// Snapshots the identity a pane operation needs, and refuses one for a
     /// session that is closed — a closed row has no pane to read or type into.
     func paneTarget(id: String) throws -> SessionPaneTarget {
-        guard let session = sessions.first(where: { $0.id == id }) else {
+        guard let found = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
+        }
+        guard let session = found as? TerminalSession else {
+            throw ControlError.conflict(
+                code: "session_has_no_pane",
+                message: "session '\(id)' is a \(found.backingSessionName) and has no terminal pane"
+            )
         }
         guard session.status != .closed else {
             throw ControlError.conflict(code: "session_closed", message: "session '\(id)' is closed")
@@ -3016,12 +3337,17 @@ final class SessionStore: ObservableObject {
 
     func tick(id: String? = nil) throws {
         if let id {
-            guard sessions.contains(where: { $0.id == id }) else {
+            guard let session = sessions.first(where: { $0.id == id }) else {
                 throw ControlError.notFound(id)
             }
-            runSupervisorTick(sessionID: id)
+            if session is PuckSession {
+                syncPuckSessions()
+            } else {
+                runSupervisorTick(sessionID: id)
+            }
         } else {
             runSupervisorTick(force: true)
+            syncPuckSessions()
         }
         saveSessions()
     }
@@ -3423,8 +3749,15 @@ final class SessionStore: ObservableObject {
         resolveSelectedContextForPullRequestPreview()
     }
 
+    /// Find searches a terminal's scrollback; other sessions have none.
+    var canFindInSelectedSession: Bool {
+        guard let selectedSession = selectedSession as? TerminalSession else { return false }
+        return !selectedSession.isImportedHistory
+    }
+
     func showFindInSelectedSession() {
-        guard let selectedSession, !selectedSession.isImportedHistory else { return }
+        guard canFindInSelectedSession,
+              let selectedSession = selectedSession as? TerminalSession else { return }
         let item = NSMenuItem()
         item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         selectedSession.terminalView.performFindPanelAction(item)
@@ -3441,7 +3774,7 @@ final class SessionStore: ObservableObject {
         if session.isImportedHistory {
             session.terminate(markClosed: true)
         } else {
-            session.killBackingSession()
+            session.closeBackingSession()
         }
         // Closing is a deliberate history event. The normal activity timestamp
         // is coalesced, so stamp it here to put this row first even if the
@@ -3470,7 +3803,10 @@ final class SessionStore: ObservableObject {
         }
         let parentSessionID = sessions[index].parentSessionID
         let promotedChildIDs = detachChildren(of: id, to: parentSessionID)
-        sessions[index].killBackingSession()
+        if sessions[index] is PuckSession {
+            dismissedPuckSessionIDs.insert(id)
+        }
+        sessions[index].closeBackingSession()
         sessions[index].updatedAt = Date()
         promoteChildrenToParentSlot(closingID: id, promotedChildIDs: promotedChildIDs, removingParent: true)
         if selectedSessionID == id {
@@ -3986,7 +4322,8 @@ final class SessionStore: ObservableObject {
         if SessionClosePolicy.requiresConfirmation(
             hasActiveChildren: hasActiveChildren(id),
             status: session.status,
-            provider: session.agentProvider
+            // Only a close that ends the agent's work can lose any of it.
+            provider: session.closeEndsAgentWork ? session.agentProvider : nil
         ) {
             pendingCloseSessionID = id
         } else {
@@ -4077,7 +4414,7 @@ final class SessionStore: ObservableObject {
             }
         }
         session.onProcessExit = { [weak self, weak session] _ in
-            guard let self, let session, session.status != .closed else { return }
+            guard let self, let session = session as? TerminalSession, session.status != .closed else { return }
             if self.tmuxBackend.hasSession(named: session.tmuxSessionName) {
                 session.detachTerminalClient()
             } else {
@@ -4086,7 +4423,7 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    private func attachScratch(_ session: BanyanSession) {
+    private func attachScratch(_ session: TerminalSession) {
         session.onDidChange = { [weak self, weak session] in
             Task { @MainActor in
                 guard let self, let session, self.scratchSession === session else { return }
@@ -4310,7 +4647,7 @@ final class SessionStore: ObservableObject {
         guard !candidates.isEmpty else { return }
 
         let liveSessions = sessions.filter {
-            AgentSessionMatcher.participatesInLiveAgentMatch(
+            $0.matchesAgentTranscripts && AgentSessionMatcher.participatesInLiveAgentMatch(
                 isImportedHistory: $0.isImportedHistory,
                 status: $0.status,
                 provider: $0.agentProvider
@@ -4385,7 +4722,9 @@ final class SessionStore: ObservableObject {
     private func runSupervisorTick(sessionID: String? = nil, force: Bool = false) {
         guard !isSupervisorTickRunning else { return }
         let now = Date()
-        let inputs = sessions.compactMap { session -> SessionStatusObservationInput? in
+        // Only a terminal session has a pane to observe; puck sessions are
+        // kept current by `syncPuckSessions`.
+        let inputs = terminalSessions.compactMap { session -> SessionStatusObservationInput? in
             guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
                 return nil
             }
@@ -5130,6 +5469,16 @@ private final class HandoffOutputBuffer {
         lock.lock()
         defer { lock.unlock() }
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+/// A puck session was created, but its first turn did not start.
+struct PuckTurnError: LocalizedError {
+    let sessionID: String
+    let message: String
+
+    var errorDescription: String? {
+        "Session \(sessionID) was created: \(message)"
     }
 }
 

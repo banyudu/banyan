@@ -8,7 +8,7 @@ Build from the two checkouts, then run from Banyan:
 
 ```sh
 (cd ../puck && cargo build -p puck-daemon -p puck-cli)
-swift test --quiet --filter appPuckBrowserSeesSharedDaemonSessionAndItsEvents
+swift test --quiet --filter appPuckSessionSeesSharedDaemonSessionAndItsEvents
 swift build
 python3 scripts/verify-puck-integration.py \
   --puckd ../puck/target/debug/puckd \
@@ -28,13 +28,14 @@ its SQLite path inside the temporary directory. The same override supplies the
 TUI's home for history discovery. Without this variable, Banyan's normal data
 directory behavior is unchanged.
 
-The same session is opened through the app's `PuckSessionBrowser` in a fresh
-Swift test process, the interactive BanyanTUI list and attach flow, and
+The same session is opened through the app's session store in a fresh Swift
+test process, where the daemon listing adds it as a `PuckSession` that the test
+then follows, the interactive BanyanTUI list and attach flow, and
 `banyanctl session list` and `puck attach`. A later turn must appear both in the
-app browser's structured events and in the fake Slack session thread. The app
-browser test then runs again in another process to verify replay after a
-frontend restart. The test exercises the app client code without launching a
-macOS window. It does not check a live Slack installation or phone tap.
+followed session's structured events and in the fake Slack session thread. The
+app test then runs again in another process to verify replay after a frontend
+restart. The test exercises the app's store and session code without launching
+a macOS window. It does not check a live Slack installation or phone tap.
 
 Temporary state and synthetic keys are removed when the script exits. The
 printed JSON records the measured RSS values and pass statuses; the ratio is

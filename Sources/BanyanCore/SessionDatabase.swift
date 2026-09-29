@@ -25,7 +25,7 @@ public struct SessionDatabase: Sendable {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended
+            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -47,6 +47,10 @@ public struct SessionDatabase: Sendable {
                     let createdAt = decodeDate(columnText(statement, 12)),
                     let updatedAt = decodeDate(columnText(statement, 13))
                 else { continue }
+                // A backend this build does not know cannot be started or
+                // observed, so skip the row rather than run it as a terminal.
+                guard let backend = SessionBackendKind(rawValue: columnText(statement, 17) ?? "terminal")
+                else { continue }
 
                 snapshots.append(SessionSnapshot(
                     id: id,
@@ -65,7 +69,17 @@ public struct SessionDatabase: Sendable {
                     agentSessionID: columnText(statement, 14),
                     isSuspended: sqlite3_column_int(statement, 16) != 0,
                     createdAt: createdAt,
-                    updatedAt: updatedAt
+                    updatedAt: updatedAt,
+                    backend: backend,
+                    puck: backend == .puck
+                        ? columnText(statement, 18).map {
+                            PuckSessionBinding(
+                                provider: $0,
+                                account: columnText(statement, 19),
+                                model: columnText(statement, 20)
+                            )
+                        }
+                        : nil
                 ))
             }
             return snapshots
@@ -253,6 +267,12 @@ public struct SessionDatabase: Sendable {
         // suspended row still loads there. A new `status` string would not — an
         // unparsable status makes `load` drop the row entirely.
         try? execute(database, "ALTER TABLE sessions ADD COLUMN is_suspended INTEGER NOT NULL DEFAULT 0")
+        // Also additive: existing rows are terminal sessions, and a puck row
+        // carries its daemon runtime so it keeps its identity offline.
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN backend TEXT NOT NULL DEFAULT 'terminal'")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN puck_provider TEXT")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN puck_account TEXT")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN puck_model TEXT")
         try execute(database, """
         CREATE TABLE IF NOT EXISTS workspace_state (
             key TEXT PRIMARY KEY,
@@ -273,8 +293,8 @@ public struct SessionDatabase: Sendable {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
@@ -292,7 +312,11 @@ public struct SessionDatabase: Sendable {
             sort_order = excluded.sort_order,
             agent_session_id = excluded.agent_session_id,
             title_url_auto = excluded.title_url_auto,
-            is_suspended = excluded.is_suspended
+            is_suspended = excluded.is_suspended,
+            backend = excluded.backend,
+            puck_provider = excluded.puck_provider,
+            puck_account = excluded.puck_account,
+            puck_model = excluded.puck_model
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -318,12 +342,16 @@ public struct SessionDatabase: Sendable {
         bindText(statement, 16, snapshot.agentSessionID)
         sqlite3_bind_int(statement, 17, snapshot.titleURLWasAutoDetected ? 1 : 0)
         sqlite3_bind_int(statement, 18, snapshot.isSuspended ? 1 : 0)
+        bindText(statement, 19, snapshot.backend.rawValue)
+        bindText(statement, 20, snapshot.puck?.provider)
+        bindText(statement, 21, snapshot.puck?.account)
+        bindText(statement, 22, snapshot.puck?.model)
 
         guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
     }
 
     private func retentionRows(_ database: OpaquePointer) throws -> [SessionRetentionPolicy.Row] {
-        let sql = "SELECT id, parent_session_id, status, updated_at, agent_session_id FROM sessions"
+        let sql = "SELECT id, parent_session_id, status, updated_at, agent_session_id, backend FROM sessions"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
             throw databaseError(database)
@@ -345,7 +373,10 @@ public struct SessionDatabase: Sendable {
                 parentSessionID: columnText(statement, 1),
                 status: status,
                 updatedAt: updatedAt,
-                agentSessionID: columnText(statement, 4)
+                agentSessionID: columnText(statement, 4),
+                // Anything but a terminal row, including a backend from a newer
+                // build, may name a session that still exists elsewhere.
+                backingOutlivesClose: (columnText(statement, 5) ?? "terminal") != SessionBackendKind.terminal.rawValue
             ))
         }
         return rows

@@ -23,6 +23,11 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public let isSuspended: Bool
     public let createdAt: Date
     public let updatedAt: Date
+    /// Which runtime owns the session. Rows written before puck sessions
+    /// existed are terminal sessions.
+    public let backend: SessionBackendKind
+    /// The daemon runtime of a `.puck` row; `nil` for terminal sessions.
+    public let puck: PuckSessionBinding?
 
     public init(
         id: String,
@@ -41,7 +46,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         agentSessionID: String? = nil,
         isSuspended: Bool = false,
         createdAt: Date,
-        updatedAt: Date
+        updatedAt: Date,
+        backend: SessionBackendKind = .terminal,
+        puck: PuckSessionBinding? = nil
     ) {
         self.id = id
         self.tmuxSessionName = tmuxSessionName
@@ -60,6 +67,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.isSuspended = isSuspended
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.backend = backend
+        self.puck = puck
     }
 
     public var launchRequest: SessionLaunchRequest {
@@ -75,6 +84,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         case id, tmuxSessionName, title, titleURL, titleURLWasAutoDetected
         case reportedTitle, generatedTitle, isTitlePinned, cwd, command
         case status, tone, parentSessionID, agentSessionID, isSuspended, createdAt, updatedAt
+        case backend, puck
     }
 
     public init(from decoder: Decoder) throws {
@@ -96,7 +106,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             agentSessionID: try container.decodeIfPresent(String.self, forKey: .agentSessionID),
             isSuspended: try container.decodeIfPresent(Bool.self, forKey: .isSuspended) ?? false,
             createdAt: try container.decode(Date.self, forKey: .createdAt),
-            updatedAt: try container.decode(Date.self, forKey: .updatedAt)
+            updatedAt: try container.decode(Date.self, forKey: .updatedAt),
+            backend: try container.decodeIfPresent(SessionBackendKind.self, forKey: .backend) ?? .terminal,
+            puck: try container.decodeIfPresent(PuckSessionBinding.self, forKey: .puck)
         )
     }
 
@@ -124,7 +136,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             agentSessionID: agentSessionID,
             isSuspended: isSuspended ?? self.isSuspended,
             createdAt: createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            backend: backend,
+            puck: puck
         )
     }
 }

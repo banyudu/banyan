@@ -8,8 +8,6 @@ final class ControlServer {
     private var listener: NWListener?
     private let port: NWEndpoint.Port = 7842
     private let token: String
-    private let puckClient: PuckDaemonClient
-    private let defaultWorkspace: String
     private let queue = DispatchQueue(label: "app.banyan.control-server")
     private var bindAttempts = 0
     /// ~30s of retries at 1s each, enough to outlast a previous instance releasing
@@ -39,11 +37,6 @@ final class ControlServer {
         }
     }
 
-    private enum PuckSpawnResult: Sendable {
-        case created(PuckSessionSummary, turnError: String?)
-        case failed(String, unavailable: Bool)
-    }
-
     private struct EventWaiter {
         let id: UUID
         let since: Int?
@@ -52,9 +45,6 @@ final class ControlServer {
 
     init(store: SessionStore, host: HostRuntimeContext) {
         self.store = store
-        self.puckClient = PuckDaemonClient(environment: host.environment,
-                                          homeDirectory: host.homeDirectory.path)
-        self.defaultWorkspace = host.currentDirectory
         self.token = (try? ControlToken.loadOrCreate(
             environment: host.environment,
             homeDirectory: host.homeDirectory
@@ -233,59 +223,21 @@ final class ControlServer {
                 if body.agentProfile != nil, body.command == nil, profile == nil {
                     return respond(.failure(400, "unknown_profile", "unknown agent profile"))
                 }
+                let parentSessionID = try store.resolvedParentSessionIDForSpawn(body.parent)
                 if let puck = profile?.puck {
-                    guard body.title == nil, body.titleURL == nil, body.tone == nil,
-                          body.agentParentExplicit != "true" || body.parent?.isEmpty == true else {
-                        return respond(.failure(400, "unsupported_puck_metadata",
-                                                "puck sessions do not support title, tone, or parent options"))
-                    }
-                    let client = puckClient
-                    let sessionID = body.id ?? UUID().uuidString.lowercased()
-                    let workspace = body.cwd ?? defaultWorkspace
-                    let prompt = body.agentPrompt
-                    Task { @MainActor [weak store] in
-                        let result = await Task.detached(priority: .userInitiated) {
-                            () -> PuckSpawnResult in
-                            do {
-                                let summary = try client.create(
-                                    id: sessionID, provider: puck.provider,
-                                    account: puck.account, model: puck.model,
-                                    workspace: workspace
-                                )
-                                if let prompt, !prompt.isEmpty {
-                                    do { try client.turn(summary.id, prompt: prompt) }
-                                    catch { return .created(summary, turnError: error.localizedDescription) }
-                                }
-                                return .created(summary, turnError: nil)
-                            } catch let error as PuckDaemonError {
-                                if case .unavailable = error {
-                                    return .failed(error.localizedDescription, unavailable: true)
-                                }
-                                return .failed(error.localizedDescription, unavailable: false)
-                            } catch {
-                                return .failed(error.localizedDescription, unavailable: false)
-                            }
-                        }.value
-                        switch result {
-                        case .created(let summary, let turnError):
-                            store?.onPuckCreated?(summary.id, shouldSelect)
-                            if let turnError {
-                                respond(.failure(502, "puck_turn_failed", "Session \(summary.id) was created: \(turnError)"))
-                            } else {
-                                let session: [String: String] = [
-                                    "id": summary.id, "provider": summary.provider,
-                                    "model": summary.model, "account": summary.account,
-                                    "workspace": summary.workspace, "backend": "puck"
-                                ]
-                                respond(.ok(["session": session, "puckSession": session]))
-                            }
-                        case .failed(let message, let unavailable):
-                            respond(.failure(unavailable ? 503 : 400, "puck_create_failed", message))
-                        }
-                    }
+                    // A daemon session is created asynchronously, so the answer
+                    // waits for `puckd` rather than returning a placeholder row.
+                    spawnPuckSession(
+                        store: store,
+                        binding: puck.binding,
+                        body: body,
+                        parentSessionID: parentSessionID,
+                        tone: tone,
+                        select: shouldSelect,
+                        respond: respond
+                    )
                     return
                 }
-                let parentSessionID = try store.resolvedParentSessionIDForSpawn(body.parent)
                 let command = body.command ?? profile.map { launch in
                     guard let prompt = body.agentPrompt, !prompt.isEmpty else { return launch.command }
                     return launch.command + " " + AgentLaunchCommand.shellQuote(prompt)
@@ -465,6 +417,46 @@ final class ControlServer {
         }
         let data = try JSONSerialization.data(withJSONObject: merged)
         return try JSONDecoder().decode(ControlPayload.self, from: data)
+    }
+
+    @MainActor
+    private func spawnPuckSession(
+        store: SessionStore,
+        binding: PuckSessionBinding,
+        body: ControlPayload,
+        parentSessionID: String?,
+        tone: SessionTone,
+        select: Bool,
+        respond: @escaping @MainActor (Response) -> Void
+    ) {
+        Task { @MainActor in
+            do {
+                let session = try await store.createPuckSession(
+                    binding: binding,
+                    cwd: body.cwd,
+                    id: body.id,
+                    title: body.title,
+                    titleURL: body.titleURL,
+                    parentSessionID: parentSessionID,
+                    tone: tone,
+                    prompt: body.agentPrompt,
+                    select: select
+                )
+                respond(.ok(["session": self.summary(session)]))
+            } catch let error as PuckTurnError {
+                respond(.failure(502, "puck_turn_failed", error.localizedDescription))
+            } catch let error as ControlError {
+                respond(.failure(error.httpStatus, error.code, error.localizedDescription))
+            } catch let error as PuckDaemonError {
+                if case .unavailable = error {
+                    respond(.failure(503, "puck_create_failed", error.localizedDescription))
+                } else {
+                    respond(.failure(400, "puck_create_failed", error.localizedDescription))
+                }
+            } catch {
+                respond(.failure(400, "puck_create_failed", error.localizedDescription))
+            }
+        }
     }
 
     // MARK: - Pane routes
@@ -798,9 +790,10 @@ final class ControlServer {
 
     @MainActor
     private func summary(_ session: BanyanSession) -> [String: Any] {
-        [
+        var summary: [String: Any] = [
             "id": session.id,
-            "tmuxSessionName": session.tmuxSessionName,
+            "backend": session.backendKind.rawValue,
+            "tmuxSessionName": session.persistedTmuxSessionName ?? "",
             "title": session.title,
             "titleURL": session.titleURL ?? "",
             "displayTitle": session.displayTitle,
@@ -822,6 +815,15 @@ final class ControlServer {
             "createdAt": ISO8601DateFormatter().string(from: session.createdAt),
             "updatedAt": ISO8601DateFormatter().string(from: session.updatedAt)
         ]
+        if let puck = session as? PuckSession {
+            summary["puck"] = [
+                "provider": puck.binding.provider,
+                "model": puck.binding.model ?? "",
+                "account": puck.binding.account ?? "",
+                "position": puck.position ?? ""
+            ]
+        }
+        return summary
     }
 
     private func send(_ connection: NWConnection, status: Int, data: [String: Any]?, error: ControlErrorBody?) {

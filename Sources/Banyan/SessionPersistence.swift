@@ -47,11 +47,16 @@ protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
     func saveLinearIssueListCache(_ snapshot: LinearIssueListCacheSnapshot)
     func loadGitHubReferenceCache() -> GitHubReferenceCacheSnapshot?
     func saveGitHubReferenceCache(_ snapshot: GitHubReferenceCacheSnapshot)
+    /// Daemon sessions removed from Banyan. `puckd` keeps them, so the next
+    /// listing would otherwise bring them back.
+    func loadDismissedPuckSessionIDs() -> Set<String>
+    func saveDismissedPuckSessionIDs(_ ids: Set<String>)
 }
 
 struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
     private static let linearIssueListCacheKey = "linearIssueListCache"
     private static let githubReferenceCacheKey = "githubReferenceCache"
+    private static let dismissedPuckSessionIDsKey = "dismissedPuckSessionIDs"
 
     private let sessionDatabase: SessionDatabase
 
@@ -103,6 +108,21 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             "sessionRetentionDays": String(workspace.sessionRetentionDays)
         ]
         sessionDatabase.saveState(values)
+    }
+
+    func loadDismissedPuckSessionIDs() -> Set<String> {
+        guard let rawIDs = sessionDatabase.loadState()[Self.dismissedPuckSessionIDsKey],
+              let data = rawIDs.data(using: .utf8),
+              let ids = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(ids)
+    }
+
+    func saveDismissedPuckSessionIDs(_ ids: Set<String>) {
+        guard let data = try? JSONEncoder().encode(ids.sorted()),
+              let rawIDs = String(data: data, encoding: .utf8) else { return }
+        sessionDatabase.saveState([Self.dismissedPuckSessionIDsKey: rawIDs])
     }
 
     func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot? {

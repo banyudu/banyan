@@ -8,8 +8,8 @@ import Testing
 /// value survives a change it should not have. These pin the invalidation for every
 /// mutable input the two keys claim to cover.
 @MainActor
-private func makeMemoSession() -> BanyanSession {
-    BanyanSession(
+private func makeMemoSession() -> TerminalSession {
+    TerminalSession(
         id: "memo-\(UUID().uuidString)",
         title: "initial",
         cwd: NSTemporaryDirectory(),

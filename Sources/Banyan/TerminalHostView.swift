@@ -3,7 +3,7 @@ import SwiftUI
 import SwiftTerm
 
 struct TerminalHostView: NSViewRepresentable {
-    let session: BanyanSession
+    let session: TerminalSession
     let theme: TerminalTheme
     let fontFamily: String
     let fontSize: Double
@@ -97,7 +97,7 @@ struct TerminalHostView: NSViewRepresentable {
 
 final class TerminalContainerView: NSView {
     private(set) var terminalView: LocalProcessTerminalView
-    let session: BanyanSession
+    let session: TerminalSession
     private let paintProbe = TerminalPaintProbeView()
     var onLayout: (() -> Void)?
     var onUserSubmittedInput: ((String?) -> Void)?
@@ -118,7 +118,7 @@ final class TerminalContainerView: NSView {
     private var energyFrameSyncCalls = 0
     private var energyFrameChanges = 0
 
-    init(terminalView: LocalProcessTerminalView, session: BanyanSession, onUserSubmittedInput: ((String?) -> Void)? = nil) {
+    init(terminalView: LocalProcessTerminalView, session: TerminalSession, onUserSubmittedInput: ((String?) -> Void)? = nil) {
         self.terminalView = terminalView
         self.session = session
         self.onUserSubmittedInput = onUserSubmittedInput

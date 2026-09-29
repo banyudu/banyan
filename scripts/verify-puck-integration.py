@@ -255,14 +255,14 @@ def clean_environment(root, puck_home, model_url, slack_url):
     return env
 
 
-def app_browser_test(repo, env, prior_cursor, ready_file=None):
+def app_session_test(repo, env, prior_cursor, ready_file=None):
     app_env = env.copy()
     app_env["BANYAN_PUCK_E2E_SESSION"] = SESSION
     app_env["BANYAN_PUCK_E2E_AFTER_CURSOR"] = str(prior_cursor)
     if ready_file:
         app_env["BANYAN_PUCK_E2E_READY_FILE"] = str(ready_file)
     return subprocess.Popen(["swift", "test", "--quiet", "--filter",
-                             "appPuckBrowserSeesSharedDaemonSessionAndItsEvents"],
+                             "appPuckSessionSeesSharedDaemonSessionAndItsEvents"],
                             cwd=repo, env=app_env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
 
@@ -338,12 +338,12 @@ def run(args):
             assert ratio < 0.25, f"RSS ratio {ratio:.3f} is not far below {COUNT} CLIs"
             assert not descendants(daemon.pid), "idle puckd spawned child processes"
 
-            # A fresh app browser process attaches before a new event arrives.
+            # A fresh app process follows the session before a new event arrives.
             prior_cursor = rpc(path, "session.events", {"session": SESSION})["cursor"]
             ready = root / "app-ready"
-            app = app_browser_test(repo, env, prior_cursor, ready)
+            app = app_session_test(repo, env, prior_cursor, ready)
             processes.append(app)
-            wait_until(ready.exists, "app browser attachment", timeout=120)
+            wait_until(ready.exists, "app session attachment", timeout=120)
             tui, tui_tty = pty_process([str(args.banyantui)], env)
             processes.append(tui)
             read_pty_until(tui, tui_tty, "id: " + SESSION)
@@ -394,7 +394,7 @@ def run(args):
                        for event in events)
 
             # The app client process exits, then a new one replays the same daemon state.
-            restarted = app_browser_test(repo, env, prior_cursor)
+            restarted = app_session_test(repo, env, prior_cursor)
             processes.append(restarted)
             restarted_output, _ = restarted.communicate(timeout=35)
             assert restarted.returncode == 0 and "Test run with 1 test" in restarted_output, restarted_output[-2000:]
@@ -430,7 +430,7 @@ def run(args):
             question_app_env = env.copy()
             question_app_env["BANYAN_PUCK_E2E_QUESTION_SESSION"] = "question-app"
             question_app = subprocess.run(["swift", "test", "--quiet", "--filter",
-                "appPuckBrowserAnswersParkedQuestion"], cwd=repo, env=question_app_env,
+                "appPuckSessionAnswersParkedQuestion"], cwd=repo, env=question_app_env,
                 capture_output=True, text=True, timeout=120)
             assert question_app.returncode == 0 and "1 test" in question_app.stdout, question_app.stdout[-2000:]
             wait_until(lambda: rpc(path, "session.get", {"session": "question-app"})["position"] == "idle",

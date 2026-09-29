@@ -107,7 +107,8 @@ extension BanyanSession {
         touch()
     }
 
-    private func markSubmittedPromptTitle(_ submittedInput: String?) {
+    /// Titles an unnamed agent session from the first prompt submitted to it.
+    func markSubmittedPromptTitle(_ submittedInput: String?) {
         guard !hasUsefulPinnedTitle, usefulAgentTitle == nil, agentProvider != nil else { return }
         guard let promptTitle = SessionInputPolicy.submittedPromptTitle(from: submittedInput) else { return }
         reportedTitle = promptTitle
@@ -257,7 +258,7 @@ extension BanyanSession {
             ? command
             : (agentProvider?.defaultExecutableName ?? command)
         let context = SessionTitleContext(
-            id: id,
+            id: titleSeed,
             baseTitle: title,
             isTitlePinned: hasUsefulPinnedTitle,
             cwd: cwd,

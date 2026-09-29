@@ -239,3 +239,126 @@ private struct EmptyUnifiedSessionSource: SessionListDataSource {
     #expect(try PuckDaemonClient(socketPath: path).list().map(\.id) == ["shared"])
     #expect(done.wait(timeout: .now() + 2) == .success)
 }
+
+@MainActor
+@Test func puckFollowReplaysStreamsAndRefreshesTheSummaryUntilCancelled() async throws {
+    let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent("puck-follow-\(UUID().uuidString.prefix(8)).sock").path
+    let listener = try listeningPuckSocket(at: path)
+    defer { _ = close(listener); _ = unlink(path) }
+
+    func summary(_ position: String, history: Int) -> String {
+        #"{"id":"shared","provider":"codex","account":"seat","workspace":"/tmp","cwd":"/tmp","model":"model","position":"\#(position)","history_items":\#(history),"pending_approval":null}"#
+    }
+    let detached = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+        let attachPeer = accept(listener, nil, nil)
+        guard attachPeer >= 0 else { return }
+        defer { _ = close(attachPeer) }
+        guard readPuckRequest(attachPeer)?["method"] as? String == "session.attach" else { return }
+        writePuckLines(attachPeer, [
+            #"{"jsonrpc":"2.0","id":1,"result":{"summary":\#(summary("running", history: 0)),"cursor":5,"events":[{"cursor":5,"data":{"event":"turn_started"}}]}}"#,
+            #"{"jsonrpc":"2.0","method":"session.event","params":{"session":"shared","cursor":6,"data":{"event":"turn_done","text":"done"}}}"#
+        ])
+
+        // A summary-changing event makes the follower ask for a fresh summary.
+        let getPeer = accept(listener, nil, nil)
+        guard getPeer >= 0 else { return }
+        if readPuckRequest(getPeer)?["method"] as? String == "session.get" {
+            writePuckLines(getPeer, [#"{"jsonrpc":"2.0","id":1,"result":\#(summary("idle", history: 1))}"#])
+        }
+        _ = close(getPeer)
+
+        // Cancelling the follower must close its attachment, or the daemon
+        // keeps publishing to a frontend that stopped listening.
+        var byte: UInt8 = 0
+        while read(attachPeer, &byte, 1) == 1 {}
+        detached.signal()
+    }
+
+    let log = PuckUpdateLog()
+    let stream = PuckDaemonClient(socketPath: path).follow("shared")
+    let consumer = Task { @MainActor in
+        for try await update in stream {
+            log.updates.append(update)
+        }
+    }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while log.updates.count < 3, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+    }
+
+    #expect(log.updates.count == 3)
+    guard log.updates.count == 3 else { return consumer.cancel() }
+    if case .attached(let attached, let replayed) = log.updates[0] {
+        #expect(attached.position == "running")
+        #expect(replayed.map(\.cursor) == [5])
+    } else {
+        Issue.record("expected the attach first, got \(log.updates[0])")
+    }
+    if case .events(let live) = log.updates[1] {
+        #expect(live.map(\.cursor) == [6])
+        #expect(live.map(\.kind) == ["turn_done"])
+    } else {
+        Issue.record("expected live events second, got \(log.updates[1])")
+    }
+    if case .summary(let refreshed) = log.updates[2] {
+        #expect(refreshed.position == "idle")
+        #expect(refreshed.historyItems == 1)
+    } else {
+        Issue.record("expected a refreshed summary third, got \(log.updates[2])")
+    }
+
+    consumer.cancel()
+    #expect(detached.wait(timeout: .now() + 2) == .success)
+}
+
+@Test func puckFollowReportsAnUnreachableDaemon() async {
+    let stream = PuckDaemonClient(socketPath: "/nonexistent/banyan-test/puck.sock").follow("shared")
+    await #expect(throws: PuckDaemonError.self) {
+        for try await _ in stream {}
+    }
+}
+
+@MainActor
+private final class PuckUpdateLog {
+    var updates: [PuckSessionUpdate] = []
+}
+
+private func listeningPuckSocket(at path: String) throws -> Int32 {
+    #if canImport(Glibc)
+    let listener = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
+    #else
+    let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+    #endif
+    guard listener >= 0 else { throw PuckDaemonError.unavailable("socket") }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let pathBytes = Array(path.utf8)
+    withUnsafeMutableBytes(of: &address.sun_path) { bytes in
+        bytes.copyBytes(from: pathBytes)
+        bytes[pathBytes.count] = 0
+    }
+    let bound = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    guard bound == 0, listen(listener, 5) == 0 else {
+        _ = close(listener)
+        throw PuckDaemonError.unavailable("bind")
+    }
+    return listener
+}
+
+private func readPuckRequest(_ peer: Int32) -> [String: Any]? {
+    var request = Data()
+    var byte: UInt8 = 0
+    while read(peer, &byte, 1) == 1 && byte != 10 { request.append(byte) }
+    return (try? JSONSerialization.jsonObject(with: request)) as? [String: Any]
+}
+
+private func writePuckLines(_ peer: Int32, _ lines: [String]) {
+    let reply = lines.joined(separator: "\n") + "\n"
+    _ = reply.withCString { write(peer, $0, reply.utf8.count) }
+}

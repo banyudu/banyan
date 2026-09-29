@@ -1,41 +1,22 @@
 import AppKit
 import BanyanCore
 import Foundation
-import SwiftTerm
 
+/// One Banyan session: a sidebar row with a title, status, project, and place
+/// in the session tree, whatever runs behind it.
+///
+/// The sidebar, selection, shortcuts, attention navigation, and persistence all
+/// work on this class. Subclasses own the backing work: `TerminalSession` runs
+/// a command in tmux and renders it with SwiftTerm, and `PuckSession` follows a
+/// durable `puckd` session. The members under "Backend interface" are what
+/// differs between them; code outside the subclasses reaches for a concrete
+/// type only for work that exists on one backend alone.
 @MainActor
-final class BanyanSession: ObservableObject, Identifiable {
+class BanyanSession: ObservableObject, Identifiable {
     let id: String
-    let tmuxSessionName: String
     let createdAt: Date
     let historyTranscriptURL: URL?
 
-    var _terminalView: DetectingLocalProcessTerminalView?
-
-    /// The SwiftTerm view backing this session, created on first access.
-    ///
-    /// A terminal preallocates its scrollback eagerly (~4.7 MB here), so building
-    /// one per session in `init` cost ~1.7 GB across a restored workspace: every
-    /// persisted row gets a `BanyanSession`, and the overwhelming majority are
-    /// closed history entries that are never opened (only `SessionHistoryPresentation.sidebarBrowseLimit`
-    /// of them are even browsable). Allocating on demand keeps the cost proportional
-    /// to the terminals actually shown. Use `loadedTerminalView` from paths that must
-    /// not bring one into existence.
-    var terminalView: DetectingLocalProcessTerminalView {
-        if let _terminalView {
-            return _terminalView
-        }
-        let view = makeTerminalView()
-        _terminalView = view
-        return view
-    }
-
-    /// Non-allocating peek at the terminal. `nil` until something actually needs to
-    /// display or run this session, which lets repaint and teardown paths no-op
-    /// instead of materializing a terminal just to tear it down.
-    var loadedTerminalView: DetectingLocalProcessTerminalView? {
-        _terminalView
-    }
     var displayProject: String
     var displayBranch: String?
     var displayIsGitWorktree: Bool
@@ -57,8 +38,9 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var reportedTitle: String?
     @Published var generatedTitle: String?
     @Published var detectedAgentProvider: CodingAgentProvider?
-    /// Runtime-only OpenCode model identity. It is deliberately not persisted:
-    /// when the process exits, the next supervisor observation clears it.
+    /// Runtime model identity. A terminal OpenCode session learns it from the
+    /// supervisor and clears it when the process exits; a puck session reads it
+    /// from its daemon. Deliberately not persisted.
     @Published var detectedAgentModelID: String?
     @Published var detectedAgentModelIDIsExact = false
     @Published var isTitlePinned: Bool
@@ -72,9 +54,9 @@ final class BanyanSession: ObservableObject, Identifiable {
     /// Persisted metadata can outlive the dedicated tmux session after reboot.
     @Published var needsRecovery: Bool
     /// Parked out of Banyan's working set. Deliberately orthogonal to `status`:
-    /// the tmux session and its agent are untouched, so the row keeps the last
-    /// observed agent state and resuming restores it instead of resetting it.
-    /// See `suspend()` / `resume()`.
+    /// the backing session and its agent are untouched, so the row keeps the
+    /// last observed agent state and resuming restores it instead of resetting
+    /// it. See `suspend()` / `resume()`.
     @Published var isSuspended: Bool
     @Published var parentSessionID: String?
     /// Underlying coding-agent session UUID (codex/claude), resolved by matching
@@ -84,9 +66,6 @@ final class BanyanSession: ObservableObject, Identifiable {
     @Published var agentSessionID: String?
     var lastConversationResetAt: Date?
 
-    var delegate: TerminalSessionDelegate?
-    let tmuxBackend: any TmuxClientBackend
-    let sessionRuntime: any SessionRuntimeBackend
     let telemetry: PerformanceTelemetry
     let homeDirectory: String
     let environment: [String: String]
@@ -149,34 +128,17 @@ final class BanyanSession: ObservableObject, Identifiable {
     var agentProviderCache: (key: AgentProviderKey, value: CodingAgentProvider?)?
     var displayAgentProviderCache: (key: DisplayAgentProviderKey, value: CodingAgentProvider?)?
 
-    var launchRequest: SessionLaunchRequest {
-        SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command, banyanSessionID: id)
-    }
     var onDidChange: (() -> Void)?
     var onOutput: ((String) -> Void)?
-    /// Called after the user submits terminal input. SessionStore uses this to
-    /// wake supervision for commands launched from an initially plain shell.
+    /// Called after the user submits input. SessionStore uses this to wake
+    /// supervision for commands launched from an initially plain shell.
     var onUserSubmittedInput: ((String?) -> Void)?
     var onStatusSignal: ((SessionStatus) -> Void)?
     var onProcessExit: ((Int32?) -> Void)?
     var onProjectContextObserved: ((String, SessionProjectContext) -> Void)?
-    var didRenderRestoredMessage = false
-    var appliedTheme: TerminalTheme?
-    var appliedFontFamily: String?
-    var appliedFontSize: Double?
-    /// Desired appearance, tracked even while no terminal exists so one created
-    /// later comes up already styled rather than flashing an unthemed frame.
-    var pendingTheme: TerminalTheme
-    var pendingFontFamily: String?
-    var pendingFontSize: Double
-    var pendingTerminalMessage: String?
     var externalTitleSignature: String?
     var externalTitleTask: Task<Void, Never>?
-    var isDetachingTerminalClient = false
-    var isInactiveTerminalClientDetached = false
-    var attemptedBlankTerminalRecovery = false
     var titleURLWasAutoDetected = false
-    var terminalRefreshTask: Task<Void, Never>?
     /// Generation counter for async directory updates. OSC7 directory
     /// notifications arrive on the main thread during streaming output; the git
     /// lookups they need must run in the background. Rapid `cd`s bump this so
@@ -185,7 +147,6 @@ final class BanyanSession: ObservableObject, Identifiable {
 
     init(
         id: String,
-        tmuxSessionName: String? = nil,
         title: String,
         titleURL: String? = nil,
         titleURLWasAutoDetected: Bool? = nil,
@@ -204,16 +165,12 @@ final class BanyanSession: ObservableObject, Identifiable {
         needsRecovery: Bool = false,
         isSuspended: Bool = false,
         displayContext: SessionProjectContext? = nil,
-        theme: TerminalTheme,
-        fontFamily: String? = nil,
-        fontSize: Double = 13,
-        tmuxBackend: any TmuxClientBackend,
+        agentProvider: CodingAgentProvider? = nil,
+        agentModelID: String? = nil,
         telemetry: PerformanceTelemetry,
         host: HostRuntimeContext,
         githubReferenceCache: GitHubReferenceCache? = nil
     ) {
-        self.tmuxBackend = tmuxBackend
-        self.sessionRuntime = SessionRuntimeCoordinator(backend: tmuxBackend)
         self.telemetry = telemetry
         self.homeDirectory = host.homeDirectory.path
         self.environment = host.environment
@@ -224,7 +181,6 @@ final class BanyanSession: ObservableObject, Identifiable {
             environment: self.environment
         )
         self.id = id
-        self.tmuxSessionName = tmuxSessionName ?? SessionIdentityPolicy.sessionName(for: id)
         self.historyTranscriptURL = historyTranscriptURL
         self.title = title
         let detectedReference = LinearIssueReference.detect(
@@ -255,12 +211,14 @@ final class BanyanSession: ObservableObject, Identifiable {
             self.titleURLWasAutoDetected = detectedReference != nil
         }
         self.generatedTitle = generatedTitle
-        // Recover the launched identity synchronously from the persisted command.
-        // A restored/recovered session starts in `.running` before the supervisor
-        // has had a chance to inspect its process tree; leaving this nil makes the
-        // sidebar render every agent as a plain terminal during that window.
-        self.detectedAgentProvider = CodingAgentProvider.detect(in: command)
-        self.detectedAgentModelID = nil
+        // Recover the launched identity synchronously. A terminal session reads
+        // it from its persisted command: a restored/recovered session starts in
+        // `.running` before the supervisor has had a chance to inspect its process
+        // tree, and leaving this nil makes the sidebar render every agent as a
+        // plain terminal during that window. Other backends know it outright.
+        self.detectedAgentProvider = agentProvider ?? CodingAgentProvider.detect(in: command)
+        self.detectedAgentModelID = agentModelID
+        self.detectedAgentModelIDIsExact = agentModelID != nil
         self.isTitlePinned = isTitlePinned
         self.cwd = cwd
         self.command = command
@@ -280,171 +238,119 @@ final class BanyanSession: ObservableObject, Identifiable {
         self.isRestored = isRestored
         self.needsRecovery = needsRecovery
         self.isSuspended = isSuspended
-        // A freshly spawned background session has no tmux backing yet. Keep this
-        // false until ensureSession succeeds; otherwise the supervisor can race
-        // the async tmux creation, observe a missing session, and mark the row
+        // A freshly spawned background session has no backing yet. Keep this
+        // false until the backend confirms it; otherwise the supervisor can race
+        // the async creation, observe a missing session, and mark the row
         // closed before the command ever starts.
         self.isProcessStarted = false
-        self.pendingTheme = theme
-        self.pendingFontFamily = fontFamily
-        self.pendingFontSize = fontSize
-
-        let delegate = TerminalSessionDelegate(sessionID: id)
-        delegate.onTitle = { [weak self] title in
-            guard let self else { return }
-            self.reportedTitle = title
-            self.refreshGeneratedTitle()
-            self.touch()
-        }
-        delegate.onDirectoryChange = { [weak self] directory in
-            self?.updateCurrentDirectoryAsync(directory)
-        }
-        delegate.onTerminate = { [weak self] exitCode in
-            guard let self else { return }
-            if self.isDetachingTerminalClient {
-                self.isDetachingTerminalClient = false
-                if !self.isInactiveTerminalClientDetached {
-                    self.isProcessStarted = false
-                }
-                self.touch()
-                return
-            }
-            self.isProcessStarted = false
-            if self.status != .closed, let onProcessExit = self.onProcessExit {
-                onProcessExit(exitCode)
-                return
-            }
-            if let nextStatus = SessionLifecyclePolicy.statusAfterTerminalExit(
-                currentStatus: self.status,
-                hasBackingSession: self.tmuxBackend.hasSession(named: self.tmuxSessionName),
-                exitCode: exitCode
-            ) {
-                self.status = nextStatus
-                if nextStatus != .running {
-                    self.onStatusSignal?(self.status)
-                }
-            }
-            self.touch()
-        }
-        self.delegate = delegate
-
-        refreshGeneratedTitle()
     }
 
-    func makeTerminalView() -> DetectingLocalProcessTerminalView {
-        let view = DetectingLocalProcessTerminalView(frame: .zero)
-        view.telemetry = telemetry
-        view.telemetrySessionID = id
-        view.rendererPreference = TerminalRendererPreference.resolvedDefault
-        view.tmuxSessionName = tmuxSessionName
-        // SwiftTerm's implicit link reporting recognizes raw http(s) URLs and
-        // its modifier-aware mode previews/opens them on Cmd-click. Keep plain
-        // clicks available for normal terminal selection and input.
-        view.linkHighlightMode = .hoverWithModifier
-        // Keep implicit links available on Cmd-hover and Cmd-click, but do not
-        // scan every changed terminal row during painting just to color links.
-        // Full-screen agents rewrite most rows per frame, and the implicit-link
-        // ICU regex dominated live draw samples even with per-row caching.
-        view.highlightDetectedLinks = false
-        pendingTheme.apply(to: view, fontFamily: pendingFontFamily, fontSize: pendingFontSize)
-        appliedTheme = pendingTheme
-        appliedFontFamily = pendingFontFamily
-        appliedFontSize = pendingFontSize
-        view.processDelegate = delegate
-        view.onOutput = { [weak self] text in
-            self?.onOutput?(text)
-        }
-        delegate?.onOpenLink = { [weak self] link in
-            self?.openTerminalLink(link)
-        }
-        if let pendingTerminalMessage {
-            view.feed(text: pendingTerminalMessage)
-            self.pendingTerminalMessage = nil
-        }
-        return view
+    // MARK: - Backend interface
+
+    /// Which runtime owns the session.
+    var backendKind: SessionBackendKind {
+        preconditionFailure("\(type(of: self)) must override backendKind")
     }
 
-    func openTerminalLink(_ link: String) {
-        if let number = Self.referenceNumber(in: link) {
-            openGitHubReference(number: number)
-            return
-        }
+    /// The tmux session a terminal row persists. `nil` for other backends.
+    var persistedTmuxSessionName: String? { nil }
 
-        guard let url = Self.terminalLinkURL(link) else {
-            return
-        }
-        if url.isFileURL, !FileManager.default.fileExists(atPath: url.path) {
-            return
-        }
-        _ = NSWorkspace.shared.open(url)
+    /// The daemon runtime a puck row persists. `nil` for other backends.
+    var puckBinding: PuckSessionBinding? { nil }
+
+    /// Seeds the automatic title before the agent or a prompt names the
+    /// session. A terminal session's ID is usually a readable name
+    /// (`codex-2`); a backend with opaque IDs substitutes a generic one.
+    var titleSeed: String { id }
+
+    /// Whether a restart means anything: it re-runs the launch command.
+    var canRestart: Bool { false }
+
+    /// Whether closing ends the agent's work, and so needs a confirmation while
+    /// the agent is busy.
+    var closeEndsAgentWork: Bool { true }
+
+    /// What keeps running behind the row, for text that names it.
+    var backingSessionName: String { "backing session" }
+
+    /// What closing does to the backing session, for the close confirmation.
+    var closeConsequence: String {
+        "Closing \(displayTitle) ends the session."
     }
 
-    /// A bare `#123` printed by an agent: resolve it as a pull request first,
-    /// then an issue, then through the session repository. Nothing opens when
-    /// the repository is known not to contain the number — a guessed URL would
-    /// only 404.
-    private func openGitHubReference(number: Int) {
-        let cwd = self.cwd
-        let environment = self.environment
-        let homeDirectory = self.homeDirectory
-        let repositoryGroupID = self.projectGroupID
-        let cache = self.githubReferenceCache
-        Task.detached(priority: .utility) {
-            let url = await GitHubReferenceResolver.resolve(
-                number: number,
-                cwd: cwd,
-                environment: environment,
-                homeDirectory: homeDirectory,
-                repositoryGroupID: repositoryGroupID,
-                cache: cache
-            )
-            await MainActor.run {
-                if let url {
-                    _ = NSWorkspace.shared.open(url)
-                } else {
-                    NSSound.beep()
-                }
-            }
-        }
+    /// Whether provider transcripts on disk (Codex, Claude, OpenCode) title and
+    /// resume this session. Only a terminal agent writes them; a daemon keeps
+    /// its own transcript.
+    var matchesAgentTranscripts: Bool { false }
+
+    /// What a new session "like this one" launches, for Cmd+N and the palette.
+    func siblingLaunch(profiles: [NewSessionLaunch], codexLaunchMode: CodexLaunchMode) -> SessionLaunchSpec {
+        .terminal(command: "")
     }
 
-    /// The `#123` form agents print in status lines and footers. Explicit OSC 8
-    /// hyperlinks still arrive as full URLs and are opened through
-    /// `terminalLinkURL`.
-    nonisolated static func referenceNumber(in link: String) -> Int? {
-        let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 1, trimmed.hasPrefix("#") else { return nil }
-        let digits = trimmed.dropFirst()
-        guard digits.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
-        return Int(digits)
+    /// Whether `profile` describes how this session was launched, so its row
+    /// can carry the profile's icon.
+    func matchesLaunchProfile(_ profile: NewSessionLaunch) -> Bool { false }
+
+    /// Starts the backing work without showing it, for a background spawn.
+    func startBackgroundBackendIfNeeded() {}
+
+    /// Ends the session in Banyan and releases what backs it.
+    func closeBackingSession() {
+        status = .closed
+        isSuspended = false
+        touch()
     }
 
-    static func terminalLinkURL(_ link: String) -> URL? {
-        let value = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return nil }
-
-        if value.hasPrefix("/") {
-            return URL(fileURLWithPath: value)
+    /// Stops observing the session without touching the backing work.
+    func terminate(markClosed: Bool = true) {
+        if markClosed {
+            status = .closed
+            // A closed session is over, not parked. Leaving the flag set would
+            // badge a history row and carry parking into a later reopen.
+            isSuspended = false
         }
-
-        guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else {
-            return nil
-        }
-        if ["http", "https"].contains(scheme), url.host != nil {
-            return url
-        }
-        return url.isFileURL ? url : nil
+        touch()
     }
 
-    /// Writes to the terminal if one exists, otherwise holds the text until one is
-    /// created. A background start can fail before any terminal is allocated, and
-    /// that diagnostic still needs to be there when the session is later opened.
-    func feedOrQueue(_ text: String) {
-        if let terminalView = loadedTerminalView {
-            terminalView.feed(text: text)
-        } else {
-            pendingTerminalMessage = (pendingTerminalMessage ?? "") + text
-        }
+    /// Parks the session: Banyan stops observing and rendering it while the
+    /// backing session keeps running untouched, so `resume()` is lossless.
+    ///
+    /// `status` is deliberately left alone. It still describes the agent, which
+    /// is still doing whatever it was doing; overwriting it here would lose
+    /// exactly the state a resume is supposed to bring back.
+    func suspend() {
+        guard !isImportedHistory, status != .closed, !isSuspended else { return }
+        isSuspended = true
+        touch()
     }
 
+    /// Returns the session to Banyan's working set.
+    func resume() {
+        guard isSuspended else { return }
+        isSuspended = false
+        touch()
+    }
+
+    /// Applies the terminal appearance, for backends that render a terminal.
+    func apply(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13, force: Bool = false) {}
+
+    func apply(renderer: TerminalRendererPreference) {}
+
+    /// Shows a notice where the user will see it when the session is opened.
+    func feedOrQueue(_ text: String) {}
+
+    func touch() {
+        // `updatedAt` feeds sidebar ordering and the sidebar/history cache
+        // hashes, which scan every row (~3000 with closed history). Bumping it
+        // on every observation and output chunk kept those caches permanently
+        // cold: each keystroke re-evaluates the menu bar, which rebuilds the
+        // full grouping. Recency at 2s granularity is plenty for
+        // human-readable ordering and resume heuristics.
+        let now = Date()
+        if now.timeIntervalSince(updatedAt) >= 2 {
+            updatedAt = now
+        }
+        onDidChange?()
+    }
 }

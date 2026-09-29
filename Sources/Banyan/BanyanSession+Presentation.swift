@@ -32,7 +32,7 @@ extension BanyanSession {
     var persistenceSnapshot: SessionSnapshot {
         SessionSnapshot(
             id: id,
-            tmuxSessionName: tmuxSessionName,
+            tmuxSessionName: persistedTmuxSessionName,
             title: title,
             titleURL: titleURL,
             titleURLWasAutoDetected: titleURLWasAutoDetected,
@@ -47,7 +47,9 @@ extension BanyanSession {
             agentSessionID: agentSessionID,
             isSuspended: isSuspended,
             createdAt: createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            backend: backendKind,
+            puck: puckBinding
         )
     }
 

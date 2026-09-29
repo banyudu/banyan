@@ -138,13 +138,16 @@ public struct SessionStatusSynchronizer: Sendable {
             processTable: processTable,
             cache: cache
         )
+        // Only terminal rows have a pane to inspect; a puck row's status comes
+        // from its daemon.
         let paneSnapshots = backend.primaryPaneSnapshots(
-            named: Set(snapshots.map { $0.launchRequest.sessionName })
+            named: Set(snapshots.filter { $0.backend == .terminal }.map { $0.launchRequest.sessionName })
         )
 
         return snapshots.map { session in
             let tmuxSessionName = session.launchRequest.sessionName
-            guard session.status != .closed,
+            guard session.backend == .terminal,
+                  session.status != .closed,
                   let result = supervisor.inspect(
                       tmuxSessionName: tmuxSessionName,
                       launchCommand: session.command,

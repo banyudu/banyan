@@ -3,7 +3,7 @@ import SwiftUI
 
 struct ScratchTerminalWindow: View {
     @EnvironmentObject private var store: SessionStore
-    @ObservedObject var session: BanyanSession
+    @ObservedObject var session: TerminalSession
 
     var body: some View {
         TerminalHostView(

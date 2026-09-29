@@ -5,50 +5,59 @@ import Testing
 
 /// Invoked by scripts/verify-puck-integration.py against a real local puckd.
 /// Ordinary test runs skip this because no fixture session is configured.
-@Test @MainActor func appPuckBrowserSeesSharedDaemonSessionAndItsEvents() async throws {
+@Test @MainActor func appPuckSessionSeesSharedDaemonSessionAndItsEvents() async throws {
     let environment = ProcessInfo.processInfo.environment
     guard let id = environment["BANYAN_PUCK_E2E_SESSION"],
           let cursorText = environment["BANYAN_PUCK_E2E_AFTER_CURSOR"],
           let priorCursor = UInt64(cursorText) else { return }
-    let browser = PuckSessionBrowser()
-    browser.refresh()
+    // The daemon the script started, found through `PUCK_HOME`.
+    let fixture = try PuckStoreFixture(daemon: PuckDaemonClient())
+    let store = fixture.makeStore()
+    store.syncPuckSessions()
     try await waitForPuckFixture {
-        browser.sessions.contains(where: { $0.id == id })
+        store.sessions.contains(where: { $0.id == id })
     }
-    browser.select(id)
+    let session = try #require(store.sessions.first(where: { $0.id == id }) as? PuckSession)
+    session.startFollowing()
     try await waitForPuckFixture {
-        browser.selectedSummary?.id == id && !browser.isConnecting
+        session.followState == .following
     }
     if let readyFile = environment["BANYAN_PUCK_E2E_READY_FILE"] {
         try "ready".write(toFile: readyFile, atomically: true, encoding: .utf8)
     }
     try await waitForPuckFixture(timeout: .seconds(30)) {
-        browser.events.contains(where: { $0.cursor > priorCursor && $0.kind == "turn_done" })
+        session.events.contains(where: { $0.cursor > priorCursor && $0.kind == "turn_done" })
     }
-    #expect(browser.selectedSummary?.id == id)
-    #expect(browser.events.contains(where: {
+    #expect(session.backendKind == .puck)
+    #expect(session.events.contains(where: {
         $0.cursor > priorCursor && $0.displayText?.contains("fixture done") == true
     }))
-    browser.detach()
+    session.stopFollowing()
 }
 
-@Test @MainActor func appPuckBrowserAnswersParkedQuestion() async throws {
+@Test @MainActor func appPuckSessionAnswersParkedQuestion() async throws {
     guard let id = ProcessInfo.processInfo.environment["BANYAN_PUCK_E2E_QUESTION_SESSION"] else { return }
-    let direct = try PuckDaemonClient().get(id)
+    let daemon = PuckDaemonClient()
+    let direct = try daemon.get(id)
     #expect(direct.pendingQuestion?.callID == "question-1")
-    let browser = PuckSessionBrowser()
-    browser.select(id)
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    store.syncPuckSessions()
     try await waitForPuckFixture {
-        browser.selectedSummary?.pendingQuestion?.callID == "question-1"
+        (store.sessions.first(where: { $0.id == id }) as? PuckSession)?.pendingQuestion?.callID == "question-1"
     }
-    let pending = try #require(browser.selectedSummary?.pendingQuestion)
+    let session = try #require(store.sessions.first(where: { $0.id == id }) as? PuckSession)
+    // A parked question is the user's to answer, like a terminal agent's prompt.
+    #expect(session.status == .asking)
+    let pending = try #require(session.pendingQuestion)
     #expect(pending.questions.first?.options.map(\.label) == ["Approve", "Deny"])
-    browser.answer([PuckQuestionSelection(labels: ["Approve"])])
+    session.startFollowing()
+    session.answer([PuckQuestionSelection(labels: ["Approve"])])
     try await waitForPuckFixture {
-        browser.events.contains(where: { $0.kind == "turn_done" })
-            && browser.selectedSummary?.pendingQuestion == nil
+        session.events.contains(where: { $0.kind == "turn_done" })
+            && session.pendingQuestion == nil
     }
-    browser.detach()
+    session.stopFollowing()
 }
 
 @MainActor

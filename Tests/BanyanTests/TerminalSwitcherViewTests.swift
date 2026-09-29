@@ -219,7 +219,7 @@ import Testing
 @MainActor
 private func update(
     _ switcher: TerminalSwitcherContainer,
-    sessions: [BanyanSession],
+    sessions: [TerminalSession],
     selectedID: String,
     focusRequestID: UUID
 ) {
@@ -239,8 +239,8 @@ private func update(
 }
 
 @MainActor
-private func makeSwitcherSession(id: String, projectGroupID: String? = nil) -> BanyanSession {
-    let session = BanyanSession(
+private func makeSwitcherSession(id: String, projectGroupID: String? = nil) -> TerminalSession {
+    let session = TerminalSession(
         id: id,
         title: id,
         cwd: NSTemporaryDirectory(),

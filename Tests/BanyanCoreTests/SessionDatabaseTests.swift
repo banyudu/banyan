@@ -288,6 +288,124 @@ private func legacySessionsTable(at url: URL) throws {
     #expect(database.load().map(\.id) == ["ancient"])
 }
 
+@Test func sessionDatabaseRoundTripsPuckSessionsAndTheirRuntime() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+    let terminal = retentionSnapshot(id: "terminal", status: .running, updatedAt: createdAt, ageDays: 0, in: directory)
+    let puck = SessionSnapshot(
+        id: "0f6c3a52-8c1e-4d7b-9a55-3b1f1d2e4c10",
+        tmuxSessionName: nil,
+        title: "project",
+        reportedTitle: "fix the parser",
+        cwd: directory.path,
+        command: "",
+        status: .needInput,
+        tone: .yellow,
+        parentSessionID: "terminal",
+        createdAt: createdAt,
+        updatedAt: createdAt,
+        backend: .puck,
+        puck: PuckSessionBinding(provider: "anthropic", account: "work", model: "claude-sonnet-4-5")
+    )
+
+    database.save([terminal, puck])
+
+    let loaded = database.load()
+    #expect(loaded == [terminal, puck])
+    #expect(loaded.map(\.backend) == [.terminal, .puck])
+}
+
+@Test func sessionDatabaseReadsRowsWrittenBeforeBackendsAsTerminalSessions() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let databaseURL = directory.appendingPathComponent("state.sqlite")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try legacySessionsTable(at: databaseURL)
+
+    let snapshots = SessionDatabase(
+        databaseURL: databaseURL,
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    ).load()
+
+    #expect(snapshots.map(\.id) == ["legacy"])
+    #expect(snapshots.first?.backend == .terminal)
+    #expect(snapshots.first?.puck == nil)
+}
+
+@Test func sessionDatabaseSkipsRowsFromABackendItDoesNotKnow() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let databaseURL = directory.appendingPathComponent("state.sqlite")
+    let database = SessionDatabase(
+        databaseURL: databaseURL,
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    database.save([
+        retentionSnapshot(id: "known", status: .running, updatedAt: now, ageDays: 0, in: directory),
+        retentionSnapshot(id: "future", status: .running, updatedAt: now, ageDays: 0, in: directory)
+    ])
+    try executeSQL("UPDATE sessions SET backend = 'future' WHERE id = 'future'", at: databaseURL)
+
+    // Running it as a terminal would start a shell for something else entirely.
+    #expect(database.load().map(\.id) == ["known"])
+}
+
+@Test func sessionDatabasePruneSparesClosedPuckSessions() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-session-db-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let database = SessionDatabase(
+        databaseURL: directory.appendingPathComponent("state.sqlite"),
+        legacyJSONURL: directory.appendingPathComponent("sessions.json")
+    )
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let ancient = retentionSnapshot(id: "ancient-puck", status: .closed, updatedAt: now, ageDays: 400, in: directory)
+    database.save([
+        retentionSnapshot(id: "ancient-terminal", status: .closed, updatedAt: now, ageDays: 400, in: directory),
+        SessionSnapshot(
+            id: ancient.id,
+            tmuxSessionName: nil,
+            title: ancient.title,
+            reportedTitle: nil,
+            cwd: ancient.cwd,
+            command: "",
+            status: .closed,
+            tone: .neutral,
+            createdAt: ancient.createdAt,
+            updatedAt: ancient.updatedAt,
+            backend: .puck,
+            puck: PuckSessionBinding(provider: "codex")
+        )
+    ])
+
+    // puckd still has the session. Pruning the row would let the next listing
+    // bring it back as a new, open one.
+    #expect(database.pruneExpiredSessions(retentionDays: 30, now: now) == 1)
+    #expect(database.load().map(\.id) == ["ancient-puck"])
+}
+
+private func executeSQL(_ sql: String, at url: URL) throws {
+    var database: OpaquePointer?
+    guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+        throw NSError(domain: "BanyanSQLiteTest", code: 1)
+    }
+    defer { sqlite3_close(database) }
+    guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+        throw NSError(domain: "BanyanSQLiteTest", code: 2)
+    }
+}
+
 private func retentionSnapshot(
     id: String,
     status: SessionStatus,

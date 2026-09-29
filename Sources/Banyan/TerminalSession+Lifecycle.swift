@@ -3,7 +3,7 @@ import BanyanCore
 import Foundation
 import SwiftTerm
 
-extension BanyanSession {
+extension TerminalSession {
     func renderRestoredMessageIfNeeded(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13) {
         guard needsManualAttach, !didRenderRestoredMessage else { return }
         // Only meaningful once the terminal is on screen, which means it already exists.
@@ -96,24 +96,6 @@ extension BanyanSession {
                 )
             }
         }
-    }
-
-    /// Start the tmux backing (and its launch command) without attaching a visible
-    /// terminal client, so a session spawned in the background actually runs without
-    /// stealing selection/focus. When the session is later selected, `start()` attaches
-    /// the visible client to this already-running tmux session (`ensureSession` is idempotent).
-    func startBackgroundBackendIfNeeded() {
-        guard !isImportedHistory, status != .closed, !isSuspended else { return }
-        // Deliberately does not attach a visible client, so it must not create a
-        // terminal either — an absent one is by definition not running.
-        guard !isProcessStarted, loadedTerminalView?.process.running != true else { return }
-        // Optimistically mark running so the sidebar updates immediately; the actual
-        // tmux work (subprocess spawns) runs off the main thread to avoid freezing the
-        // UI while a session is created via banyanctl.
-        isRestored = false
-        status = .running
-        touch()
-        startBackingSessionInBackground()
     }
 
     func refreshTerminalClient(immediately: Bool = false) {
@@ -272,7 +254,7 @@ extension BanyanSession {
         startBackingSessionInBackground()
     }
 
-    private func startBackingSessionInBackground() {
+    func startBackingSessionInBackground() {
         guard ensureProjectFolderAccess() else { return }
         let runtime = sessionRuntime
         let request = launchRequest
@@ -348,42 +330,6 @@ extension BanyanSession {
         touch()
     }
 
-    func apply(theme: TerminalTheme, fontFamily: String? = nil, fontSize: Double = 13, force: Bool = false) {
-        guard force || appliedTheme != theme || appliedFontFamily != fontFamily || appliedFontSize != fontSize else {
-            return
-        }
-        pendingTheme = theme
-        pendingFontFamily = fontFamily
-        pendingFontSize = fontSize
-        // A theme change for a session with no terminal yet is just bookkeeping;
-        // `makeTerminalView` applies it if and when one is created.
-        guard let view = loadedTerminalView else { return }
-        theme.apply(to: view, fontFamily: fontFamily, fontSize: fontSize)
-        tmuxBackend.configureTerminalTheme(style: theme.tmuxDefaultStyle, for: tmuxSessionName)
-        appliedTheme = theme
-        appliedFontFamily = fontFamily
-        appliedFontSize = fontSize
-        view.requestFullRedraw()
-    }
-
-    /// Switching renderers on a live session rebuilds its drawing surface, so
-    /// it only touches sessions that already have a terminal; the rest resolve
-    /// the preference in `makeTerminalView`.
-    func apply(renderer: TerminalRendererPreference) {
-        loadedTerminalView?.rendererPreference = renderer
-    }
-
-    func terminate(markClosed: Bool = true) {
-        stopTerminalClient()
-        if markClosed {
-            status = .closed
-            // A closed session is over, not parked. Leaving the flag set would
-            // badge a history row and carry parking into a later reopen.
-            isSuspended = false
-        }
-        touch()
-    }
-
     func killBackingSession() {
         status = .closed
         isSuspended = false
@@ -392,7 +338,7 @@ extension BanyanSession {
         touch()
     }
 
-    private func stopTerminalClient() {
+    func stopTerminalClient() {
         terminalRefreshTask?.cancel()
         isInactiveTerminalClientDetached = false
         isDetachingTerminalClient = false
@@ -445,60 +391,6 @@ extension BanyanSession {
             durationMS: PerformanceTelemetry.elapsedMS(since: startedAt),
             sessionID: id
         )
-    }
-
-    /// Parks the session: Banyan stops observing and rendering it, while its tmux
-    /// session and agent process keep running untouched. Nothing is torn down, so
-    /// `resume()` is lossless.
-    ///
-    /// `status` is deliberately left alone. It still describes the agent, which is
-    /// still doing whatever it was doing; overwriting it here would lose exactly
-    /// the state a resume is supposed to bring back.
-    func suspend() {
-        guard !isImportedHistory, status != .closed, !isSuspended else { return }
-        isSuspended = true
-        // Drops the SwiftTerm client only. Reattaching later rebuilds the buffer
-        // from the live pane, so no scrollback is lost.
-        detachTerminalClient()
-    }
-
-    /// Returns the session to Banyan's working set.
-    ///
-    /// Nothing observed this session while it was parked, so a tmux server that
-    /// exited meanwhile is only discovered here. One `has-session` probe settles
-    /// whether the row re-enters supervision or needs recovery.
-    func resume() {
-        guard isSuspended else { return }
-        isSuspended = false
-        if tmuxBackend.hasSession(named: tmuxSessionName) {
-            // The backing session ran the whole time, so rejoin the supervisor
-            // tick immediately rather than waiting for a visible client to attach.
-            isProcessStarted = true
-            // This probe outranks anything the liveness sweep concluded earlier.
-            needsRecovery = false
-        } else {
-            // Same shape as a session restored without its tmux server: persisted
-            // metadata, nothing behind it. `needsManualAttach` reads all three
-            // fields, so the recovery banner needs `isRestored` set here too.
-            isProcessStarted = false
-            isRestored = true
-            needsRecovery = true
-        }
-        touch()
-    }
-
-    func touch() {
-        // `updatedAt` feeds sidebar ordering and the sidebar/history cache
-        // hashes, which scan every row (~3000 with closed history). Bumping it
-        // on every observation and output chunk kept those caches permanently
-        // cold: each keystroke re-evaluates the menu bar, which rebuilds the
-        // full grouping. Recency at 2s granularity is plenty for
-        // human-readable ordering and resume heuristics.
-        let now = Date()
-        if now.timeIntervalSince(updatedAt) >= 2 {
-            updatedAt = now
-        }
-        onDidChange?()
     }
 
     fileprivate func restoredMessage() -> String {

@@ -90,3 +90,47 @@ private struct ModelHistoryBackend: SessionHistoryBackend {
         transcriptURL: URL?
     ) -> String? { nil }
 }
+
+@Test func sessionListModelListsOnlyTerminalRowsFromTheAppDatabase() {
+    let now = Date(timeIntervalSince1970: 100)
+    let terminal = SessionSnapshot(
+        id: "terminal",
+        tmuxSessionName: nil,
+        title: "Shell",
+        reportedTitle: nil,
+        cwd: "/tmp",
+        command: "",
+        status: .running,
+        tone: .blue,
+        createdAt: now,
+        updatedAt: now
+    )
+    let puck = SessionSnapshot(
+        id: "0f6c3a52-8c1e-4d7b-9a55-3b1f1d2e4c10",
+        tmuxSessionName: nil,
+        title: "Puck",
+        reportedTitle: nil,
+        cwd: "/tmp",
+        command: "",
+        status: .needInput,
+        tone: .yellow,
+        createdAt: now,
+        updatedAt: now,
+        backend: .puck,
+        puck: PuckSessionBinding(provider: "codex")
+    )
+    var model = SessionListModel(dataSource: FixedActiveSessionSource(sessions: [terminal, puck]))
+
+    model.reload()
+
+    // The TUI lists puck sessions from the daemon itself, which is live even
+    // when the app that saved this row is not running.
+    #expect(model.sessions.map(\.id) == ["terminal"])
+}
+
+private struct FixedActiveSessionSource: SessionListDataSource {
+    let sessions: [SessionSnapshot]
+
+    func loadActiveSessions() -> [SessionSnapshot] { sessions }
+    func loadHistory(limit: Int) -> [ImportedAgentSession] { [] }
+}
