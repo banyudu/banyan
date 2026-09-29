@@ -77,9 +77,19 @@ private func tempHome() -> URL {
         puckProvider: opencode-go
         puckModel: muse-spark-1.3-contributor
         puckAccount: personal
+      gemini-api:
+        label: Gemini API
+        provider: gemini
+        tags: [banyan]
+        command: gemini
+        puckProvider: gemini
+        puckModel: gemini-2.5-flash
+        puckAccount: ai-studio-seat
     """)
     #expect(profiles.first?.puck == .init(provider: "opencode-go",
                                           model: "muse-spark-1.3-contributor", account: "personal"))
+    #expect(profiles.last?.puck == .init(provider: "gemini",
+                                         model: "gemini-2.5-flash", account: "ai-studio-seat"))
 }
 
 @Test func agentsFallbackFiltersByTagAndPicker() throws {

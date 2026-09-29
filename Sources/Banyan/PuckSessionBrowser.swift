@@ -198,9 +198,10 @@ struct PuckSessionSidebar: View {
                     Text("Codex").tag("codex")
                     Text("OpenCode Go").tag("opencode-go")
                     Text("Anthropic API (billed)").tag("anthropic")
+                    Text("Gemini AI Studio API (billed)").tag("gemini")
                 }
-                TextField(provider == "anthropic" ? "API-key account label" : "Account label (optional)", text: $account)
-                TextField(provider == "anthropic" ? "API model ID" : "Model (optional)", text: $model)
+                TextField(["anthropic", "gemini"].contains(provider) ? "API-key account label" : "Account label (optional)", text: $account)
+                TextField(["anthropic", "gemini"].contains(provider) ? "API model ID" : "Model (optional)", text: $model)
                 TextField("Workspace", text: $workspace)
                 TextField("First prompt (optional)", text: $prompt)
                 HStack {
@@ -213,7 +214,7 @@ struct PuckSessionSidebar: View {
                                        prompt: prompt.isEmpty ? nil : prompt)
                         browser.showingNew = false
                     }
-                    .disabled(workspace.isEmpty || (provider == "anthropic" && (model.isEmpty || account.isEmpty)))
+                    .disabled(workspace.isEmpty || (["anthropic", "gemini"].contains(provider) && (model.isEmpty || account.isEmpty)))
                 }
             }
             .padding()
