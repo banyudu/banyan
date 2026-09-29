@@ -140,3 +140,76 @@ import Glibc
     #expect(events.map(\.cursor) == [1, 2, 3])
     #expect(serverDone.wait(timeout: .now() + 2) == .success)
 }
+
+private struct EmptyUnifiedSessionSource: SessionListDataSource {
+    func loadActiveSessions() -> [SessionSnapshot] { [] }
+    func loadHistory(limit: Int) -> [ImportedAgentSession] { [] }
+}
+
+@Test func oneDaemonSessionSurvivesThreeFrontendConnectionsAndReconnect() throws {
+    let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent("puck-shared-\(UUID().uuidString.prefix(8)).sock").path
+    #if canImport(Glibc)
+    let listener = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
+    #else
+    let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+    #endif
+    #expect(listener >= 0)
+    defer { _ = close(listener); _ = unlink(path) }
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let pathBytes = Array(path.utf8)
+    withUnsafeMutableBytes(of: &address.sun_path) { bytes in
+        bytes.copyBytes(from: pathBytes)
+        bytes[pathBytes.count] = 0
+    }
+    let bound = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    #expect(bound == 0)
+    #expect(listen(listener, 5) == 0)
+
+    let summary = #"{"id":"shared","provider":"codex","account":"seat","workspace":"/tmp","cwd":"/tmp","model":"model","position":"idle","pending_approval":null}"#
+    let done = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+        defer { done.signal() }
+        for expected in ["session.list", "session.list", "session.list",
+                         "session.attach", "session.attach", "session.list"] {
+            let peer = accept(listener, nil, nil)
+            guard peer >= 0 else { return }
+            var request = Data()
+            var byte: UInt8 = 0
+            while read(peer, &byte, 1) == 1 && byte != 10 { request.append(byte) }
+            let object = (try? JSONSerialization.jsonObject(with: request)) as? [String: Any]
+            guard object?["method"] as? String == expected else { _ = close(peer); return }
+            let result = expected == "session.attach"
+                ? #"{"summary":\#(summary),"cursor":0,"events":[]}"#
+                : "[\(summary)]"
+            let reply = #"{"jsonrpc":"2.0","id":1,"result":\#(result)}"# + "\n"
+            _ = reply.withCString { write(peer, $0, reply.utf8.count) }
+            _ = close(peer)
+        }
+    }
+
+    let appClient = PuckDaemonClient(socketPath: path)
+    #expect(try appClient.list().map(\.id) == ["shared"])
+
+    var tuiList = SessionListModel(dataSource: EmptyUnifiedSessionSource(),
+                                   puckClient: PuckDaemonClient(socketPath: path))
+    tuiList.reload()
+    #expect(tuiList.selectedPuckSession?.id == "shared")
+    #expect(tuiList.visibleRowCount == 1)
+
+    let ctlClient = PuckDaemonClient(socketPath: path)
+    #expect(try ctlClient.list().map(\.id) == ["shared"])
+    let (connection, attached) = try appClient.attach("shared")
+    #expect(attached.summary.id == "shared")
+    connection.disconnect()
+    let (reconnected, resumed) = try PuckDaemonClient(socketPath: path).attach("shared")
+    #expect(resumed.summary.id == attached.summary.id)
+    reconnected.disconnect()
+    #expect(try PuckDaemonClient(socketPath: path).list().map(\.id) == ["shared"])
+    #expect(done.wait(timeout: .now() + 2) == .success)
+}

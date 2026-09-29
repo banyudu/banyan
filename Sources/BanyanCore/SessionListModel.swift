@@ -3,14 +3,18 @@ import Foundation
 /// Session rows, history rows, and selection behavior shared by list frontends.
 public struct SessionListModel: Sendable {
     private let dataSource: any SessionListDataSource
+    private let puckClient: PuckDaemonClient?
     private var viewState = SessionListViewState()
     private var historyFilter = ""
+    private var puckNeedsReload = true
 
     public private(set) var sessions: [SessionSnapshot] = []
+    public private(set) var puckSessions: [PuckSessionSummary] = []
     public private(set) var history: [ImportedAgentSession] = []
 
-    public init(dataSource: any SessionListDataSource) {
+    public init(dataSource: any SessionListDataSource, puckClient: PuckDaemonClient? = nil) {
         self.dataSource = dataSource
+        self.puckClient = puckClient
     }
 
     public var showingHistory: Bool { viewState.showingHistory }
@@ -18,10 +22,15 @@ public struct SessionListModel: Sendable {
     public var selectedIndex: Int { viewState.selectedIndex }
     public var notice: String? { viewState.notice }
     public var currentHistoryFilter: String { historyFilter }
-    public var visibleRowCount: Int { showingHistory ? history.count : sessions.count }
+    public var visibleRowCount: Int { showingHistory ? history.count : sessions.count + puckSessions.count }
 
     public var selectedSession: SessionSnapshot? {
         sessions.indices.contains(selectedIndex) ? sessions[selectedIndex] : nil
+    }
+
+    public var selectedPuckSession: PuckSessionSummary? {
+        let index = selectedIndex - sessions.count
+        return puckSessions.indices.contains(index) ? puckSessions[index] : nil
     }
 
     public var selectedHistory: ImportedAgentSession? {
@@ -47,7 +56,11 @@ public struct SessionListModel: Sendable {
             return
         }
         sessions = dataSource.loadActiveSessions()
-        viewState.clampSelection(rowCount: sessions.count)
+        if puckNeedsReload {
+            puckSessions = (try? puckClient?.list()) ?? []
+            puckNeedsReload = false
+        }
+        viewState.clampSelection(rowCount: visibleRowCount)
     }
 
     public mutating func toggleHistory() {
@@ -61,6 +74,7 @@ public struct SessionListModel: Sendable {
 
     public mutating func refresh() {
         viewState.refresh()
+        puckNeedsReload = true
     }
 
     public mutating func moveNext() {

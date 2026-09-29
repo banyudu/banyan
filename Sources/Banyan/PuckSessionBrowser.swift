@@ -55,7 +55,7 @@ final class PuckSessionBrowser: ObservableObject {
                     return true
                 }
                 guard shouldRead else { connection.disconnect(); return }
-                var cursor = attached.batch.cursor
+                var cursor = replayed.last?.cursor ?? attached.batch.cursor
                 while let nextEvents = try client.receive(connection, session: id, after: cursor) {
                     if let last = nextEvents.last { cursor = last.cursor }
                     guard !nextEvents.isEmpty else { continue }
@@ -197,9 +197,10 @@ struct PuckSessionSidebar: View {
                 Picker("Provider", selection: $provider) {
                     Text("Codex").tag("codex")
                     Text("OpenCode Go").tag("opencode-go")
+                    Text("Anthropic API (billed)").tag("anthropic")
                 }
-                TextField("Account label (optional)", text: $account)
-                TextField("Model (optional)", text: $model)
+                TextField(provider == "anthropic" ? "API-key account label" : "Account label (optional)", text: $account)
+                TextField(provider == "anthropic" ? "API model ID" : "Model (optional)", text: $model)
                 TextField("Workspace", text: $workspace)
                 TextField("First prompt (optional)", text: $prompt)
                 HStack {
@@ -212,7 +213,7 @@ struct PuckSessionSidebar: View {
                                        prompt: prompt.isEmpty ? nil : prompt)
                         browser.showingNew = false
                     }
-                    .disabled(workspace.isEmpty)
+                    .disabled(workspace.isEmpty || (provider == "anthropic" && (model.isEmpty || account.isEmpty)))
                 }
             }
             .padding()

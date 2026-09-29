@@ -112,8 +112,9 @@ status detection, and local history importer as the macOS app. In the TUI,
 `j`/`k` or the arrow keys navigate, Page Up/Down move by a page, `e` renames
 the selected session, Enter attaches or resumes, `n` creates a shell, `N` creates a custom titled/command session, `c` closes, `x` removes, `R` recovers a missing
 backing session, `h` toggles history, and `T` resumes history with transcript
-trimming. Press `p` to list, create, and attach puck sessions using structured
-daemon events. The detail pane shows the selected legacy session's status, working
+trimming. Puck sessions also appear in the active list; Enter attaches to the
+selected daemon session. Press `p` for the daemon's create and attach menu.
+The detail pane shows the selected legacy session's status, working
 directory, command, tmux name, and latest terminal output. Press `q` to quit.
 
 For a packaged macOS build:
@@ -130,7 +131,9 @@ the companion CLI at `dist/bin/banyanctl`. For iterative development, use
 ## Puck sessions
 
 Start `puckd` after configuring an account with `puck auth login`. In the
-macOS app choose **Puck** from the sidebar picker. Create a session with a
+macOS app, daemon sessions appear in the main **Sessions** list alongside
+tmux sessions. Create a session from a configured agent profile or choose
+**Puck** from the sidebar picker for provider and model controls. Create it with a
 workspace, provider, optional account label and model, then send a prompt.
 The Puck view streams daemon events and shows pending approvals. Detach by
 switching views or clicking **Detach**; the turn continues in `puckd`. After a
@@ -227,7 +230,7 @@ quote YAML values when needed.
 
 The project picker opens the built-in plain `codex` profile as a puck daemon
 session. A configured profile uses puck only when it declares `puck_provider`
-(`codex` or `opencode-go`); optional `puck_model` and `puck_account` select the
+(`codex`, `opencode-go`, or `anthropic`); optional `puck_model` and `puck_account` select the
 exact model and a label in puck's own account store. The shared agent registry
 accepts `puckProvider`, `puckModel`, and `puckAccount` for the same purpose.
 Configure puck credentials with `puck auth login`, then start `puckd` before
@@ -236,10 +239,19 @@ sessions until given explicit puck settings, because Banyan cannot infer the
 model or account that another CLI profile would choose. Other agent backends
 continue using their configured commands until puck supports their credential
 and API contracts.
+An Anthropic Console API-key account requires explicit `puck_model` and
+`puck_account`. This is a separately billed API route; the built-in Claude
+subscription profile stays on its configured command.
 
 A puck session can be opened in the macOS app with `banyan://puck/SESSION_ID`.
-For a Slack button, serve an HTTPS link that redirects to this local app link;
-the same session ID also works with `banyanctl puck attach --id SESSION_ID`.
+For a Slack button, host [the static redirect page](docs/puck-session-redirect.html)
+at an HTTPS origin and set puck's `PUCK_BANYAN_SESSION_URL_TEMPLATE` to
+`https://your.example/puck-session-redirect.html?session={session}`. The page
+validates the ID, opens the local app link, and shows a manual button if the
+browser does not open Banyan automatically. No Banyan server or private host is
+required for the redirect page.
+The same session ID also works with `banyanctl session list` and
+`banyanctl puck attach --id SESSION_ID`.
 The project picker, New Session shortcut, and command palette use a profile's
 puck settings. `banyanctl agent run --profile PROFILE_ID` uses the same profile
 when Banyan is running; `--agent codex` also resolves the `codex` profile.
