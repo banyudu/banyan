@@ -823,6 +823,7 @@ struct BanyanCtl {
           banyanctl puck show --id ID
           banyanctl puck turn --id ID --prompt TEXT
           banyanctl puck decide --id ID --call-id CALL --decision approve|deny|session
+          banyanctl puck answer --id ID --call-id CALL --selections JSON
 
         Usage:
           banyanctl session list

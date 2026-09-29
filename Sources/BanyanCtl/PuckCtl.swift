@@ -35,6 +35,7 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
         if let pending = session.pendingApproval {
             print("approval \(pending.callID): \(pending.tool) \(pending.arguments)")
         }
+        if let pending = session.pendingQuestion { printPendingQuestion(pending) }
         let firstPage = try client.events(id)
         for event in try client.replay(id, initial: firstPage) { printPuckEvent(event) }
     case "turn":
@@ -45,12 +46,16 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
             throw PuckDaemonError.rejected("decision must be approve, deny, or session")
         }
         try client.decide(options.required("id"), callID: options.required("call-id"), decision: decision)
+    case "answer":
+        try client.answer(options.required("id"), callID: options.required("call-id"),
+                          selections: PuckQuestionSelection.decodeJSON(options.required("selections")))
     case "attach":
         let id = try options.required("id")
         let (connection, attached) = try client.attach(id)
         print("\(attached.summary.id) · \(attached.summary.provider)/\(attached.summary.model) · \(attached.summary.position)")
         let replayed = try client.replay(id, initial: attached.batch)
         for event in replayed { printPuckEvent(event) }
+        if let pending = attached.summary.pendingQuestion { printPendingQuestion(pending) }
         let approval = PuckApprovalState(attached.summary.pendingApproval?.callID)
         let reader = Thread {
             do {
@@ -68,7 +73,7 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
             }
         }
         reader.start()
-        print("Enter a prompt, /approve, /deny, /session, or /detach.")
+        print("Enter a prompt, /approve, /deny, /session, /answer, or /detach.")
         while let line = readLine() {
             let input = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if input == "/detach" { break }
@@ -78,6 +83,26 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
                     continue
                 }
                 try client.decide(id, callID: callID, decision: String(input.dropFirst()))
+            } else if input == "/answer" {
+                guard let pending = try client.get(id).pendingQuestion else {
+                    print("No question is pending")
+                    continue
+                }
+                printPendingQuestion(pending)
+                var selections: [PuckQuestionSelection] = []
+                for question in pending.questions {
+                    while true {
+                        guard let response = readLine() else { break }
+                        if let selection = PuckQuestionSelection.parse(response, for: question) {
+                            selections.append(selection)
+                            break
+                        }
+                        print("Enter an option number, comma-separated numbers, or text:your answer when offered.")
+                    }
+                }
+                if selections.count == pending.questions.count {
+                    try client.answer(id, callID: pending.callID, selections: selections)
+                }
             } else if !input.isEmpty {
                 try client.turn(id, prompt: input)
             }
@@ -100,7 +125,7 @@ private struct PuckOptions {
                 throw PuckDaemonError.rejected("expected --option VALUE")
             }
             let name = String(option.dropFirst(2))
-            guard ["id", "cwd", "provider", "account", "model", "prompt", "call-id", "decision"].contains(name) else {
+            guard ["id", "cwd", "provider", "account", "model", "prompt", "call-id", "decision", "selections"].contains(name) else {
                 throw PuckDaemonError.rejected("unknown puck option '\(option)'")
             }
             result[name] = args[index + 1]
@@ -140,4 +165,16 @@ private final class PuckApprovalState {
 
 private func printPuckEvent(_ event: PuckSessionEvent) {
     if let text = event.displayText { print("[\(event.cursor)] \(text)") }
+}
+
+private func printPendingQuestion(_ pending: PuckPendingQuestion) {
+    print("question \(pending.callID):")
+    for question in pending.questions {
+        print("\(question.header): \(question.question)")
+        for (index, option) in question.options.enumerated() {
+            print("  \(index + 1). \(option.label) — \(option.description)")
+        }
+        if question.multiple { print("  Pick multiple with comma-separated numbers.") }
+        if question.custom { print("  Or enter text:your answer") }
+    }
 }

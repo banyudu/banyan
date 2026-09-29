@@ -50,7 +50,23 @@ def response(handler, body, content_type="application/json"):
 class ModelHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         assert self.path == "/responses", self.path
-        self.rfile.read(int(self.headers["Content-Length"]))
+        request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        history = request["input"]
+        if any("ask-question" in json.dumps(item) for item in history) and not any(
+                item.get("type") == "function_call_output" for item in history):
+            items = [
+                {"type": "response.output_item.done", "item": {
+                    "type": "function_call", "name": "request_user_input", "call_id": "question-1",
+                    "arguments": json.dumps({"questions": [{"header": "Plan",
+                        "question": "Approve the plan?", "options": [
+                            {"label": "Approve", "description": "Proceed."},
+                            {"label": "Deny", "description": "Stop."}],
+                        "default": "Deny", "custom": False}]})}},
+                {"type": "response.completed", "response": {"id": "offline-question"}},
+            ]
+            response(self, "".join("data: " + json.dumps(item) + "\n\n" for item in items),
+                     "text/event-stream")
+            return
         items = [
             {"type": "response.output_text.delta", "delta": ANSWER},
             {"type": "response.output_item.done", "item": {
@@ -384,10 +400,56 @@ def run(args):
             assert restarted.returncode == 0 and "Test run with 1 test" in restarted_output, restarted_output[-2000:]
             assert len(rpc(path, "session.list")) == COUNT
             assert not descendants(daemon.pid)
+
+            def parked_question(session_id):
+                rpc(path, "session.create", {"id": session_id, "provider": "codex",
+                    "account": "fixture", "workspace": str(root / "workspace"),
+                    "model": "fixture-model", "settings": {"approval": "ask",
+                    "exec": False, "fetch": False, "search": False}})
+                rpc(path, "session.turn", {"session": session_id, "prompt": "ask-question"})
+                return wait_until(lambda: (summary if (summary := rpc(path, "session.get",
+                    {"session": session_id}))["position"] == "parked" else None),
+                    f"parked question {session_id}")
+
+            question = parked_question("question-ctl")
+            assert question["pending_question"]["call_id"] == "question-1"
+            shown = subprocess.check_output([str(args.banyanctl), "puck", "show", "--id", "question-ctl"],
+                                            env=env, text=True)
+            assert "Approve the plan?" in shown and "Approve — Proceed." in shown
+            answer = '[{"labels":["Approve"],"text":null}]'
+            stale = subprocess.run([str(args.banyanctl), "puck", "answer", "--id", "question-ctl",
+                "--call-id", "stale", "--selections", answer], env=env, capture_output=True, text=True)
+            assert stale.returncode != 0
+            assert rpc(path, "session.get", {"session": "question-ctl"})["position"] == "parked"
+            subprocess.run([str(args.banyanctl), "puck", "answer", "--id", "question-ctl",
+                "--call-id", "question-1", "--selections", answer], env=env, check=True)
+            wait_until(lambda: rpc(path, "session.get", {"session": "question-ctl"})["position"] == "idle",
+                       "answered CLI question")
+
+            parked_question("question-app")
+            question_app_env = env.copy()
+            question_app_env["BANYAN_PUCK_E2E_QUESTION_SESSION"] = "question-app"
+            question_app = subprocess.run(["swift", "test", "--quiet", "--filter",
+                "appPuckBrowserAnswersParkedQuestion"], cwd=repo, env=question_app_env,
+                capture_output=True, text=True, timeout=120)
+            assert question_app.returncode == 0 and "1 test" in question_app.stdout, question_app.stdout[-2000:]
+            wait_until(lambda: rpc(path, "session.get", {"session": "question-app"})["position"] == "idle",
+                       "answered app question")
+
+            parked_question("question-tui")
+            question_tui_env = env.copy()
+            question_tui_env["BANYAN_PUCK_E2E_TUI_QUESTION_SESSION"] = "question-tui"
+            question_tui = subprocess.run(["swift", "test", "--quiet", "--filter",
+                "tuiAnswersParkedPuckQuestion"], cwd=repo, env=question_tui_env,
+                capture_output=True, text=True, timeout=120)
+            assert question_tui.returncode == 0 and "1 test" in question_tui.stdout, question_tui.stdout[-2000:]
+            wait_until(lambda: rpc(path, "session.get", {"session": "question-tui"})["position"] == "idle",
+                       "answered TUI question")
             print(json.dumps({"sessions": COUNT, "emptyDaemonKiB": empty_rss,
                               "idleDaemonKiB": daemon_rss, "singleCliKiB": cli_rss,
                               "rssVs35Cli": round(ratio, 4), "appRestart": "passed",
                               "tui": "passed", "ctl": "passed", "fakeSlack": "passed",
+                              "parkedQuestions": "ctl/app/tui passed",
                               "daemonChildren": 0}, sort_keys=True))
         except Exception:
             if (root / "puckd.log").exists():
