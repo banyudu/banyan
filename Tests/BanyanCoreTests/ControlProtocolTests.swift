@@ -38,6 +38,17 @@ import Testing
     #expect(payload.command == "codex")
 }
 
+@Test func agentRunPayloadKeepsProfileAndPromptSeparateFromShellCommand() throws {
+    let body = #"{"apiVersion":"v1","agentProfile":"muse","agentPrompt":"Fix this issue","agentParentExplicit":"false","cwd":"/Users/example/dev/project"}"#
+    let raw = "POST /spawn HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
+    let request = try #require(HTTPControlRequest(data: Data(raw.utf8)))
+    let payload = try request.decode(ControlPayload.self)
+    #expect(payload.agentProfile == "muse")
+    #expect(payload.agentPrompt == "Fix this issue")
+    #expect(payload.command == nil)
+    #expect(payload.cwd == "/Users/example/dev/project")
+}
+
 @Test func malformedJSONThrowsDuringDecode() throws {
     let body = #"{"apiVersion":"v1","id":"abc""#
     let raw = "POST /mark HTTP/1.1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"

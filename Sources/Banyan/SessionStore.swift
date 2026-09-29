@@ -236,6 +236,12 @@ final class SessionStore: ObservableObject {
     /// last for that project. Persisted in `UserDefaults`.
     @Published private var projectLaunchByGroup: [String: String] = [:]
     @Published private(set) var sessionLaunchProfiles = NewSessionLaunch.builtInDefaults
+    /// The active app window owns the puck presentation while this store owns
+    /// launch policy for toolbar, palette, and project actions.
+    var onPuckLaunch: ((NewSessionLaunch, String, String?) -> Void)?
+    var onPuckSibling: (() -> Void)?
+    var onPuckCreated: ((String, Bool) -> Void)?
+    var puckSelectedWorkspace: (() -> String?)?
     /// The command palette's picked agent profile. `nil` is Auto: actions fall
     /// back to their default (e.g. New Session copies the current session).
     /// Persisted in `UserDefaults` so the pick survives relaunches.
@@ -2110,8 +2116,17 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
-    func spawnSiblingSession() -> BanyanSession {
+    func spawnSiblingSession() -> BanyanSession? {
+        if sidebarMode == .puck {
+            onPuckSibling?()
+            return nil
+        }
         let cwd = selectedSession?.cwd ?? homeDirectory
+        if let selectedSession,
+           let launch = unambiguousPuckLaunch(for: selectedSession) {
+            onPuckLaunch?(launch, cwd, nil)
+            return nil
+        }
         let command = NewSessionLaunch.siblingCommand(
             sessionCommand: selectedSession?.command,
             provider: selectedSession?.agentProvider,
@@ -2124,7 +2139,7 @@ final class SessionStore: ObservableObject {
     /// Agent entries of the launch profiles (plain shell excluded): the command
     /// palette's agent picker loops these, with Auto (nil) as the default.
     var paletteAgentProfiles: [NewSessionLaunch] {
-        sessionLaunchProfiles.filter { $0.provider != nil }
+        sessionLaunchProfiles.filter { $0.provider != nil || $0.puck != nil }
     }
 
     /// The palette's picked agent profile, or nil for Auto / unknown IDs.
@@ -2146,9 +2161,15 @@ final class SessionStore: ObservableObject {
     /// Falls back to copying the current session's runtime when the picker is
     /// on Auto — the same command `spawnSiblingSession` produces.
     @discardableResult
-    func spawnPaletteAgentSession() -> BanyanSession {
+    func spawnPaletteAgentSession() -> BanyanSession? {
         if let launch = paletteAgentLaunch {
-            let cwd = selectedSession?.cwd ?? homeDirectory
+            let cwd = sidebarMode == .puck
+                ? (puckSelectedWorkspace?() ?? homeDirectory)
+                : (selectedSession?.cwd ?? homeDirectory)
+            if launch.puck != nil {
+                onPuckLaunch?(launch, cwd, nil)
+                return nil
+            }
             return spawn(
                 cwd: cwd,
                 command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
@@ -2164,17 +2185,32 @@ final class SessionStore: ObservableObject {
     /// a subdirectory opens at `<repo>`; a path outside any repository stays put.
     /// On Auto the runtime mirrors the current session, like the sibling command.
     @discardableResult
-    func spawnPaletteAgentSessionInProjectRoot() -> BanyanSession {
+    func spawnPaletteAgentSessionInProjectRoot() -> BanyanSession? {
+        if sidebarMode == .puck, paletteAgentLaunch == nil {
+            onPuckSibling?()
+            return nil
+        }
         let cwd = SessionDisplayLabel.workspaceRoot(
-            cwd: selectedSession?.cwd ?? homeDirectory,
+            cwd: sidebarMode == .puck
+                ? (puckSelectedWorkspace?() ?? homeDirectory)
+                : (selectedSession?.cwd ?? homeDirectory),
             environment: environment
         )
         if let launch = paletteAgentLaunch {
+            if launch.puck != nil {
+                onPuckLaunch?(launch, cwd, nil)
+                return nil
+            }
             return spawn(
                 cwd: cwd,
                 command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
                 parentSessionID: selectedSession?.parentSessionID
             )
+        }
+        if let selectedSession,
+           let launch = unambiguousPuckLaunch(for: selectedSession) {
+            onPuckLaunch?(launch, cwd, nil)
+            return nil
         }
         let command = NewSessionLaunch.siblingCommand(
             sessionCommand: selectedSession?.command,
@@ -2203,25 +2239,18 @@ final class SessionStore: ObservableObject {
         return launch
     }
 
-    /// The project header launches agent profiles in the repository root,
-    /// whether their backend is a tmux shell or a puck daemon session.
-    func projectWorkspace(for groupID: String) -> String? {
-        let groupSessions = visibleSessions.filter {
-            $0.projectGroupID == groupID && !$0.isImportedHistory
-        }
-        guard let preferredSessionID = SessionLaunchPolicy.preferredSessionID(
-            for: selectedSessionID,
-            in: groupSessions.map(\.id)
-        ), let representative = groupSessions.first(where: { $0.id == preferredSessionID }) else {
-            return nil
-        }
-        return SessionDisplayLabel.workspaceRoot(cwd: representative.cwd, environment: environment)
-    }
-
     /// Finds the configured profile that launched a session so sidebar rows can
     /// retain a profile-specific label icon (for example, Luna vs. standard Codex).
     func sessionLaunchProfile(for session: BanyanSession) -> NewSessionLaunch? {
         sessionLaunchProfiles.first { $0.command == session.command }
+    }
+
+    /// A terminal command alone cannot distinguish profiles with different
+    /// puck models or accounts. Only copy a puck launch when the match is unique.
+    private func unambiguousPuckLaunch(for session: BanyanSession) -> NewSessionLaunch? {
+        let matches = sessionLaunchProfiles.filter { $0.command == session.command }
+        guard matches.count == 1, matches[0].puck != nil else { return nil }
+        return matches[0]
     }
 
     @discardableResult
@@ -2236,20 +2265,24 @@ final class SessionStore: ObservableObject {
             return nil
         }
         rememberProjectLaunch(launch, for: groupID)
+        let workspace = SessionDisplayLabel.workspaceRoot(
+            cwd: representative.cwd, environment: environment
+        )
+        if launch.puck != nil {
+            onPuckLaunch?(launch, workspace, nil)
+            return nil
+        }
         // This is a project-level control, so it opens the repository itself
         // rather than whichever worktree or subdirectory the representative
         // session happens to sit in. `spawnSiblingSession` stays session-level.
         return spawn(
-            cwd: SessionDisplayLabel.workspaceRoot(
-                cwd: representative.cwd,
-                environment: environment
-            ),
+            cwd: workspace,
             command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
             parentSessionID: representative.parentSessionID
         )
     }
 
-    func rememberProjectLaunch(_ launch: NewSessionLaunch, for groupID: String) {
+    private func rememberProjectLaunch(_ launch: NewSessionLaunch, for groupID: String) {
         guard projectLaunchByGroup[groupID] != launch.id else { return }
         projectLaunchByGroup[groupID] = launch.id
         UserDefaults.standard.set(

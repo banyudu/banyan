@@ -580,6 +580,7 @@ struct BanyanCtl {
             "cwd": host.currentDirectory
         ]
         var provider: CodingAgentProvider?
+        var profileID: String?
         var prompt: String?
         var promptParts: [String] = []
         var commandOverride: String?
@@ -604,6 +605,7 @@ struct BanyanCtl {
             }
             if rawKey == "no-parent" {
                 result["parent"] = ""
+                result["agentParentExplicit"] = "true"
                 index += 1
                 continue
             }
@@ -617,6 +619,9 @@ struct BanyanCtl {
                     throw CLIError.message("unknown agent '\(value)'")
                 }
                 provider = parsedProvider
+            case "profile":
+                guard !value.isEmpty else { throw CLIError.message("--profile requires an ID") }
+                profileID = value
             case "command", "cmd":
                 commandOverride = value
             case "cwd", "id", "title", "tone":
@@ -625,6 +630,7 @@ struct BanyanCtl {
                 result["titleURL"] = value
             case "parent", "parent-id", "parentSessionID":
                 result["parent"] = value
+                result["agentParentExplicit"] = "true"
             case "prompt":
                 prompt = value
             case "prompt-file":
@@ -643,15 +649,25 @@ struct BanyanCtl {
         }
 
         if let commandOverride {
+            guard profileID == nil else {
+                throw CLIError.message("--profile cannot be combined with --command")
+            }
             result["command"] = commandOverride
             return result
         }
 
-        guard let provider else {
-            throw CLIError.message("agent run requires --agent NAME")
+        guard provider != nil || profileID != nil else {
+            throw CLIError.message("agent run requires --agent NAME or --profile ID")
+        }
+        guard provider == nil || profileID == nil else {
+            throw CLIError.message("provide either --agent or --profile, not both")
         }
         let positionalPrompt = promptParts.isEmpty ? nil : promptParts.joined(separator: " ")
-        result["command"] = AgentLaunchCommand.command(provider: provider, prompt: prompt ?? positionalPrompt)
+        result["agentProfile"] = profileID ?? provider?.rawValue
+        result["agentPrompt"] = prompt ?? positionalPrompt
+        if let provider {
+            result["command"] = AgentLaunchCommand.command(provider: provider, prompt: prompt ?? positionalPrompt)
+        }
         return result
     }
 
@@ -753,7 +769,7 @@ struct BanyanCtl {
         Usage:
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
-          banyanctl agent run --agent codex|claude|deepseek|gemini|glm|hunyuan|mimo|minimax|muse|opencode [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--parent ID] [--no-parent] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
+          banyanctl agent run (--agent codex|claude|deepseek|gemini|glm|hunyuan|mimo|minimax|muse|opencode | --profile ID) [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--parent ID] [--no-parent] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
 
         Spawns open in the background by default (they do not steal focus from the
         current session). Pass --focus to select the new session, or --background

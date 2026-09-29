@@ -240,6 +240,12 @@ and API contracts.
 A puck session can be opened in the macOS app with `banyan://puck/SESSION_ID`.
 For a Slack button, serve an HTTPS link that redirects to this local app link;
 the same session ID also works with `banyanctl puck attach --id SESSION_ID`.
+The project picker, New Session shortcut, and command palette use a profile's
+puck settings. `banyanctl agent run --profile PROFILE_ID` uses the same profile
+when Banyan is running; `--agent codex` also resolves the `codex` profile.
+Puck launches accept `--id`, `--cwd`, `--prompt`, and focus/background options.
+Title, tone, and a tmux parent belong to shell sessions and are rejected for
+puck profiles.
 
 When this file is absent or omits `session_launches:`, Banyan falls back to
 the shared registry at `~/.agents/agents.yml` (entries with `tags: [banyan]`,

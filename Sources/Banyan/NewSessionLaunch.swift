@@ -17,7 +17,7 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
     let command: String
     let puck: PuckLaunch?
 
-    struct PuckLaunch: Hashable, Codable {
+    struct PuckLaunch: Hashable, Codable, Sendable {
         let provider: String
         let model: String?
         let account: String?

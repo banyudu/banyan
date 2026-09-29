@@ -125,6 +125,21 @@ struct ContentView: View {
                 .environmentObject(store)
         }
         .onAppear {
+            let browser = puckBrowser
+            store.onPuckLaunch = { [weak store, weak browser] launch, workspace, prompt in
+                guard let puck = launch.puck else { return }
+                browser?.create(provider: puck.provider, account: puck.account,
+                                model: puck.model, workspace: workspace, prompt: prompt)
+                store?.sidebarMode = .puck
+            }
+            store.onPuckSibling = { [weak browser] in browser?.createSibling() }
+            store.puckSelectedWorkspace = { [weak browser] in browser?.selectedSummary?.workspace }
+            store.onPuckCreated = { [weak store, weak browser] id, focus in
+                browser?.refresh()
+                guard focus else { return }
+                store?.sidebarMode = .puck
+                browser?.select(id)
+            }
             store.loadPersistedSessionsIfNeeded()
             store.spawnDefaultSessionIfEmpty()
             store.refreshImportedHistoryIfNeeded()
@@ -1167,12 +1182,7 @@ struct ContentView: View {
                     if !isStatic {
                         Spacer(minLength: 4)
 
-                        ProjectNewSessionButton(groupID: group.id, groupTitle: group.title) { launch, workspace in
-                            guard let puck = launch.puck else { return }
-                            puckBrowser.create(provider: puck.provider, account: puck.account,
-                                               model: puck.model, workspace: workspace, prompt: nil)
-                            store.sidebarMode = .puck
-                        }
+                        ProjectNewSessionButton(groupID: group.id, groupTitle: group.title)
                     }
                 }
                 // Only the first project gets extra top breathing room under the
@@ -2882,17 +2892,6 @@ private struct ProjectNewSessionButton: View {
     @EnvironmentObject private var store: SessionStore
     let groupID: String
     let groupTitle: String
-    let onPuckLaunch: (NewSessionLaunch, String) -> Void
-
-    private func launch(_ profile: NewSessionLaunch) {
-        if profile.puck != nil {
-            guard let workspace = store.projectWorkspace(for: groupID) else { return }
-            store.rememberProjectLaunch(profile, for: groupID)
-            onPuckLaunch(profile, workspace)
-        } else {
-            store.spawnSession(inProjectGroup: groupID, launch: profile)
-        }
-    }
 
     var body: some View {
         // Time-of-use pricing flips at most a few times a day, so a
@@ -2904,7 +2903,7 @@ private struct ProjectNewSessionButton: View {
             Menu {
                 ForEach(store.sessionLaunchProfiles) { launch in
                     Button {
-                        self.launch(launch)
+                        store.spawnSession(inProjectGroup: groupID, launch: launch)
                     } label: {
                         Label {
                             Text(launch.label)
@@ -2916,7 +2915,7 @@ private struct ProjectNewSessionButton: View {
             } label: {
                 NewSessionLaunchIcon(launch: current)
             } primaryAction: {
-                launch(current)
+                store.spawnSession(inProjectGroup: groupID, launch: current)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.visible)

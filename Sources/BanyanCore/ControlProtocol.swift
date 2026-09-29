@@ -100,6 +100,11 @@ public struct ControlPayload: Codable {
     public let titleURL: String?
     public let cwd: String?
     public let command: String?
+    /// `/spawn` from `banyanctl agent run`: resolve the same launch profile
+    /// that the app picker uses before choosing puck or tmux.
+    public let agentProfile: String?
+    public let agentPrompt: String?
+    public let agentParentExplicit: String?
     public let status: String?
     public let tone: String?
     public let parent: String?
@@ -151,6 +156,9 @@ public struct ControlPayload: Codable {
         titleURL: String? = nil,
         cwd: String? = nil,
         command: String? = nil,
+        agentProfile: String? = nil,
+        agentPrompt: String? = nil,
+        agentParentExplicit: String? = nil,
         status: String? = nil,
         tone: String? = nil,
         parent: String? = nil,
@@ -179,6 +187,9 @@ public struct ControlPayload: Codable {
         self.titleURL = titleURL
         self.cwd = cwd
         self.command = command
+        self.agentProfile = agentProfile
+        self.agentPrompt = agentPrompt
+        self.agentParentExplicit = agentParentExplicit
         self.status = status
         self.tone = tone
         self.parent = parent

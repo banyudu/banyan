@@ -10,6 +10,7 @@ final class PuckSessionBrowser: ObservableObject {
     @Published private(set) var events: [PuckSessionEvent] = []
     @Published private(set) var error: String?
     @Published private(set) var isConnecting = false
+    @Published var showingNew = false
 
     private let client = PuckDaemonClient()
     private var connection: PuckDaemonConnection?
@@ -109,6 +110,15 @@ final class PuckSessionBrowser: ObservableObject {
         }
     }
 
+    func createSibling() {
+        guard let current = selectedSummary else {
+            showingNew = true
+            return
+        }
+        create(provider: current.provider, account: current.account,
+               model: current.model, workspace: current.workspace, prompt: nil)
+    }
+
     func turn(_ prompt: String) {
         guard let id = selectedID, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let client = self.client
@@ -151,7 +161,6 @@ final class PuckSessionBrowser: ObservableObject {
 
 struct PuckSessionSidebar: View {
     @ObservedObject var browser: PuckSessionBrowser
-    @State private var showingNew = false
     @State private var provider = "codex"
     @State private var account = ""
     @State private var model = ""
@@ -176,14 +185,14 @@ struct PuckSessionSidebar: View {
             }
             .listStyle(.sidebar)
             HStack {
-                Button("New") { showingNew = true }
+                Button("New") { browser.showingNew = true }
                 Button("Refresh") { browser.refresh() }
                 Spacer()
             }
             .padding(8)
         }
         .onAppear { browser.refresh() }
-        .sheet(isPresented: $showingNew) {
+        .sheet(isPresented: $browser.showingNew) {
             Form {
                 Picker("Provider", selection: $provider) {
                     Text("Codex").tag("codex")
@@ -194,14 +203,14 @@ struct PuckSessionSidebar: View {
                 TextField("Workspace", text: $workspace)
                 TextField("First prompt (optional)", text: $prompt)
                 HStack {
-                    Button("Cancel") { showingNew = false }
+                    Button("Cancel") { browser.showingNew = false }
                     Button("Create") {
                         browser.create(provider: provider,
                                        account: account.isEmpty ? nil : account,
                                        model: model.isEmpty ? nil : model,
                                        workspace: NSString(string: workspace).expandingTildeInPath,
                                        prompt: prompt.isEmpty ? nil : prompt)
-                        showingNew = false
+                        browser.showingNew = false
                     }
                     .disabled(workspace.isEmpty)
                 }
