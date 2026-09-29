@@ -15,6 +15,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// off to tmux's copy-mode instead of keeping a duplicate local history.
     var tmuxSessionName: String?
     var telemetry: PerformanceTelemetry?
+    var telemetrySessionID: String?
     /// Which renderer paints this view. Applied once the view has a window,
     /// because the GPU path builds an `MTKView` and its pipeline state.
     var rendererPreference: TerminalRendererPreference = .coreGraphics {
@@ -68,6 +69,12 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     private(set) var drawCount = 0
     private(set) var drawnRowsRebuilt = 0
     private(set) var totalDrawMS: Double = 0
+    private var diagnosticOutputChunks = 0
+    private var diagnosticOutputBytes = 0
+    private var diagnosticInvalidationCalls = 0
+    private var diagnosticFlushes = 0
+    private var diagnosticDroppedFlushes = 0
+    private var diagnosticDraws = 0
 
     private var isSurfaceWorthPainting: Bool {
         if let surfaceVisibilityOverride {
@@ -170,6 +177,9 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// flush still runs on the next run-loop turn.
     override func setNeedsDisplay(_ invalidRect: NSRect) {
         displayInvalidationLock.lock()
+        if TerminalEnergyDiagnostics.enabled {
+            diagnosticInvalidationCalls += 1
+        }
         if displayInvalidationPending {
             accumulatedDirtyRect = accumulatedDirtyRect.union(invalidRect)
             displayInvalidationLock.unlock()
@@ -229,6 +239,9 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
 
     private func flushCoalescedDisplayInvalidation() {
         displayInvalidationLock.lock()
+        if TerminalEnergyDiagnostics.enabled {
+            diagnosticFlushes += 1
+        }
         displayInvalidationPending = false
         let dirtyRect = accumulatedDirtyRect
         accumulatedDirtyRect = .zero
@@ -236,6 +249,11 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         displayInvalidationLock.unlock()
 
         guard isSurfaceWorthPainting else {
+            if TerminalEnergyDiagnostics.enabled {
+                displayInvalidationLock.lock()
+                diagnosticDroppedFlushes += 1
+                displayInvalidationLock.unlock()
+            }
             // The invalidation is being thrown away, so SwiftTerm must stop believing
             // these rows reached the screen; otherwise a later unchanged repaint would
             // be filtered out and the surface would stay stale after it is revealed.
@@ -260,6 +278,11 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
         lastDrawUptime = ProcessInfo.processInfo.systemUptime
         displayInvalidationLock.unlock()
         let stats = lastDrawStats
+        if TerminalEnergyDiagnostics.enabled {
+            displayInvalidationLock.lock()
+            diagnosticDraws += 1
+            displayInvalidationLock.unlock()
+        }
         drawCount += 1
         drawnRowsRebuilt += stats.rowsRebuilt
         totalDrawMS += elapsed
@@ -282,9 +305,19 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
             detail += " " + rowsDetail
         }
         if Self.recordsEveryDraw {
-            telemetry?.recordDuration("terminal.draw", durationMS: durationMS, detail: detail)
+            telemetry?.recordDuration(
+                "terminal.draw",
+                durationMS: durationMS,
+                sessionID: telemetrySessionID,
+                detail: detail
+            )
         } else {
-            telemetry?.recordDurationIfSlow("terminal.draw", durationMS: durationMS, detail: detail)
+            telemetry?.recordDurationIfSlow(
+                "terminal.draw",
+                durationMS: durationMS,
+                sessionID: telemetrySessionID,
+                detail: detail
+            )
         }
     }
 
@@ -353,6 +386,12 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     }
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
+        if TerminalEnergyDiagnostics.enabled {
+            displayInvalidationLock.lock()
+            diagnosticOutputChunks += 1
+            diagnosticOutputBytes += slice.count
+            displayInvalidationLock.unlock()
+        }
         // Capture the current viewport for this output batch only when the user
         // explicitly scrolled it there. In particular, do not restore a stale
         // hidden (or transparent initial-sync) viewport: a cross-project return
@@ -373,6 +412,26 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
             followLiveOutput()
         }
         noteInitialScreenOutput()
+    }
+
+    func takeEnergyDiagnosticsSnapshot() -> TerminalSurfaceEnergySnapshot {
+        displayInvalidationLock.lock()
+        defer { displayInvalidationLock.unlock() }
+        let snapshot = TerminalSurfaceEnergySnapshot(
+            outputChunks: diagnosticOutputChunks,
+            outputBytes: diagnosticOutputBytes,
+            invalidationCalls: diagnosticInvalidationCalls,
+            flushes: diagnosticFlushes,
+            droppedFlushes: diagnosticDroppedFlushes,
+            draws: diagnosticDraws
+        )
+        diagnosticOutputChunks = 0
+        diagnosticOutputBytes = 0
+        diagnosticInvalidationCalls = 0
+        diagnosticFlushes = 0
+        diagnosticDroppedFlushes = 0
+        diagnosticDraws = 0
+        return snapshot
     }
 
     /// Called after a local scroll gesture (rather than a tmux copy-mode

@@ -325,6 +325,7 @@ Use the CLI report before investigating performance issues:
 ```sh
 dist/bin/banyanctl perf report --since 7d
 dist/bin/banyanctl perf report --since 7d --json
+dist/bin/banyanctl perf captures --since 12h --json
 ```
 
 Important metrics include `session_switch.total`, `session_switch.to_terminal_ready`, `session_switch.to_first_output`, `terminal.ready_wait`, `terminal.start_client`, `terminal.reattach_client`, `tmux.refresh_clients`, and `selected_context.resolve`.

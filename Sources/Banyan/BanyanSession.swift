@@ -334,6 +334,7 @@ final class BanyanSession: ObservableObject, Identifiable {
     func makeTerminalView() -> DetectingLocalProcessTerminalView {
         let view = DetectingLocalProcessTerminalView(frame: .zero)
         view.telemetry = telemetry
+        view.telemetrySessionID = id
         view.rendererPreference = TerminalRendererPreference.resolvedDefault
         view.tmuxSessionName = tmuxSessionName
         // SwiftTerm's implicit link reporting recognizes raw http(s) URLs and

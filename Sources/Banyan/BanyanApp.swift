@@ -51,6 +51,7 @@ struct BanyanApp: App {
         ),
         axiomExporter: Self.axiomExporter
     )
+    private static let resourceDiagnostics = BanyanResourceDiagnostics(host: Self.host, telemetry: Self.telemetry)
     static let attentionNotifier = AttentionNotifier()
     private static let jumpOverlayMonitor = JumpOverlayMonitor()
     private static let commandWTerminalCloseMonitor = CommandWTerminalCloseMonitor()
@@ -92,6 +93,12 @@ struct BanyanApp: App {
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
+                    if Self.host.environment["BANYAN_CPU_CAPTURE"] != "0" {
+                        Self.resourceDiagnostics.start { [weak store] in
+                            (store?.selection.selectedSessionID,
+                             store?.sessions.lazy.filter { $0.status != .closed && $0.isProcessStarted }.count ?? 0)
+                        }
+                    }
                     updater.axiomExporter = Self.axiomExporter
                     updater.checkForUpdates()
                     Self.commandWTerminalCloseMonitor.action = { window in
@@ -138,6 +145,16 @@ struct BanyanApp: App {
                         return true
                     }
                     Self.sessionRenameShortcutMonitor.start()
+                }
+                .onReceive(store.selection.$selectedSessionID) { id in
+                    if Self.host.environment["BANYAN_CPU_CAPTURE"] != "0" {
+                        Self.resourceDiagnostics.updateSelectedSessionID(id)
+                    }
+                }
+                .onChange(of: store.sessions.count) { _, _ in
+                    if Self.host.environment["BANYAN_CPU_CAPTURE"] != "0" {
+                        Self.resourceDiagnostics.refreshContext()
+                    }
                 }
                 .alert(item: $updater.prompt) { prompt in
                     switch prompt {

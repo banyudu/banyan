@@ -90,6 +90,24 @@ struct BanyanCtl {
     private func runPerfCommand(_ args: [String]) throws {
         let subcommand = args.first ?? "report"
         switch subcommand {
+        case "captures":
+            let options = try parsePerfReportOptions(Array(args.dropFirst()))
+            let store = ResourceSpikeCaptureStore(directoryURL: ResourceSpikeCaptureStore.defaultDirectoryURL(host: host))
+            let records = store.records(since: options.since)
+            if options.json {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                print(String(decoding: try encoder.encode(records), as: UTF8.self))
+            } else if records.isEmpty {
+                print("No Banyan CPU spike captures in the requested window. Directory: \(store.directoryURL.path)")
+            } else {
+                for record in records {
+                    print("\(record.createdAt.formatted(.iso8601)) cpu=\(String(format: "%.1f", record.trigger.cpuPercent))% activity=\(record.trigger.context.activity) status=\(record.status)")
+                    print("  \(store.captureDirectory(id: record.id).path)")
+                    if let error = record.error { print("  \(error)") }
+                }
+            }
         case "report":
             let options = try parsePerfReportOptions(Array(args.dropFirst()))
             let store = PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(host: host))
@@ -747,6 +765,7 @@ struct BanyanCtl {
           banyanctl screenshot --output PATH
           banyanctl prune  [--older-than DAYS] [--dry-run]
           banyanctl perf report [--since 7d] [--json]
+          banyanctl perf captures [--since 7d] [--json]
           banyanctl perf prompt [--since 7d]
           banyanctl perf fix [--since 7d] [--agent codex|claude] [--cwd PATH]
           banyanctl window-state

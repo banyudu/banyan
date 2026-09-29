@@ -84,6 +84,11 @@ final class TerminalSwitcherContainer: NSView {
     private var deferredProjectSwitch: DeferredProjectSwitch?
     private var inactiveDetachWorkItems: [String: (token: UUID, workItem: DispatchWorkItem)] = [:]
     var inactiveClientDetachDelay: TimeInterval = 30
+    private var energyDiagnosticsLastLogUptime = 0.0
+    private var energyDiagnosticsUpdateCount = 0
+    private var energyDiagnosticsLayoutCount = 0
+    private var energyDiagnosticsAttachCount = 0
+    private var energyDiagnosticsHideCount = 0
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -223,6 +228,10 @@ final class TerminalSwitcherContainer: NSView {
         onUserSubmittedInput: @escaping (BanyanSession, String?) -> Void,
         onTerminalReady: @escaping (BanyanSession) -> Void
     ) {
+        if TerminalEnergyDiagnostics.enabled {
+            energyDiagnosticsUpdateCount += 1
+        }
+        defer { logEnergyDiagnosticsIfNeeded(reason: "update") }
         let liveSessions = sessions.filter { !$0.isImportedHistory && $0.status != .closed }
         projectGroupBySessionID = Dictionary(
             liveSessions.map { ($0.id, $0.projectGroupID) },
@@ -480,8 +489,12 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     override func layout() {
+        if TerminalEnergyDiagnostics.enabled {
+            energyDiagnosticsLayoutCount += 1
+        }
         super.layout()
         syncContainerFrames()
+        logEnergyDiagnosticsIfNeeded(reason: "layout")
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -511,6 +524,9 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     private func attachHidden(_ container: TerminalContainerView) {
+        if TerminalEnergyDiagnostics.enabled {
+            energyDiagnosticsAttachCount += 1
+        }
         cancelInactiveDetach(for: container.session.id)
         container.terminalView.displayUpdatesEnabled = true
         container.session.resumeInactiveTerminalClientIfNeeded()
@@ -530,6 +546,9 @@ final class TerminalSwitcherContainer: NSView {
 
     private func hideActiveContainer() {
         guard let activeSessionID, let activeContainer = containers[activeSessionID] else { return }
+        if TerminalEnergyDiagnostics.enabled {
+            energyDiagnosticsHideCount += 1
+        }
         activeContainer.isHidden = true
         scheduleInactiveDetach(for: activeSessionID, container: activeContainer)
     }
@@ -589,6 +608,9 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     private func attach(_ container: TerminalContainerView) {
+        if TerminalEnergyDiagnostics.enabled {
+            energyDiagnosticsAttachCount += 1
+        }
         cancelInactiveDetach(for: container.session.id)
         container.terminalView.displayUpdatesEnabled = true
         container.session.resumeInactiveTerminalClientIfNeeded()
@@ -617,6 +639,80 @@ final class TerminalSwitcherContainer: NSView {
         if wasHidden {
             (container.terminalView as? DetectingLocalProcessTerminalView)?.invalidateEntireSurface()
         }
+    }
+
+    private func logEnergyDiagnosticsIfNeeded(reason: String) {
+        guard TerminalEnergyDiagnostics.enabled else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - energyDiagnosticsLastLogUptime >= TerminalEnergyDiagnostics.minimumLogInterval else {
+            return
+        }
+        energyDiagnosticsLastLogUptime = now
+
+        let snapshots = containers.values.map { $0.takeEnergyDiagnosticsSnapshot() }
+        let attached = containers.values.filter { $0.superview === self }.count
+        let visible = containers.values.filter { !$0.isHidden && $0.superview === self }.count
+        let runningAttached = snapshots.filter { $0.clientRunning }.count
+        let outputBytes = snapshots.reduce(0) { $0 + $1.surface.outputBytes }
+        let outputChunks = snapshots.reduce(0) { $0 + $1.surface.outputChunks }
+        let invalidations = snapshots.reduce(0) { $0 + $1.surface.invalidationCalls }
+        let flushes = snapshots.reduce(0) { $0 + $1.surface.flushes }
+        let droppedFlushes = snapshots.reduce(0) { $0 + $1.surface.droppedFlushes }
+        let draws = snapshots.reduce(0) { $0 + $1.surface.draws }
+        let layoutPasses = snapshots.reduce(0) { $0 + $1.layoutPasses }
+        let frameSyncCalls = snapshots.reduce(0) { $0 + $1.frameSyncCalls }
+        let frameChanges = snapshots.reduce(0) { $0 + $1.frameChanges }
+        let busiest = snapshots
+            .filter { $0.surface.hasActivity }
+            .sorted {
+                ($0.surface.outputBytes + $0.surface.invalidationCalls)
+                    > ($1.surface.outputBytes + $1.surface.invalidationCalls)
+            }
+            .prefix(5)
+            .map {
+                "\($0.sessionID):bytes=\($0.surface.outputBytes),chunks=\($0.surface.outputChunks),invalidations=\($0.surface.invalidationCalls),dropped=\($0.surface.droppedFlushes),draws=\($0.surface.draws)"
+            }
+            .joined(separator: ";")
+        let layoutHotspots = snapshots
+            .filter { $0.layoutPasses > 0 || $0.frameSyncCalls > 0 }
+            .sorted {
+                ($0.layoutPasses + $0.frameSyncCalls)
+                    > ($1.layoutPasses + $1.frameSyncCalls)
+            }
+            .prefix(5)
+            .map {
+                "\($0.sessionID):layouts=\($0.layoutPasses),sync=\($0.frameSyncCalls),changes=\($0.frameChanges)"
+            }
+            .joined(separator: ";")
+
+        let message = [
+            "reason=\(reason)",
+            "updates=\(energyDiagnosticsUpdateCount)",
+            "layouts=\(energyDiagnosticsLayoutCount)",
+            "containers=\(containers.count)",
+            "attached=\(attached)",
+            "visible=\(visible)",
+            "runningAttached=\(runningAttached)",
+            "attach=\(energyDiagnosticsAttachCount)",
+            "hide=\(energyDiagnosticsHideCount)",
+            "layoutPasses=\(layoutPasses)",
+            "frameSyncCalls=\(frameSyncCalls)",
+            "frameChanges=\(frameChanges)",
+            "outputBytes=\(outputBytes)",
+            "outputChunks=\(outputChunks)",
+            "invalidations=\(invalidations)",
+            "flushes=\(flushes)",
+            "droppedFlushes=\(droppedFlushes)",
+            "draws=\(draws)",
+            "busiest=\(busiest)",
+            "layoutHotspots=\(layoutHotspots)"
+        ].joined(separator: " ")
+        TerminalEnergyDiagnostics.logger.info("\(message, privacy: .public)")
+
+        energyDiagnosticsUpdateCount = 0
+        energyDiagnosticsLayoutCount = 0
+        energyDiagnosticsAttachCount = 0
+        energyDiagnosticsHideCount = 0
     }
 
     private func takeAfterPaint(for sessionID: String) -> (() -> Void)? {

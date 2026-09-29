@@ -114,6 +114,9 @@ final class TerminalContainerView: NSView {
     private var lastSelectionDragEvent: NSEvent?
     private var pendingReadyCallback: (() -> Void)?
     private weak var pendingReadyTerminalView: LocalProcessTerminalView?
+    private var energyLayoutPasses = 0
+    private var energyFrameSyncCalls = 0
+    private var energyFrameChanges = 0
 
     init(terminalView: LocalProcessTerminalView, session: BanyanSession, onUserSubmittedInput: ((String?) -> Void)? = nil) {
         self.terminalView = terminalView
@@ -212,6 +215,9 @@ final class TerminalContainerView: NSView {
     }
 
     override func layout() {
+        if TerminalEnergyDiagnostics.enabled {
+            energyLayoutPasses += 1
+        }
         super.layout()
         syncTerminalFrameIfNeeded(markNeedsDisplay: false)
         onLayout?()
@@ -219,6 +225,9 @@ final class TerminalContainerView: NSView {
     }
 
     func syncTerminalFrameIfNeeded(markNeedsDisplay: Bool) {
+        if TerminalEnergyDiagnostics.enabled {
+            energyFrameSyncCalls += 1
+        }
         guard bounds.width > 40, bounds.height > 40 else { return }
         let terminalFrame = bounds.insetBy(dx: contentInset, dy: contentInset)
         guard terminalFrame.width > 40, terminalFrame.height > 40 else { return }
@@ -229,6 +238,9 @@ final class TerminalContainerView: NSView {
             return
         }
         let oldSize = terminalView.bounds.size
+        if TerminalEnergyDiagnostics.enabled {
+            energyFrameChanges += 1
+        }
         terminalView.frame = terminalFrame
         terminalView.setFrameSize(terminalFrame.size)
         if oldSize != terminalFrame.size {
@@ -238,6 +250,30 @@ final class TerminalContainerView: NSView {
         if markNeedsDisplay {
             terminalView.requestFullRedraw()
         }
+    }
+
+    func takeEnergyDiagnosticsSnapshot() -> TerminalContainerEnergySnapshot {
+        let surface = (terminalView as? DetectingLocalProcessTerminalView)?.takeEnergyDiagnosticsSnapshot()
+            ?? TerminalSurfaceEnergySnapshot(
+                outputChunks: 0,
+                outputBytes: 0,
+                invalidationCalls: 0,
+                flushes: 0,
+                droppedFlushes: 0,
+                draws: 0
+            )
+        let snapshot = TerminalContainerEnergySnapshot(
+            sessionID: session.id,
+            layoutPasses: energyLayoutPasses,
+            frameSyncCalls: energyFrameSyncCalls,
+            frameChanges: energyFrameChanges,
+            clientRunning: terminalView.process.running,
+            surface: surface
+        )
+        energyLayoutPasses = 0
+        energyFrameSyncCalls = 0
+        energyFrameChanges = 0
+        return snapshot
     }
 
     func focusTerminalWhenReady() {

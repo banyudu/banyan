@@ -143,6 +143,57 @@ selecting a session resets that session's backoff.
 
 ## Reproduction and attribution
 
+### Automatic CPU spike captures
+
+The macOS app monitors its own process counters on a utility queue independent
+of the main thread. There is no CPU-change notification, so detecting an
+unprompted spike requires polling: every 5 seconds while active with started
+sessions, 10 seconds otherwise, or 15 seconds on battery or in Low Power Mode.
+The timer has coalescing tolerance. It performs one kernel resource read, without
+scanning process trees or calling tmux. Between spikes, the last 60 intervals
+stay in memory and generate no disk writes.
+
+A capture starts after two consecutive intervals at or above 50% CPU, or 20%
+while hidden. An interval at or above 100% starts one immediately. CPU percentage
+uses actual elapsed time and Mach timebase conversion; 100% means one occupied
+core. These thresholds are CPU thresholds, not Activity Monitor Energy Impact.
+
+Each capture runs `/usr/bin/sample` for 3 seconds at 10 ms intervals, with a
+15-second process timeout. The profiler runs on a separate queue. Its intervals
+are excluded from spike detection, and counters are re-baselined afterwards.
+There is a five-minute cooldown and at most six attempts per rolling hour,
+including failures. Recent attempts restore this budget after an app restart.
+Metadata records failures when macOS does not permit sampling.
+
+Captures are local under Banyan's data directory at `Diagnostics/CPU/<id>/`:
+
+- `capture.json`: app build, startup age, cached visibility/power/selection
+  context, and recent CPU, interrupt wakeup, disk I/O, and memory intervals.
+  Kernel CPU energy accounting is included when the OS supports it; it is not
+  whole-device battery power or Energy Impact. These counters cover Banyan's
+  process only, excluding tmux, agents, and the profiler child.
+- `stack.txt`: the stack sample, capped at 2 MiB, with truncation noted in JSON.
+
+Startup and capture cleanup retain at most 20 captures for up to 14 days,
+including incomplete captures. Completed captures use roughly 40 MiB at most
+for stacks, plus small metadata files. Directories and files are private to the
+current user. Stack symbols may include local paths; nothing is uploaded, and
+no terminal text, transcripts, environment, or command arguments are collected.
+
+```sh
+dist/bin/banyanctl perf captures --since 12h
+dist/bin/banyanctl perf captures --since 12h --json
+dist/bin/banyanctl perf report --since 12h
+```
+
+`perf captures` reads local files without requesting work from the app. The
+performance report includes `resource.cpu_spike` events with the capture path;
+their duration is CPU time consumed during the triggering interval. An
+interrupted capture remains marked `capturing` in its metadata. Set
+`BANYAN_CPU_CAPTURE=0` in the app's launch environment to disable the monitor.
+This captures future app spikes; it cannot reconstruct historical agent usage
+or catch a burst shorter than the sampling window that averages below threshold.
+
 1. Run several tmux-backed agent sessions and collect the performance report.
 2. In Activity Monitor, inspect Banyan, each `tmux` server, and each agent
    process separately. Record PID, parent PID, CPU, wakeups, and Energy Impact.
