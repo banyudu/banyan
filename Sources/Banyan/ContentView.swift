@@ -57,6 +57,12 @@ struct ContentView: View {
         } detail: {
             detail
         }
+        .onOpenURL { url in
+            guard let id = PuckSessionLink.sessionID(from: url) else { return }
+            store.sidebarMode = .puck
+            puckBrowser.refresh()
+            puckBrowser.select(id)
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 TitleBarLogo()
@@ -1161,7 +1167,12 @@ struct ContentView: View {
                     if !isStatic {
                         Spacer(minLength: 4)
 
-                        ProjectNewSessionButton(groupID: group.id, groupTitle: group.title)
+                        ProjectNewSessionButton(groupID: group.id, groupTitle: group.title) { launch, workspace in
+                            guard let puck = launch.puck else { return }
+                            puckBrowser.create(provider: puck.provider, account: puck.account,
+                                               model: puck.model, workspace: workspace, prompt: nil)
+                            store.sidebarMode = .puck
+                        }
                     }
                 }
                 // Only the first project gets extra top breathing room under the
@@ -2871,6 +2882,17 @@ private struct ProjectNewSessionButton: View {
     @EnvironmentObject private var store: SessionStore
     let groupID: String
     let groupTitle: String
+    let onPuckLaunch: (NewSessionLaunch, String) -> Void
+
+    private func launch(_ profile: NewSessionLaunch) {
+        if profile.puck != nil {
+            guard let workspace = store.projectWorkspace(for: groupID) else { return }
+            store.rememberProjectLaunch(profile, for: groupID)
+            onPuckLaunch(profile, workspace)
+        } else {
+            store.spawnSession(inProjectGroup: groupID, launch: profile)
+        }
+    }
 
     var body: some View {
         // Time-of-use pricing flips at most a few times a day, so a
@@ -2882,7 +2904,7 @@ private struct ProjectNewSessionButton: View {
             Menu {
                 ForEach(store.sessionLaunchProfiles) { launch in
                     Button {
-                        store.spawnSession(inProjectGroup: groupID, launch: launch)
+                        self.launch(launch)
                     } label: {
                         Label {
                             Text(launch.label)
@@ -2894,7 +2916,7 @@ private struct ProjectNewSessionButton: View {
             } label: {
                 NewSessionLaunchIcon(launch: current)
             } primaryAction: {
-                store.spawnSession(inProjectGroup: groupID, launch: current)
+                launch(current)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.visible)

@@ -206,7 +206,11 @@ session_launches:
     provider: codex
     # Optional SF Symbol or local PNG/JPEG/ICNS image path.
     icon: ~/.banyan/icons/codex-fast.png
-    command: codex --profile fast
+    command: codex --model gpt-6-luna
+    # Explicit puck settings preserve the model/account selected by the profile.
+    puck_provider: codex
+    puck_model: gpt-6-luna
+    puck_account: personal
   - id: claude-opus
     label: Claude Opus
     provider: claude
@@ -220,6 +224,22 @@ optional SF Symbol name (for example, `bolt.fill`) or local image path. Image
 paths can be absolute, start with `~`, or use a `file://` URL, and override
 provider branding. Commands are passed to the session shell unchanged, so
 quote YAML values when needed.
+
+The project picker opens the built-in plain `codex` profile as a puck daemon
+session. A configured profile uses puck only when it declares `puck_provider`
+(`codex` or `opencode-go`); optional `puck_model` and `puck_account` select the
+exact model and a label in puck's own account store. The shared agent registry
+accepts `puckProvider`, `puckModel`, and `puckAccount` for the same purpose.
+Configure puck credentials with `puck auth login`, then start `puckd` before
+launching those profiles. Opaque commands such as `codex -p fast` remain tmux
+sessions until given explicit puck settings, because Banyan cannot infer the
+model or account that another CLI profile would choose. Other agent backends
+continue using their configured commands until puck supports their credential
+and API contracts.
+
+A puck session can be opened in the macOS app with `banyan://puck/SESSION_ID`.
+For a Slack button, serve an HTTPS link that redirects to this local app link;
+the same session ID also works with `banyanctl puck attach --id SESSION_ID`.
 
 When this file is absent or omits `session_launches:`, Banyan falls back to
 the shared registry at `~/.agents/agents.yml` (entries with `tags: [banyan]`,

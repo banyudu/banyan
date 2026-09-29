@@ -7,6 +7,14 @@ import Darwin
 import Glibc
 #endif
 
+@Test func puckSessionLinkAcceptsOnlyDaemonIDs() {
+    #expect(PuckSessionLink.sessionID(from: URL(string: "banyan://puck/session_123")!) == "session_123")
+    #expect(PuckSessionLink.sessionID(from: URL(string: "banyan://puck/session-123")!) == "session-123")
+    #expect(PuckSessionLink.sessionID(from: URL(string: "banyan://puck/session%2F123")!) == nil)
+    #expect(PuckSessionLink.sessionID(from: URL(string: "banyan://puck/session?x=1")!) == nil)
+    #expect(PuckSessionLink.sessionID(from: URL(string: "https://puck/session")!) == nil)
+}
+
 @Test func puckAttachReplaysEventsThenReceivesLiveNotifications() throws {
     let path = FileManager.default.temporaryDirectory
         .appendingPathComponent("puck-client-\(UUID().uuidString.prefix(8)).sock").path

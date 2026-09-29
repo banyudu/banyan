@@ -2203,6 +2203,21 @@ final class SessionStore: ObservableObject {
         return launch
     }
 
+    /// The project header launches agent profiles in the repository root,
+    /// whether their backend is a tmux shell or a puck daemon session.
+    func projectWorkspace(for groupID: String) -> String? {
+        let groupSessions = visibleSessions.filter {
+            $0.projectGroupID == groupID && !$0.isImportedHistory
+        }
+        guard let preferredSessionID = SessionLaunchPolicy.preferredSessionID(
+            for: selectedSessionID,
+            in: groupSessions.map(\.id)
+        ), let representative = groupSessions.first(where: { $0.id == preferredSessionID }) else {
+            return nil
+        }
+        return SessionDisplayLabel.workspaceRoot(cwd: representative.cwd, environment: environment)
+    }
+
     /// Finds the configured profile that launched a session so sidebar rows can
     /// retain a profile-specific label icon (for example, Luna vs. standard Codex).
     func sessionLaunchProfile(for session: BanyanSession) -> NewSessionLaunch? {
@@ -2234,7 +2249,7 @@ final class SessionStore: ObservableObject {
         )
     }
 
-    private func rememberProjectLaunch(_ launch: NewSessionLaunch, for groupID: String) {
+    func rememberProjectLaunch(_ launch: NewSessionLaunch, for groupID: String) {
         guard projectLaunchByGroup[groupID] != launch.id else { return }
         projectLaunchByGroup[groupID] = launch.id
         UserDefaults.standard.set(
