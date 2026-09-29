@@ -9,6 +9,7 @@ struct BanyanTUI {
     private let output: any TUIOutput
     private let renderer: any TUIRenderer
     private let currentDirectory: String
+    private let puckClient: PuckDaemonClient?
     private var model: SessionListModel
 
     init(
@@ -19,6 +20,7 @@ struct BanyanTUI {
         output: any TUIOutput,
         processRunner: any TUIProcessRunner,
         renderer: any TUIRenderer,
+        puckClient: PuckDaemonClient? = nil,
         currentDirectory: String
     ) {
         self.tmux = backend
@@ -27,12 +29,13 @@ struct BanyanTUI {
             processRunner: processRunner,
             output: output
         )
-        self.model = SessionListModel(dataSource: dataSource)
+        self.model = SessionListModel(dataSource: dataSource, puckClient: puckClient)
         self.actions = actions
         self.input = input
         self.output = output
         self.renderer = renderer
         self.currentDirectory = currentDirectory
+        self.puckClient = puckClient
     }
 
     mutating func run() {
@@ -79,6 +82,13 @@ struct BanyanTUI {
                 input.restore()
                 if model.showingHistory {
                     resumeHistorySelected()
+                } else if let session = model.selectedPuckSession, let puckClient {
+                    do {
+                        try PuckTUI(input: input, output: output,
+                                    currentDirectory: currentDirectory).attach(session.id, client: puckClient)
+                    } catch {
+                        model.showNotice("Puck: \(error.localizedDescription)")
+                    }
                 } else {
                     attachSelected()
                 }
@@ -86,7 +96,9 @@ struct BanyanTUI {
             case .trimResume:
                 if model.showingHistory { resumeHistorySelected(trimmed: true) }
             case .puck:
-                PuckTUI(input: input, output: output, currentDirectory: currentDirectory).run()
+                PuckTUI(input: input, output: output, currentDirectory: currentDirectory)
+                    .run(client: puckClient ?? PuckDaemonClient())
+                model.refresh()
             case .unknown:
                 break
         }
@@ -100,6 +112,7 @@ struct BanyanTUI {
     private func render() {
         let output = renderer.render(
             sessions: model.sessions,
+            puckSessions: model.puckSessions,
             history: model.history,
             showingHistory: model.showingHistory,
             selectedIndex: model.selectedIndex,

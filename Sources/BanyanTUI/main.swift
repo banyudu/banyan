@@ -44,6 +44,8 @@ private func makeDefaultApp(host: HostRuntimeContext) -> BanyanTUI {
         output: output,
         processRunner: InteractiveProcessRunner(),
         renderer: StandardTUIRenderer(),
+        puckClient: PuckDaemonClient(environment: host.environment,
+                                     homeDirectory: host.homeDirectory.path),
         currentDirectory: host.currentDirectory
     )
 }

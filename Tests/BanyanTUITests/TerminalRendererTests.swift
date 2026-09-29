@@ -1,4 +1,4 @@
-import BanyanCore
+@testable import BanyanCore
 import Foundation
 import Testing
 @testable import BanyanTUI
@@ -18,6 +18,21 @@ import Testing
     #expect(output.contains("(no history)"))
     #expect(output.contains("enter resume/T trim"))
     #expect(output.contains("h history"))
+}
+
+@Test func rendererShowsPuckSessionInActiveList() throws {
+    let puck = try PuckSessionSummary([
+        "id": "shared", "provider": "codex", "account": "seat",
+        "workspace": "/tmp/project", "cwd": "/tmp/project",
+        "model": "gpt-6-luna", "position": "idle"
+    ])
+    let output = TerminalRenderer.render(
+        sessions: [], puckSessions: [puck], history: [], showingHistory: false,
+        selectedIndex: 0, notice: nil, tmux: RendererTestBackend()
+    )
+    #expect(output.contains("✦ codex/gpt-6-luna"))
+    #expect(output.contains("id: shared"))
+    #expect(output.contains("backend: puckd"))
 }
 
 @Test func rendererUsesSelectedPaneTextForActiveSession() {

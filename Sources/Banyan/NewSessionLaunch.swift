@@ -369,11 +369,14 @@ enum SessionLaunchProfileLoader {
         let model = item["puck_model"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let account = item["puck_account"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard provider != nil || model != nil || account != nil else { return nil }
-        guard let provider, ["codex", "opencode-go"].contains(provider) else {
-            throw ParseError(lineNumber, "puck_provider must be codex or opencode-go")
+        guard let provider, ["codex", "opencode-go", "anthropic"].contains(provider) else {
+            throw ParseError(lineNumber, "puck_provider must be codex, opencode-go, or anthropic")
         }
         guard model?.isEmpty != true, account?.isEmpty != true else {
             throw ParseError(lineNumber, "puck_model and puck_account must not be empty")
+        }
+        if provider == "anthropic", model == nil || account == nil {
+            throw ParseError(lineNumber, "anthropic puck profiles require puck_model and puck_account")
         }
         return NewSessionLaunch.PuckLaunch(provider: provider, model: model, account: account)
     }

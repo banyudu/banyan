@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Open Banyan session</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; max-width: 34rem; margin: 15vh auto; padding: 0 1rem; }
+    a { display: inline-block; padding: .7rem 1rem; border-radius: .5rem; background: #1769aa; color: white; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>Open Banyan session</h1>
+  <p id="message">Checking session link…</p>
+  <p><a id="open" hidden>Open in Banyan</a></p>
+  <script>
+    const id = new URLSearchParams(location.search).get("session");
+    const message = document.getElementById("message");
+    if (id && /^[A-Za-z0-9_-]{1,128}$/.test(id)) {
+      const target = "banyan://puck/" + id;
+      const link = document.getElementById("open");
+      link.href = target;
+      link.hidden = false;
+      message.textContent = "Opening session " + id + " in Banyan. If nothing happens, use the button below.";
+      location.replace(target);
+    } else {
+      message.textContent = "This link does not contain a valid session ID.";
+    }
+  </script>
+</body>
+</html>

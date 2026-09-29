@@ -242,6 +242,7 @@ final class SessionStore: ObservableObject {
     var onPuckSibling: (() -> Void)?
     var onPuckCreated: ((String, Bool) -> Void)?
     var puckSelectedWorkspace: (() -> String?)?
+    var activePuckSessionID: String?
     /// The command palette's picked agent profile. `nil` is Auto: actions fall
     /// back to their default (e.g. New Session copies the current session).
     /// Persisted in `UserDefaults` so the pick survives relaunches.
@@ -2117,7 +2118,7 @@ final class SessionStore: ObservableObject {
 
     @discardableResult
     func spawnSiblingSession() -> BanyanSession? {
-        if sidebarMode == .puck {
+        if activePuckSessionID != nil || sidebarMode == .puck {
             onPuckSibling?()
             return nil
         }
@@ -2186,7 +2187,7 @@ final class SessionStore: ObservableObject {
     /// On Auto the runtime mirrors the current session, like the sibling command.
     @discardableResult
     func spawnPaletteAgentSessionInProjectRoot() -> BanyanSession? {
-        if sidebarMode == .puck, paletteAgentLaunch == nil {
+        if activePuckSessionID != nil, paletteAgentLaunch == nil {
             onPuckSibling?()
             return nil
         }

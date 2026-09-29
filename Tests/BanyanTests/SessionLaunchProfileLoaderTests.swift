@@ -41,6 +41,32 @@ import Testing
     #expect(NewSessionLaunch.builtInDefaults.first { $0.id == "codex" }?.puck == .init(provider: "codex"))
 }
 
+@Test func anthropicPuckProfileRequiresExplicitModelAndAccount() throws {
+    let profiles = try SessionLaunchProfileLoader.parse("""
+    session_launches:
+      - id: claude-api
+        label: Claude API
+        provider: claude
+        command: claude
+        puck_provider: anthropic
+        puck_model: claude-sonnet-4-6
+        puck_account: console-seat
+    """)
+    #expect(profiles[0].puck == .init(provider: "anthropic",
+                                      model: "claude-sonnet-4-6", account: "console-seat"))
+    #expect(NewSessionLaunch.builtInDefaults.first { $0.id == "claude" }?.puck == nil)
+    #expect(throws: Error.self) {
+        try SessionLaunchProfileLoader.parse("""
+        session_launches:
+          - id: claude-api
+            label: Claude API
+            command: claude
+            puck_provider: anthropic
+            puck_model: claude-sonnet-4-6
+        """)
+    }
+}
+
 @Test func invalidPuckLaunchProfileDoesNotBecomeACLIProfile() {
     #expect(throws: Error.self) {
         try SessionLaunchProfileLoader.parse("""

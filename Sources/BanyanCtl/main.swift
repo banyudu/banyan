@@ -150,6 +150,8 @@ struct BanyanCtl {
             throw CLIError.message("session requires a subcommand")
         }
         switch subcommand {
+        case "list":
+            try listUnifiedSessions()
         case "new", "spawn":
             try post("/spawn", payload: withDefaultParent(parsePayload(Array(args.dropFirst()))))
         case "suspend":
@@ -159,6 +161,57 @@ struct BanyanCtl {
         default:
             throw CLIError.message("unknown session subcommand '\(subcommand)'")
         }
+    }
+
+    /// One catalog for shell and daemon sessions. The daemon half remains
+    /// available when the Banyan app is closed.
+    private func listUnifiedSessions() throws {
+        var sessions: [[String: Any]] = []
+        var shellAvailable = false
+        var puckAvailable = false
+        if let shells = try? loadShellSessions() {
+            sessions.append(contentsOf: shells.map { shell in
+                var row = shell
+                row["backend"] = "tmux"
+                return row
+            })
+            shellAvailable = true
+        }
+        let puckClient = PuckDaemonClient(environment: host.environment,
+                                          homeDirectory: host.homeDirectory.path)
+        if let puckSessions = try? puckClient.list() {
+            sessions.append(contentsOf: puckSessions.map { session in
+                ["id": session.id, "backend": "puck", "provider": session.provider,
+                 "model": session.model, "account": session.account,
+                 "cwd": session.cwd, "workspace": session.workspace,
+                 "status": session.position]
+            })
+            puckAvailable = true
+        }
+        guard shellAvailable || puckAvailable else { throw CLIError.serverUnavailable }
+        let output: [String: Any] = [
+            "sessions": sessions,
+            "shellAvailable": shellAvailable,
+            "puckAvailable": puckAvailable
+        ]
+        let data = try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
+        print(String(decoding: data, as: UTF8.self))
+    }
+
+    private func loadShellSessions() throws -> [[String: Any]] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("list"))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 5
+        try authorize(&request)
+        let result = try exchange(request)
+        guard result.statusCode < 400,
+              let data = result.data,
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let body = object["data"] as? [String: Any],
+              let sessions = body["sessions"] as? [[String: Any]] else {
+            throw CLIError.message("Banyan returned an invalid session list")
+        }
+        return sessions
     }
 
     private func runAgentCommand(_ args: [String]) throws {
@@ -729,6 +782,16 @@ struct BanyanCtl {
     }
 
     private func send(_ request: URLRequest) throws {
+        let result = try exchange(request)
+        if let data = result.data, let text = String(data: data, encoding: .utf8) {
+            print(text)
+        }
+        if result.statusCode >= 400 {
+            throw CLIError.http(result.statusCode)
+        }
+    }
+
+    private func exchange(_ request: URLRequest) throws -> HTTPResponseBox.Value {
         let semaphore = DispatchSemaphore(value: 0)
         let responseBox = HTTPResponseBox()
 
@@ -746,12 +809,7 @@ struct BanyanCtl {
         if result.error != nil {
             throw CLIError.serverUnavailable
         }
-        if let data = result.data, let text = String(data: data, encoding: .utf8) {
-            print(text)
-        }
-        if result.statusCode >= 400 {
-            throw CLIError.http(result.statusCode)
-        }
+        return result
     }
 
     private func printHelp() {
@@ -760,13 +818,14 @@ struct BanyanCtl {
 
         Puck sessions use the local puckd socket and work while Banyan is closed:
           banyanctl puck list
-          banyanctl puck new [--id ID] [--provider codex|opencode-go] [--account LABEL] [--model MODEL] [--cwd PATH] [--prompt TEXT]
+          banyanctl puck new [--id ID] [--provider codex|opencode-go|anthropic] [--account LABEL] [--model MODEL] [--cwd PATH] [--prompt TEXT]
           banyanctl puck attach --id ID
           banyanctl puck show --id ID
           banyanctl puck turn --id ID --prompt TEXT
           banyanctl puck decide --id ID --call-id CALL --decision approve|deny|session
 
         Usage:
+          banyanctl session list
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl agent run (--agent codex|claude|deepseek|gemini|glm|hunyuan|mimo|minimax|muse|opencode | --profile ID) [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--parent ID] [--no-parent] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]

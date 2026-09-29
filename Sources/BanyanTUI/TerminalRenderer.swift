@@ -3,6 +3,7 @@ import BanyanCore
 protocol TUIRenderer {
     func render(
         sessions: [SessionSnapshot],
+        puckSessions: [PuckSessionSummary],
         history: [ImportedAgentSession],
         showingHistory: Bool,
         selectedIndex: Int,
@@ -14,6 +15,7 @@ protocol TUIRenderer {
 struct StandardTUIRenderer: TUIRenderer {
     func render(
         sessions: [SessionSnapshot],
+        puckSessions: [PuckSessionSummary],
         history: [ImportedAgentSession],
         showingHistory: Bool,
         selectedIndex: Int,
@@ -22,6 +24,7 @@ struct StandardTUIRenderer: TUIRenderer {
     ) -> String {
         TerminalRenderer.render(
             sessions: sessions,
+            puckSessions: puckSessions,
             history: history,
             showingHistory: showingHistory,
             selectedIndex: selectedIndex,
@@ -34,6 +37,7 @@ struct StandardTUIRenderer: TUIRenderer {
 struct TerminalRenderer {
     static func render(
         sessions: [SessionSnapshot],
+        puckSessions: [PuckSessionSummary] = [],
         history: [ImportedAgentSession],
         showingHistory: Bool,
         selectedIndex: Int,
@@ -51,6 +55,7 @@ struct TerminalRenderer {
         let rightWidth = 45
         let rightLines = detailLines(
             sessions: sessions,
+            puckSessions: puckSessions,
             history: history,
             showingHistory: showingHistory,
             selectedIndex: selectedIndex,
@@ -58,20 +63,24 @@ struct TerminalRenderer {
             width: rightWidth
         )
         output += (showingHistory ? "History" : "Sessions").padding(toLength: sidebarWidth, withPad: " ", startingAt: 0)
-        output += "│ " + (showingHistory ? "History detail" : "Terminal detail") + "\n"
+        output += "│ " + (showingHistory ? "History detail" : "Session detail") + "\n"
         output += String(repeating: "─", count: sidebarWidth) + "┼" + String(repeating: "─", count: rightWidth) + "\n"
 
-        let rowCount = showingHistory ? history.count : sessions.count
+        let rowCount = showingHistory ? history.count : sessions.count + puckSessions.count
         for row in 0..<max(max(rowCount, 1), rightLines.count) {
             var left = ""
             if showingHistory, row < history.count {
                 let item = history[row]
                 let marker = row == selectedIndex ? ">" : " "
                 left = "\(marker) \(item.provider.badgeText) ◷ \(item.title)"
-            } else if row < sessions.count {
+            } else if !showingHistory, row < sessions.count {
                 let session = sessions[row]
                 let marker = row == selectedIndex ? ">" : " "
                 left = "\(marker) \(session.status.emoji) \(session.title)"
+            } else if !showingHistory, row - sessions.count < puckSessions.count {
+                let session = puckSessions[row - sessions.count]
+                let marker = row == selectedIndex ? ">" : " "
+                left = "\(marker) ✦ \(session.provider)/\(session.model)"
             } else {
                 left = row == 0
                     ? (showingHistory ? "(no history)" : "(no active sessions)")
@@ -85,6 +94,7 @@ struct TerminalRenderer {
 
     private static func detailLines(
         sessions: [SessionSnapshot],
+        puckSessions: [PuckSessionSummary],
         history: [ImportedAgentSession],
         showingHistory: Bool,
         selectedIndex: Int,
@@ -102,6 +112,18 @@ struct TerminalRenderer {
             ].map { truncate($0, to: width) }
         }
 
+        if selectedIndex >= sessions.count {
+            let puckIndex = selectedIndex - sessions.count
+            guard puckSessions.indices.contains(puckIndex) else { return [] }
+            let session = puckSessions[puckIndex]
+            return [
+                "✦ \(session.provider)/\(session.model) · \(session.position)",
+                "id: \(session.id)",
+                "workspace: \(session.workspace)",
+                "account: \(session.account)",
+                "backend: puckd"
+            ].map { truncate($0, to: width) }
+        }
         guard sessions.indices.contains(selectedIndex) else { return [] }
         let session = sessions[selectedIndex]
         var lines = [

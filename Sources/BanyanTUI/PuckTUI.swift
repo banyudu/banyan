@@ -8,8 +8,7 @@ struct PuckTUI {
     let output: any TUIOutput
     let currentDirectory: String
 
-    func run() {
-        let client = PuckDaemonClient()
+    func run(client: PuckDaemonClient = PuckDaemonClient()) {
         do {
             let sessions = try client.list()
             output.write("\u{1b}[2J\u{1b}[H", terminator: "")
@@ -22,14 +21,22 @@ struct PuckTUI {
             guard !choice.isEmpty else { return }
             let id: String
             if choice == "new" {
-                let provider = input.readLine(prompt: "Provider [codex/opencode-go] (default codex): ") ?? ""
+                let provider = input.readLine(prompt: "Provider [codex/opencode-go/anthropic] (default codex): ") ?? ""
                 let selectedProvider = provider.isEmpty ? "codex" : provider
-                guard ["codex", "opencode-go"].contains(selectedProvider) else {
+                guard ["codex", "opencode-go", "anthropic"].contains(selectedProvider) else {
                     output.write("Unsupported puck provider", terminator: "\n")
                     return
                 }
-                let account = input.readLine(prompt: "Account label (blank for pool): ") ?? ""
-                let model = input.readLine(prompt: "Model (blank for default): ") ?? ""
+                let account = input.readLine(prompt: selectedProvider == "anthropic"
+                    ? "Anthropic Console API-key account label: "
+                    : "Account label (blank for pool): ") ?? ""
+                let model = input.readLine(prompt: selectedProvider == "anthropic"
+                    ? "Anthropic API model ID: "
+                    : "Model (blank for default): ") ?? ""
+                if selectedProvider == "anthropic" && (account.isEmpty || model.isEmpty) {
+                    output.write("Anthropic requires an explicit model and separately billed API-key account", terminator: "\n")
+                    return
+                }
                 let cwd = input.readLine(prompt: "Workspace (blank for current): ") ?? ""
                 let summary = try client.create(
                     id: UUID().uuidString.lowercased(), provider: selectedProvider,
@@ -48,15 +55,16 @@ struct PuckTUI {
         }
     }
 
-    private func attach(_ id: String, client: PuckDaemonClient) throws {
+    func attach(_ id: String, client: PuckDaemonClient) throws {
         let (connection, attached) = try client.attach(id)
         output.write("\u{1b}[2J\u{1b}[H", terminator: "")
         output.write("\(id) · \(attached.summary.provider)/\(attached.summary.model) · \(attached.summary.position)", terminator: "\n")
-        for event in try client.replay(id, initial: attached.batch) { show(event) }
+        let replayed = try client.replay(id, initial: attached.batch)
+        for event in replayed { show(event) }
         output.write("Type a prompt, /approve, /deny, /session, or /detach.", terminator: "\n")
         let reader = Thread {
             do {
-                var cursor = attached.batch.cursor
+                var cursor = replayed.last?.cursor ?? attached.batch.cursor
                 while let events = try client.receive(connection, session: id, after: cursor) {
                     for event in events {
                         cursor = event.cursor

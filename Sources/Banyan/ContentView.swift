@@ -59,7 +59,7 @@ struct ContentView: View {
         }
         .onOpenURL { url in
             guard let id = PuckSessionLink.sessionID(from: url) else { return }
-            store.sidebarMode = .puck
+            store.sidebarMode = .sessions
             puckBrowser.refresh()
             puckBrowser.select(id)
         }
@@ -130,14 +130,14 @@ struct ContentView: View {
                 guard let puck = launch.puck else { return }
                 browser?.create(provider: puck.provider, account: puck.account,
                                 model: puck.model, workspace: workspace, prompt: prompt)
-                store?.sidebarMode = .puck
+                store?.sidebarMode = .sessions
             }
             store.onPuckSibling = { [weak browser] in browser?.createSibling() }
             store.puckSelectedWorkspace = { [weak browser] in browser?.selectedSummary?.workspace }
             store.onPuckCreated = { [weak store, weak browser] id, focus in
                 browser?.refresh()
                 guard focus else { return }
-                store?.sidebarMode = .puck
+                store?.sidebarMode = .sessions
                 browser?.select(id)
             }
             store.loadPersistedSessionsIfNeeded()
@@ -145,6 +145,13 @@ struct ContentView: View {
             store.refreshImportedHistoryIfNeeded()
             store.startControlServer()
             store.startSupervisor()
+        }
+        .onChange(of: puckBrowser.selectedID) { _, id in
+            store.activePuckSessionID = id
+        }
+        .onReceive(selection.$selectedSessionID.dropFirst()) { id in
+            guard id != nil else { return }
+            puckBrowser.detach()
         }
         .onChange(of: store.commandPaletteRequestID) {
             showingCommandPalette = true
@@ -469,12 +476,54 @@ struct ContentView: View {
             ScrollViewReader { proxy in
                 List {
                     sidebarSections(groups, jumpKeyLabels: jumpKeyLabels)
+                    Section {
+                        if puckBrowser.sessions.isEmpty {
+                            Text(puckBrowser.error ?? "No puck sessions")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(puckBrowser.sessions, id: \.id) { session in
+                                Button {
+                                    puckBrowser.select(session.id)
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "sparkles")
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("\(session.provider)/\(session.model)").lineLimit(1)
+                                            Text(session.id)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        Spacer()
+                                        Text(session.position)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .listRowBackground(puckBrowser.selectedID == session.id
+                                    ? Color.accentColor.opacity(0.16) : Color.clear)
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text("Puck sessions")
+                            Spacer()
+                            Button { puckBrowser.refresh() } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Refresh daemon sessions")
+                        }
+                    }
                 }
                 .listStyle(.sidebar)
                 .scrollIndicators(.hidden)
                 .hidesVerticalScroller()
                 .accessibilityIdentifier(AccessibilityID.sidebarList)
                 .onAppear {
+                    puckBrowser.refresh()
                     guard let id = selection.selectedSessionID,
                           id != lastAutoScrolledSidebarSessionID,
                           store.unifiedSidebarGroups.flatMap(\.items).contains(where: { $0.id == id })
@@ -495,6 +544,9 @@ struct ContentView: View {
                         proxy.scrollTo(id, anchor: .center)
                     }
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                puckBrowser.refresh()
             }
 
             Spacer(minLength: 0)
@@ -1242,6 +1294,7 @@ struct ContentView: View {
             hiddenChildCount: item.hiddenChildCount,
             jumpKeyLabel: jumpKeyLabel,
             onSelect: {
+                puckBrowser.detach()
                 store.userSelect(id: item.session.id)
             },
             onToggleCollapse: {
@@ -1396,7 +1449,11 @@ struct ContentView: View {
     private var detail: some View {
         switch store.sidebarMode {
         case .sessions:
-            sessionDetail
+            if puckBrowser.selectedID != nil {
+                PuckSessionDetail(browser: puckBrowser)
+            } else {
+                sessionDetail
+            }
         case .puck:
             PuckSessionDetail(browser: puckBrowser)
         case .linear:

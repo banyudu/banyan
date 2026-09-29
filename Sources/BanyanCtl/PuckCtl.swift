@@ -16,8 +16,12 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
         let id = options["id"] ?? UUID().uuidString.lowercased()
         let workspace = NSString(string: options["cwd"] ?? host.currentDirectory).expandingTildeInPath
         let provider = options["provider"] ?? "codex"
-        guard ["codex", "opencode-go"].contains(provider) else {
-            throw PuckDaemonError.rejected("puckd supports codex and opencode-go providers")
+        guard ["codex", "opencode-go", "anthropic"].contains(provider) else {
+            throw PuckDaemonError.rejected("puckd supports codex, opencode-go, and anthropic providers")
+        }
+        if provider == "anthropic",
+           options["model"]?.isEmpty != false || options["account"]?.isEmpty != false {
+            throw PuckDaemonError.rejected("anthropic requires --model and --account (a separately billed API key)")
         }
         let session = try client.create(id: id, provider: provider,
                                         account: options["account"], model: options["model"],
@@ -45,11 +49,12 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
         let id = try options.required("id")
         let (connection, attached) = try client.attach(id)
         print("\(attached.summary.id) · \(attached.summary.provider)/\(attached.summary.model) · \(attached.summary.position)")
-        for event in try client.replay(id, initial: attached.batch) { printPuckEvent(event) }
+        let replayed = try client.replay(id, initial: attached.batch)
+        for event in replayed { printPuckEvent(event) }
         let approval = PuckApprovalState(attached.summary.pendingApproval?.callID)
         let reader = Thread {
             do {
-                var cursor = attached.batch.cursor
+                var cursor = replayed.last?.cursor ?? attached.batch.cursor
                 while let events = try client.receive(connection, session: id, after: cursor) {
                     for event in events {
                         cursor = event.cursor
