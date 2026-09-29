@@ -50,9 +50,11 @@ private func makeDefaultApp(host: HostRuntimeContext) -> BanyanTUI {
     )
 }
 
+private let environment = ProcessInfo.processInfo.environment
 private let host = HostRuntimeContext(
-    environment: ProcessInfo.processInfo.environment,
-    homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
+    environment: environment,
+    homeDirectory: BanyanDataDirectory.fixtureDataHome(environment: environment)
+        ?? URL(fileURLWithPath: NSHomeDirectory()),
     currentDirectory: FileManager.default.currentDirectoryPath
 )
 
