@@ -69,6 +69,12 @@ final class PuckSessionBrowser: ObservableObject {
                         return true
                     }
                     if !keepReading { break }
+                    if nextEvents.contains(where: { Self.summaryEvents.contains($0.kind) }) {
+                        let summary = try client.get(id)
+                        await MainActor.run {
+                            if self.generation == currentGeneration { self.selectedSummary = summary }
+                        }
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -144,19 +150,25 @@ final class PuckSessionBrowser: ObservableObject {
         }
     }
 
-    func updateSummaryAfterEvent(_ event: PuckSessionEvent) {
-        guard ["turn_done", "turn_error", "approval_pending", "approval_decided", "hibernated"].contains(event.kind),
-              let id = selectedID else { return }
+    func answer(_ selections: [PuckQuestionSelection]) {
+        guard let id = selectedID, let pending = selectedSummary?.pendingQuestion else { return }
         let client = self.client
-        Task.detached(priority: .utility) {
-            guard let summary = try? client.get(id) else { return }
-            await MainActor.run {
-                if self.selectedID == id && self.events.last?.cursor == event.cursor {
-                    self.selectedSummary = summary
+        let currentGeneration = generation
+        Task.detached(priority: .userInitiated) {
+            do {
+                try client.answer(id, callID: pending.callID, selections: selections)
+            } catch {
+                await MainActor.run {
+                    if self.generation == currentGeneration { self.error = error.localizedDescription }
                 }
             }
         }
     }
+
+    nonisolated private static let summaryEvents: Set<String> = [
+        "turn_done", "turn_error", "approval_pending", "approval_decided",
+        "blocked_on_question", "question_answered", "hibernated",
+    ]
 }
 
 struct PuckSessionSidebar: View {
@@ -226,6 +238,8 @@ struct PuckSessionSidebar: View {
 struct PuckSessionDetail: View {
     @ObservedObject var browser: PuckSessionBrowser
     @State private var prompt = ""
+    @State private var questionChoices: [Int: Set<String>] = [:]
+    @State private var questionTexts: [Int: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -258,9 +272,6 @@ struct PuckSessionDetail: View {
                         .padding()
                     }
                     .onChange(of: browser.events.count) { _, _ in
-                        if let last = browser.events.last {
-                            browser.updateSummaryAfterEvent(last)
-                        }
                         if let last = browser.renderedEvents.last {
                             proxy.scrollTo(last.id, anchor: .bottom)
                         }
@@ -277,6 +288,54 @@ struct PuckSessionDetail: View {
                             Button("Deny") { browser.decide("deny") }
                             Button("Approve for session") { browser.decide("session") }
                         }
+                    }
+                    .padding()
+                }
+                if let pending = summary.pendingQuestion {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Answer needed").font(.headline)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(question.header).font(.subheadline.bold())
+                                        Text(question.question)
+                                        ForEach(question.options, id: \.label) { option in
+                                            Button {
+                                                var chosen = questionChoices[index] ?? []
+                                                if question.multiple {
+                                                    if !chosen.insert(option.label).inserted { chosen.remove(option.label) }
+                                                } else {
+                                                    chosen = [option.label]
+                                                }
+                                                questionChoices[index] = chosen
+                                                questionTexts[index] = ""
+                                            } label: {
+                                                Label("\(option.label) — \(option.description)",
+                                                      systemImage: questionChoices[index, default: []].contains(option.label)
+                                                        ? "checkmark.circle.fill" : "circle")
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        if question.custom {
+                                            TextField("Other answer", text: Binding(
+                                                get: { questionTexts[index] ?? "" },
+                                                set: { value in
+                                                    questionTexts[index] = value
+                                                    if !value.isEmpty { questionChoices[index] = [] }
+                                                }
+                                            ))
+                                        }
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 260)
+                        Button("Answer") {
+                            if let selections = selections(for: pending) { browser.answer(selections) }
+                        }
+                        .disabled(selections(for: pending) == nil)
                     }
                     .padding()
                 }
@@ -297,6 +356,14 @@ struct PuckSessionDetail: View {
                 Text(error).foregroundStyle(.red).font(.caption).padding(.horizontal)
             }
         }
+        .onChange(of: browser.selectedID) { _, _ in
+            questionChoices = [:]
+            questionTexts = [:]
+        }
+        .onChange(of: browser.selectedSummary?.pendingQuestion?.callID) { _, _ in
+            questionChoices = [:]
+            questionTexts = [:]
+        }
         .onDisappear { browser.detach() }
     }
 
@@ -305,5 +372,21 @@ struct PuckSessionDetail: View {
         guard !text.isEmpty else { return }
         browser.turn(text)
         prompt = ""
+    }
+
+    private func selections(for pending: PuckPendingQuestion) -> [PuckQuestionSelection]? {
+        var answers: [PuckQuestionSelection] = []
+        for (index, question) in pending.questions.enumerated() {
+            let text = questionTexts[index]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if question.custom && !text.isEmpty {
+                answers.append(PuckQuestionSelection(text: text))
+                continue
+            }
+            let chosen = questionChoices[index] ?? []
+            let labels = question.options.map(\.label).filter { chosen.contains($0) }
+            guard !labels.isEmpty, question.multiple || labels.count == 1 else { return nil }
+            answers.append(PuckQuestionSelection(labels: labels))
+        }
+        return answers.count == pending.questions.count ? answers : nil
     }
 }

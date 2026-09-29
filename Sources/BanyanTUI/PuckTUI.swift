@@ -62,7 +62,8 @@ struct PuckTUI {
         output.write("\(id) · \(attached.summary.provider)/\(attached.summary.model) · \(attached.summary.position)", terminator: "\n")
         let replayed = try client.replay(id, initial: attached.batch)
         for event in replayed { show(event) }
-        output.write("Type a prompt, /approve, /deny, /session, or /detach.", terminator: "\n")
+        if let pending = attached.summary.pendingQuestion { show(pending) }
+        output.write("Type a prompt, /approve, /deny, /session, /answer, or /detach.", terminator: "\n")
         let reader = Thread {
             do {
                 var cursor = replayed.last?.cursor ?? attached.batch.cursor
@@ -88,6 +89,14 @@ struct PuckTUI {
                         continue
                     }
                     try client.decide(id, callID: pending.callID, decision: String(command.dropFirst()))
+                } else if command == "/answer" {
+                    guard let pending = try client.get(id).pendingQuestion else {
+                        output.write("No question is pending", terminator: "\n")
+                        continue
+                    }
+                    show(pending)
+                    guard let selections = collectAnswers(pending) else { continue }
+                    try client.answer(id, callID: pending.callID, selections: selections)
                 } else if !command.isEmpty {
                     try client.turn(id, prompt: command)
                 }
@@ -100,5 +109,32 @@ struct PuckTUI {
     private func show(_ event: PuckSessionEvent) {
         guard let text = event.displayText else { return }
         output.write("[\(event.cursor)] \(text)", terminator: "\n")
+    }
+
+    private func show(_ pending: PuckPendingQuestion) {
+        output.write("Question \(pending.callID) needs an answer:", terminator: "\n")
+        for question in pending.questions {
+            output.write("\(question.header): \(question.question)", terminator: "\n")
+            for (index, option) in question.options.enumerated() {
+                output.write("  \(index + 1). \(option.label) — \(option.description)", terminator: "\n")
+            }
+            if question.multiple { output.write("  Use comma-separated numbers for multiple choices.", terminator: "\n") }
+            if question.custom { output.write("  Or enter text:your answer", terminator: "\n") }
+        }
+    }
+
+    private func collectAnswers(_ pending: PuckPendingQuestion) -> [PuckQuestionSelection]? {
+        var selections: [PuckQuestionSelection] = []
+        for question in pending.questions {
+            while true {
+                guard let line = input.readLine(prompt: "\(question.header)> ") else { return nil }
+                if let selection = PuckQuestionSelection.parse(line, for: question) {
+                    selections.append(selection)
+                    break
+                }
+                output.write("Enter an offered number, comma-separated numbers, or text:your answer.", terminator: "\n")
+            }
+        }
+        return selections
     }
 }

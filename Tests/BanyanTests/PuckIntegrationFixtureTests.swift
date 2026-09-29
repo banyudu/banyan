@@ -1,4 +1,5 @@
 @testable import Banyan
+import BanyanCore
 import Foundation
 import Testing
 
@@ -28,6 +29,25 @@ import Testing
     #expect(browser.events.contains(where: {
         $0.cursor > priorCursor && $0.displayText?.contains("fixture done") == true
     }))
+    browser.detach()
+}
+
+@Test @MainActor func appPuckBrowserAnswersParkedQuestion() async throws {
+    guard let id = ProcessInfo.processInfo.environment["BANYAN_PUCK_E2E_QUESTION_SESSION"] else { return }
+    let direct = try PuckDaemonClient().get(id)
+    #expect(direct.pendingQuestion?.callID == "question-1")
+    let browser = PuckSessionBrowser()
+    browser.select(id)
+    try await waitForPuckFixture {
+        browser.selectedSummary?.pendingQuestion?.callID == "question-1"
+    }
+    let pending = try #require(browser.selectedSummary?.pendingQuestion)
+    #expect(pending.questions.first?.options.map(\.label) == ["Approve", "Deny"])
+    browser.answer([PuckQuestionSelection(labels: ["Approve"])])
+    try await waitForPuckFixture {
+        browser.events.contains(where: { $0.kind == "turn_done" })
+            && browser.selectedSummary?.pendingQuestion == nil
+    }
     browser.detach()
 }
 

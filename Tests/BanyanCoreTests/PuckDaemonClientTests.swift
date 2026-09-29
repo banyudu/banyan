@@ -15,6 +15,32 @@ import Glibc
     #expect(PuckSessionLink.sessionID(from: URL(string: "https://puck/session")!) == nil)
 }
 
+@Test func puckPendingQuestionsPreserveChoicesAndValidateTerminalInput() throws {
+    let summary = try PuckSessionSummary([
+        "id": "shared", "provider": "codex", "account": "seat", "workspace": "/tmp",
+        "cwd": "/tmp", "model": "model", "position": "parked",
+        "pending_question": [
+            "call_id": "ask-1", "expires_at_ms": 999999,
+            "questions": [[
+                "header": "Files", "question": "Which files?", "multiple": true,
+                "custom": true, "default": "1", "options": [
+                    ["label": "One", "description": "Use one file."],
+                    ["label": "Two", "description": "Use two files."]
+                ]
+            ]]
+        ]
+    ])
+    let pending = try #require(summary.pendingQuestion)
+    #expect(pending.callID == "ask-1")
+    #expect(pending.questions[0].options.map(\.label) == ["One", "Two"])
+    #expect(PuckQuestionSelection.parse("1,2", for: pending.questions[0])?.labels == ["One", "Two"])
+    #expect(PuckQuestionSelection.parse("2,2", for: pending.questions[0]) == nil)
+    #expect(PuckQuestionSelection.parse("-9223372036854775808", for: pending.questions[0]) == nil)
+    #expect(PuckQuestionSelection.parse("text:Other files", for: pending.questions[0])?.text == "Other files")
+    let decoded = try PuckQuestionSelection.decodeJSON("[{\"labels\":[\"One\"],\"text\":null}]")
+    #expect(decoded == [PuckQuestionSelection(labels: ["One"])])
+}
+
 @Test func puckAttachReplaysEventsThenReceivesLiveNotifications() throws {
     let path = FileManager.default.temporaryDirectory
         .appendingPathComponent("puck-client-\(UUID().uuidString.prefix(8)).sock").path

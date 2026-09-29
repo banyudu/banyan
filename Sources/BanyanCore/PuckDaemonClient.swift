@@ -34,6 +34,7 @@ public struct PuckSessionSummary: Equatable, Sendable {
     public let model: String
     public let position: String
     public let pendingApproval: PuckPendingApproval?
+    public let pendingQuestion: PuckPendingQuestion?
 
     init(_ object: [String: Any]) throws {
         id = try Self.string("id", in: object)
@@ -44,6 +45,7 @@ public struct PuckSessionSummary: Equatable, Sendable {
         model = try Self.string("model", in: object)
         position = try Self.string("position", in: object)
         pendingApproval = try (object["pending_approval"] as? [String: Any]).map(PuckPendingApproval.init)
+        pendingQuestion = try (object["pending_question"] as? [String: Any]).map(PuckPendingQuestion.init)
     }
 
     private static func string(_ key: String, in object: [String: Any]) throws -> String {
@@ -69,6 +71,111 @@ public struct PuckPendingApproval: Equatable, Sendable {
         self.tool = tool
         self.arguments = arguments
         self.expiresAtMS = expiresAtMS
+    }
+}
+
+public struct PuckQuestionChoice: Equatable, Sendable {
+    public let label: String
+    public let description: String
+
+    init(_ object: [String: Any]) throws {
+        guard let label = object["label"] as? String,
+              let description = object["description"] as? String else {
+            throw PuckDaemonError.invalidResponse("question option")
+        }
+        self.label = label
+        self.description = description
+    }
+}
+
+public struct PuckQuestion: Equatable, Sendable {
+    public let header: String
+    public let question: String
+    public let options: [PuckQuestionChoice]
+    public let multiple: Bool
+    public let custom: Bool
+    public let defaultAnswer: String?
+
+    init(_ object: [String: Any]) throws {
+        guard let header = object["header"] as? String,
+              let question = object["question"] as? String,
+              let options = object["options"] as? [[String: Any]],
+              let multiple = object["multiple"] as? Bool,
+              let custom = object["custom"] as? Bool else {
+            throw PuckDaemonError.invalidResponse("question")
+        }
+        self.header = header
+        self.question = question
+        self.options = try options.map(PuckQuestionChoice.init)
+        self.multiple = multiple
+        self.custom = custom
+        defaultAnswer = object["default"] as? String
+    }
+}
+
+public struct PuckPendingQuestion: Equatable, Sendable {
+    public let callID: String
+    public let questions: [PuckQuestion]
+    public let expiresAtMS: UInt64
+
+    init(_ object: [String: Any]) throws {
+        guard let callID = object["call_id"] as? String,
+              let questions = object["questions"] as? [[String: Any]],
+              let expiresAtMS = (object["expires_at_ms"] as? NSNumber)?.uint64Value else {
+            throw PuckDaemonError.invalidResponse("pending_question")
+        }
+        self.callID = callID
+        self.questions = try questions.map(PuckQuestion.init)
+        self.expiresAtMS = expiresAtMS
+    }
+}
+
+public struct PuckQuestionSelection: Equatable, Sendable {
+    public let labels: [String]
+    public let text: String?
+
+    public init(labels: [String] = [], text: String? = nil) {
+        self.labels = labels
+        self.text = text
+    }
+
+    var wireValue: [String: Any] {
+        ["labels": labels, "text": text as Any? ?? NSNull()]
+    }
+
+    public static func decodeJSON(_ source: String) throws -> [Self] {
+        guard let data = source.data(using: .utf8),
+              let entries = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw PuckDaemonError.rejected("--selections must be a JSON array")
+        }
+        return try entries.map { entry in
+            guard let labels = entry["labels"] as? [String],
+                  entry["text"] == nil || entry["text"] is NSNull || entry["text"] is String else {
+                throw PuckDaemonError.rejected("each selection needs labels and optional text")
+            }
+            return Self(labels: labels, text: entry["text"] as? String)
+        }
+    }
+
+    /// Terminal clients accept option numbers, comma-separated for a
+    /// multi-choice question, or `text:...` when free text is offered.
+    public static func parse(_ input: String, for question: PuckQuestion) -> Self? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("text:") {
+            let value = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return question.custom && !value.isEmpty ? Self(text: value) : nil
+        }
+        let parts = trimmed.split(separator: ",", omittingEmptySubsequences: false)
+        guard !parts.isEmpty, question.multiple || parts.count == 1 else { return nil }
+        var labels: [String] = []
+        for part in parts {
+            guard let number = Int(part.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  number >= 1, number <= question.options.count else { return nil }
+            let label = question.options[number - 1].label
+            guard !labels.contains(label) else { return nil }
+            labels.append(label)
+        }
+        return labels.isEmpty ? nil : Self(labels: labels)
     }
 }
 
@@ -111,6 +218,8 @@ public struct PuckSessionEvent: Sendable {
         case "turn_error", "persistence_error", "audit_error": return message ?? "Turn failed"
         case "approval_pending": return "Approval needed for \(tool ?? "tool"): \(arguments ?? "")"
         case "approval_decided": return "Approval decided"
+        case "blocked_on_question": return "Question needs an answer"
+        case "question_answered": return "Question answered"
         case "hibernated": return "Session hibernated"
         default: return nil
         }
@@ -348,6 +457,12 @@ public struct PuckDaemonClient: Sendable {
     public func decide(_ id: String, callID: String, decision: String) throws {
         _ = try PuckDaemonConnection(socketPath: socketPath).request(
             "session.decide", params: ["session": id, "call_id": callID, "decision": decision])
+    }
+
+    public func answer(_ id: String, callID: String, selections: [PuckQuestionSelection]) throws {
+        _ = try PuckDaemonConnection(socketPath: socketPath).request(
+            "session.answer", params: ["session": id, "call_id": callID,
+                                       "selections": selections.map(\.wireValue)])
     }
 
     public func events(_ id: String, after: UInt64? = nil) throws -> PuckEventBatch {
