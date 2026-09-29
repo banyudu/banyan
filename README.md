@@ -131,10 +131,11 @@ the companion CLI at `dist/bin/banyanctl`. For iterative development, use
 ## Puck sessions
 
 Start `puckd` after configuring an account with `puck auth login`. In the
-macOS app, daemon sessions appear in the main **Sessions** list alongside
-tmux sessions. Create a session from a configured agent profile or choose
-**Puck** from the sidebar picker for provider and model controls. Create it with a
-workspace, provider, optional account label and model, then send a prompt.
+macOS app, daemon sessions appear beside tmux sessions in their project group
+in the main **Sessions** list. Create a session from a configured agent profile,
+or choose **Puck** from the sidebar picker for provider and model controls.
+Create it with a workspace, provider, optional account label and model, then
+send a prompt.
 The Puck view streams daemon events and shows pending approvals. Detach by
 switching views or clicking **Detach**; the turn continues in `puckd`. After a
 Banyan restart, choose the same session from the daemon list. Slack and other
@@ -205,6 +206,11 @@ session_launches:
     label: Codex
     provider: codex
     command: codex
+  - id: codex-puck
+    label: Codex (Puck)
+    provider: codex
+    command: codex
+    puck_provider: codex
   - id: codex-fast
     label: Codex Fast
     provider: codex
@@ -229,9 +235,9 @@ paths can be absolute, start with `~`, or use a `file://` URL, and override
 provider branding. Commands are passed to the session shell unchanged, so
 quote YAML values when needed.
 
-The project picker opens the built-in plain `codex` profile as a puck daemon
-session. A configured profile uses puck only when it declares `puck_provider`
-(`codex`, `opencode-go`, `anthropic`, or `gemini`); `puck_model` and
+The built-in `Codex` profile opens a terminal session; `Codex (Puck)` opens a
+puck daemon session. A configured profile uses puck only when it declares
+`puck_provider` (`codex`, `opencode-go`, `anthropic`, or `gemini`); `puck_model` and
 `puck_account` select the exact model and a label in puck's own account store.
 Both fields are required for `anthropic` and `gemini` and optional for the other
 providers. The shared agent registry accepts `puckProvider`, `puckModel`, and
@@ -258,7 +264,8 @@ The same session ID also works with `banyanctl session list` and
 `banyanctl puck attach --id SESSION_ID`.
 The project picker, New Session shortcut, and command palette use a profile's
 puck settings. `banyanctl agent run --profile PROFILE_ID` uses the same profile
-when Banyan is running; `--agent codex` also resolves the `codex` profile.
+when Banyan is running; `--agent codex` resolves the terminal `codex` profile,
+while `--profile codex-puck` selects puck.
 Puck launches accept `--id`, `--cwd`, `--prompt`, and focus/background options.
 Title, tone, and a tmux parent belong to shell sessions and are rejected for
 puck profiles.
@@ -268,10 +275,10 @@ the shared registry at `~/.agents/agents.yml` (entries with `tags: [banyan]`,
 respecting `picker: false` and `banyanCommand`), so `workit sync` is no longer
 required for the picker — you can omit the `session_launches` section
 entirely. If neither source is available, Banyan uses the built-ins `zsh`,
-Claude, and Codex. If the file cannot be read or is invalid (including
-duplicate IDs or no profiles), Banyan starts with those built-ins and shows
-the parsing diagnostic in Preferences. An old remembered profile ID that is no
-longer configured falls back to the `zsh` profile, or the first profile when
+Claude, Codex, and Codex (Puck). If the file cannot be read or is invalid
+(including duplicate IDs or no profiles), Banyan starts with those built-ins
+and shows the parsing diagnostic in Preferences. An old remembered profile ID
+that is no longer configured falls back to the `zsh` profile, or the first profile when
 no `zsh` profile is configured.
 
 ## Custom palette commands

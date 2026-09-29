@@ -39,8 +39,8 @@ private func tempHome() -> URL {
     try configWithoutLaunches.write(to: home.appendingPathComponent(".banyan/config.yml"), atomically: true, encoding: .utf8)
 
     let result = SessionLaunchProfileLoader.load(homeDirectory: home)
-    #expect(result.profiles.map(\.id) == ["zsh", "codex", "claude"])
-    // zsh/codex from agents, claude merged from builtInDefaults (since agents lacks it)
+    #expect(result.profiles.map(\.id) == ["zsh", "codex", "claude", "codex-puck"])
+    // zsh/codex from agents, claude and optional puck merged from builtInDefaults.
     #expect(result.diagnostic == nil)
     #expect(result.profiles.first { $0.id == "zsh" }?.command == "")
     #expect(result.profiles.first { $0.id == "codex" }?.command == "codex")
