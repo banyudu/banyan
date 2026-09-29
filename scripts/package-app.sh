@@ -93,6 +93,11 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>${APP_VERSION}</string>
   <key>CFBundleVersion</key>
   <string>${GIT_BUILD}</string>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>puck session</string>
+    <key>CFBundleURLSchemes</key><array><string>banyan</string></array>
+  </dict></array>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>

@@ -8,6 +8,8 @@ final class ControlServer {
     private var listener: NWListener?
     private let port: NWEndpoint.Port = 7842
     private let token: String
+    private let puckClient: PuckDaemonClient
+    private let defaultWorkspace: String
     private let queue = DispatchQueue(label: "app.banyan.control-server")
     private var bindAttempts = 0
     /// ~30s of retries at 1s each, enough to outlast a previous instance releasing
@@ -37,6 +39,11 @@ final class ControlServer {
         }
     }
 
+    private enum PuckSpawnResult: Sendable {
+        case created(PuckSessionSummary, turnError: String?)
+        case failed(String, unavailable: Bool)
+    }
+
     private struct EventWaiter {
         let id: UUID
         let since: Int?
@@ -45,6 +52,9 @@ final class ControlServer {
 
     init(store: SessionStore, host: HostRuntimeContext) {
         self.store = store
+        self.puckClient = PuckDaemonClient(environment: host.environment,
+                                          homeDirectory: host.homeDirectory.path)
+        self.defaultWorkspace = host.currentDirectory
         self.token = (try? ControlToken.loadOrCreate(
             environment: host.environment,
             homeDirectory: host.homeDirectory
@@ -214,16 +224,78 @@ final class ControlServer {
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
                 let tone = body.tone.flatMap(SessionTone.init(rawValue:)) ?? .blue
-                let parentSessionID = try store.resolvedParentSessionIDForSpawn(body.parent)
                 // Default to a background spawn (do not steal the user's focus) unless
                 // focus was explicitly requested, or nothing is currently selected.
                 let shouldSelect = body.focus.flatMap(Bool.init) ?? (store.selectedSessionID == nil)
+                let profile = body.agentProfile.flatMap { id in
+                    store.sessionLaunchProfiles.first { $0.id == id }
+                }
+                if body.agentProfile != nil, body.command == nil, profile == nil {
+                    return respond(.failure(400, "unknown_profile", "unknown agent profile"))
+                }
+                if let puck = profile?.puck {
+                    guard body.title == nil, body.titleURL == nil, body.tone == nil,
+                          body.agentParentExplicit != "true" || body.parent?.isEmpty == true else {
+                        return respond(.failure(400, "unsupported_puck_metadata",
+                                                "puck sessions do not support title, tone, or parent options"))
+                    }
+                    let client = puckClient
+                    let sessionID = body.id ?? UUID().uuidString.lowercased()
+                    let workspace = body.cwd ?? defaultWorkspace
+                    let prompt = body.agentPrompt
+                    Task { @MainActor [weak store] in
+                        let result = await Task.detached(priority: .userInitiated) {
+                            () -> PuckSpawnResult in
+                            do {
+                                let summary = try client.create(
+                                    id: sessionID, provider: puck.provider,
+                                    account: puck.account, model: puck.model,
+                                    workspace: workspace
+                                )
+                                if let prompt, !prompt.isEmpty {
+                                    do { try client.turn(summary.id, prompt: prompt) }
+                                    catch { return .created(summary, turnError: error.localizedDescription) }
+                                }
+                                return .created(summary, turnError: nil)
+                            } catch let error as PuckDaemonError {
+                                if case .unavailable = error {
+                                    return .failed(error.localizedDescription, unavailable: true)
+                                }
+                                return .failed(error.localizedDescription, unavailable: false)
+                            } catch {
+                                return .failed(error.localizedDescription, unavailable: false)
+                            }
+                        }.value
+                        switch result {
+                        case .created(let summary, let turnError):
+                            store?.onPuckCreated?(summary.id, shouldSelect)
+                            if let turnError {
+                                respond(.failure(502, "puck_turn_failed", "Session \(summary.id) was created: \(turnError)"))
+                            } else {
+                                let session: [String: String] = [
+                                    "id": summary.id, "provider": summary.provider,
+                                    "model": summary.model, "account": summary.account,
+                                    "workspace": summary.workspace, "backend": "puck"
+                                ]
+                                respond(.ok(["session": session, "puckSession": session]))
+                            }
+                        case .failed(let message, let unavailable):
+                            respond(.failure(unavailable ? 503 : 400, "puck_create_failed", message))
+                        }
+                    }
+                    return
+                }
+                let parentSessionID = try store.resolvedParentSessionIDForSpawn(body.parent)
+                let command = body.command ?? profile.map { launch in
+                    guard let prompt = body.agentPrompt, !prompt.isEmpty else { return launch.command }
+                    return launch.command + " " + AgentLaunchCommand.shellQuote(prompt)
+                }
                 let session = store.spawn(
                     id: body.id,
                     title: body.title,
                     titleURL: body.titleURL,
                     cwd: body.cwd,
-                    command: body.command,
+                    command: command,
                     parentSessionID: parentSessionID,
                     tone: tone,
                     select: shouldSelect

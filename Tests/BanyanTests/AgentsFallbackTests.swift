@@ -66,6 +66,22 @@ private func tempHome() -> URL {
     #expect(profiles[0].providerName == "opus")
 }
 
+@Test func agentsRegistryCarriesExplicitPuckModel() throws {
+    let profiles = try SessionLaunchProfileLoader.parseAgents("""
+    agents:
+      muse:
+        label: Muse
+        provider: muse
+        tags: [banyan]
+        command: opencode --agent muse-spark
+        puckProvider: opencode-go
+        puckModel: muse-spark-1.3-contributor
+        puckAccount: personal
+    """)
+    #expect(profiles.first?.puck == .init(provider: "opencode-go",
+                                          model: "muse-spark-1.3-contributor", account: "personal"))
+}
+
 @Test func agentsFallbackFiltersByTagAndPicker() throws {
     let yaml = """
     agents:

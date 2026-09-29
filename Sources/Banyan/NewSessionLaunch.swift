@@ -15,11 +15,35 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
     let providerName: String?
     let iconName: String?
     let command: String
+    let puck: PuckLaunch?
+
+    struct PuckLaunch: Hashable, Codable, Sendable {
+        let provider: String
+        let model: String?
+        let account: String?
+
+        init(provider: String, model: String? = nil, account: String? = nil) {
+            self.provider = provider
+            self.model = model
+            self.account = account
+        }
+    }
+
+    init(id: String, label: String, providerName: String?, iconName: String?,
+         command: String, puck: PuckLaunch? = nil) {
+        self.id = id
+        self.label = label
+        self.providerName = providerName
+        self.iconName = iconName
+        self.command = command
+        self.puck = puck
+    }
 
     static let builtInDefaults = [
         NewSessionLaunch(id: "zsh", label: "zsh", providerName: nil, iconName: nil, command: ""),
         NewSessionLaunch(id: "claude", label: "Claude", providerName: "claude", iconName: nil, command: "claude"),
-        NewSessionLaunch(id: "codex", label: "Codex", providerName: "codex", iconName: nil, command: "codex")
+        NewSessionLaunch(id: "codex", label: "Codex", providerName: "codex", iconName: nil,
+                         command: "codex", puck: PuckLaunch(provider: "codex"))
     ]
 
     var provider: CodingAgentProvider? {
@@ -328,20 +352,36 @@ enum SessionLaunchProfileLoader {
                   let command = item["command"]
             else { throw ParseError(index + 1, "each profile requires non-empty id, label, and command") }
             guard ids.insert(id).inserted else { throw ParseError(index + 1, "duplicate profile id '\(id)'") }
+            let puck = try puckLaunch(item, lineNumber: index + 1)
             return NewSessionLaunch(
                 id: id,
                 label: label,
                 providerName: item["provider"],
                 iconName: item["icon"],
-                command: command
+                command: command,
+                puck: puck
             )
         }
+    }
+
+    private static func puckLaunch(_ item: [String: String], lineNumber: Int) throws -> NewSessionLaunch.PuckLaunch? {
+        let provider = item["puck_provider"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let model = item["puck_model"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let account = item["puck_account"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard provider != nil || model != nil || account != nil else { return nil }
+        guard let provider, ["codex", "opencode-go"].contains(provider) else {
+            throw ParseError(lineNumber, "puck_provider must be codex or opencode-go")
+        }
+        guard model?.isEmpty != true, account?.isEmpty != true else {
+            throw ParseError(lineNumber, "puck_model and puck_account must not be empty")
+        }
+        return NewSessionLaunch.PuckLaunch(provider: provider, model: model, account: account)
     }
 
     private static func parseField(_ line: String, lineNumber: Int) throws -> [String: String] {
         guard let separator = line.firstIndex(of: ":") else { throw ParseError(lineNumber, "expected key: value") }
         let key = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
-        guard ["id", "label", "provider", "icon", "command"].contains(key) else { throw ParseError(lineNumber, "unknown field '\(key)'") }
+        guard ["id", "label", "provider", "icon", "command", "puck_provider", "puck_model", "puck_account"].contains(key) else { throw ParseError(lineNumber, "unknown field '\(key)'") }
         let value = try scalar(String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces), lineNumber: lineNumber)
         return [key: value]
     }
@@ -379,11 +419,14 @@ enum SessionLaunchProfileLoader {
         var currentCommand: String?
         var currentBanyanCommand: String?
         var currentTags: [String]?
+        var currentPuckProvider: String?
+        var currentPuckModel: String?
+        var currentPuckAccount: String?
         var currentPickerIsFalse = false
         var skippingOpencodeDepth: Int?
         var foundAgentsSection = false
 
-        func flushCurrent() {
+        func flushCurrent() throws {
             guard let id = currentID else { return }
             // Replicate workit filtering
             let tags = currentTags ?? []
@@ -394,12 +437,18 @@ enum SessionLaunchProfileLoader {
             }
             let command = currentBanyanCommand ?? currentCommand ?? ""
             let label = (currentLabel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? currentLabel! : id
+            var puckFields: [String: String] = [:]
+            puckFields["puck_provider"] = currentPuckProvider
+            puckFields["puck_model"] = currentPuckModel
+            puckFields["puck_account"] = currentPuckAccount
+            let puck = try puckLaunch(puckFields, lineNumber: 1)
             profiles.append(NewSessionLaunch(
                 id: id,
                 label: label,
                 providerName: currentProvider,
                 iconName: currentIcon,
-                command: command
+                command: command,
+                puck: puck
             ))
         }
 
@@ -414,7 +463,7 @@ enum SessionLaunchProfileLoader {
             if isTopLevel {
                 if trimmed == "agents:" {
                     // leaving previous top-level, flush any pending agent
-                    if inAgentsSection { flushCurrent(); currentID = nil }
+                    if inAgentsSection { try flushCurrent(); currentID = nil }
                     inAgentsSection = true
                     foundAgentsSection = true
                     currentID = nil
@@ -425,12 +474,15 @@ enum SessionLaunchProfileLoader {
                     currentBanyanCommand = nil
                     currentTags = nil
                     currentPickerIsFalse = false
+                    currentPuckProvider = nil
+                    currentPuckModel = nil
+                    currentPuckAccount = nil
                     skippingOpencodeDepth = nil
                     continue
                 }
                 if trimmed.contains(":") {
                     if inAgentsSection {
-                        flushCurrent()
+                        try flushCurrent()
                         currentID = nil
                         inAgentsSection = false
                         skippingOpencodeDepth = nil
@@ -451,7 +503,7 @@ enum SessionLaunchProfileLoader {
 
             if indent == 2 {
                 // New agent entry: `  name:`
-                flushCurrent()
+                try flushCurrent()
                 // Parse id — must end with colon
                 guard trimmed.hasSuffix(":") else { continue }
                 let idPart = String(trimmed.dropLast()).trimmingCharacters(in: .whitespaces)
@@ -471,6 +523,9 @@ enum SessionLaunchProfileLoader {
                 currentBanyanCommand = nil
                 currentTags = nil
                 currentPickerIsFalse = false
+                currentPuckProvider = nil
+                currentPuckModel = nil
+                currentPuckAccount = nil
                 continue
             }
 
@@ -507,13 +562,19 @@ enum SessionLaunchProfileLoader {
             case "picker":
                 let v = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
                 currentPickerIsFalse = v.lowercased() == "false"
+            case "puckProvider", "puck_provider":
+                currentPuckProvider = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
+            case "puckModel", "puck_model":
+                currentPuckModel = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
+            case "puckAccount", "puck_account":
+                currentPuckAccount = (try? scalar(rawValue, lineNumber: 1)) ?? rawValue
             case "opencode":
                 skippingOpencodeDepth = 4
             default:
                 continue
             }
         }
-        flushCurrent()
+        try flushCurrent()
         guard foundAgentsSection else { throw ParseError(1, "missing agents section") }
         return profiles
     }

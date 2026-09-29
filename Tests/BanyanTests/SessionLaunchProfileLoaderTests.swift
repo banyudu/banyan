@@ -20,8 +20,46 @@ import Testing
     #expect(profiles[0].label == "Codex Fast")
     #expect(profiles[0].provider == .codex)
     #expect(profiles[0].command == "codex --profile fast")
+    #expect(profiles[0].puck == nil) // A CLI profile may select an unknown model/account.
     #expect(profiles[1].command == "claude --model opus --dangerously-skip-permissions")
     #expect(profiles[1].iconName == "~/.banyan/icons/claude-opus.png")
+}
+
+@Test func puckLaunchProfileKeepsExplicitModelAndAccount() throws {
+    let profiles = try SessionLaunchProfileLoader.parse("""
+    session_launches:
+      - id: muse
+        label: Muse Spark
+        provider: muse
+        command: opencode --agent muse-spark
+        puck_provider: opencode-go
+        puck_model: muse-spark-1.3-contributor
+        puck_account: personal
+    """)
+    #expect(profiles[0].puck == .init(provider: "opencode-go",
+                                      model: "muse-spark-1.3-contributor", account: "personal"))
+    #expect(NewSessionLaunch.builtInDefaults.first { $0.id == "codex" }?.puck == .init(provider: "codex"))
+}
+
+@Test func invalidPuckLaunchProfileDoesNotBecomeACLIProfile() {
+    #expect(throws: Error.self) {
+        try SessionLaunchProfileLoader.parse("""
+        session_launches:
+          - id: unknown
+            label: Unknown
+            command: opencode
+            puck_provider: another-provider
+        """)
+    }
+    #expect(throws: Error.self) {
+        try SessionLaunchProfileLoader.parse("""
+        session_launches:
+          - id: incomplete
+            label: Incomplete
+            command: opencode
+            puck_model: muse-spark-1.3-contributor
+        """)
+    }
 }
 
 @Test func duplicateSessionLaunchProfileIDsFallBackToDefaults() {

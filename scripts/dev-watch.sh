@@ -54,6 +54,10 @@ package_dev_app() {
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.4.0</string>
   <key>CFBundleVersion</key><string>dev</string>
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>puck session</string>
+    <key>CFBundleURLSchemes</key><array><string>banyan</string></array>
+  </dict></array>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

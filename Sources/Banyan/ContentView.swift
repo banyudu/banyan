@@ -57,6 +57,12 @@ struct ContentView: View {
         } detail: {
             detail
         }
+        .onOpenURL { url in
+            guard let id = PuckSessionLink.sessionID(from: url) else { return }
+            store.sidebarMode = .puck
+            puckBrowser.refresh()
+            puckBrowser.select(id)
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 TitleBarLogo()
@@ -119,6 +125,21 @@ struct ContentView: View {
                 .environmentObject(store)
         }
         .onAppear {
+            let browser = puckBrowser
+            store.onPuckLaunch = { [weak store, weak browser] launch, workspace, prompt in
+                guard let puck = launch.puck else { return }
+                browser?.create(provider: puck.provider, account: puck.account,
+                                model: puck.model, workspace: workspace, prompt: prompt)
+                store?.sidebarMode = .puck
+            }
+            store.onPuckSibling = { [weak browser] in browser?.createSibling() }
+            store.puckSelectedWorkspace = { [weak browser] in browser?.selectedSummary?.workspace }
+            store.onPuckCreated = { [weak store, weak browser] id, focus in
+                browser?.refresh()
+                guard focus else { return }
+                store?.sidebarMode = .puck
+                browser?.select(id)
+            }
             store.loadPersistedSessionsIfNeeded()
             store.spawnDefaultSessionIfEmpty()
             store.refreshImportedHistoryIfNeeded()
