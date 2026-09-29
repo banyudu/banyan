@@ -18,5 +18,6 @@ public enum SessionListAction: Sendable, Equatable {
     case remove
     case activate
     case trimResume
+    case puck
     case unknown
 }

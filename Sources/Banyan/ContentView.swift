@@ -30,6 +30,7 @@ private enum LinearIssueSortOption: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @EnvironmentObject private var updater: AppUpdater
+    @StateObject private var puckBrowser = PuckSessionBrowser()
     private let selection: SessionSelection
     @State private var showingPreferences = false
     @State private var showingCommandPalette = false
@@ -379,6 +380,8 @@ struct ContentView: View {
             switch store.sidebarMode {
             case .sessions:
                 sessionsSidebar
+            case .puck:
+                PuckSessionSidebar(browser: puckBrowser)
             case .linear:
                 linearSidebar
             }
@@ -1373,6 +1376,8 @@ struct ContentView: View {
         switch store.sidebarMode {
         case .sessions:
             sessionDetail
+        case .puck:
+            PuckSessionDetail(browser: puckBrowser)
         case .linear:
             linearDetail
         }
