@@ -16,12 +16,12 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
         let id = options["id"] ?? UUID().uuidString.lowercased()
         let workspace = NSString(string: options["cwd"] ?? host.currentDirectory).expandingTildeInPath
         let provider = options["provider"] ?? "codex"
-        guard ["codex", "opencode-go", "anthropic"].contains(provider) else {
-            throw PuckDaemonError.rejected("puckd supports codex, opencode-go, and anthropic providers")
+        guard ["codex", "opencode-go", "anthropic", "gemini"].contains(provider) else {
+            throw PuckDaemonError.rejected("puckd supports codex, opencode-go, anthropic, and gemini providers")
         }
-        if provider == "anthropic",
+        if ["anthropic", "gemini"].contains(provider),
            options["model"]?.isEmpty != false || options["account"]?.isEmpty != false {
-            throw PuckDaemonError.rejected("anthropic requires --model and --account (a separately billed API key)")
+            throw PuckDaemonError.rejected("\(provider) requires --model and --account (a separately billed API key)")
         }
         let session = try client.create(id: id, provider: provider,
                                         account: options["account"], model: options["model"],

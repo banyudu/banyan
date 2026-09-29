@@ -21,20 +21,21 @@ struct PuckTUI {
             guard !choice.isEmpty else { return }
             let id: String
             if choice == "new" {
-                let provider = input.readLine(prompt: "Provider [codex/opencode-go/anthropic] (default codex): ") ?? ""
+                let provider = input.readLine(prompt: "Provider [codex/opencode-go/anthropic/gemini] (default codex): ") ?? ""
                 let selectedProvider = provider.isEmpty ? "codex" : provider
-                guard ["codex", "opencode-go", "anthropic"].contains(selectedProvider) else {
+                guard ["codex", "opencode-go", "anthropic", "gemini"].contains(selectedProvider) else {
                     output.write("Unsupported puck provider", terminator: "\n")
                     return
                 }
-                let account = input.readLine(prompt: selectedProvider == "anthropic"
-                    ? "Anthropic Console API-key account label: "
+                let billedAPI = ["anthropic", "gemini"].contains(selectedProvider)
+                let account = input.readLine(prompt: billedAPI
+                    ? "Separately billed API-key account label: "
                     : "Account label (blank for pool): ") ?? ""
-                let model = input.readLine(prompt: selectedProvider == "anthropic"
-                    ? "Anthropic API model ID: "
+                let model = input.readLine(prompt: billedAPI
+                    ? "API model ID: "
                     : "Model (blank for default): ") ?? ""
-                if selectedProvider == "anthropic" && (account.isEmpty || model.isEmpty) {
-                    output.write("Anthropic requires an explicit model and separately billed API-key account", terminator: "\n")
+                if billedAPI && (account.isEmpty || model.isEmpty) {
+                    output.write("\(selectedProvider) requires an explicit model and separately billed API-key account", terminator: "\n")
                     return
                 }
                 let cwd = input.readLine(prompt: "Workspace (blank for current): ") ?? ""

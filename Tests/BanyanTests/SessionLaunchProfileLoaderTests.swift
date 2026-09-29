@@ -67,6 +67,41 @@ import Testing
     }
 }
 
+@Test func geminiPuckProfileRequiresExplicitModelAndAccount() throws {
+    let profiles = try SessionLaunchProfileLoader.parse("""
+    session_launches:
+      - id: gemini-api
+        label: Gemini API
+        provider: gemini
+        command: gemini
+        puck_provider: gemini
+        puck_model: gemini-2.5-flash
+        puck_account: ai-studio-seat
+    """)
+    #expect(profiles[0].puck == .init(provider: "gemini",
+                                      model: "gemini-2.5-flash", account: "ai-studio-seat"))
+    #expect(throws: Error.self) {
+        try SessionLaunchProfileLoader.parse("""
+        session_launches:
+          - id: gemini-api
+            label: Gemini API
+            command: gemini
+            puck_provider: gemini
+            puck_model: gemini-2.5-flash
+        """)
+    }
+    #expect(throws: Error.self) {
+        try SessionLaunchProfileLoader.parse("""
+        session_launches:
+          - id: gemini-api
+            label: Gemini API
+            command: gemini
+            puck_provider: gemini
+            puck_account: ai-studio-seat
+        """)
+    }
+}
+
 @Test func invalidPuckLaunchProfileDoesNotBecomeACLIProfile() {
     #expect(throws: Error.self) {
         try SessionLaunchProfileLoader.parse("""

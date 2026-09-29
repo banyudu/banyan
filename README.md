@@ -149,10 +149,11 @@ banyanctl puck attach --id SESSION_ID
 banyanctl puck decide --id SESSION_ID --call-id CALL_ID --decision approve
 ```
 
-`PUCK_HOME` selects a non-default puck data directory. Puck currently supports
-`codex` and `opencode-go` providers. Existing agent launch profiles and
-`banyanctl agent run` still use their terminal backends; plain shells retain
-their tmux behavior.
+`PUCK_HOME` selects a non-default puck data directory. Banyan's puck launch
+surfaces support `codex`, `opencode-go`, `anthropic`, and `gemini`. The latter two
+use separately billed API-key accounts and require an explicit model and account
+label. Profiles without `puck_provider` and plain shells retain their terminal
+backends.
 
 ## Run the macOS app
 
@@ -230,18 +231,21 @@ quote YAML values when needed.
 
 The project picker opens the built-in plain `codex` profile as a puck daemon
 session. A configured profile uses puck only when it declares `puck_provider`
-(`codex`, `opencode-go`, or `anthropic`); optional `puck_model` and `puck_account` select the
-exact model and a label in puck's own account store. The shared agent registry
-accepts `puckProvider`, `puckModel`, and `puckAccount` for the same purpose.
+(`codex`, `opencode-go`, `anthropic`, or `gemini`); `puck_model` and
+`puck_account` select the exact model and a label in puck's own account store.
+Both fields are required for `anthropic` and `gemini` and optional for the other
+providers. The shared agent registry accepts `puckProvider`, `puckModel`, and
+`puckAccount` for the same purpose.
 Configure puck credentials with `puck auth login`, then start `puckd` before
 launching those profiles. Opaque commands such as `codex -p fast` remain tmux
 sessions until given explicit puck settings, because Banyan cannot infer the
 model or account that another CLI profile would choose. Other agent backends
 continue using their configured commands until puck supports their credential
 and API contracts.
-An Anthropic Console API-key account requires explicit `puck_model` and
-`puck_account`. This is a separately billed API route; the built-in Claude
-subscription profile stays on its configured command.
+Anthropic Console and Gemini AI Studio API-key accounts require explicit
+`puck_model` and `puck_account`. These are separately billed API routes; the
+existing Claude and Gemini subscription profiles stay on their configured
+commands.
 
 A puck session can be opened in the macOS app with `banyan://puck/SESSION_ID`.
 For a Slack button, host [the static redirect page](docs/puck-session-redirect.html)
