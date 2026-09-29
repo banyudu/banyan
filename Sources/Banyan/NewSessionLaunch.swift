@@ -43,6 +43,8 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
         NewSessionLaunch(id: "zsh", label: "zsh", providerName: nil, iconName: nil, command: ""),
         NewSessionLaunch(id: "claude", label: "Claude", providerName: "claude", iconName: nil, command: "claude"),
         NewSessionLaunch(id: "codex", label: "Codex", providerName: "codex", iconName: nil,
+                         command: "codex"),
+        NewSessionLaunch(id: "codex-puck", label: "Codex (Puck)", providerName: "codex", iconName: nil,
                          command: "codex", puck: PuckLaunch(provider: "codex"))
     ]
 

@@ -2,33 +2,75 @@ import BanyanCore
 import Foundation
 import SwiftUI
 
+struct PuckSessionProject: Equatable, Sendable {
+    let id: String
+    let title: String
+}
+
 @MainActor
 final class PuckSessionBrowser: ObservableObject {
     @Published private(set) var sessions: [PuckSessionSummary] = []
+    @Published private(set) var projectsBySessionID: [String: PuckSessionProject] = [:]
     @Published private(set) var selectedID: String?
     @Published private(set) var selectedSummary: PuckSessionSummary?
     @Published private(set) var events: [PuckSessionEvent] = []
     @Published private(set) var error: String?
+    @Published private(set) var creationError: String?
     @Published private(set) var isConnecting = false
     @Published var showingNew = false
 
     private let client = PuckDaemonClient()
+    private let homeDirectory: String
+    private let environment: [String: String]
     private var connection: PuckDaemonConnection?
     private var generation = 0
+    private var listGeneration = 0
 
     var renderedEvents: [PuckRenderedEvent] { PuckTranscript.render(events) }
 
+    init(homeDirectory: String = NSHomeDirectory(),
+         environment: [String: String] = ProcessInfo.processInfo.environment) {
+        self.homeDirectory = homeDirectory
+        self.environment = environment
+    }
+
     func refresh() {
+        listGeneration += 1
+        let currentListGeneration = listGeneration
         let client = self.client
+        let homeDirectory = self.homeDirectory
+        let environment = self.environment
         Task.detached(priority: .utility) {
             do {
                 let sessions = try client.list()
+                var projectsByWorkspace: [String: PuckSessionProject] = [:]
+                var projectsBySessionID: [String: PuckSessionProject] = [:]
+                for session in sessions {
+                    if projectsByWorkspace[session.workspace] == nil {
+                        let context = SessionDisplayLabel.context(
+                            cwd: session.workspace,
+                            homeDirectory: homeDirectory,
+                            environment: environment
+                        )
+                        projectsByWorkspace[session.workspace] = PuckSessionProject(
+                            id: context.groupID, title: context.groupTitle
+                        )
+                    }
+                    projectsBySessionID[session.id] = projectsByWorkspace[session.workspace]
+                }
+                let projects = projectsBySessionID
                 await MainActor.run {
+                    guard self.listGeneration == currentListGeneration else { return }
                     self.sessions = sessions
+                    self.projectsBySessionID = projects
                     self.error = nil
                 }
             } catch {
-                await MainActor.run { self.error = error.localizedDescription }
+                await MainActor.run {
+                    if self.listGeneration == currentListGeneration {
+                        self.error = error.localizedDescription
+                    }
+                }
             }
         }
     }
@@ -98,22 +140,38 @@ final class PuckSessionBrowser: ObservableObject {
 
     func create(provider: String, account: String?, model: String?, workspace: String,
                 prompt: String?) {
+        creationError = nil
         let client = self.client
         let id = UUID().uuidString.lowercased()
+        let homeDirectory = self.homeDirectory
+        let environment = self.environment
         Task.detached(priority: .userInitiated) {
             do {
                 let summary = try client.create(id: id, provider: provider, account: account,
                                                 model: model, workspace: workspace)
+                let context = SessionDisplayLabel.context(
+                    cwd: summary.workspace, homeDirectory: homeDirectory, environment: environment
+                )
+                let project = PuckSessionProject(id: context.groupID, title: context.groupTitle)
                 await MainActor.run {
+                    self.listGeneration += 1
                     self.sessions.append(summary)
                     self.sessions.sort { $0.id < $1.id }
+                    self.projectsBySessionID[summary.id] = project
                     self.select(summary.id)
                 }
                 if let prompt, !prompt.isEmpty { try client.turn(id, prompt: prompt) }
             } catch {
-                await MainActor.run { self.error = error.localizedDescription }
+                await MainActor.run {
+                    self.error = error.localizedDescription
+                    self.creationError = error.localizedDescription
+                }
             }
         }
+    }
+
+    func dismissCreationError() {
+        creationError = nil
     }
 
     func createSibling() {

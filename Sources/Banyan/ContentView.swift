@@ -27,6 +27,55 @@ private enum LinearIssueSortOption: String, CaseIterable, Identifiable {
     }
 }
 
+struct PuckSidebarProjection {
+    let groups: [SidebarSessionGroup]
+    let sessionsByGroup: [String: [PuckSessionSummary]]
+
+    static func make(
+        terminalGroups: [SidebarSessionGroup],
+        puckSessions: [PuckSessionSummary],
+        projectsBySessionID: [String: PuckSessionProject],
+        query: String
+    ) -> Self {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var groups = terminalGroups
+        if !query.isEmpty {
+            let matches = puckSessions.filter { session in
+                [session.provider, session.model, session.id, session.workspace]
+                    .contains { $0.localizedStandardContains(query) }
+            }
+            if groups.isEmpty, !matches.isEmpty {
+                groups = [SidebarSessionGroup(id: "search", title: "Search", items: [])]
+            }
+            return Self(groups: groups, sessionsByGroup: ["search": matches])
+        }
+
+        var sessionsByGroup: [String: [PuckSessionSummary]] = [:]
+        var puckOnlyProjects: [String: PuckSessionProject] = [:]
+        let existingGroupIDs = Set(groups.map(\.id))
+        for session in puckSessions {
+            guard let project = projectsBySessionID[session.id] else { continue }
+            sessionsByGroup[project.id, default: []].append(session)
+            if !existingGroupIDs.contains(project.id) {
+                puckOnlyProjects[project.id] = project
+            }
+        }
+        let history = groups.filter { $0.id == "history" }
+        groups.removeAll { $0.id == "history" }
+        groups.append(contentsOf: puckOnlyProjects.values.map {
+            SidebarSessionGroup(id: $0.id, title: $0.title, items: [])
+        })
+        groups.sort {
+            let titleComparison = $0.title.localizedCaseInsensitiveCompare($1.title)
+            return titleComparison == .orderedSame
+                ? $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending
+                : titleComparison == .orderedAscending
+        }
+        groups.append(contentsOf: history)
+        return Self(groups: groups, sessionsByGroup: sessionsByGroup)
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @EnvironmentObject private var updater: AppUpdater
@@ -171,6 +220,14 @@ struct ContentView: View {
             }
         } message: {
             Text(store.handoffNotice ?? "")
+        }
+        .alert("Puck session error", isPresented: Binding(
+            get: { puckBrowser.creationError != nil },
+            set: { if !$0 { puckBrowser.dismissCreationError() } }
+        )) {
+            Button("OK") { puckBrowser.dismissCreationError() }
+        } message: {
+            Text(puckBrowser.creationError ?? "")
         }
         .background(WindowTitleConfigurator(trigger: titlebarConfigurationTrigger))
         .preferredColorScheme(store.terminalTheme.colorScheme)
@@ -469,54 +526,27 @@ struct ContentView: View {
         .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
     }
 
+    private var puckSidebarProjection: PuckSidebarProjection {
+        PuckSidebarProjection.make(
+            terminalGroups: store.unifiedSidebarGroups,
+            puckSessions: puckBrowser.sessions,
+            projectsBySessionID: puckBrowser.projectsBySessionID,
+            query: store.historyFilterText
+        )
+    }
+
     private var sessionsSidebar: some View {
-        let groups = store.unifiedSidebarGroups
+        let projection = puckSidebarProjection
+        let groups = projection.groups
         let jumpKeyLabels = makeJumpKeyLabels(groups: groups)
         return VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 List {
-                    sidebarSections(groups, jumpKeyLabels: jumpKeyLabels)
-                    Section {
-                        if puckBrowser.sessions.isEmpty {
-                            Text(puckBrowser.error ?? "No puck sessions")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(puckBrowser.sessions, id: \.id) { session in
-                                Button {
-                                    puckBrowser.select(session.id)
-                                } label: {
-                                    HStack {
-                                        Image(systemName: "sparkles")
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("\(session.provider)/\(session.model)").lineLimit(1)
-                                            Text(session.id)
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-                                        Spacer()
-                                        Text(session.position)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                                .listRowBackground(puckBrowser.selectedID == session.id
-                                    ? Color.accentColor.opacity(0.16) : Color.clear)
-                            }
-                        }
-                    } header: {
-                        HStack {
-                            Text("Puck sessions")
-                            Spacer()
-                            Button { puckBrowser.refresh() } label: {
-                                Image(systemName: "arrow.clockwise")
-                            }
-                            .buttonStyle(.plain)
-                            .help("Refresh daemon sessions")
-                        }
-                    }
+                    sidebarSections(
+                        groups,
+                        puckSessionsByGroup: projection.sessionsByGroup,
+                        jumpKeyLabels: jumpKeyLabels
+                    )
                 }
                 .listStyle(.sidebar)
                 .scrollIndicators(.hidden)
@@ -542,6 +572,14 @@ struct ContentView: View {
                     lastAutoScrolledSidebarSessionID = id
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo(id, anchor: .center)
+                    }
+                }
+                .onChange(of: puckBrowser.selectedID) { _, id in
+                    guard let id else { return }
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("puck:\(id)", anchor: .center)
+                        }
                     }
                 }
             }
@@ -1186,6 +1224,7 @@ struct ContentView: View {
     @ViewBuilder
     private func sidebarSections(
         _ groups: [SidebarSessionGroup],
+        puckSessionsByGroup: [String: [PuckSessionSummary]],
         jumpKeyLabels: [String: String]
     ) -> some View {
         let firstGroupID = groups.first?.id
@@ -1193,6 +1232,7 @@ struct ContentView: View {
             // The history and search groups are not user-reorderable and render
             // their rows dimmed, as a visual separator above the active sessions.
             let isStatic = group.id == "history" || group.id == "search"
+            let puckSessions = puckSessionsByGroup[group.id] ?? []
             // The disclosure gutter is reserved for every row in the group as
             // soon as any row needs it, so same-depth badges line up and a
             // top-level parent never reads as a child of its sibling.
@@ -1224,6 +1264,9 @@ struct ContentView: View {
                         store.moveSidebarSessions(in: group.id, from: source, to: destination)
                     }
                 }
+                ForEach(puckSessions, id: \.id) { session in
+                    puckSidebarRow(session)
+                }
             } header: {
                 HStack(spacing: 4) {
                     Text(group.title)
@@ -1234,7 +1277,11 @@ struct ContentView: View {
                     if !isStatic {
                         Spacer(minLength: 4)
 
-                        ProjectNewSessionButton(groupID: group.id, groupTitle: group.title)
+                        ProjectNewSessionButton(
+                            groupID: group.id,
+                            groupTitle: group.title,
+                            puckWorkspace: puckSessions.first?.workspace
+                        )
                     }
                 }
                 // Only the first project gets extra top breathing room under the
@@ -1252,6 +1299,33 @@ struct ContentView: View {
             }
             .listSectionSeparator(isStatic ? .visible : .hidden, edges: .top)
         }
+    }
+
+    private func puckSidebarRow(_ session: PuckSessionSummary) -> some View {
+        Button {
+            puckBrowser.select(session.id)
+        } label: {
+            HStack {
+                Image(systemName: "sparkles")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Puck · \(session.provider)/\(session.model)").lineLimit(1)
+                    Text(session.id)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(session.position)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(puckBrowser.selectedID == session.id
+            ? Color.accentColor.opacity(0.16) : Color.clear)
+        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+        .id("puck:\(session.id)")
+        .accessibilityIdentifier("banyan.puckSession.\(session.id)")
     }
 
     private func makeJumpKeyLabels(
@@ -2949,6 +3023,7 @@ private struct ProjectNewSessionButton: View {
     @EnvironmentObject private var store: SessionStore
     let groupID: String
     let groupTitle: String
+    let puckWorkspace: String?
 
     var body: some View {
         // Time-of-use pricing flips at most a few times a day, so a
@@ -2960,7 +3035,8 @@ private struct ProjectNewSessionButton: View {
             Menu {
                 ForEach(store.sessionLaunchProfiles) { launch in
                     Button {
-                        store.spawnSession(inProjectGroup: groupID, launch: launch)
+                        store.spawnSession(inProjectGroup: groupID, launch: launch,
+                                           puckWorkspace: puckWorkspace)
                     } label: {
                         Label {
                             Text(launch.label)
@@ -2972,7 +3048,8 @@ private struct ProjectNewSessionButton: View {
             } label: {
                 NewSessionLaunchIcon(launch: current)
             } primaryAction: {
-                store.spawnSession(inProjectGroup: groupID, launch: current)
+                store.spawnSession(inProjectGroup: groupID, launch: current,
+                                   puckWorkspace: puckWorkspace)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.visible)

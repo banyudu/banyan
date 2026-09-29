@@ -7,8 +7,10 @@ import BanyanCore
     #expect(SessionLaunchPolicy.siblingRuntimeCommand(for: .codex) == "codex")
 }
 
-@Test func builtInDefaultsContainOnlyZshClaudeAndCodex() {
-    #expect(NewSessionLaunch.builtInDefaults.map(\.id) == ["zsh", "claude", "codex"])
+@Test func builtInDefaultsOfferTerminalCodexAndOptionalPuck() {
+    #expect(NewSessionLaunch.builtInDefaults.map(\.id) == ["zsh", "claude", "codex", "codex-puck"])
+    #expect(NewSessionLaunch.builtInDefaults.first { $0.id == "codex" }?.puck == nil)
+    #expect(NewSessionLaunch.builtInDefaults.first { $0.id == "codex-puck" }?.puck == .init(provider: "codex"))
 }
 
 @Test func siblingShortcutFallsBackToTerminalForOtherRuntimes() {

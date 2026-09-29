@@ -38,7 +38,8 @@ import Testing
     """)
     #expect(profiles[0].puck == .init(provider: "opencode-go",
                                       model: "muse-spark-1.3-contributor", account: "personal"))
-    #expect(NewSessionLaunch.builtInDefaults.first { $0.id == "codex" }?.puck == .init(provider: "codex"))
+    #expect(NewSessionLaunch.builtInDefaults.first { $0.id == "codex" }?.puck == nil)
+    #expect(NewSessionLaunch.builtInDefaults.first { $0.id == "codex-puck" }?.puck == .init(provider: "codex"))
 }
 
 @Test func anthropicPuckProfileRequiresExplicitModelAndAccount() throws {

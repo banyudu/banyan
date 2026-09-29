@@ -2255,19 +2255,20 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
-    func spawnSession(inProjectGroup groupID: String, launch: NewSessionLaunch) -> BanyanSession? {
+    func spawnSession(inProjectGroup groupID: String, launch: NewSessionLaunch,
+                      puckWorkspace: String? = nil) -> BanyanSession? {
         let groupSessions = visibleSessions.filter {
             $0.projectGroupID == groupID && !$0.isImportedHistory
         }
-        guard let preferredSessionID = SessionLaunchPolicy.preferredSessionID(
+        let preferredSessionID = SessionLaunchPolicy.preferredSessionID(
             for: selectedSessionID,
             in: groupSessions.map(\.id)
-        ), let representative = groupSessions.first(where: { $0.id == preferredSessionID }) else {
-            return nil
-        }
+        )
+        let representative = groupSessions.first { $0.id == preferredSessionID }
+        guard let cwd = representative?.cwd ?? puckWorkspace else { return nil }
         rememberProjectLaunch(launch, for: groupID)
         let workspace = SessionDisplayLabel.workspaceRoot(
-            cwd: representative.cwd, environment: environment
+            cwd: cwd, environment: environment
         )
         if launch.puck != nil {
             onPuckLaunch?(launch, workspace, nil)
@@ -2279,7 +2280,7 @@ final class SessionStore: ObservableObject {
         return spawn(
             cwd: workspace,
             command: launch.resolvedCommand(codexLaunchMode: codexLaunchMode),
-            parentSessionID: representative.parentSessionID
+            parentSessionID: representative?.parentSessionID
         )
     }
 
