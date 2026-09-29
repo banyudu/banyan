@@ -149,7 +149,8 @@ struct ContentView: View {
         .onChange(of: puckBrowser.selectedID) { _, id in
             store.activePuckSessionID = id
         }
-        .onReceive(selection.$selectedSessionID.dropFirst()) { _ in
+        .onReceive(selection.$selectedSessionID.dropFirst()) { id in
+            guard id != nil else { return }
             puckBrowser.detach()
         }
         .onChange(of: store.commandPaletteRequestID) {
