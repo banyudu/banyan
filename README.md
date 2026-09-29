@@ -1,9 +1,9 @@
 # Banyan
 
 Banyan is a workspace for running and supervising many long-lived terminal
-and coding-agent sessions. Each session runs inside a dedicated `tmux`
-session, so closing or restarting a frontend does not normally stop the
-underlying shell or agent.
+and coding-agent sessions. Shell and legacy agent sessions use `tmux`; puck
+sessions live in one `puckd` process. Closing or restarting a frontend leaves
+either backing session running.
 
 This repository provides three products over one shared runtime:
 
@@ -20,7 +20,7 @@ The first screen is the working surface:
 
 - left sidebar: sessions, status signals, tone, title, and compact session actions
 - right side: the selected terminal session
-- each session is backed by a persistent `tmux` session, so agents keep running across Banyan restarts
+- shell and legacy sessions use persistent `tmux`; puck sessions use durable daemon state
 - programmatic control is available through `banyanctl`
 
 ### Linear keyboard navigation
@@ -65,9 +65,10 @@ on the machine where the frontend is running.
 
 ## Requirements
 
-Banyan requires Swift 6.3 or a compatible Swift toolchain and `tmux` for every
-terminal session. The macOS app requires macOS 14 or newer. The TUI builds on
-Linux and macOS without SwiftUI or AppKit.
+Banyan requires Swift 6.3 or a compatible Swift toolchain and `tmux` for shell
+and legacy terminal sessions. Puck sessions require `puckd`. The macOS app
+requires macOS 14 or newer. The TUI builds on Linux and macOS without SwiftUI
+or AppKit.
 
 ```sh
 brew install tmux
@@ -79,7 +80,9 @@ On Debian/Ubuntu Linux:
 sudo apt install tmux
 ```
 
-Banyan owns the native macOS UI; `tmux` owns the long-running shell or agent process. Closing Banyan or detaching a session only closes the tmux client in Banyan, not the underlying tmux session.
+Banyan owns the native macOS UI. `tmux` owns shell and legacy agent processes;
+`puckd` owns puck sessions. Detaching from Banyan closes only that client's
+attachment.
 
 Banyan uses a dedicated tmux socket namespace:
 
@@ -109,7 +112,8 @@ status detection, and local history importer as the macOS app. In the TUI,
 `j`/`k` or the arrow keys navigate, Page Up/Down move by a page, `e` renames
 the selected session, Enter attaches or resumes, `n` creates a shell, `N` creates a custom titled/command session, `c` closes, `x` removes, `R` recovers a missing
 backing session, `h` toggles history, and `T` resumes history with transcript
-trimming. The detail pane shows the selected session's status, working
+trimming. Press `p` to list, create, and attach puck sessions using structured
+daemon events. The detail pane shows the selected legacy session's status, working
 directory, command, tmux name, and latest terminal output. Press `q` to quit.
 
 For a packaged macOS build:
@@ -122,6 +126,30 @@ For a packaged macOS build:
 This builds all products, installs `Banyan.app` to `/Applications`, and places
 the companion CLI at `dist/bin/banyanctl`. For iterative development, use
 `swift run Banyan` or `./scripts/dev-watch.sh`.
+
+## Puck sessions
+
+Start `puckd` after configuring an account with `puck auth login`. In the
+macOS app choose **Puck** from the sidebar picker. Create a session with a
+workspace, provider, optional account label and model, then send a prompt.
+The Puck view streams daemon events and shows pending approvals. Detach by
+switching views or clicking **Detach**; the turn continues in `puckd`. After a
+Banyan restart, choose the same session from the daemon list. Slack and other
+clients may attach to that session at the same time.
+
+The TUI's `p` view and `banyanctl` use the same local daemon socket:
+
+```sh
+banyanctl puck new --provider codex --account work --model gpt-6-luna --cwd "$PWD" --prompt "Inspect this repository"
+banyanctl puck list
+banyanctl puck attach --id SESSION_ID
+banyanctl puck decide --id SESSION_ID --call-id CALL_ID --decision approve
+```
+
+`PUCK_HOME` selects a non-default puck data directory. Puck currently supports
+`codex` and `opencode-go` providers. Existing agent launch profiles and
+`banyanctl agent run` still use their terminal backends; plain shells retain
+their tmux behavior.
 
 ## Run the macOS app
 

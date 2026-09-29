@@ -43,7 +43,7 @@ struct TerminalRenderer {
         var output = "\u{1b}[2J\u{1b}[H"
         let mode = showingHistory ? "history" : "active"
         let enterAction = showingHistory ? "resume/T trim" : "attach"
-        output += "Banyan TUI  h \(mode)  j/k/arrows navigate  enter \(enterAction)  / search  e rename  n shell  N custom  R recover  c close  x remove  r refresh  q quit\n"
+        output += "Banyan TUI  h \(mode)  j/k/arrows navigate  enter \(enterAction)  p puck  / search  e rename  n shell  N custom  R recover  c close  x remove  r refresh  q quit\n"
         if let notice { output += "\(notice)\n" }
         output += "\n"
 

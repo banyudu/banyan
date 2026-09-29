@@ -85,6 +85,8 @@ struct BanyanTUI {
                 input.enterRaw()
             case .trimResume:
                 if model.showingHistory { resumeHistorySelected(trimmed: true) }
+            case .puck:
+                PuckTUI(input: input, output: output, currentDirectory: currentDirectory).run()
             case .unknown:
                 break
         }

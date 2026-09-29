@@ -17,6 +17,7 @@ extension SessionListAction {
         case 120: self = .remove     // x
         case 10, 13: self = .activate // return
         case 84: self = .trimResume  // T
+        case 112: self = .puck     // p
         default: self = .unknown
         }
     }

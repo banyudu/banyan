@@ -35,6 +35,8 @@ struct BanyanCtl {
                 try runSessionCommand(Array(arguments.dropFirst()))
             case "agent":
                 try runAgentCommand(Array(arguments.dropFirst()))
+            case "puck":
+                try runPuckCtl(Array(arguments.dropFirst()), host: host)
             case "perf":
                 try runPerfCommand(Array(arguments.dropFirst()))
             case "mark":
@@ -739,6 +741,14 @@ struct BanyanCtl {
     private func printHelp() {
         print("""
         banyanctl controls a running Banyan app on localhost:7842.
+
+        Puck sessions use the local puckd socket and work while Banyan is closed:
+          banyanctl puck list
+          banyanctl puck new [--id ID] [--provider codex|opencode-go] [--account LABEL] [--model MODEL] [--cwd PATH] [--prompt TEXT]
+          banyanctl puck attach --id ID
+          banyanctl puck show --id ID
+          banyanctl puck turn --id ID --prompt TEXT
+          banyanctl puck decide --id ID --call-id CALL --decision approve|deny|session
 
         Usage:
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
