@@ -7,6 +7,59 @@ import Darwin
 import Glibc
 #endif
 
+@Suite struct PuckDaemonClientTests {
+    @Test(arguments: [false, true])
+    func createUsesDaemonApprovalDefault(throughService: Bool) throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("puck-create-\(UUID().uuidString.prefix(8)).sock").path
+        let listener = try listeningPuckSocket(at: path)
+        defer { _ = close(listener); _ = unlink(path) }
+
+        let captured = PuckRequestCapture()
+        let serverDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            defer { serverDone.signal() }
+            let peer = accept(listener, nil, nil)
+            guard peer >= 0 else { return }
+            defer { _ = close(peer) }
+            captured.record(readPuckRequest(peer))
+            writePuckLines(peer, [
+                #"{"jsonrpc":"2.0","id":1,"result":{"id":"created","provider":"codex","account":"seat","workspace":"/tmp","cwd":"/tmp","model":"model","position":"idle"}}"#
+            ])
+        }
+
+        let client = PuckDaemonClient(socketPath: path)
+        let summary: PuckSessionSummary
+        if throughService {
+            let service: any PuckDaemonService = client
+            summary = try service.create(id: "created", provider: "codex", account: nil,
+                                         model: nil, workspace: "/tmp")
+        } else {
+            summary = try client.create(id: "created", provider: "codex", workspace: "/tmp")
+        }
+
+        #expect(summary.id == "created")
+        #expect(serverDone.wait(timeout: .now() + 2) == .success)
+        let request = try #require(captured.request)
+        #expect(request["method"] as? String == "session.create")
+        let params = try #require(request["params"] as? [String: Any])
+        #expect(params["id"] as? String == "created")
+        let settings = try #require(params["settings"] as? [String: Any])
+        #expect(settings["approval"] == nil)
+    }
+}
+
+private final class PuckRequestCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: [String: Any]?
+
+    var request: [String: Any]? { lock.withLock { value } }
+
+    func record(_ request: [String: Any]?) {
+        lock.withLock { value = request }
+    }
+}
+
 @Test func puckSessionLinkAcceptsOnlyDaemonIDs() {
     #expect(PuckSessionLink.sessionID(from: URL(string: "banyan://puck/session_123")!) == "session_123")
     #expect(PuckSessionLink.sessionID(from: URL(string: "banyan://puck/session-123")!) == "session-123")
@@ -247,7 +300,7 @@ private struct EmptyUnifiedSessionSource: SessionListDataSource {
     let listener = try listeningPuckSocket(at: path)
     defer { _ = close(listener); _ = unlink(path) }
 
-    func summary(_ position: String, history: Int) -> String {
+    @Sendable func summary(_ position: String, history: Int) -> String {
         #"{"id":"shared","provider":"codex","account":"seat","workspace":"/tmp","cwd":"/tmp","model":"model","position":"\#(position)","history_items":\#(history),"pending_approval":null}"#
     }
     let detached = DispatchSemaphore(value: 0)
