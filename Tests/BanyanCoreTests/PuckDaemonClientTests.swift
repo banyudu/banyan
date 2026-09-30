@@ -300,7 +300,7 @@ private struct EmptyUnifiedSessionSource: SessionListDataSource {
     let listener = try listeningPuckSocket(at: path)
     defer { _ = close(listener); _ = unlink(path) }
 
-    func summary(_ position: String, history: Int) -> String {
+    @Sendable func summary(_ position: String, history: Int) -> String {
         #"{"id":"shared","provider":"codex","account":"seat","workspace":"/tmp","cwd":"/tmp","model":"model","position":"\#(position)","history_items":\#(history),"pending_approval":null}"#
     }
     let detached = DispatchSemaphore(value: 0)
