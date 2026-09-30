@@ -519,7 +519,7 @@ public struct PuckDaemonClient: Sendable {
 
     public func create(id: String, provider: String, account: String? = nil,
                        model: String? = nil, workspace: String,
-                       settings: [String: Any] = ["approval": "ask"]) throws -> PuckSessionSummary {
+                       settings: [String: Any] = [:]) throws -> PuckSessionSummary {
         var params: [String: Any] = ["id": id, "provider": provider, "workspace": workspace,
                                      "cwd": workspace, "settings": settings]
         if let account { params["account"] = account }
@@ -601,7 +601,7 @@ extension PuckDaemonClient: PuckDaemonService {
     public func create(id: String, provider: String, account: String?, model: String?,
                        workspace: String) throws -> PuckSessionSummary {
         try create(id: id, provider: provider, account: account, model: model,
-                   workspace: workspace, settings: ["approval": "ask"])
+                   workspace: workspace, settings: [:])
     }
 
     /// Events that change what a session is waiting on, so a follower refreshes
