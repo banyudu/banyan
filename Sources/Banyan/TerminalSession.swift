@@ -122,7 +122,14 @@ final class TerminalSession: BanyanSession {
         let delegate = TerminalSessionDelegate(sessionID: id)
         delegate.onTitle = { [weak self] title in
             guard let self else { return }
-            self.reportedTitle = title
+            // Agents emit generic terminal labels such as "Claude session" or
+            // "Codex session-83". Those are runtime chrome, not conversation
+            // titles; accepting them here overwrites a useful prompt title and
+            // makes the sidebar appear to reset. Keep terminal-title adoption
+            // for useful agent-provided names only.
+            guard let usefulTitle = SessionDisplayPolicy.usefulAgentTitle(title) else { return }
+            guard self.reportedTitle != usefulTitle else { return }
+            self.reportedTitle = usefulTitle
             self.refreshGeneratedTitle()
             self.touch()
         }

@@ -161,7 +161,18 @@ public enum SessionTitleGenerator {
             || lowercased.hasPrefix("shell-")
             || lowercased == "session"
             || lowercased.hasPrefix("session-")
+            || isGenericProviderSessionTitle(lowercased)
             || CodingAgentProvider.allCases.contains { $0.rawValue == lowercased || $0.displayName.lowercased() == lowercased }
+    }
+
+    /// Coding agents use labels such as `Claude session` and `Codex session-3`
+    /// for their terminal window title. They describe the runtime, not the
+    /// conversation, so they must not replace a prompt- or agent-derived title.
+    private static func isGenericProviderSessionTitle(_ lowercased: String) -> Bool {
+        CodingAgentProvider.allCases.contains { provider in
+            let prefix = "\(provider.displayName.lowercased()) session"
+            return lowercased == prefix || lowercased.hasPrefix("\(prefix)-")
+        }
     }
 
     /// Titles produced for sessions that have not received a meaningful name.

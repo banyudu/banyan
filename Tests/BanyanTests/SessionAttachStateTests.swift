@@ -80,6 +80,27 @@ import Testing
 }
 
 @MainActor
+@Test func genericTerminalTitleDoesNotReplacePromptTitle() {
+    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "codex")
+    session.noteUserSubmittedInput("fix the sidebar title")
+
+    session.delegate?.onTitle?("Codex session-83")
+
+    #expect(session.reportedTitle == "fix the sidebar title")
+    #expect(session.displayTitle == "fix the sidebar title")
+}
+
+@MainActor
+@Test func usefulTerminalTitleCanRenameAnAgentSession() {
+    let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "claude")
+
+    session.delegate?.onTitle?("Review the sidebar title")
+
+    #expect(session.reportedTitle == "Review the sidebar title")
+    #expect(session.displayTitle == "Review the sidebar title")
+}
+
+@MainActor
 @Test func transcriptResetDropsStaleTitleWhenKeystrokePathMissedClear() {
     let session = makeAttachStateSession(isRestored: false, status: .longRunningShell, command: "codex")
     session.noteUserSubmittedInput("find workable linear issues for me")

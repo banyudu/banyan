@@ -1,6 +1,13 @@
 import Testing
 @testable import BanyanCore
 
+@Test func providerSessionLabelsAreGenericTitles() {
+    for title in ["Claude session", "claude session-83", "Codex session", "codex session-83"] {
+        #expect(SessionTitleGenerator.isGenericTitle(title))
+        #expect(!SessionTitleGenerator.isUsefulTitle(title))
+    }
+}
+
 @Test func titleFromPromptPreservesFullURL() {
     let title = SessionTitleGenerator.titleFromPrompt("https://github.com/2enai/themis/pull/70")
     #expect(title != nil)

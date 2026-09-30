@@ -34,6 +34,19 @@ import Testing
     ) == "Generated")
 }
 
+@Test func displayPolicyIgnoresGenericProviderSessionReportedTitles() {
+    #expect(SessionDisplayPolicy.displayTitle(
+        title: "project",
+        isTitlePinned: false,
+        reportedTitle: "Claude session-83",
+        generatedTitle: "Fix the sidebar title",
+        cwd: "/tmp/project",
+        homeDirectory: "/home/test",
+        detectedProvider: .claude,
+        command: "claude"
+    ) == "Fix the sidebar title")
+}
+
 @Test func displayPolicyKeepsKnownProviderDuringStartup() {
     #expect(SessionDisplayPolicy.displayAgentProvider(
         status: .running,
