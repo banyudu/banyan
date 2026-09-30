@@ -1173,18 +1173,32 @@ struct ContentView: View {
                         )
                     }
                 }
+                // Static headers have no button; keep every chip the same height.
+                .frame(minHeight: 20)
+                .padding(.leading, 8)
+                .padding(.trailing, 4)
+                .padding(.vertical, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // A rounded chip rather than a full-bleed band. The window
+                // background is darker than the sidebar in dark mode and
+                // lighter in light mode, so the chip never reads as a hovered
+                // row. Sidebar-style section headers do not pin on current
+                // macOS, so nothing scrolls under the chip's margins.
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color(nsColor: .windowBackgroundColor))
+                )
+                // The header cell starts ~7pt left of the row cells and ends
+                // ~19pt right of them; inset the chip to line up with the row
+                // highlights below it.
+                .padding(.leading, 7)
+                .padding(.trailing, 19)
                 // Only the first project gets extra top breathing room under the
                 // mode-picker divider; adding it to every header widened the gaps
                 // between projects. The history/search header gets a touch more
                 // space so it reads as a separator above the active rows.
                 .padding(.top, group.id == firstGroupID ? 4 : (isStatic ? 8 : 0))
-                .padding(.bottom, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // Sticky headers float over scrolled rows. Materials
-                // (.bar/.ultraThickMaterial) are blurs, not opaque fills,
-                // so high-contrast row text still bled through in dark mode.
-                // Use an opaque sidebar-matching fill instead.
-                .background(Color(nsColor: .windowBackgroundColor))
+                .padding(.bottom, 2)
             }
             .listSectionSeparator(isStatic ? .visible : .hidden, edges: .top)
         }
@@ -2835,11 +2849,14 @@ private struct SessionRow: View {
         }
     }
 
+    /// The unemphasized selection gray sat only ~3 levels above the dark
+    /// sidebar, so the active session was hard to find. An accent tint stands
+    /// out in both appearances and cannot be mistaken for the neutral hover fill.
     @ViewBuilder
     private var rowBackground: some View {
         if isSelected {
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
+                .fill(Color.accentColor.opacity(0.28))
         } else if isRowHovered {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.primary.opacity(0.08))
