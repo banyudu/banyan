@@ -434,14 +434,23 @@ struct ContentView: View {
         }
     }
 
+    /// A Menu rather than a menu-style Picker. The Picker's pop-up button is
+    /// measured on the window's first layout, before it has a title, so
+    /// `.fixedSize()` pinned it at ~24pt and the search field beside it took the
+    /// rest, leaving only a sliver of "Sessions". SwiftUI measures a Menu's
+    /// label itself, so the switcher always fits the current mode's name.
     private var sidebarModeSwitcher: some View {
-        Picker("Sidebar", selection: $store.sidebarMode) {
-            ForEach(SidebarMode.allCases) { mode in
-                Text(mode.label).tag(mode)
+        Menu {
+            Picker("Sidebar", selection: $store.sidebarMode) {
+                ForEach(SidebarMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(store.sidebarMode.label)
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
         .controlSize(.small)
         .fixedSize()
         .accessibilityIdentifier(AccessibilityID.sidebarModePicker)
