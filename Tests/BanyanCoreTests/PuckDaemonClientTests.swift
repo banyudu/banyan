@@ -415,3 +415,86 @@ private func writePuckLines(_ peer: Int32, _ lines: [String]) {
     let reply = lines.joined(separator: "\n") + "\n"
     _ = reply.withCString { write(peer, $0, reply.utf8.count) }
 }
+
+@Test @MainActor func puckWatchPreservesEventsAcrossPresenceRepliesOnTheSameSocket() async throws {
+    let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent("puck-watch-\(UUID().uuidString.prefix(8)).sock").path
+    let listener = try listeningPuckSocket(at: path)
+    defer { _ = close(listener); _ = unlink(path) }
+    let detached = DispatchSemaphore(value: 0)
+    let activeRequest = PuckRequestCapture()
+    let declaration = PuckRequestCapture()
+    DispatchQueue.global().async {
+        let peer = accept(listener, nil, nil)
+        guard peer >= 0 else { return }
+        defer { _ = close(peer) }
+        // Registration starts away, and claims interactivity without renewing
+        // that lease. All commands use the very same persistent socket.
+        for (id, method) in [(1, "session.watch"), (2, "presence.away"), (3, "session.watch")] {
+            let request = readPuckRequest(peer)
+            guard request?["method"] as? String == method else { return }
+            if id == 3 { declaration.record(request) }
+            writePuckLines(peer, [
+                #"{"jsonrpc":"2.0","method":"session.event","params":{"cursor":0,"session":"","data":{"event":"presence_changed","present":false}}}"#,
+                #"{"jsonrpc":"2.0","id":\#(id),"result":{"watching":true,"window_seconds":300}}"#
+            ])
+        }
+        let listPeer = accept(listener, nil, nil)
+        guard listPeer >= 0 else { return }
+        guard readPuckRequest(listPeer)?["method"] as? String == "session.list" else { _ = close(listPeer); return }
+        writePuckLines(listPeer, [#"{"jsonrpc":"2.0","id":1,"result":[]}"#])
+        _ = close(listPeer)
+        let away = readPuckRequest(peer)
+        guard away?["method"] as? String == "presence.away" else { return }
+        writePuckLines(peer, [
+            #"{"jsonrpc":"2.0","method":"session.event","params":{"session":"first","cursor":1,"data":{"event":"text_delta","text":"desk"}}}"#,
+            #"{"jsonrpc":"2.0","id":4,"result":{"present":false}}"#
+        ])
+        let active = readPuckRequest(peer)
+        activeRequest.record(active)
+        guard active?["method"] as? String == "presence.active" else { return }
+        writePuckLines(peer, [
+            #"{"jsonrpc":"2.0","id":5,"result":{"present":true}}"#,
+            #"{"jsonrpc":"2.0","method":"session.event","params":{"session":"second","cursor":1,"data":{"event":"text_delta","text":"away"}}}"#
+        ])
+        var byte: UInt8 = 0
+        while read(peer, &byte, 1) == 1 {}
+        detached.signal()
+    }
+    let observer = PuckDaemonClient(socketPath: path).watch()
+    var ids: [String] = []
+    var snapshots = 0
+    let consumer = Task { @MainActor in
+        for try await update in observer.updates {
+            switch update {
+            case .snapshot: snapshots += 1
+            case .event(let id, _): ids.append(id)
+            }
+        }
+    }
+    defer { consumer.cancel(); observer.cancel() }
+    var deadline = ContinuousClock.now + .seconds(5)
+    while ids.count < 1, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(snapshots == 1)
+    #expect(ids == ["first"])
+    observer.reportPresence(active: true)
+    deadline = ContinuousClock.now + .seconds(5)
+    while ids.count < 2, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(ids == ["first", "second"])
+    let params = try #require(declaration.request?["params"] as? [String: Any])
+    #expect((params["client"] as? [String: String])?["capability"] == "interactive")
+    #expect(activeRequest.request?["method"] as? String == "presence.active")
+    observer.cancel()
+    #expect(detached.wait(timeout: .now() + 2) == .success)
+}
+
+@Test func puckAskRoutingAndCursorlessLagMarkersDecode() throws {
+    let ask = try PuckSessionEvent(["cursor": 3, "data": [
+        "event": "blocked_on_question", "route": "interactive", "notify": false
+    ]])
+    #expect(ask.route == "interactive")
+    #expect(ask.notify == false)
+    let lag = try PuckSessionEvent(["data": ["event": "lagged", "count": 7]])
+    #expect(lag.cursor == 0)
+    #expect(lag.displayText == nil)
+}

@@ -40,6 +40,10 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
         for event in try client.replay(id, initial: firstPage) { printPuckEvent(event) }
     case "turn":
         try client.turn(options.required("id"), prompt: options.required("prompt"))
+    case "plan":
+        if let plan = try client.plan(options.required("id")) { print(plan) }
+    case "reject":
+        try client.reject(options.required("id"), callID: options.required("call-id"), reason: options.required("reason"))
     case "decide":
         let decision = try options.required("decision")
         guard ["approve", "deny", "session"].contains(decision) else {
@@ -125,7 +129,7 @@ private struct PuckOptions {
                 throw PuckDaemonError.rejected("expected --option VALUE")
             }
             let name = String(option.dropFirst(2))
-            guard ["id", "cwd", "provider", "account", "model", "prompt", "call-id", "decision", "selections"].contains(name) else {
+            guard ["id", "cwd", "provider", "account", "model", "prompt", "call-id", "decision", "selections", "reason"].contains(name) else {
                 throw PuckDaemonError.rejected("unknown puck option '\(option)'")
             }
             result[name] = args[index + 1]

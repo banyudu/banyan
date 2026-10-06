@@ -238,6 +238,17 @@ final class SessionStore: ObservableObject {
     @Published var puckSessionError: String?
     /// The local daemon behind every `PuckSession`.
     let puckDaemon: any PuckDaemonService
+    private var puckWatchTask: Task<Void, Never>?
+    private var puckWatchGeneration = 0
+    private var isPuckWatchConnected = false
+    private var puckObservation: (any PuckDaemonObservation)?
+    private(set) var puckPresenceMonitor: PuckPresenceMonitor?
+    private var lastPuckSnapshotAt: Date?
+
+    deinit {
+        puckWatchTask?.cancel()
+        puckObservation?.cancel()
+    }
     private var isPuckSyncRunning = false
     /// Daemon sessions Banyan is creating. The daemon lists one before its
     /// create returns, and a listing must not add it as a stranger's session.
@@ -245,10 +256,8 @@ final class SessionStore: ObservableObject {
     /// Bumped whenever Banyan adds a puck row itself. A listing requested
     /// before then may predate the row, so it says nothing about its absence.
     private var puckRowEpoch = 0
-    /// Whether the last listing reached `puckd`. While it answers, its sessions
-    /// can change with nothing to tell Banyan, so the supervisor timer that
-    /// carries the listing keeps its base cadence rather than backing off to
-    /// the pace of idle terminals.
+    /// Whether the last daemon snapshot succeeded. A watch drives live state;
+    /// sparse listings discover empty sessions, which emit no creation event.
     private var isPuckDaemonReachable = false
     /// Daemon sessions removed from Banyan. The daemon keeps them, so without
     /// this the next listing would bring them back as new rows.
@@ -1988,7 +1997,7 @@ final class SessionStore: ObservableObject {
         installCodexTitleWatcherIfNeeded()
         guard supervisorTimer == nil else { return }
         rescheduleSupervisor(runImmediately: true)
-        syncPuckSessions()
+        startPuckObservation()
     }
 
     /// How visible the app is, which decides how fresh its polled state has to be.
@@ -2029,7 +2038,7 @@ final class SessionStore: ObservableObject {
             // A running puck turn can finish between listings just as a terminal
             // agent can between inspections. It adds no inspection cost, so it
             // counts as active work without counting toward the fleet size.
-            let isObserved = session is PuckSession ? !session.isSuspended : session.isProcessStarted
+            let isObserved = session is PuckSession ? puckObservation == nil && !session.isSuspended : session.isProcessStarted
             guard isObserved else { return }
             if !session.status.isCodingAgentIdle && ![.completed, .failed].contains(session.status) {
                 count += 1
@@ -2058,6 +2067,7 @@ final class SessionStore: ObservableObject {
     private var supervisorInterval: TimeInterval {
         let baseInterval = supervisorBaseInterval
         let terminalInterval = terminalSupervisorInterval(baseInterval: baseInterval)
+        if puckObservation != nil { return min(terminalInterval, puckCatalogInterval) }
         return isPuckDaemonReachable ? min(terminalInterval, baseInterval) : terminalInterval
     }
 
@@ -3127,14 +3137,20 @@ final class SessionStore: ObservableObject {
         return session
     }
 
-    /// Mirrors `puckd` into the session list: status for the sessions Banyan
-    /// knows, and rows for sessions another frontend started. The daemon has no
-    /// subscription for its session set — `session.attach` follows one session
-    /// — so this rides the supervisor's adaptive timer: one local socket round
-    /// trip per tick, however many sessions there are. The session on screen is
-    /// followed live and does not wait for it.
+    /// Watch events carry turn and ask changes. Empty new sessions emit nothing,
+    /// so a sparse catalog reconciliation uses the existing adaptive supervisor
+    /// (one minute at the desk, five minutes in the background).
+    private var puckCatalogInterval: TimeInterval {
+        supervisorActivityLevel == .active ? 60 : 300
+    }
+
     func syncPuckSessions() {
         guard !isPuckSyncRunning else { return }
+        // The watch owns reconnect attempts; supervisor ticks must not add a
+        // second recovery poll while its connection is being established.
+        if puckWatchTask != nil && !isPuckWatchConnected { return }
+        if puckObservation != nil, let lastPuckSnapshotAt,
+           Date().timeIntervalSince(lastPuckSnapshotAt) < puckCatalogInterval { return }
         isPuckSyncRunning = true
         let daemon = puckDaemon
         let epoch = puckRowEpoch
@@ -3159,9 +3175,73 @@ final class SessionStore: ObservableObject {
     /// cadence that carries its listing.
     private func notePuckDaemonReachable(_ reachable: Bool) {
         isPuckDaemonReachable = reachable
+        if reachable { lastPuckSnapshotAt = Date() }
         if supervisorTimer != nil {
             rescheduleSupervisor()
         }
+    }
+
+    /// One socket watches all sessions and reports this frontend's activity.
+    /// Reconnect backoff applies only while disconnected; live state is pushed.
+    func startPuckObservation() {
+        guard puckWatchTask == nil else { return }
+        puckWatchGeneration += 1
+        let generation = puckWatchGeneration
+        let monitor = PuckPresenceMonitor()
+        puckPresenceMonitor = monitor
+        monitor.start()
+        attentionNotifier.onOpenPuckSession = { [weak self] id in self?.openPuckSession(id: id) }
+        puckWatchTask = Task { [weak self] in
+            var delay: UInt64 = 1
+            while !Task.isCancelled {
+                guard self?.puckWatchGeneration == generation else { return }
+                guard let daemon = self?.puckDaemon else { return }
+                let observation = daemon.watch()
+                self?.puckObservation = observation
+                monitor.observe(observation)
+                do {
+                    for try await update in observation.updates {
+                        guard let self, self.puckWatchGeneration == generation, !Task.isCancelled else { break }
+                        delay = 1
+                        switch update {
+                        case .snapshot(let summaries):
+                            self.isPuckWatchConnected = true
+                            // A watch snapshot can predate a local create that
+                            // completed during its listing. Only the epoch-checked
+                            // catalog reconciliation proves a row is missing.
+                            self.applyPuckSummaries(summaries, closingMissing: false)
+                            self.notePuckDaemonReachable(true)
+                        case .event(let id, let event):
+                            guard let session = self.sessions.first(where: { $0.id == id }) as? PuckSession,
+                                  session.status != .closed, !session.isSuspended else { continue }
+                            self.attentionNotifier.notifyPuckAsk(session: session, event: event)
+                        }
+                    }
+                } catch {
+                    // Keep the last durable rows while puckd is unavailable.
+                }
+                observation.cancel()
+                monitor.observe(nil)
+                guard self?.puckWatchGeneration == generation else { return }
+                self?.puckObservation = nil
+                self?.isPuckWatchConnected = false
+                self?.notePuckDaemonReachable(false)
+                do { try await Task.sleep(nanoseconds: delay * 1_000_000_000) }
+                catch { return }
+                delay = min(delay * 2, 30)
+            }
+        }
+    }
+
+    func stopPuckObservation() {
+        puckWatchGeneration += 1
+        puckWatchTask?.cancel()
+        puckWatchTask = nil
+        puckObservation?.cancel()
+        puckObservation = nil
+        isPuckWatchConnected = false
+        puckPresenceMonitor?.stop()
+        puckPresenceMonitor = nil
     }
 
     /// `closingMissing` is false for a listing that may predate a row Banyan
@@ -3189,7 +3269,7 @@ final class SessionStore: ObservableObject {
         }
         // A dismissal only has to outlive the daemon's copy of the session.
         let forgotten = dismissedPuckSessionIDs.filter { summariesByID[$0] == nil }
-        if !forgotten.isEmpty {
+        if closingMissing, !forgotten.isEmpty {
             dismissedPuckSessionIDs.subtract(forgotten)
         }
         if didChangeStructure {
@@ -4400,7 +4480,11 @@ final class SessionStore: ObservableObject {
             guard let self, let session else { return }
             self.resetSupervisorObservationBackoff(for: session.id)
             self.recordStatusEvent(id: session.id, status: status)
-            self.attentionNotifier.notifyIfNeeded(session: session, status: status)
+            // Puck asks are notified from routed watch events, not a status
+            // inferred from a listing. Away delivery belongs to the notify peer.
+            if !(session is PuckSession) {
+                self.attentionNotifier.notifyIfNeeded(session: session, status: status)
+            }
         }
         session.onProjectContextObserved = { [weak self, weak session] cwd, context in
             guard let self else { return }

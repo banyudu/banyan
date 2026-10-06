@@ -166,6 +166,29 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         }
     }
 
+    func plan(_ id: String) throws -> String? { nil }
+    func reject(_ id: String, callID: String, reason: String) throws {}
+
+    private var watchers: [FakePuckObservation] = []
+
+    func watch() -> any PuckDaemonObservation {
+        let observer = FakePuckObservation()
+        locked { watchers.append(observer) }
+        do { observer.continuation.yield(.snapshot(try list())) }
+        catch { observer.continuation.finish(throwing: error) }
+        return observer
+    }
+
+    func publishWatch(_ update: PuckDaemonWatchUpdate) {
+        for observer in locked({ watchers }) { observer.continuation.yield(update) }
+    }
+
+    func dropWatchers() {
+        for observer in locked({ watchers }) { observer.continuation.finish() }
+    }
+
+    var watchCount: Int { locked { watchers.count } }
+
     private func checkReachable() throws {
         guard reachable else { throw PuckDaemonError.unavailable("fake puckd is down") }
     }
@@ -175,6 +198,23 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         defer { lock.unlock() }
         return try body()
     }
+}
+
+final class FakePuckObservation: PuckDaemonObservation, @unchecked Sendable {
+    let updates: AsyncThrowingStream<PuckDaemonWatchUpdate, Error>
+    let continuation: AsyncThrowingStream<PuckDaemonWatchUpdate, Error>.Continuation
+    private let lock = NSLock()
+    private var reports: [Bool] = []
+    var presenceReports: [Bool] { lock.withLock { reports } }
+
+    init() {
+        let stream = AsyncThrowingStream<PuckDaemonWatchUpdate, Error>.makeStream()
+        updates = stream.stream
+        continuation = stream.continuation
+    }
+
+    func reportPresence(active: Bool) { lock.withLock { reports.append(active) } }
+    func cancel() { continuation.finish() }
 }
 
 func puckSummary(

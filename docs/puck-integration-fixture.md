@@ -37,6 +37,16 @@ app test then runs again in another process to verify replay after a frontend
 restart. The test exercises the app's store and session code without launching
 a macOS window. It does not check a live Slack installation or phone tap.
 
+The fixture also runs a long-lived app watch against the real daemon, reports
+desk activity, and parks a question. It checks the ask's `interactive` route
+and that fake Slack posts nothing. After answering, the app reports display
+sleep through its presence monitor; the fixture checks Slack's catch-up and
+that a second question on the same session routes to `notify`. Unit tests
+exercise lock, display sleep, app deactivation, automatic reconnection,
+cursorless lag markers, and events interleaved with presence RPC replies.
+Finally the fixture restarts puckd while the app follows a session, requires
+automatic replay with the same cursors, and verifies a new turn arrives live.
+
 Temporary state and synthetic keys are removed when the script exits. The
 printed JSON records the measured RSS values and pass statuses; the ratio is
 specific to the local machine and this short-history fixture.

@@ -52,11 +52,19 @@ class ModelHandler(BaseHTTPRequestHandler):
         assert self.path == "/responses", self.path
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         history = request["input"]
-        if any("ask-question" in json.dumps(item) for item in history) and not any(
-                item.get("type") == "function_call_output" for item in history):
+        last_ask = max((index for index, item in enumerate(history)
+                        if item.get("role") == "user" and "ask-question" in json.dumps(item)), default=-1)
+        last_answer = max((index for index, item in enumerate(history)
+                           if item.get("type") == "function_call_output"), default=-1)
+        if last_ask > last_answer:
+            question_number = 1 + sum(item.get("type") == "function_call_output" for item in history)
             items = [
+                {"type": "response.output_text.delta", "delta": "Inspect the workspace, then summarize the findings."},
                 {"type": "response.output_item.done", "item": {
-                    "type": "function_call", "name": "request_user_input", "call_id": "question-1",
+                    "type": "message", "role": "assistant", "phase": "commentary",
+                    "content": [{"type": "output_text", "text": "Inspect the workspace, then summarize the findings."}]}},
+                {"type": "response.output_item.done", "item": {
+                    "type": "function_call", "name": "request_user_input", "call_id": f"question-{question_number}",
                     "arguments": json.dumps({"questions": [{"header": "Plan",
                         "question": "Approve the plan?", "options": [
                             {"label": "Approve", "description": "Proceed."},
@@ -165,11 +173,12 @@ def rpc(path, method, params=None):
     return reply["result"]
 
 
-def daemon_is_ready(path):
+def daemon_is_ready(path, empty=True):
     if not path.exists():
         return False
     try:
-        return rpc(path, "session.list") == []
+        sessions = rpc(path, "session.list")
+        return sessions == [] if empty else True
     except (OSError, TimeoutError):
         return False
 
@@ -251,7 +260,7 @@ def clean_environment(root, puck_home, model_url, slack_url):
                 "PUCK_SLACK_BOT_TOKEN": "xoxb-synthetic",
                 "PUCK_SLACK_CHANNEL": "C-fixture",
                 "PUCK_SLACK_ALLOWED_USERS": "U-fixture",
-                "PUCK_BANYAN_SESSION_URL_TEMPLATE": "https://example.invalid/open?session={session}"})
+                "PUCK_SESSION_URL_TEMPLATE": "https://example.invalid/open?session={session}"})
     return env
 
 
@@ -416,6 +425,12 @@ def run(args):
             shown = subprocess.check_output([str(args.banyanctl), "puck", "show", "--id", "question-ctl"],
                                             env=env, text=True)
             assert "Approve the plan?" in shown and "Approve — Proceed." in shown
+            plan = subprocess.check_output([str(args.banyanctl), "puck", "plan", "--id", "question-ctl"],
+                                           env=env, text=True)
+            assert "Inspect the workspace" in plan
+            subprocess.run([str(args.banyanctl), "puck", "reject", "--id", "question-ctl",
+                "--call-id", "question-1", "--reason", "fixture audit only"], env=env, check=True)
+            assert rpc(path, "session.get", {"session": "question-ctl"})["position"] == "parked"
             answer = '[{"labels":["Approve"],"text":null}]'
             stale = subprocess.run([str(args.banyanctl), "puck", "answer", "--id", "question-ctl",
                 "--call-id", "stale", "--selections", answer], env=env, capture_output=True, text=True)
@@ -445,11 +460,94 @@ def run(args):
             assert question_tui.returncode == 0 and "1 test" in question_tui.stdout, question_tui.stdout[-2000:]
             wait_until(lambda: rpc(path, "session.get", {"session": "question-tui"})["position"] == "idle",
                        "answered TUI question")
+
+            # A long-lived Banyan watch claims the interactive capability, and
+            # sends its real presence reports on that very same connection.
+            presence_id = "question-presence"
+            rpc(path, "session.create", {"id": presence_id, "provider": "codex",
+                "account": "fixture", "workspace": str(root / "workspace"),
+                "model": "fixture-model", "settings": {"approval": "ask",
+                "exec": False, "fetch": False, "search": False}})
+            presence_ready = root / "presence-ready"
+            away_trigger = root / "away-trigger"
+            away_ready = root / "away-ready"
+            presence_env = env.copy()
+            presence_env.update({"BANYAN_PUCK_E2E_PRESENCE_SESSION": presence_id,
+                "BANYAN_PUCK_E2E_PRESENCE_READY": str(presence_ready),
+                "BANYAN_PUCK_E2E_AWAY_TRIGGER": str(away_trigger),
+                "BANYAN_PUCK_E2E_AWAY_READY": str(away_ready)})
+            presence_app = subprocess.Popen(["swift", "test", "--skip-build", "--filter",
+                "appPuckPresenceRoutesDeskThenAway"], cwd=repo, env=presence_env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            processes.append(presence_app)
+            wait_until(presence_ready.exists, "Banyan interactive presence", timeout=120)
+            assert rpc(path, "presence.get")["present"] is True
+            # Let prior fixture posts drain before measuring the quiet interval.
+            time.sleep(1)
+            with slack.posts_lock:
+                before_desk = len(slack.posts)
+            rpc(path, "session.turn", {"session": presence_id, "prompt": "ask-question"})
+            wait_until(lambda: rpc(path, "session.get", {"session": presence_id})["position"] == "parked",
+                       "desk ask")
+            asks = [event["data"] for event in rpc(path, "session.events", {"session": presence_id})["events"]
+                    if event["data"]["event"] == "blocked_on_question"]
+            assert asks[-1]["route"] == "interactive" and asks[-1]["notify"] is False, asks
+            time.sleep(0.5)
+            with slack.posts_lock:
+                assert len(slack.posts) == before_desk, "Slack posted while Banyan was present"
+            rpc(path, "session.answer", {"session": presence_id, "call_id": "question-1",
+                "selections": [{"labels": ["Approve"], "text": None}]})
+            wait_until(lambda: rpc(path, "session.get", {"session": presence_id})["position"] == "idle",
+                       "desk answer")
+            away_trigger.touch()
+            wait_until(away_ready.exists, "Banyan display-sleep away report")
+            assert rpc(path, "presence.get")["present"] is False
+            rpc(path, "session.turn", {"session": presence_id, "prompt": "ask-question again"})
+            wait_until(lambda: rpc(path, "session.get", {"session": presence_id})["position"] == "parked",
+                       "away ask")
+            asks = [event["data"] for event in rpc(path, "session.events", {"session": presence_id})["events"]
+                    if event["data"]["event"] == "blocked_on_question"]
+            assert asks[-1]["route"] == "notify" and asks[-1]["notify"] is True, asks
+            wait_until(lambda: any(presence_id in body.get("text", "")
+                for _path, body in list(slack.posts)), "Slack catch-up after away")
+            wait_until(lambda: any("question-2" in json.dumps(body)
+                for _path, body in list(slack.posts)), "next ask delivered to Slack")
+            presence_output, _ = presence_app.communicate(timeout=35)
+            assert presence_app.returncode == 0 and "1 test" in presence_output, presence_output[-3000:]
+
+            reconnect_ready = root / "reconnect-ready"
+            reconnect_lost = root / "reconnect-lost"
+            reconnect_resumed = root / "reconnect-resumed"
+            reconnect_env = env.copy()
+            reconnect_env.update({"BANYAN_PUCK_E2E_RECONNECT_SESSION": SESSION,
+                "BANYAN_PUCK_E2E_RECONNECT_READY": str(reconnect_ready),
+                "BANYAN_PUCK_E2E_RECONNECT_LOST": str(reconnect_lost),
+                "BANYAN_PUCK_E2E_RECONNECT_RESUMED": str(reconnect_resumed)})
+            reconnect_app = subprocess.Popen(["swift", "test", "--skip-build", "--filter",
+                "appPuckReattachesAfterDaemonRestart"], cwd=repo, env=reconnect_env,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            processes.append(reconnect_app)
+            wait_until(reconnect_ready.exists, "app attached before daemon restart")
+            session_count = len(rpc(path, "session.list"))
+            stop_process(daemon)
+            wait_until(reconnect_lost.exists, "app observed daemon exit")
+            daemon = subprocess.Popen([str(args.puckd), "--idle-seconds", "3600"],
+                                      env=env, stdout=log, stderr=subprocess.STDOUT)
+            processes.append(daemon)
+            wait_until(lambda: daemon_is_ready(path, empty=False), "restarted puckd", timeout=15)
+            assert len(rpc(path, "session.list")) == session_count
+            wait_until(reconnect_resumed.exists, "app reattached without user action")
+            rpc(path, "session.turn", {"session": SESSION, "prompt": "after daemon restart"})
+            reconnect_output, _ = reconnect_app.communicate(timeout=35)
+            assert reconnect_app.returncode == 0 and "1 test" in reconnect_output, reconnect_output[-3000:]
+            assert not descendants(daemon.pid)
             print(json.dumps({"sessions": COUNT, "emptyDaemonKiB": empty_rss,
                               "idleDaemonKiB": daemon_rss, "singleCliKiB": cli_rss,
                               "rssVs35Cli": round(ratio, 4), "appRestart": "passed",
                               "tui": "passed", "ctl": "passed", "fakeSlack": "passed",
                               "parkedQuestions": "ctl/app/tui passed",
+                              "presence": "desk quiet, away catch-up, next ask to Slack passed",
+                              "daemonRestart": "automatic replay and live turn passed",
                               "daemonChildren": 0}, sort_keys=True))
         except Exception:
             if (root / "puckd.log").exists():

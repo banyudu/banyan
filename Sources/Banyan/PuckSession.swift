@@ -29,6 +29,7 @@ final class PuckSession: BanyanSession {
     @Published private(set) var position: String?
     @Published private(set) var pendingApproval: PuckPendingApproval?
     @Published private(set) var pendingQuestion: PuckPendingQuestion?
+    @Published private(set) var questionPlan: String?
     /// The replayed and live transcript, held only while the session is followed.
     @Published private(set) var events: [PuckSessionEvent] = []
     @Published private(set) var followState: PuckFollowState = .stopped
@@ -41,6 +42,8 @@ final class PuckSession: BanyanSession {
     private var lastSummary: PuckSessionSummary?
     private var followTask: Task<Void, Never>?
     private var followGeneration = 0
+
+    deinit { followTask?.cancel() }
 
     var renderedEvents: [PuckRenderedEvent] { PuckTranscript.render(events) }
 
@@ -168,7 +171,25 @@ final class PuckSession: BanyanSession {
         markDetectedAgentModel(reported.model, isExact: true)
         position = summary.position
         pendingApproval = summary.pendingApproval
+        let priorQuestion = pendingQuestion?.callID
         pendingQuestion = summary.pendingQuestion
+        if pendingQuestion?.callID != priorQuestion {
+            questionPlan = nil
+            if let callID = pendingQuestion?.callID {
+                let daemon = self.daemon
+                let id = self.id
+                Task { [weak self] in
+                    do {
+                        let plan = try await Task.detached(priority: .utility) { try daemon.plan(id) }.value
+                        guard let self, self.pendingQuestion?.callID == callID else { return }
+                        self.questionPlan = plan
+                    } catch {
+                        guard let self, self.pendingQuestion?.callID == callID else { return }
+                        self.daemonError = error.localizedDescription
+                    }
+                }
+            }
+        }
         // A closed row stays closed until the user reopens it, and a parked one
         // keeps what it last showed: Banyan was asked to stop watching both.
         guard status != .closed, !isSuspended else { return }
@@ -193,29 +214,41 @@ final class PuckSession: BanyanSession {
     // MARK: - Following
 
     /// Replays the transcript and follows new events while the session is on
-    /// screen. Only the visible session holds a daemon connection; the rest are
-    /// kept current by the store's periodic listing.
+    /// screen. Sidebar state comes from the store's shared watch connection.
     func startFollowing() {
-        guard followTask == nil, status != .closed, !isSuspended else { return }
+        guard status != .closed, !isSuspended else { return }
+        if followState == .lost { followTask?.cancel(); followTask = nil }
+        guard followTask == nil else { return }
         followGeneration += 1
         let generation = followGeneration
         events = []
         daemonError = nil
         followState = .connecting
-        let stream = daemon.follow(id)
+        let daemon = self.daemon
+        let id = self.id
         followTask = Task { [weak self] in
-            do {
-                for try await update in stream {
+            var delay: UInt64 = 1
+            while !Task.isCancelled {
+                do {
+                    for try await update in daemon.follow(id) {
+                        guard let self, self.followGeneration == generation, !Task.isCancelled else { return }
+                        self.receive(update)
+                        delay = 1
+                    }
+                } catch {
                     guard let self, self.followGeneration == generation else { return }
-                    self.receive(update)
+                    self.daemonError = error.localizedDescription
                 }
-            } catch {
                 guard let self, self.followGeneration == generation else { return }
-                self.daemonError = error.localizedDescription
+                self.followState = .lost
+                // Recovery backoff, not an idle-session polling loop. The
+                // next attach replays durable cursors before receiving live data.
+                do { try await Task.sleep(nanoseconds: delay * 1_000_000_000) }
+                catch { return }
+                guard self.followGeneration == generation else { return }
+                self.followState = .connecting
+                delay = min(delay * 2, 30)
             }
-            guard let self, self.followGeneration == generation else { return }
-            self.followState = .lost
-            self.followTask = nil
         }
     }
 

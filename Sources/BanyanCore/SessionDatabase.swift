@@ -233,6 +233,10 @@ public struct SessionDatabase: Sendable {
         guard sqlite3_open(databaseURL.path, &database) == SQLITE_OK, let database else {
             throw databaseError(database)
         }
+        // Session saves run in the background while frontends update workspace
+        // state. A brief overlapping write must not drop a durable session row
+        // or its dismissal; SQLite's default is to fail immediately on a lock.
+        sqlite3_busy_timeout(database, 5_000)
         return database
     }
 
