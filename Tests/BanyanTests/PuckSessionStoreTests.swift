@@ -67,7 +67,7 @@ import Testing
 }
 
 @MainActor
-@Test func closingAPuckSessionAsksNothingAndLeavesTheDaemonSessionAlone() throws {
+@Test func closingAPuckSessionConfirmsFirstAndLeavesTheDaemonSessionAlone() throws {
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
@@ -76,10 +76,18 @@ import Testing
     store.applyPuckSummaries([summary])
     let session = try #require(store.sessions.first)
 
-    // A running terminal agent asks first, because closing kills it. Closing a
-    // puck session only stops Banyan from showing it.
+    // Closing a puck session only stops Banyan from showing it, but every close
+    // asks first so the tradeoff is never a surprise.
     store.requestClose(id: session.id)
+    #expect(store.pendingCloseSession?.id == session.id)
+    #expect(session.status == .executing)
+
+    store.cancelPendingClose()
     #expect(store.pendingCloseSession == nil)
+    #expect(session.status == .executing)
+
+    store.requestClose(id: session.id)
+    store.confirmPendingClose()
     #expect(session.status == .closed)
     #expect(try daemon.list().map(\.id) == [session.id])
 

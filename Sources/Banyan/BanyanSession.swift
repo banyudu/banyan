@@ -266,8 +266,8 @@ class BanyanSession: ObservableObject, Identifiable {
     /// Whether a restart means anything: it re-runs the launch command.
     var canRestart: Bool { false }
 
-    /// Whether closing ends the agent's work, and so needs a confirmation while
-    /// the agent is busy.
+    /// Whether closing ends the agent's work. Closing always asks first; this
+    /// decides whether the confirmation also warns that a process dies.
     var closeEndsAgentWork: Bool { true }
 
     /// What keeps running behind the row, for text that names it.

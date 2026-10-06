@@ -1391,7 +1391,10 @@ struct ContentView: View {
         if store.pendingCloseHasOngoingAgent {
             return "Close running agent?"
         }
-        return "Close parent session?"
+        if store.pendingCloseHasActiveChildren {
+            return "Close parent session?"
+        }
+        return "Close session?"
     }
 
     private var titlebarConfigurationTrigger: String {

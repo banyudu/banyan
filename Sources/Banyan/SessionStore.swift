@@ -4318,17 +4318,12 @@ final class SessionStore: ObservableObject {
     }
 
     func requestClose(id: String) {
-        guard let session = sessions.first(where: { $0.id == id }) else { return }
-        if SessionClosePolicy.requiresConfirmation(
-            hasActiveChildren: hasActiveChildren(id),
-            status: session.status,
-            // Only a close that ends the agent's work can lose any of it.
-            provider: session.closeEndsAgentWork ? session.agentProvider : nil
-        ) {
-            pendingCloseSessionID = id
-        } else {
-            try? close(id: id)
-        }
+        guard sessions.contains(where: { $0.id == id }) else { return }
+        // Every close is confirmed, whatever the backend: the dialog is where
+        // the consequence is spelled out (kill a running agent, detach
+        // children, or just drop a daemon session from the sidebar), and the
+        // close chord is easy to hit by accident.
+        pendingCloseSessionID = id
     }
 
     func confirmPendingClose() {
