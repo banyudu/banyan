@@ -120,8 +120,10 @@ private final class PuckWatchConnectionState: @unchecked Sendable {
 
     private func enqueuePresence(active: Bool) {
         writer.async { [self] in
-            let connection = lock.withLock { cancelled ? nil : connection }
-            do { try connection?.sendRequest(active ? "presence.active" : "presence.away") }
+            let socketConnection: PuckDaemonConnection? = lock.withLock {
+                self.cancelled ? nil : self.connection
+            }
+            do { try socketConnection?.sendRequest(active ? "presence.active" : "presence.away") }
             catch { cancel() }
         }
     }
