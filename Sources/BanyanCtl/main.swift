@@ -823,6 +823,8 @@ struct BanyanCtl {
           banyanctl puck list
           banyanctl puck new [--id ID] [--provider codex|opencode-go|anthropic|gemini] [--account LABEL] [--model MODEL] [--cwd PATH] [--prompt TEXT]
           banyanctl puck attach --id ID
+          banyanctl puck plan --id ID
+          banyanctl puck reject --id ID --call-id CALL_ID --reason REASON
           banyanctl puck show --id ID
           banyanctl puck turn --id ID --prompt TEXT
           banyanctl puck decide --id ID --call-id CALL --decision approve|deny|session

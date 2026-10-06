@@ -142,11 +142,21 @@ optional account label and model.
 
 Selecting a puck session shows its transcript, any pending approval or
 question, and a message field. Banyan follows the daemon's event stream only
-while the session is on screen; the rest are kept current by one daemon
-listing per supervisor tick, because `puckd` has no subscription for its
-session set. Sessions another frontend starts, such as Slack, appear on the
-next listing. Closing a puck session in Banyan stops following it and never
-warns about a running agent, since nothing is killed: the session stays in
+while the session is on screen. One `session.watch` connection keeps sidebar
+state current across all sessions and declares Banyan's interactive capability.
+Input renews the daemon's presence lease; app deactivation, screen lock, display
+sleep, and system sleep report away immediately. Idle time expires the lease
+in puckd, so leaving an attached window open does not keep Slack quiet forever.
+While present, routed asks notify Banyan; while away, the daemon's notify peer
+delivers them and catches up suppressed history. Both surfaces see the same
+session and resolve the same pending call. Clicking a Banyan ask notification
+opens `banyan://puck/SESSION_ID`.
+
+Watch and transcript connections reconnect automatically with bounded backoff,
+reconcile summaries, and replay durable events after a daemon restart. Empty
+sessions emit no creation event, so Banyan also reconciles the catalog once a
+minute at the desk or every five minutes in the background. Closing a puck
+session in Banyan confirms removal from the sidebar; the session stays in
 `puckd`, and **Reopen** brings it back. **Remove** also keeps a later listing
 from adding it again. Terminal-only actions — Restart, Find, and
 `banyanctl output`, `send`, and `answer` — do not apply to puck sessions; use
@@ -159,6 +169,8 @@ banyanctl puck new --provider codex --account work --model gpt-6-luna --cwd "$PW
 banyanctl puck list
 banyanctl puck attach --id SESSION_ID
 banyanctl puck decide --id SESSION_ID --call-id CALL_ID --decision approve
+banyanctl puck plan --id SESSION_ID
+banyanctl puck reject --id SESSION_ID --call-id CALL_ID --reason "Cannot handle this call"
 ```
 
 `PUCK_HOME` selects a non-default puck data directory. Banyan's puck launch
@@ -266,7 +278,7 @@ commands.
 
 A puck session can be opened in the macOS app with `banyan://puck/SESSION_ID`.
 For a Slack button, host [the static redirect page](docs/puck-session-redirect.html)
-at an HTTPS origin and set puck's `PUCK_BANYAN_SESSION_URL_TEMPLATE` to
+at an HTTPS origin and set puck's `PUCK_SESSION_URL_TEMPLATE` to
 `https://your.example/puck-session-redirect.html?session={session}`. The page
 validates the ID, opens the local app link, and shows a manual button if the
 browser does not open Banyan automatically. No Banyan server or private host is

@@ -223,6 +223,8 @@ public struct PuckSessionEvent: Sendable {
     public let arguments: String?
     public let output: String?
     public let query: String?
+    public let route: String?
+    public let notify: Bool?
 
     public init(
         cursor: UInt64,
@@ -233,7 +235,9 @@ public struct PuckSessionEvent: Sendable {
         callID: String? = nil,
         arguments: String? = nil,
         output: String? = nil,
-        query: String? = nil
+        query: String? = nil,
+        route: String? = nil,
+        notify: Bool? = nil
     ) {
         self.cursor = cursor
         self.kind = kind
@@ -244,13 +248,17 @@ public struct PuckSessionEvent: Sendable {
         self.arguments = arguments
         self.output = output
         self.query = query
+        self.route = route
+        self.notify = notify
     }
 
     init(_ object: [String: Any]) throws {
-        guard let cursor = (object["cursor"] as? NSNumber)?.uint64Value,
-              let data = object["data"] as? [String: Any],
+        guard let data = object["data"] as? [String: Any],
               let kind = data["event"] as? String else {
             throw PuckDaemonError.invalidResponse("event")
+        }
+        guard let cursor = (object["cursor"] as? NSNumber)?.uint64Value ?? (kind == "lagged" ? 0 : nil) else {
+            throw PuckDaemonError.invalidResponse("event cursor")
         }
         self.cursor = cursor
         self.kind = kind
@@ -261,6 +269,8 @@ public struct PuckSessionEvent: Sendable {
         arguments = data["arguments"] as? String
         output = data["output"] as? String
         query = data["query"] as? String
+        route = data["route"] as? String
+        notify = data["notify"] as? Bool
     }
 
     public var displayText: String? {
@@ -360,6 +370,9 @@ public enum PuckDaemonError: LocalizedError {
 public final class PuckDaemonConnection {
     private let descriptor: Int32
     private var pending = Data()
+    private var queuedNotifications: [[String: Any]] = []
+    private let writeLock = NSLock()
+    private var requestID = 0
     // The daemon normally caps replay pages at 512 KiB. One individual event
     // can exceed a page, so allow a larger single JSON-RPC response.
     private static let maxLineBytes = 4 * 1_048_576
@@ -404,8 +417,31 @@ public final class PuckDaemonConnection {
     public func disconnect() { _ = shutdown(descriptor, Int32(SHUT_RDWR)) }
 
     public func request(_ method: String, params: [String: Any] = [:]) throws -> Any {
+        let id = try sendRequest(method, params: params)
+        while let message = try readMessage() {
+            if message["method"] as? String == "session.event" {
+                queuedNotifications.append(message)
+                continue
+            }
+            guard (message["id"] as? NSNumber)?.intValue == id else { continue }
+            if let error = message["error"] as? [String: Any] {
+                throw PuckDaemonError.rejected(error["message"] as? String ?? "puckd rejected the request")
+            }
+            guard let result = message["result"] else { throw PuckDaemonError.invalidResponse("result") }
+            return result
+        }
+        throw PuckDaemonError.unavailable("connection closed")
+    }
+
+    /// Writes without taking ownership of the reader. A watched connection has
+    /// one reader; presence replies are consumed alongside its notifications.
+    @discardableResult
+    public func sendRequest(_ method: String, params: [String: Any] = [:]) throws -> Int {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        requestID += 1
         let bytes = try JSONSerialization.data(withJSONObject: [
-            "jsonrpc": "2.0", "id": 1, "method": method, "params": params
+            "jsonrpc": "2.0", "id": requestID, "method": method, "params": params
         ]) + Data([10])
         try bytes.withUnsafeBytes { rawBuffer in
             guard let base = rawBuffer.baseAddress else { return }
@@ -424,24 +460,27 @@ public final class PuckDaemonConnection {
                 written += count
             }
         }
-        while let message = try readMessage() {
-            guard message["id"] != nil else { continue }
-            if let error = message["error"] as? [String: Any] {
-                throw PuckDaemonError.rejected(error["message"] as? String ?? "puckd rejected the request")
-            }
-            guard let result = message["result"] else { throw PuckDaemonError.invalidResponse("result") }
-            return result
-        }
-        throw PuckDaemonError.unavailable("connection closed")
+        return requestID
     }
 
     /// Returns nil at EOF. A detached frontend closes this socket; daemon state
     /// and any running turn continue for other clients, including Slack.
     public func nextEvent() throws -> PuckSessionEvent? {
-        while let message = try readMessage() {
+        while let message = try nextNotification() {
             guard message["method"] as? String == "session.event",
                   let params = message["params"] as? [String: Any] else { continue }
             return try PuckSessionEvent(params)
+        }
+        return nil
+    }
+
+    public func nextNotification() throws -> [String: Any]? {
+        if !queuedNotifications.isEmpty { return queuedNotifications.removeFirst() }
+        while let message = try readMessage() {
+            if let error = message["error"] as? [String: Any] {
+                throw PuckDaemonError.rejected(error["message"] as? String ?? "puckd rejected the request")
+            }
+            if message["method"] as? String == "session.event" { return message }
         }
         return nil
     }
@@ -489,6 +528,9 @@ public protocol PuckDaemonService: Sendable {
     func turn(_ id: String, prompt: String) throws
     func decide(_ id: String, callID: String, decision: String) throws
     func answer(_ id: String, callID: String, selections: [PuckQuestionSelection]) throws
+    func plan(_ id: String) throws -> String?
+    func reject(_ id: String, callID: String, reason: String) throws
+    func watch() -> any PuckDaemonObservation
     /// Replays the session, then follows it live until the stream is cancelled.
     /// Cancelling detaches only this client; a running turn continues.
     func follow(_ id: String) -> AsyncThrowingStream<PuckSessionUpdate, Error>
@@ -543,6 +585,20 @@ public struct PuckDaemonClient: Sendable {
         _ = try PuckDaemonConnection(socketPath: socketPath).request(
             "session.answer", params: ["session": id, "call_id": callID,
                                        "selections": selections.map(\.wireValue)])
+    }
+
+    public func plan(_ id: String) throws -> String? {
+        let value = try PuckDaemonConnection(socketPath: socketPath).request("session.plan", params: ["session": id])
+        guard let object = value as? [String: Any], object["plan"] is String || object["plan"] is NSNull else {
+            throw PuckDaemonError.invalidResponse("plan")
+        }
+        return object["plan"] as? String
+    }
+
+    public func reject(_ id: String, callID: String, reason: String) throws {
+        _ = try PuckDaemonConnection(socketPath: socketPath).request(
+            "session.reject", params: ["session": id, "call_id": callID, "reason": reason,
+                                       "actor": ["name": "Banyan", "kind": "banyan"]])
     }
 
     public func events(_ id: String, after: UInt64? = nil) throws -> PuckEventBatch {
@@ -607,7 +663,7 @@ extension PuckDaemonClient: PuckDaemonService {
     /// Events that change what a session is waiting on, so a follower refreshes
     /// the summary after one instead of re-deriving it from the event stream.
     static let summaryEventKinds: Set<String> = [
-        "turn_done", "turn_error", "approval_pending", "approval_decided",
+        "turn_started", "turn_done", "turn_error", "approval_pending", "approval_decided",
         "blocked_on_question", "question_answered", "hibernated",
     ]
 
@@ -620,8 +676,11 @@ extension PuckDaemonClient: PuckDaemonService {
             // off the cooperative pool, whose few threads every task shares.
             let thread = Thread {
                 do {
-                    let (connection, attached) = try attach(id)
+                    let connection = try PuckDaemonConnection(socketPath: socketPath)
                     guard attachment.adopt(connection) else { return }
+                    let value = try connection.request("session.attach", params: ["session": id])
+                    guard let object = value as? [String: Any] else { throw PuckDaemonError.invalidResponse("attach") }
+                    let attached = try PuckAttachedSession(object)
                     let replayed = try replay(id, initial: attached.batch)
                     continuation.yield(.attached(attached.summary, replayed))
                     var cursor = replayed.last?.cursor ?? attached.batch.cursor

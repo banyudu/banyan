@@ -3,8 +3,8 @@ import SwiftUI
 
 /// The detail pane of a `PuckSession`: the daemon's transcript, its pending
 /// approval or question, and a message field. The session follows its event
-/// stream only while this pane is on screen; the rest of the time the store's
-/// listing keeps the row current.
+/// stream only while this pane is on screen; a shared daemon watch keeps the
+/// sidebar current and reports human activity.
 struct PuckSessionDetail: View {
     @EnvironmentObject private var store: SessionStore
     @ObservedObject var session: PuckSession
@@ -24,6 +24,15 @@ struct PuckSessionDetail: View {
             }
             if let pending = session.pendingQuestion {
                 Divider()
+                if let plan = session.questionPlan {
+                    ScrollView {
+                        Text(plan)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 180)
+                    .padding(16)
+                }
                 questionPanel(pending)
             }
             Divider()
