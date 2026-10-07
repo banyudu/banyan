@@ -10,6 +10,26 @@ private func candidate(_ id: String, provider: CodingAgentProvider = .codex, cwd
     .init(provider: provider, sourceID: id, cwd: cwd, createdAt: .distantPast, updatedAt: Date())
 }
 
+@Test func deepSuspendProviderSelectionWalksFullAncestryAndPreservesIndependentBranches() {
+    func process(_ pid: Int, _ parent: Int, _ command: String, _ arguments: String) -> ProcessInfoRow {
+        .init(pid: pid, parentPID: parent, state: "S", elapsed: 10, commandName: command, arguments: arguments)
+    }
+    let shell = process(10, 1, "/bin/zsh", "/bin/zsh -lc /tmp/provider/codex --no-daemon")
+    let host = process(11, 10, "/tmp/banyanctl", "/tmp/banyanctl __process-host --inherited")
+    let agent = process(12, 11, "/tmp/provider/codex", "/tmp/provider/codex --no-daemon")
+    #expect(shell.isSupportedAgentForFreezing && agent.isSupportedAgentForFreezing)
+    #expect(AgentDeepSuspend.deepestProviderProcesses(in: [shell, host, agent]).map(\.pid) == [agent.pid])
+    let independent = process(13, 10, "/tmp/provider/claude", "/tmp/provider/claude --resume example")
+    #expect(Set(AgentDeepSuspend.deepestProviderProcesses(in: [shell, host, agent, independent]).map(\.pid)) == [12, 13])
+    // A missing intervening row cannot establish ancestry. Cycles terminate
+    // without choosing one of two mutually ancestral provider candidates.
+    #expect(Set(AgentDeepSuspend.deepestProviderProcesses(in: [shell, agent]).map(\.pid)) == [10, 12])
+    let cycle = process(11, 12, host.commandName, host.arguments)
+    #expect(AgentDeepSuspend.deepestProviderProcesses(in: [cycle, agent]).map(\.pid) == [12])
+    let cyclicAgent = process(11, 12, independent.commandName, independent.arguments)
+    #expect(AgentDeepSuspend.deepestProviderProcesses(in: [cyclicAgent, agent]).isEmpty)
+}
+
 @Test func deepSuspendExactIdentityRejectsNewestHeuristicWrongCWDAndAmbiguity() throws {
     let candidates = [candidate(diskID), candidate(otherDiskID)]
     let held = FileManager.default.temporaryDirectory.appendingPathComponent("banyan-exact-\(UUID()).jsonl")

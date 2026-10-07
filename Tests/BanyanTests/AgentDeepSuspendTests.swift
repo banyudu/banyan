@@ -10,6 +10,51 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AgentDeepSuspendTests {
+    @Test func unquotedAbsoluteExecutableResumesExactProviderInSamePane() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex, unquotedAbsoluteExecutable: true)
+        defer { f.cleanup() }
+        #expect(f.session.command.hasPrefix("/") && !f.session.command.contains("'"))
+        let rows = ProcessTable.snapshot().descendants(of: f.pane.rootPID)
+        let shell = try #require(rows.first(where: { $0.parentPID == f.pane.rootPID }))
+        #expect(shell.commandName == "/bin/zsh" && shell.isSupportedAgentForFreezing)
+        let innerHost = try #require(rows.first(where: { $0.parentPID == shell.pid && $0.isBanyanProcessHost }))
+        #expect(rows.contains { $0.pid == Int(f.agentPID) && $0.parentPID == innerHost.pid })
+        let shellIdentity = try #require(AgentProcessSample.read(pid: Int32(shell.pid))?.identity)
+        let background = try #require(f.backgroundIdentity())
+        try await f.store.deepSuspendAgent(id: f.session.id)
+        #expect(AgentProcessSample.presence(of: try #require(f.session.suspendTicket).agent) == .exited)
+        #expect(f.session.suspendTicket?.agent.pid == f.agentPID)
+        #expect(f.session.suspendTicket?.disk.id == f.diskID)
+        #expect(AgentProcessSample.read(pid: Int32(shell.pid))?.identity == shellIdentity)
+        #expect(AgentProcessSample.read(pid: background.pid)?.identity == background)
+        try await waitForPuckState { ProcessTable.snapshot().descendants(of: f.pane.rootPID).count == 2 }
+        try f.store.deepResumeAgent(id: f.session.id)
+        try await waitForPuckState(timeout: .seconds(10)) { !f.session.isDeepSuspended }
+        #expect(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName)?.paneID == f.pane.paneID)
+        #expect(f.currentAgentPID() != f.agentPID)
+        #expect(AgentProcessSample.read(pid: Int32(shell.pid))?.identity == shellIdentity)
+        #expect(f.backend.readSuspendJournal(named: f.session.tmuxSessionName) == .absent)
+        let receipt = try String(contentsOf: f.fixture.root.appendingPathComponent("resumed"), encoding: .utf8).components(separatedBy: "|")
+        try #require(receipt.count == 4)
+        #expect(receipt[0] == f.diskID && receipt[1] == "from-login" && receipt[3] == "True")
+        #expect(PathDisplayName.canonicalPath(receipt[2]) == PathDisplayName.canonicalPath(f.fixture.project.path))
+    }
+
+    @Test func unquotedAbsoluteExecutableStillRefusesIndependentProvider() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex, mode: "independent-agent", shellBackground: true,
+            unquotedAbsoluteExecutable: true)
+        defer { f.cleanup() }
+        let agent = try #require(AgentProcessSample.read(pid: f.agentPID)?.identity)
+        let secondPID = try #require(Int32(String(contentsOf: f.fixture.root.appendingPathComponent("shell-background"), encoding: .utf8)))
+        let second = try #require(AgentProcessSample.read(pid: secondPID)?.identity)
+        let rows = ProcessTable.snapshot().descendants(of: f.pane.rootPID)
+        #expect(Set(AgentDeepSuspend.deepestProviderProcesses(in: rows).map(\.pid)) == [Int(agent.pid), Int(second.pid)])
+        await #expect(throws: (any Error).self) { try await f.store.deepSuspendAgent(id: f.session.id) }
+        #expect(AgentProcessSample.read(pid: agent.pid)?.identity == agent)
+        #expect(AgentProcessSample.read(pid: second.pid)?.identity == second)
+        #expect(f.backend.readSuspendJournal(named: f.session.tmuxSessionName) == .absent)
+    }
+
     @Test func claudeFreshQueryAllowsOnlyOwnedBridgeHelperTurnover() async throws {
         let f = try await DeepSuspendFixture(provider: .claude, mode: "helper-turnover")
         defer { f.cleanup() }
@@ -440,7 +485,8 @@ private struct DeepSuspendFixture {
     let diskID: String
     let transcript: URL
 
-    init(provider: CodingAgentProvider, mode: String = "normal", shellBackground: Bool = false, legacy: Bool = false) async throws {
+    init(provider: CodingAgentProvider, mode: String = "normal", shellBackground: Bool = false, legacy: Bool = false,
+         unquotedAbsoluteExecutable: Bool = false) async throws {
         fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         diskID = provider == .opencode ? "ses_syntheticExactIdentity" : UUID().uuidString.lowercased()
         transcript = fixture.root.appendingPathComponent("transcript.jsonl")
@@ -460,10 +506,15 @@ private struct DeepSuspendFixture {
         environment["BANYAN_TEST_ID"] = diskID
         environment["BANYAN_TEST_MODE"] = mode
         try "export FIXTURE_RETAINED=from-login\n".write(to: fixture.home.appendingPathComponent(".profile"), atomically: true, encoding: .utf8)
+        if unquotedAbsoluteExecutable {
+            environment["SHELL"] = "/bin/zsh"
+            try "export FIXTURE_RETAINED=from-login\n".write(to: fixture.home.appendingPathComponent(".zprofile"), atomically: true, encoding: .utf8)
+        }
         if shellBackground {
             environment["SHELL"] = "/bin/zsh"
+            let backgroundCommand = mode == "independent-agent" ? executable.path : fixture.root.appendingPathComponent("mcp-server.py").path
             let script = "if [[ -z $BANYAN_SHELL_BACKGROUND ]]; then\nexport BANYAN_SHELL_BACKGROUND=1\n/usr/bin/python3 "
-                + AgentLaunchCommand.shellQuote(fixture.root.appendingPathComponent("mcp-server.py").path) + " background shell &!\nfi\n"
+                + AgentLaunchCommand.shellQuote(backgroundCommand) + " background shell &!\nfi\n"
             try script.write(to: fixture.home.appendingPathComponent(".zprofile"), atomically: true, encoding: .utf8)
         }
         backend = TmuxBackend(environment: environment, workingDirectory: fixture.project.path,
@@ -472,7 +523,7 @@ private struct DeepSuspendFixture {
         store = fixture.makeStore(historyBackend: history, tmuxBackend: backend,
             processTable: DeepLiveProcessTable(), freezePreferences: try #require(UserDefaults(suiteName: backend.socketName)))
         let options = provider == .codex ? "--no-daemon resume" : provider == .claude ? "--session-id" : "--session"
-        let literal = AgentLaunchCommand.shellQuote(executable.path) + " " + options + " " + diskID
+        let literal = (unquotedAbsoluteExecutable ? executable.path : AgentLaunchCommand.shellQuote(executable.path)) + " " + options + " " + diskID
         let command = legacy ? "cd . && " + literal + " '--persistent'" : literal
         session = store.spawn(id: "synthetic-deep", title: "Synthetic deep suspend", cwd: fixture.project.path, command: command, select: false)
         let pidFile = fixture.root.appendingPathComponent("pid")
