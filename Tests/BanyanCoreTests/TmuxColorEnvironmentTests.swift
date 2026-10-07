@@ -21,7 +21,7 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) async throws
     try """
     #!/bin/sh
     printf '%s\\n' "$*" >> \(colorTestQuote(commandLog.path))
-    if [ "$3" = list-sessions ]; then /usr/bin/env > \(colorTestQuote(processEnvironment.path)); fi
+    if [ "$4" = list-sessions ]; then /usr/bin/env > \(colorTestQuote(processEnvironment.path)); fi
     exec \(colorTestQuote(tmux.path)) -f /dev/null "$@"
 
     """.write(to: wrapper, atomically: true, encoding: .utf8)

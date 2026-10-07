@@ -72,6 +72,11 @@ struct PreferencesSheet: View {
                 Text("Sessions")
                     .font(.headline)
 
+                Stepper("Concurrent agent slots: \(store.maximumConcurrentAgents)", value: $store.maximumConcurrentAgents, in: 1...64)
+                Text("New managed commands and active native turns share this budget. Existing work is preserved when lowering it. Plain shells remain available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Toggle("Automatically freeze inactive agents", isOn: $store.autoFreezeAgents)
                 ForEach([CodingAgentProvider.claude, .codex, .opencode]) { provider in
                     let policy = store.deepSuspendPolicy(for: provider)

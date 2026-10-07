@@ -145,6 +145,22 @@ final class SessionStore: ObservableObject {
     @Published var addSessionDraft: AddSessionDraft?
     private(set) var sessionSwitchRequestedAt: DispatchTime?
     let selection = SessionSelection()
+    var lastPublishedAgentReservations: Set<String> = []
+    let agentAdmission: AgentAdmissionController
+    var admissionPuckSessions: [String: PuckSession] = [:]
+    var admissionTerminals: [String: TerminalSession] = [:]
+    var admissionWatchOwners: [String: (id: String, generation: UUID, pid: Int32, identity: AgentProcessIdentity?)] = [:]
+    lazy var admissionProcessExitMonitor = SupervisorProcessExitMonitor { [weak self] key in
+        self?.noteAgentAdmissionProcessExit(key: key)
+    }
+    @Published var maximumConcurrentAgents: Int = AgentAdmissionController.defaultLimit {
+        didSet {
+            let bounded = min(64, max(1, maximumConcurrentAgents))
+            if maximumConcurrentAgents != bounded { maximumConcurrentAgents = bounded }
+            freezePreferences.set(maximumConcurrentAgents, forKey: AgentAdmissionController.defaultsKey)
+            agentAdmission.setLimit(maximumConcurrentAgents)
+        }
+    }
     var pendingAgentFreezeIDs: Set<String> = []
     var isAutoFreezeRunning = false
     var nextAutoFreezeProbeAt = Date.distantPast
@@ -552,8 +568,11 @@ final class SessionStore: ObservableObject {
         }
     ) {
         self.freezePreferences = freezePreferences
+        let storedLimit = freezePreferences.integer(forKey: AgentAdmissionController.defaultsKey)
+        let admission = AgentAdmissionController(limit: storedLimit > 0 ? min(64, storedLimit) : AgentAdmissionController.defaultLimit)
+        self.agentAdmission = admission
         self.makeControlServer = makeControlServer
-        self.codexThreads = CodexThreadCoordinator(service: codexService ?? CodexAppServerClient(environment: host.environment))
+        self.codexThreads = CodexThreadCoordinator(service: codexService ?? CodexAppServerClient(environment: host.environment), admission: admission)
         self.puckDaemon = puckDaemon ?? PuckDaemonClient(
             environment: host.environment,
             homeDirectory: host.homeDirectory.path
@@ -568,6 +587,8 @@ final class SessionStore: ObservableObject {
         self.host = host
         self.telemetry = telemetry
         self.attentionNotifier = attentionNotifier
+        maximumConcurrentAgents = admission.limit
+        admission.onChange = { [weak self] in self?.publishAgentAdmission() }
         codexThreads.onChange = { [weak self] id, state in
             guard let self, let session = self.sessions.first(where: { $0.id == id }) as? CodexSession else { return }
             session.apply(state)
@@ -1023,7 +1044,10 @@ final class SessionStore: ObservableObject {
                         githubReferenceCache: githubReferenceCache)
                     attach(session)
                     sessions.append(session)
-                    if enableNativeCodex && (snapshot.status == .executing || snapshot.status == .asking) {
+                    if snapshot.agentSlotReserved || [.executing, .asking, .failed].contains(snapshot.status) {
+                        codexThreads.adoptRestoredWork(sessionID: snapshot.id)
+                    }
+                    if enableNativeCodex && agentAdmission.running.contains(snapshot.id) {
                         session.reconnect()
                     }
                 } catch { codexSessionError = error.localizedDescription }
@@ -1033,6 +1057,7 @@ final class SessionStore: ObservableObject {
                 // A puck row without its runtime cannot be followed, and must
                 // not come back as a shell either.
                 guard let binding = snapshot.puck else { continue }
+                if snapshot.agentSlotReserved { agentAdmission.adopt(snapshot.id) }
                 // Status comes back from the daemon on the first listing; until
                 // then the row shows what it last showed.
                 let session = PuckSession(
@@ -1097,11 +1122,33 @@ final class SessionStore: ObservableObject {
             )
             session.reportedTitle = snapshot.reportedTitle
             session.nativeCodexProvenance = snapshot.codex
+            session.agentLaunchQueue = snapshot.agentLaunchQueue
+            session.admissionProviderIdentity = snapshot.agentSlotProviderIdentity
+            session.admissionProcessIdentity = snapshot.agentSlotPaneIdentity
+            session.admissionPanePID = snapshot.agentSlotPaneIdentity?.pid
+            if snapshot.agentSlotReserved || (liveTmuxSessionNames.contains(session.tmuxSessionName) && session.status != .closed &&
+               !session.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+               snapshot.agentSlotProviderIdentity.map({ AgentProcessSample.presence(of: $0) != .exited }) != false) {
+                agentAdmission.adopt(session.id)
+                session.admissionLaunchSucceeded = true
+                session.agentLaunchQueue = nil
+            }
             attach(session)
             sessions.append(session)
             if session.status != .closed {
                 loadedTmuxSessionNames.insert(session.tmuxSessionName)
             }
+        }
+        // Register the whole restored fleet before any recovery can claim a
+        // new slot. Over-budget work stays intact, including parked/frozen rows.
+        for terminal in terminalSessions where agentAdmission.running.contains(terminal.id) {
+            reconcileAgentAdmission(id: terminal.id)
+        }
+        for terminal in terminalSessions.sorted(by: {
+            ($0.agentLaunchQueue?.requestedAt ?? .distantFuture) < ($1.agentLaunchQueue?.requestedAt ?? .distantFuture)
+        }) where terminal.agentLaunchQueue?.cancelled == false {
+            terminal.needsRecovery = false
+            retryQueuedAgent(id: terminal.id)
         }
         for tmuxSessionName in SessionHistoryPresentation.staleTmuxSessionNames(
             liveSessionNames: tmuxBackend.listBanyanSessions(),
@@ -2671,21 +2718,23 @@ final class SessionStore: ObservableObject {
                 codexHome: codexHome))
         let session = try CodexSession(snapshot: snapshot, coordinator: codexThreads,
             telemetry: telemetry, host: host, githubReferenceCache: githubReferenceCache)
+        let previousSelection = selectedSessionID
         attach(session)
         sessions.append(session)
+        if select { selectedSessionID = id }
         saveSessions()
         do {
-            // A selected conversation must be subscribed when creation returns
-            // so its first send and streamed items cannot race a queued select.
+            // Show queued creation immediately. A later selection outranks
+            // this request, so completion never steals focus back.
             if select { try await codexThreads.select(sessionID: id) }
             else { try await codexThreads.connect(sessionID: id) }
         } catch {
             // Keep only rows that may own a thread. Definite pre-start failures
             // must not leave a half-created row behind.
-            if codexThreads.states[id]?.binding.creationAttempted == false {
+            if !(error is CancellationError), codexThreads.states[id]?.binding.creationAttempted == false {
                 sessions.removeAll { $0.id == id }
                 codexThreads.discardUnstartedSession(sessionID: id)
-                if selectedSessionID == id { selectedSessionID = nil }
+                if selectedSessionID == id { selectedSessionID = previousSelection }
                 saveSessions()
                 await codexThreads.flushPersistence?()
                 // Restore the actual UI selection after removing a failed
@@ -2694,7 +2743,6 @@ final class SessionStore: ObservableObject {
             }
             throw error
         }
-        if select { selectedSessionID = id }
         return session
     }
 
@@ -2791,6 +2839,7 @@ final class SessionStore: ObservableObject {
         if select {
             selectedSessionID = session.id
             refreshSelectedContextInfo(force: true)
+            session.startBackgroundBackendIfNeeded()
         } else {
             // Keep the user's current selection/focus; still run the command so
             // background spawns (e.g. `agent run`) actually start.
@@ -2804,6 +2853,7 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        session.agentLaunchQueue = nil
         unparkForAttach(session)
         // The daemon kept a closed puck session whole, so reopening it is only
         // a matter of following it again.
@@ -3187,6 +3237,7 @@ final class SessionStore: ObservableObject {
             throw ControlError.badRequest("session '\(id)' has no launch command to restart")
         }
         try session.prepareFrozenAgentForTeardown()
+        session.agentLaunchQueue = nil
         unparkForAttach(session)
         session.restartBackingSession()
         selectedSessionID = id
@@ -3354,7 +3405,8 @@ final class SessionStore: ObservableObject {
             homeDirectory: homeDirectory
         )
         let id = SessionInputPolicy.normalizedOptionalText(proposedID) ?? UUID().uuidString.lowercased()
-        guard !sessions.contains(where: { $0.id == id }), !pendingPuckCreationIDs.contains(id) else {
+        guard !sessions.contains(where: { $0.id == id }), !pendingPuckCreationIDs.contains(id),
+              !agentAdmission.running.contains(id), agentAdmission.position(of: id) == nil else {
             throw ControlError.conflict(code: "session_exists", message: "session '\(id)' already exists")
         }
         let daemon = puckDaemon
@@ -3371,7 +3423,9 @@ final class SessionStore: ObservableObject {
         }.value
         notePuckDaemonReachable(true)
         // Row IDs must stay unique, and the daemon answers with its own.
-        guard !sessions.contains(where: { $0.id == summary.id }) else {
+        guard !sessions.contains(where: { $0.id == summary.id }),
+              !agentAdmission.running.contains(summary.id), agentAdmission.position(of: summary.id) == nil,
+              !codexThreads.reserves(sessionID: summary.id) else {
             throw ControlError.conflict(code: "session_exists", message: "session '\(summary.id)' already exists")
         }
         let explicitTitle = SessionInputPolicy.normalizedOptionalText(title)
@@ -3407,6 +3461,47 @@ final class SessionStore: ObservableObject {
                 throw PuckTurnError(sessionID: session.id, message: error.localizedDescription)
             }
         }
+        return session
+    }
+
+    /// Synchronous CLI/TUI delivery never leaves a prompt waiting behind a
+    /// transport that can time out. UI sends keep their cancellable FIFO queue.
+    func startPuckTurnImmediately(id: String, prompt: String, expiresAt: Date) async throws -> PuckSession {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ControlError.badRequest("Turn prompt must not be empty; nothing was queued")
+        }
+        func validateOwnership() throws {
+            guard !sessions.contains(where: { $0.id == id && !($0 is PuckSession) }),
+                  !(admissionTerminals[id] != nil && agentAdmission.running.contains(id)),
+                  !codexThreads.reserves(sessionID: id), !pendingPuckCreationIDs.contains(id) else {
+                throw ControlError.conflict(code: "session_exists", message: "session '\(id)' belongs to another runtime; nothing was queued")
+            }
+        }
+        try validateOwnership()
+        let session: PuckSession
+        if let existing = admissionPuckSessions[id] { session = existing }
+        else {
+            let daemon = puckDaemon
+            let summary = try await Task.detached(priority: .utility) { try daemon.get(id) }.value
+            try validateOwnership()
+            session = adoptPuckSession(summary)
+        }
+        guard Date() < expiresAt else { throw ControlError.conflict(code: "request_expired", message: "Turn request expired; nothing was queued") }
+        guard !session.admissionTurnInFlight, session.turnUnavailableReason == nil else {
+            throw ControlError.conflict(code: "turn_busy", message: session.turnUnavailableReason ?? "A turn is already starting")
+        }
+        guard agentAdmission.acquireImmediately(id) else {
+            throw ControlError.conflict(code: "agent_capacity_busy", message: "All \(maximumConcurrentAgents) agent slots are in use. Nothing was queued; retry later or send from the app's visible queue.")
+        }
+        if !sessions.contains(where: { $0 === session }) {
+            dismissedPuckSessionIDs.remove(id)
+            sessions.append(session)
+            puckRowEpoch += 1
+        }
+        session.reopen()
+        // No suspension point lies between reservation and startTurn entering
+        // its in-flight guard. Errors release only a definitively unused slot.
+        try await session.startTurn(prompt)
         return session
     }
 
@@ -3522,11 +3617,14 @@ final class SessionStore: ObservableObject {
     func applyPuckSummaries(_ summaries: [PuckSessionSummary], closingMissing: Bool = true) {
         let summariesByID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var didChangeStructure = false
-        for session in sessions {
-            guard let session = session as? PuckSession else { continue }
+        // Retain accounting for hidden/removed busy rows. Transcript following
+        // can stop, while the one dashboard watch still receives completion.
+        for session in admissionPuckSessions.values {
             if let summary = summariesByID[session.id] {
                 session.apply(summary: summary)
-            } else if closingMissing, session.status != .closed {
+            } else if closingMissing, !session.admissionTurnInFlight {
+                agentAdmission.release(session.id)
+                guard session.status != .closed else { continue }
                 // The daemon answered without it, so there is nothing left to
                 // follow or reopen.
                 session.closeBackingSession()
@@ -4729,6 +4827,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func attach(_ session: BanyanSession) {
+        configureAgentAdmission(session)
         if let terminal = session as? TerminalSession, terminal.isRestored, terminal.status != .closed {
             let backend = terminal.tmuxBackend
             let name = terminal.tmuxSessionName
@@ -5775,6 +5874,9 @@ final class SessionStore: ObservableObject {
     }
 
     private func isAvailableID(_ id: String, avoidingLiveTmuxSessions: Bool) -> Bool {
+        // Removed/closing rows can still own live or uncertain work. Reusing
+        // their ID would alias two runtimes onto one resource reservation.
+        guard !agentAdmission.running.contains(id), agentAdmission.position(of: id) == nil else { return false }
         guard !codexThreads.reserves(sessionID: id) else { return false }
         guard !sessions.contains(where: { $0.id == id }) else {
             return false

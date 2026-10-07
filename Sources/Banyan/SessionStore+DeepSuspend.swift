@@ -21,6 +21,7 @@ extension SessionStore {
         guard let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession else {
             throw ControlError.badRequest("deep resume requires a terminal agent session")
         }
+        if terminal.agentLaunchQueue?.cancelled == true { terminal.agentLaunchQueue = nil }
         try terminal.beginDeepResume()
         resetSupervisorObservationBackoff(for: id)
     }
@@ -191,6 +192,7 @@ extension SessionStore {
                       elapsed: ProcessInfo.processInfo.systemUptime - started) else {
                 throw AgentFreezeError.unsafe("Agent became active while recording recovery")
             }
+            recordAgentProviderIdentity(id: id, identity: ticket.agent)
             try AgentDeepSuspend.terminateAgent(ticket, freezePlan: plan)
             terminal.suspendTicket = ticket
             terminal.isDeepSuspended = true

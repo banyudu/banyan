@@ -59,6 +59,9 @@ class BanyanSession: ObservableObject, Identifiable {
     /// it. See `suspend()` / `resume()`.
     @Published var isSuspended: Bool
     /// Actual agent process-group STOP, independent of frontend parking.
+    @Published var agentQueuePosition: Int?
+    @Published var agentLaunchQueue: AgentLaunchQueueState?
+    var agentAdmission: AgentAdmissionController?
     @Published var isFrozen = false
     @Published var isDeepSuspended = false
     @Published var isDeepResuming = false
@@ -303,6 +306,7 @@ class BanyanSession: ObservableObject, Identifiable {
 
     /// Ends the session in Banyan and releases what backs it.
     func closeBackingSession() {
+        agentAdmission?.cancel(id)
         status = .closed
         isSuspended = false
         touch()
@@ -327,6 +331,7 @@ class BanyanSession: ObservableObject, Identifiable {
     /// exactly the state a resume is supposed to bring back.
     func suspend() {
         guard !isImportedHistory, status != .closed, !isSuspended else { return }
+        agentAdmission?.cancel(id)
         isSuspended = true
         touch()
     }

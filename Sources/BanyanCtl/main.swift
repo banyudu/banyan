@@ -56,7 +56,13 @@ client.run()
 struct BanyanCtl {
     let arguments: [String]
     let host: HostRuntimeContext
-    let baseURL = URL(string: "http://127.0.0.1:7842")!
+    var baseURL: URL {
+        let address = host.environment["BANYAN_FIXTURE_CONTROL_URL"] ?? "http://127.0.0.1:7842"
+        guard let url = URL(string: address), url.scheme == "http", url.host == "127.0.0.1" else {
+            preconditionFailure("Invalid local Banyan control address")
+        }
+        return url
+    }
 
     init(arguments: [String]) {
         self.arguments = arguments
@@ -277,6 +283,17 @@ struct BanyanCtl {
         switch subcommand {
         case "run":
             try post("/spawn", payload: withDefaultParent(parseAgentRunPayload(Array(args.dropFirst()))))
+        case "queue":
+            let action = args.dropFirst().first ?? "status"
+            if action == "status" { try get("/agent-queue"); return }
+            guard args.count == 3 else { throw CLIError.message("agent queue requires cancel|prioritize|retry ID or limit N") }
+            if action == "limit" {
+                guard let limit = Int(args[2]), (1...64).contains(limit) else { throw CLIError.message("agent limit must be between 1 and 64") }
+                try post("/agent-limit", payload: ["limit": String(limit)])
+            } else {
+                guard ["cancel", "prioritize", "retry"].contains(action) else { throw CLIError.message("unknown agent queue action") }
+                try post("/agent-queue", payload: ["id": args[2], "detail": action])
+            }
         default:
             throw CLIError.message("unknown agent subcommand '\(subcommand)'")
         }
@@ -889,6 +906,7 @@ struct BanyanCtl {
           banyanctl session list
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
+          banyanctl agent queue [status | cancel ID | prioritize ID | retry ID | limit N]
           banyanctl agent run (--agent codex|claude|deepseek|gemini|glm|hunyuan|mimo|minimax|muse|opencode | --profile ID) [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--parent ID] [--no-parent] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
 
         Spawns open in the background by default (they do not steal focus from the

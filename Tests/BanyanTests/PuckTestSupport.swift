@@ -27,6 +27,20 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     private var recordedTurns: [Turn] = []
     private var recordedDecisions: [String] = []
     private var reachable = true
+    private var turnGate: DispatchSemaphore?
+    func holdTurns() -> DispatchSemaphore {
+        let gate = DispatchSemaphore(value: 0)
+        locked { turnGate = gate }
+        return gate
+    }
+    private var getGate: DispatchSemaphore?
+    private var startedGets = 0
+    var getsStarted: Int { locked { startedGets } }
+    func holdGets() -> DispatchSemaphore {
+        let gate = DispatchSemaphore(value: 0)
+        locked { getGate = gate }
+        return gate
+    }
     private var createGate: DispatchSemaphore?
     private var listGate: DispatchSemaphore?
     private var completedLists = 0
@@ -96,7 +110,9 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     }
 
     func get(_ id: String) throws -> PuckSessionSummary {
-        try locked {
+        let gate = locked { startedGets += 1; return getGate }
+        gate?.wait()
+        return try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
             return summary
@@ -123,12 +139,14 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     }
 
     func turn(_ id: String, prompt: String) throws {
-        try locked {
+        let gate = try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
             recordedTurns.append(Turn(id: id, prompt: prompt))
             summaries[id] = summary.with(position: "running", historyItems: summary.historyItems + 1)
+            return turnGate
         }
+        gate?.wait()
     }
 
     func decide(_ id: String, callID: String, decision: String) throws {
@@ -313,6 +331,7 @@ struct PuckStoreFixture {
             host: HostRuntimeContext(
                 environment: [
                     "HOME": home.path,
+                    "BANYAN_FIXTURE_DATA_HOME": root.appendingPathComponent("app-data").path,
                     "PATH": "/usr/bin:/bin",
                     "SHELL": "/bin/zsh"
                 ],

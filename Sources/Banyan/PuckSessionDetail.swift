@@ -8,7 +8,6 @@ import SwiftUI
 struct PuckSessionDetail: View {
     @EnvironmentObject private var store: SessionStore
     @ObservedObject var session: PuckSession
-    @State private var prompt = ""
     @State private var questionChoices: [Int: Set<String>] = [:]
     @State private var questionTexts: [Int: String] = [:]
     @FocusState private var isPromptFocused: Bool
@@ -251,7 +250,7 @@ struct PuckSessionDetail: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
-                TextField("Message", text: $prompt, axis: .vertical)
+                TextField("Message", text: $session.draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...5)
                     .focused($isPromptFocused)
@@ -272,14 +271,13 @@ struct PuckSessionDetail: View {
     }
 
     private var canSend: Bool {
-        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && session.turnUnavailableReason == nil
+        !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && session.turnUnavailableReason == nil && !session.admissionTurnInFlight
     }
 
     private func send() {
         guard canSend else { return }
-        session.send(prompt)
-        prompt = ""
+        session.send(session.draft)
     }
 
     private func choose(_ label: String, for index: Int, multiple: Bool) {

@@ -91,7 +91,7 @@ extension SessionStore {
         let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession
         terminal?.freezeInputInFlight += 1
         defer { terminal?.freezeInputInFlight -= 1 }
-        try terminal?.beginDeepResume()
+        try terminal?.beginDeepResume(queueIfBusy: false)
         guard terminal?.isDeepSuspended != true else {
             throw ControlError.badRequest("Agent is resuming; retry input when isDeepResuming is false")
         }
@@ -135,7 +135,7 @@ extension SessionStore {
         let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession
         terminal?.freezeInputInFlight += 1
         defer { terminal?.freezeInputInFlight -= 1 }
-        try terminal?.beginDeepResume()
+        try terminal?.beginDeepResume(queueIfBusy: false)
         guard terminal?.isDeepSuspended != true else {
             throw ControlError.badRequest("Agent is resuming; read a fresh prompt after startup")
         }

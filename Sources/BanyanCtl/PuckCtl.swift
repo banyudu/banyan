@@ -5,6 +5,11 @@ import Foundation
 /// same session and event stream shown by the macOS app and the TUI.
 func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
     let client = PuckDaemonClient(environment: host.environment, homeDirectory: host.homeDirectory.path)
+    func turn(_ id: String, prompt: String) throws {
+        if try !PuckAppAdmission.turn(id, prompt: prompt, environment: host.environment, homeDirectory: host.homeDirectory) {
+            try client.turn(id, prompt: prompt)
+        }
+    }
     let command = args.first ?? "list"
     let options = try PuckOptions(Array(args.dropFirst()))
     switch command {
@@ -27,7 +32,7 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
                                         account: options["account"], model: options["model"],
                                         workspace: workspace)
         print("\(session.id)\t\(session.provider)/\(session.model)\t\(session.cwd)")
-        if let prompt = options["prompt"] { try client.turn(id, prompt: prompt) }
+        if let prompt = options["prompt"] { try turn(id, prompt: prompt) }
     case "show":
         let id = try options.required("id")
         let session = try client.get(id)
@@ -39,7 +44,7 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
         let firstPage = try client.events(id)
         for event in try client.replay(id, initial: firstPage) { printPuckEvent(event) }
     case "turn":
-        try client.turn(options.required("id"), prompt: options.required("prompt"))
+        try turn(options.required("id"), prompt: options.required("prompt"))
     case "plan":
         if let plan = try client.plan(options.required("id")) { print(plan) }
     case "reject":
@@ -108,7 +113,7 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
                     try client.answer(id, callID: pending.callID, selections: selections)
                 }
             } else if !input.isEmpty {
-                try client.turn(id, prompt: input)
+                try turn(id, prompt: input)
             }
         }
         connection.disconnect()

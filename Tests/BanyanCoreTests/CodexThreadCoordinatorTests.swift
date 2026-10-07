@@ -665,3 +665,201 @@ private func coordinator(_ server: ThreadServer, id: String = "session", threadI
     #expect(server.starts == 0)
     #expect(server.handoffs == 1)
 }
+
+@Test @MainActor func nativeAgentAdmissionBoundsParallelTurnsWithinOneServer() async throws {
+    let server = ThreadServer()
+    let pool = AgentAdmissionController(limit: 2)
+    let manager = CodexThreadCoordinator(service: server, admission: pool)
+    for id in ["a", "b", "c"] {
+        try manager.register(sessionID: id, binding: .init(cwd: "/tmp/project"))
+        try await manager.connect(sessionID: id)
+    }
+    #expect(server.starts == 3)
+    #expect(pool.running.isEmpty) // Idle native threads do not claim CPU-turn slots.
+    _ = try await manager.startTurn(sessionID: "a", input: [])
+    _ = try await manager.startTurn(sessionID: "b", input: [])
+    let third = Task { try await manager.startTurn(sessionID: "c", input: []) }
+    try await admissionEventually { pool.queuedIDs == ["c"] }
+    #expect(server.count("turn/start") == 2)
+    try await manager.interrupt(sessionID: "a")
+    #expect(pool.running == ["a", "b"]) // An interrupt ACK is not a completion.
+    server.emit("turn/completed", id: "thread-1", fields: ["turn": .object([
+        "id": .string("turn-1"), "status": .string("interrupted")])])
+    _ = try await third.value
+    #expect(server.count("turn/start") == 3)
+    #expect(pool.running == ["b", "c"])
+}
+
+@Test @MainActor func nativeAgentAdmissionQueuesCreationResumeAndRecoveryWithoutChangingBindings() async throws {
+    let server = ThreadServer()
+    let pool = AgentAdmissionController(limit: 1)
+    let manager = CodexThreadCoordinator(service: server, admission: pool)
+    pool.adopt("terminal")
+    let binding = CodexThreadBinding(cwd: "/tmp/project", settings: .init(model: "fixture-model", approvalPolicy: "untrusted"))
+    try manager.register(sessionID: "new", binding: binding)
+    let create = Task { try await manager.connect(sessionID: "new") }
+    try await admissionEventually { pool.queuedIDs == ["new"] }
+    #expect(server.starts == 0)
+    #expect(manager.states["new"]?.binding == binding)
+    pool.cancel("new")
+    await #expect(throws: CancellationError.self) { try await create.value }
+    #expect(manager.states["new"]?.binding == binding)
+
+    let mapped = CodexThreadBinding(threadID: "stored", cwd: "/tmp/project", settings: binding.settings)
+    try manager.register(sessionID: "restored", binding: mapped)
+    server.threads["stored"] = .object(["id": .string("stored"), "cwd": .string("/tmp/project"),
+        "status": .object(["type": .string("idle")])])
+    let resume = Task { try await manager.connect(sessionID: "restored") }
+    try await admissionEventually { pool.queuedIDs == ["restored"] }
+    #expect(server.count("thread/resume") == 0)
+    pool.cancel("restored")
+    await #expect(throws: CancellationError.self) { try await resume.value }
+    #expect(manager.states["restored"]?.binding == mapped)
+    let recovery = Task { try await manager.recoverCreation(sessionID: "new", threadID: "stored") }
+    try await admissionEventually { pool.queuedIDs == ["new"] }
+    pool.cancel("new")
+    await #expect(throws: CancellationError.self) { try await recovery.value }
+    #expect(server.count("thread/read") == 0)
+    #expect(manager.states["new"]?.binding == binding)
+    pool.release("terminal")
+}
+
+@Test @MainActor func nativeAgentAdmissionPreservesRestoredBusyWorkAndPendingApprovals() async throws {
+    let server = ThreadServer()
+    let pool = AgentAdmissionController(limit: 1)
+    let manager = CodexThreadCoordinator(service: server, admission: pool)
+    for id in ["a", "b"] {
+        let threadID = "stored-\(id)"
+        server.threads[threadID] = .object(["id": .string(threadID),
+            "status": .object(["type": .string("active")]),
+            "turns": .array([.object(["id": .string("live-\(id)"), "status": .string("inProgress")])])])
+        try manager.register(sessionID: id, binding: .init(threadID: threadID, cwd: "/tmp/project"))
+        manager.adoptRestoredWork(sessionID: id)
+    }
+    try await manager.connect(sessionID: "a")
+    try await manager.connect(sessionID: "b")
+    #expect(pool.running == ["a", "b"])
+    let handler = try #require(server.handler)
+    let approval = Task { await handler(.init(id: .integer(42), method: "item/commandExecution/requestApproval",
+        params: .object(["threadId": .string("stored-a"), "turnId": .string("live-a")]))) }
+    try await admissionEventually { manager.states["a"]?.needsAttention == true }
+    pool.cancel("a") // Cancellation only removes queued work, never a live ask.
+    #expect(manager.states["a"]?.pendingRequests.count == 1)
+    try manager.respond(sessionID: "a", requestID: .integer(42), reply: .result(.object(["decision": .string("decline")])))
+    _ = await approval.value
+    #expect(pool.running == ["a", "b"])
+    server.emit("turn/completed", id: "stored-a", fields: ["turn": .object([
+        "id": .string("live-a"), "status": .string("completed")])])
+    try await admissionEventually { pool.running == ["b"] }
+}
+
+@Test @MainActor func nativeAgentAdmissionReleasesDefiniteFailureButKeepsUncertainStarts() async throws {
+    let server = ThreadServer()
+    let pool = AgentAdmissionController(limit: 1)
+    let manager = CodexThreadCoordinator(service: server, admission: pool)
+    try manager.register(sessionID: "a", binding: .init(cwd: "/tmp/project"))
+    try await manager.connect(sessionID: "a")
+    server.failures["turn/start"] = .remote(code: -32602, message: "Invalid input")
+    await #expect(throws: CodexAppServerError.self) { try await manager.startTurn(sessionID: "a", input: []) }
+    #expect(pool.running.isEmpty)
+    server.failures["turn/start"] = .timedOut("turn/start")
+    await #expect(throws: CodexAppServerError.self) { try await manager.startTurn(sessionID: "a", input: []) }
+    #expect(pool.running == ["a"])
+    server.failures.removeValue(forKey: "turn/start")
+    try await manager.connect(sessionID: "a")
+    #expect(pool.running.isEmpty)
+}
+
+@Test @MainActor func nativeAgentAdmissionCancellationImmediatelyAfterGrantReleasesUnusedReservation() async throws {
+    let server = ThreadServer()
+    let pool = AgentAdmissionController(limit: 1)
+    let manager = CodexThreadCoordinator(service: server, admission: pool)
+    try manager.register(sessionID: "new", binding: .init(cwd: "/tmp/project"))
+    pool.adopt("busy")
+    let queued = Task { try await manager.startTurn(sessionID: "new", input: []) }
+    try await admissionEventually { pool.queuedIDs == ["new"] }
+    pool.onChange = {
+        if pool.running.contains("new") { queued.cancel() }
+    }
+    pool.release("busy")
+    await #expect(throws: CancellationError.self) { try await queued.value }
+    #expect(pool.running.isEmpty)
+    #expect(server.starts == 0 && server.count("turn/start") == 0)
+}
+
+@Test @MainActor func nativeAgentAdmissionKeepsLostCreationResumeAndUnknownRepliesReserved() async throws {
+    let server = ThreadServer()
+    let pool = AgentAdmissionController(limit: 1)
+    let manager = CodexThreadCoordinator(service: server, admission: pool)
+    try manager.register(sessionID: "uncertain", binding: .init(cwd: "/tmp/project"))
+    server.failures["thread/start"] = .timedOut("thread/start")
+    await #expect(throws: CodexAppServerError.self) { try await manager.connect(sessionID: "uncertain") }
+    #expect(pool.running == ["uncertain"])
+    #expect(manager.states["uncertain"]?.binding.creationAttempted == true)
+    server.failures.removeAll()
+    server.threads["stored"] = .object(["id": .string("stored"), "cwd": .string("/tmp/project"),
+        "status": .object(["type": .string("unknown")])])
+    try await manager.recoverCreation(sessionID: "uncertain", threadID: "stored")
+    #expect(pool.running == ["uncertain"])
+    server.emit("thread/status/changed", id: "stored", fields: ["status": .object(["type": .string("idle")])])
+    try await admissionEventually { pool.running.isEmpty }
+    server.failures["thread/resume"] = .timedOut("thread/resume")
+    await #expect(throws: CodexAppServerError.self) { try await manager.connect(sessionID: "uncertain") }
+    #expect(pool.running == ["uncertain"])
+}
+
+@Test @MainActor func nativeAgentAdmissionCancellationWhileWaitingForLifecycleLockDoesNotStartWork() async throws {
+    let server = ThreadServer()
+    let pool = AgentAdmissionController(limit: 2)
+    let manager = CodexThreadCoordinator(service: server, admission: pool)
+    for id in ["first", "cancelled"] { try manager.register(sessionID: id, binding: .init(cwd: "/tmp/project")) }
+    var gate: CheckedContinuation<Void, Never>?
+    server.beforeResponse = { method in
+        if method == "thread/start", server.count(method) == 1 {
+            await withCheckedContinuation { gate = $0 }
+        }
+    }
+    let first = Task { try await manager.connect(sessionID: "first") }
+    try await admissionEventually { gate != nil }
+    let cancelled = Task { try await manager.connect(sessionID: "cancelled") }
+    try await admissionEventually { pool.running == ["first", "cancelled"] }
+    cancelled.cancel()
+    gate?.resume()
+    try await first.value
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    #expect(server.starts == 1 && pool.running.isEmpty)
+    #expect(manager.states["cancelled"]?.binding.creationAttempted == false)
+}
+
+@Test @MainActor func nativeAgentAdmissionCannotMutateCLIOwnershipAfterFallback() async throws {
+    let server = ThreadServer()
+    let pool = AgentAdmissionController(limit: 1)
+    let manager = CodexThreadCoordinator(service: server, admission: pool)
+    try manager.register(sessionID: "same-id", binding: .init(cwd: "/tmp", settings: .init(model: "synthetic-model")))
+    try await manager.select(sessionID: "same-id")
+    let original = try #require(manager.states["same-id"]?.binding)
+    var oldSelection: Task<Void, Error>?
+    server.duringFallbackValidation = {
+        // This admission predates transfer but its operation/defer is blocked
+        // by fallback's lifecycle lock until the terminal owns the same ID.
+        oldSelection = Task { try await manager.connect(sessionID: "same-id") }
+        try? await admissionEventually { pool.running.contains("same-id") }
+    }
+    let handedOff = try await manager.prepareForCLIFallback(sessionID: "same-id")
+    #expect(handedOff == original && pool.running.isEmpty)
+    #expect(pool.request("same-id", start: {})) // The terminal now owns it.
+    if let oldSelection { await #expect(throws: (any Error).self) { try await oldSelection.value } }
+    #expect(pool.running == ["same-id"])
+    server.emit("thread/status/changed", id: "thread-1", fields: ["status": .object(["type": .string("idle")])])
+    server.emit("turn/completed", id: "thread-1", fields: ["turn": .object(["id": .string("old"), "status": .string("completed")])])
+    server.disconnect()
+    for _ in 0..<20 { await Task.yield() }
+    #expect(pool.running == ["same-id"])
+    pool.release("same-id")
+    server.emit("thread/status/changed", id: "thread-1", fields: ["status": .object(["type": .string("active")])])
+    for _ in 0..<20 { await Task.yield() }
+    #expect(pool.running.isEmpty)
+    await #expect(throws: (any Error).self) { try await manager.connect(sessionID: "same-id") }
+    #expect(pool.running.isEmpty && pool.queuedIDs.isEmpty)
+    #expect(manager.states["same-id"]?.binding == original)
+}

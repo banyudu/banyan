@@ -98,7 +98,9 @@ struct PuckTUI {
                     guard let selections = collectAnswers(pending) else { continue }
                     try client.answer(id, callID: pending.callID, selections: selections)
                 } else if !command.isEmpty {
-                    try client.turn(id, prompt: command)
+                    if try !PuckAppAdmission.turn(id, prompt: command) {
+                        try client.turn(id, prompt: command)
+                    }
                 }
             } catch {
                 output.write("Puck: \(error.localizedDescription)", terminator: "\n")

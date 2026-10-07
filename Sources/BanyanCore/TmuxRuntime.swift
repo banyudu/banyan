@@ -59,6 +59,7 @@ public protocol TmuxSessionLookupBackend: Sendable {
 }
 
 public protocol TmuxSessionBackend: TmuxSessionLookupBackend {
+    func agentAdmissionPane(named name: String) -> AgentAdmissionPaneInspection
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot?
     /// Returns the primary pane for each requested session in one backend call
     /// when the implementation can batch the lookup. The default keeps small
@@ -68,6 +69,12 @@ public protocol TmuxSessionBackend: TmuxSessionLookupBackend {
 }
 
 public extension TmuxSessionBackend {
+    func agentAdmissionPane(named name: String) -> AgentAdmissionPaneInspection {
+        if let pane = primaryPaneSnapshot(named: name) { return .present(pane) }
+        // Legacy Bool/optional lookups conflate absence with command failure.
+        return .unknown
+    }
+
     func primaryPaneSnapshots(named names: Set<String>) -> [String: TmuxPaneSnapshot] {
         names.reduce(into: [:]) { snapshots, name in
             if let snapshot = primaryPaneSnapshot(named: name) {
