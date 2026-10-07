@@ -184,6 +184,9 @@ struct BanyanApp: App {
                 }
         }
         .windowStyle(.titleBar)
+        // The toolbar shows the logo and the selected session's title instead;
+        // the window keeps its real name for the Window menu.
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Session") {

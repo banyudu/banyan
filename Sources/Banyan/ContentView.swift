@@ -56,6 +56,11 @@ struct ContentView: View {
         } detail: {
             detail
         }
+        // The default titlebar background over the detail column starts 2pt
+        // left of the split divider, so it overlapped the sidebar. Without it,
+        // the detail column's own background fills the titlebar and meets the
+        // divider exactly.
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .onOpenURL { url in
             guard let id = PuckSessionLink.sessionID(from: url) else { return }
             store.openPuckSession(id: id)
@@ -73,6 +78,12 @@ struct ContentView: View {
                 } else if let session = store.selectedSession {
                     TitleBarSessionFallbackView(session: session)
                 }
+            }
+            // With a principal item, the actions below are laid out right after
+            // the centered title instead of at the trailing edge. A Spacer item
+            // becomes a flexible toolbar space that pushes them back.
+            ToolbarItem(placement: .primaryAction) {
+                Spacer()
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 if let update = updater.pendingUpdate {
@@ -153,7 +164,7 @@ struct ContentView: View {
         } message: {
             Text(store.codexSessionError ?? "")
         }
-        .background(WindowTitleConfigurator(trigger: titlebarConfigurationTrigger))
+        .background(WindowRestorationConfigurator())
         .preferredColorScheme(store.terminalTheme.colorScheme)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("AppleInterfaceThemeChangedNotification"))) { _ in
             store.refreshTerminalAppearance()
@@ -1140,7 +1151,14 @@ struct ContentView: View {
             // soon as any row needs it, so same-depth badges line up and a
             // top-level parent never reads as a child of its sibling.
             let showsDisclosureGutter = group.items.contains { $0.isParent || $0.depth > 0 }
+            // The project chip is the section's first row, not its header. This
+            // binary links against the macOS 14 SDK, where sidebar section
+            // headers are collapsible: hovering one drew the system's collapse
+            // chevron just outside the chip, and `.collapsible(false)` is
+            // ignored there. A headerless section gets no collapse control.
             Section {
+                sidebarGroupHeader(group, isStatic: isStatic, isFirst: group.id == firstGroupID)
+
                 if isStatic {
                     ForEach(group.items) { item in
                         sidebarRow(
@@ -1167,51 +1185,56 @@ struct ContentView: View {
                         store.moveSidebarSessions(in: group.id, from: source, to: destination)
                     }
                 }
-            } header: {
-                HStack(spacing: 4) {
-                    Text(group.title)
-                        .font(.caption)
-                        .foregroundStyle(isStatic ? .tertiary : .secondary)
-                        .lineLimit(1)
-
-                    if !isStatic {
-                        Spacer(minLength: 4)
-
-                        ProjectNewSessionButton(
-                            groupID: group.id,
-                            groupTitle: group.title
-                        )
-                    }
-                }
-                // Static headers have no button; keep every chip the same height.
-                .frame(minHeight: 20)
-                .padding(.leading, 8)
-                .padding(.trailing, 4)
-                .padding(.vertical, 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // A rounded chip rather than a full-bleed band. The window
-                // background is darker than the sidebar in dark mode and
-                // lighter in light mode, so the chip never reads as a hovered
-                // row. Sidebar-style section headers do not pin on current
-                // macOS, so nothing scrolls under the chip's margins.
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(Color(nsColor: .windowBackgroundColor))
-                )
-                // The header cell starts ~7pt left of the row cells and ends
-                // ~19pt right of them; inset the chip to line up with the row
-                // highlights below it.
-                .padding(.leading, 7)
-                .padding(.trailing, 19)
-                // Only the first project gets extra top breathing room under the
-                // mode-picker divider; adding it to every header widened the gaps
-                // between projects. The history/search header gets a touch more
-                // space so it reads as a separator above the active rows.
-                .padding(.top, group.id == firstGroupID ? 4 : (isStatic ? 8 : 0))
-                .padding(.bottom, 2)
             }
             .listSectionSeparator(isStatic ? .visible : .hidden, edges: .top)
         }
+    }
+
+    private func sidebarGroupHeader(
+        _ group: SidebarSessionGroup,
+        isStatic: Bool,
+        isFirst: Bool
+    ) -> some View {
+        HStack(spacing: 4) {
+            Text(group.title)
+                .font(.caption)
+                .foregroundStyle(isStatic ? .tertiary : .secondary)
+                .lineLimit(1)
+
+            if !isStatic {
+                Spacer(minLength: 4)
+
+                ProjectNewSessionButton(
+                    groupID: group.id,
+                    groupTitle: group.title
+                )
+            }
+        }
+        // Static headers have no button; keep every chip the same height.
+        .frame(minHeight: 20)
+        .padding(.leading, 8)
+        .padding(.trailing, 4)
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // A rounded chip rather than a full-bleed band. The window background
+        // is darker than the sidebar in dark mode and lighter in light mode, so
+        // the chip never reads as a hovered row.
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor))
+        )
+        .accessibilityAddTraits(.isHeader)
+        // Only the first project gets extra top breathing room under the
+        // mode-picker divider; adding it to every header widened the gaps
+        // between projects. The history/search header gets a touch more space
+        // so it reads as a separator above the active rows. This is padding
+        // rather than a row inset: a sidebar row applies its vertical insets to
+        // both edges.
+        .padding(.top, isFirst ? 4 : (isStatic ? 8 : 0))
+        .padding(.bottom, 2)
+        // The session rows' horizontal insets, so the chip lines up with their
+        // highlights.
+        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
     }
 
     private func makeJumpKeyLabels(
@@ -1414,17 +1437,6 @@ struct ContentView: View {
             return "Close parent session?"
         }
         return "Close session?"
-    }
-
-    private var titlebarConfigurationTrigger: String {
-        guard let session = store.selectedSession else { return "none" }
-        return [
-            session.id,
-            session.displayTitle,
-            session.cwd,
-            store.selectedContextInfo?.linearIssueID ?? "",
-            store.selectedContextInfo?.pullRequestURL ?? ""
-        ].joined(separator: "|")
     }
 
     private var selectedPullRequestHelp: String {
@@ -1984,38 +1996,20 @@ private struct TitleBarLogo: NSViewRepresentable {
     }
 }
 
-private struct WindowTitleConfigurator: NSViewRepresentable {
-    let trigger: String
-
+/// Applies the window restoration policy once the content is in a window.
+private struct WindowRestorationConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        TitlebarConfigurationView(frame: .zero)
+        WindowRestorationConfigurationView(frame: .zero)
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            Self.configure(window: nsView.window)
-        }
-    }
-
-    fileprivate static func configure(window: NSWindow?) {
-        guard let window else { return }
-        WindowRestorationPolicy.configure(window)
-        window.title = " "
-        window.titleVisibility = .visible
-    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-private final class TitlebarConfigurationView: NSView {
+private final class WindowRestorationConfigurationView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return }
-        configureTitlebar()
-    }
-
-    private func configureTitlebar() {
-        DispatchQueue.main.async { [weak self] in
-            WindowTitleConfigurator.configure(window: self?.window)
-        }
+        guard let window else { return }
+        WindowRestorationPolicy.configure(window)
     }
 }
 

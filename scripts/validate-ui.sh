@@ -69,17 +69,17 @@ verify_png() {
   fi
 }
 
-assert_native_title_blank() {
+assert_native_title_hidden() {
   local state
   local attempt
   for attempt in {1..20}; do
     state="$("$CTL" window-state)"
-    if grep -q '"title" : " "' <<<"$state"; then
+    if grep -q '"titleVisibility" : "hidden"' <<<"$state"; then
       return 0
     fi
     sleep 0.25
   done
-  echo "Expected native window title text to remain blank, got:" >&2
+  echo "Expected the native window title to stay hidden, got:" >&2
   echo "$state" >&2
   return 1
 }
@@ -147,7 +147,7 @@ fi
 
 wait_for_control_server
 activate_app
-assert_native_title_blank
+assert_native_title_hidden
 assert_toolbar_actions_trailing
 
 "$CTL" spawn \
@@ -171,7 +171,7 @@ open -n "$APP"
 STARTED_APP=1
 wait_for_control_server
 activate_app
-assert_native_title_blank
+assert_native_title_hidden
 assert_toolbar_actions_trailing
 
 "$CTL" list | grep -q "$SESSION_ID"
