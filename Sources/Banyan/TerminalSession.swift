@@ -38,9 +38,8 @@ final class TerminalSession: BanyanSession {
         return view
     }
 
-    /// Non-allocating peek at the terminal. `nil` until something actually needs to
-    /// display or run this session, which lets repaint and teardown paths no-op
-    /// instead of materializing a terminal just to tear it down.
+    /// Non-allocating peek. `nil` before first display and after cache eviction,
+    /// so repaint and teardown paths never create a terminal just to discard it.
     var loadedTerminalView: DetectingLocalProcessTerminalView? {
         _terminalView
     }
@@ -67,6 +66,8 @@ final class TerminalSession: BanyanSession {
     var isInactiveTerminalClientDetached = false
     var attemptedBlankTerminalRecovery = false
     var terminalRefreshTask: Task<Void, Never>?
+    /// Invalidates asynchronous work that was launched for a previous client.
+    var terminalClientGeneration = UUID()
 
     init(
         id: String,
@@ -129,6 +130,9 @@ final class TerminalSession: BanyanSession {
         )
 
         let delegate = TerminalSessionDelegate(sessionID: id)
+        delegate.isCurrentSource = { [weak self] source in
+            self?.loadedTerminalView === source
+        }
         delegate.onTitle = { [weak self] title in
             guard let self else { return }
             // Agents emit generic terminal labels such as "Claude session" or
