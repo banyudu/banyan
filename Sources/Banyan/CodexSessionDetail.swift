@@ -73,6 +73,8 @@ struct CodexSessionDetail: View {
             Text(["Codex", session.state.binding.settings.model ?? "Default model", status,
                   session.state.binding.settings.approvalPolicy, session.state.binding.settings.sandbox].joined(separator: " · "))
                 .font(.caption).foregroundStyle(.secondary)
+            Text("Leaving an idle thread unsubscribes this view. Codex unloads it later, after its inactivity grace period.")
+                .font(.caption).foregroundStyle(.secondary)
             if let message = session.state.connection.message {
                 Text(message).font(.callout).textSelection(.enabled)
             }

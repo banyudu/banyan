@@ -212,6 +212,19 @@ public actor CodexAppServerClient {
         await shutdown()
     }
 
+    public func validateCLIFallback(binding: CodexThreadBinding) async throws {
+        var environment = environmentProvider()
+        if let home = binding.codexHome { environment["CODEX_HOME"] = home }
+        let arguments = try CodexCLIFallback.arguments(binding: binding, executable: executable, validateOnly: true)
+        let result = try await SubprocessRunner.runAsync(arguments: ["/usr/bin/env"] + arguments,
+            cwd: binding.cwd, environment: environment, timeout: requestTimeout)
+        guard result.terminationStatus == 0 else {
+            let detail = String(decoding: result.standardError.prefix(2048), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw CodexAppServerError.protocolViolation("The installed Codex CLI cannot preserve this thread's settings. The native session is unchanged. Keep using native Codex, or explicitly choose CLI-compatible settings before retrying. \(detail)")
+        }
+    }
+
     private func shutdown() async {
         generation += 1
         let current = generation

@@ -17,6 +17,7 @@ import Testing
     #expect(command.contains("'provider_options={\"enabled\" = true, \"name\" = \"a'\\''b\"}'"))
     #expect(!command.contains("--last"))
     #expect(!command.contains("remote-control"))
+    #expect(command.contains("'--no-daemon'"))
     #expect(CodingAgentProvider.detect(in: command) == .codex)
 }
 

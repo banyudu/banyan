@@ -92,6 +92,8 @@ public protocol CodexThreadService: Sendable {
     func storageHome() async -> String?
     /// Reap the shared child before a CLI acquires a thread writer.
     func disconnectForHandoff() async throws
+    /// Validate the installed interactive CLI before releasing any native work.
+    func validateCLIFallback(binding: CodexThreadBinding) async throws
     func request(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue
     func requestWhileConnected(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue
     func events() async -> AsyncStream<CodexAppServerEvent>
@@ -99,6 +101,9 @@ public protocol CodexThreadService: Sendable {
 }
 
 public extension CodexThreadService {
+    func validateCLIFallback(binding: CodexThreadBinding) async throws {
+        _ = try CodexCLIFallback.command(binding: binding)
+    }
     func connect() async throws {}
     func storageHome() async -> String? { nil }
     func requestWhileConnected(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue {
