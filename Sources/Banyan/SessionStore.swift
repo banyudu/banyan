@@ -335,6 +335,8 @@ final class SessionStore: ObservableObject {
     private static let showFinishedChildrenDefaultsKey = "sidebarShowFinishedChildren"
 
     private var controlServer: ControlServer?
+    private let makeControlServer: (SessionStore, HostRuntimeContext) -> ControlServer
+    private var didStartRuntime = false
     private let persistence: any SessionStorePersistenceBackend
     /// Shared memory of `gh` reference lookups, so a click on a `#123` that has
     /// already been resolved does not spend another GitHub API call.
@@ -488,8 +490,12 @@ final class SessionStore: ObservableObject {
         host: HostRuntimeContext,
         telemetry: PerformanceTelemetry,
         attentionNotifier: AttentionNotifier,
-        puckDaemon: (any PuckDaemonService)? = nil
+        puckDaemon: (any PuckDaemonService)? = nil,
+        makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
+            ControlServer(store: $0, host: $1)
+        }
     ) {
+        self.makeControlServer = makeControlServer
         self.puckDaemon = puckDaemon ?? PuckDaemonClient(
             environment: host.environment,
             homeDirectory: host.homeDirectory.path
@@ -1984,9 +1990,21 @@ final class SessionStore: ObservableObject {
         )
     }
 
+    /// App-owned startup, independent of any window. Restore before accepting
+    /// control requests or supervising sessions, and never repeat launch work.
+    func startRuntimeIfNeeded() {
+        guard !didStartRuntime else { return }
+        didStartRuntime = true
+        loadPersistedSessionsIfNeeded()
+        spawnDefaultSessionIfEmpty()
+        refreshImportedHistoryIfNeeded()
+        startControlServer()
+        startSupervisor()
+    }
+
     func startControlServer() {
         guard controlServer == nil else { return }
-        let server = ControlServer(store: self, host: host)
+        let server = makeControlServer(self, host)
         server.start()
         controlServer = server
     }

@@ -5,11 +5,14 @@ import Network
 
 final class ControlServer {
     private weak var store: SessionStore?
+    /// Listener lifecycle state is confined to `queue`, including first startup.
     private var listener: NWListener?
-    private let port: NWEndpoint.Port = 7842
+    private let port: NWEndpoint.Port
     private let token: String
     private let queue = DispatchQueue(label: "app.banyan.control-server")
     private var bindAttempts = 0
+    private var isStopped = false
+    private var bindRetry: DispatchWorkItem?
     /// ~30s of retries at 1s each, enough to outlast a previous instance releasing
     /// the port on a quick restart, without looping forever.
     private let maxBindAttempts = 30
@@ -43,12 +46,38 @@ final class ControlServer {
         let respond: (Response) -> Void
     }
 
-    init(store: SessionStore, host: HostRuntimeContext) {
+    init(store: SessionStore, host: HostRuntimeContext, port: NWEndpoint.Port = 7842) {
         self.store = store
+        self.port = port
         self.token = (try? ControlToken.loadOrCreate(
             environment: host.environment,
             homeDirectory: host.homeDirectory
         )) ?? ""
+    }
+
+    /// The actual bound port, including when a private runtime requests `.any`.
+    @MainActor
+    var listeningPort: UInt16? {
+        queue.sync {
+            guard let listener, case .ready = listener.state else { return nil }
+            return listener.port?.rawValue
+        }
+    }
+
+    @MainActor
+    var hasPendingBindRetry: Bool {
+        queue.sync { bindRetry != nil }
+    }
+
+    @MainActor
+    func stop() {
+        queue.sync {
+            // Pending bind retries must not resurrect a stopped server.
+            isStopped = true
+            bindRetry?.cancel()
+            bindRetry = nil
+            if let listener { retire(listener, thenRetry: false) }
+        }
     }
 
     @MainActor
@@ -59,10 +88,14 @@ final class ControlServer {
         store?.onSessionEvent = { [weak self] _ in
             self?.deliverParkedEvents()
         }
-        startListener()
+        queue.async { [weak self] in
+            self?.startListener()
+        }
     }
 
     private func startListener() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard !isStopped, listener == nil, bindRetry == nil else { return }
         let listener: NWListener
         do {
             listener = try NWListener(using: .tcp, on: port)
@@ -79,7 +112,7 @@ final class ControlServer {
         // listener silently never bound and the control server was dead until the
         // next launch. Observe it and retry with a fresh listener.
         listener.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
+            guard let self, !self.isStopped, self.listener === listener else { return }
             switch state {
             case .ready:
                 if self.bindAttempts > 0 {
@@ -104,6 +137,7 @@ final class ControlServer {
     }
 
     private func retire(_ oldListener: NWListener, thenRetry: Bool) {
+        dispatchPrecondition(condition: .onQueue(queue))
         oldListener.stateUpdateHandler = nil
         oldListener.cancel()
         if listener === oldListener {
@@ -115,15 +149,20 @@ final class ControlServer {
     }
 
     private func scheduleBindRetry() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard !isStopped, bindRetry == nil else { return }
         guard bindAttempts < maxBindAttempts else {
             NSLog("Banyan control server gave up binding port \(port) after \(bindAttempts) attempts")
             return
         }
         bindAttempts += 1
-        queue.asyncAfter(deadline: .now() + 1) { [weak self] in
-            guard let self, self.listener == nil else { return }
+        let retry = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.bindRetry = nil
             self.startListener()
         }
+        bindRetry = retry
+        queue.asyncAfter(deadline: .now() + 1, execute: retry)
     }
 
     private func handle(_ connection: NWConnection) {

@@ -6,7 +6,8 @@
 #      listener never bound (now also mitigated by ControlServer bind-retry),
 #   2) SIGKILL (`kill -9`) leaving incomplete window-restoration state, which then
 #      crashed the next launch inside AppKit's NSWindow.restoreStateWithCoder path
-#      and left the app running windowless (so onAppear/the control server never ran).
+#      and left the app running windowless. Runtime startup now runs from the app
+#      delegate, independently of window appearance.
 #      Banyan disables AppKit's image snapshots, but retains ordinary restoration,
 #      so the forced-restart cleanup remains a precaution, and
 #   3) looking for running instances only under this script's own checkout, so an
@@ -15,7 +16,9 @@
 #
 # This script quits gracefully (never SIGKILL unless --force), waits for both the
 # process to exit and the port to free, then relaunches. It refuses to launch
-# while another Banyan still owns the port.
+# while another Banyan still owns the port. If the launched process stays up but
+# its control server is unavailable, it reopens the bundle once to recover a
+# possible windowless launch, then repeats the bounded health check.
 #
 # Which checkout:
 #   By default this acts on the MAIN checkout, not on the worktree the script
@@ -49,7 +52,7 @@ for arg in "$@"; do
     --previous) CHANNEL=previous ;;
     --here) HERE=1 ;;
     --force) FORCE=1 ;;
-    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) echo "restart-app: unknown option '$arg' (--stable | --previous | --here | --force)" >&2; exit 1 ;;
   esac
 done
@@ -177,13 +180,30 @@ open "$APP"
 
 # Confirm the control server comes back up.
 CTL="$ROOT_DIR/dist/bin/banyanctl"
-if [[ -x "$CTL" ]]; then
+wait_for_control_server() {
+  local i
   for i in $(seq 1 25); do
     if ! "$CTL" list >/dev/null 2>&1; then sleep 1; continue; fi
     echo "Control server is up (after ~${i}s)."
-    exit 0
+    return 0
   done
-  echo "restart-app: control server did not respond within 25s — check the app window." >&2
+  return 1
+}
+
+if [[ -x "$CTL" ]]; then
+  if wait_for_control_server; then exit 0; fi
+  # Reopen the same bundle through Launch Services, without -n: this delivers a
+  # reopen event to the existing instance instead of launching a second runtime.
+  # Avoid System Events window inspection, which requires Accessibility access
+  # and can itself fail in unattended restart workflows.
+  if pgrep -f "$BIN" >/dev/null 2>&1; then
+    echo "restart-app: Banyan is running without a responding control server; reopening the bundle to recover a possible windowless launch…" >&2
+    open "$APP"
+    if wait_for_control_server; then exit 0; fi
+    echo "restart-app: control server did not respond after reopening (two 25s health checks)." >&2
+  else
+    echo "restart-app: control server did not respond within 25s and the launched Banyan process is not running." >&2
+  fi
   exit 1
 fi
 
