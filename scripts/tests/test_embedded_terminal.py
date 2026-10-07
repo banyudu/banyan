@@ -91,14 +91,16 @@ def main():
             env.pop(key, None)
         client = None
         master = None
+        outer_tty = None
 
         def command(*arguments, check=True):
             return subprocess.run([tmux, "-L", socket, *arguments], env=env, check=check,
                                   capture_output=True, text=True, timeout=10).stdout.strip()
 
         def start():
-            nonlocal client, master, screen
+            nonlocal client, master, outer_tty, screen
             master, slave = pty.openpty()
+            outer_tty = os.ttyname(slave)
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
 
             def terminal_session():
@@ -214,8 +216,16 @@ def main():
             wait(lambda: "disconnected" in screen.text(), "client exit notification")
             wait(lambda: "disconnected" not in screen.text(), "automatic reconnect", timeout=15)
 
+            fallback_output_start = len(screen.raw)
             send(b"\x1d]f")
-            wait(lambda: "Banyan TUI" not in screen.text(), "full-screen fallback")
+            # TUIAttachment clears before launching tmux. Screen absence alone
+            # can send detach before tty_start_tty flushes queued input. Tmux's
+            # keypad-mode output follows that flush; require a fresh sequence
+            # and its client on our outer tty, rather than an elapsed delay.
+            wait(lambda: "Banyan TUI" not in screen.text() and
+                 "\x1b[?1h" in screen.raw[fallback_output_start:] and
+                 outer_tty in command("list-clients", "-F", "#{client_name}").splitlines(),
+                 "full-screen fallback ready for input")
             # Detach the foreground fallback through tmux's own prefix.
             send(b"\x02d")
             wait(lambda: "Banyan TUI" in screen.text(), "fallback returns to embedded screen")
