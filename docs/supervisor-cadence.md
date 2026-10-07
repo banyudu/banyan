@@ -13,6 +13,11 @@ deferred work, coalesced behind a two-second deadline and any running tick.
 Output preserves a usable in-flight status result; newer status/input/exit
 signals invalidate it. The process watcher uses PIDs from the same inspection
 snapshot, creates no tmux client, and stops watching removed or suspended rows.
+Frozen rows are excluded from observations, exit watches and stale-result
+application. Freeze reconciliation still bounds its own deadline to 15 seconds;
+the auto-freeze probe cap applies only while that preference is enabled.
+Selection/input resume synchronously, and bulk resume/reconciliation resets
+observation backoff. Shutdown still releases owned frozen groups.
 
 Evicted/unattached terminals have no PTY output callback. While executing, a
 batched pane-activity probe remains due at most every 30 seconds in normal power
@@ -65,12 +70,12 @@ fixture distributions, in milliseconds (p50 / p95 / max):
 
 | Scenario | Metric | Before | After |
 | --- | --- | --- | --- |
-| Quiet active | supervisor.tick | 8.082 / 8.775 / 15.336 | 8.010 / 15.881 / 15.881 |
-| Quiet active | supervisor.session | 0.078 / 0.103 / 7.822 | 0.088 / 7.346 / 7.643 |
-| Quiet hidden | supervisor.tick | 8.466 / 16.144 / 16.144 | 8.237 / 16.005 / 16.005 |
-| Quiet hidden | supervisor.session | 0.087 / 7.967 / 8.083 | 0.106 / 7.726 / 7.751 |
-| Output every tick | supervisor.tick | 15.894 / 17.006 / 17.591 | 15.932 / 17.008 / 17.806 |
-| Output every tick | supervisor.session | 7.421 / 8.239 / 8.991 | 7.396 / 8.197 / 8.675 |
+| Quiet active | supervisor.tick | 7.605 / 8.239 / 16.258 | 7.601 / 15.757 / 15.757 |
+| Quiet active | supervisor.session | 0.087 / 0.113 / 7.876 | 0.095 / 7.301 / 7.706 |
+| Quiet hidden | supervisor.tick | 7.746 / 15.004 / 15.004 | 7.410 / 15.444 / 15.444 |
+| Quiet hidden | supervisor.session | 0.096 / 7.195 / 7.282 | 0.092 / 7.817 / 7.840 |
+| Output every tick | supervisor.tick | 15.195 / 15.764 / 15.974 | 15.218 / 15.839 / 16.340 |
+| Output every tick | supervisor.session | 7.340 / 7.777 / 7.982 | 7.364 / 7.861 / 8.070 |
 
 | Scenario | Scheduled ticks / list-panes | Process snapshots | Classifications | Captures |
 | --- | --- | --- | --- | --- |
@@ -125,6 +130,8 @@ Setting a fixture data directory alone does **not** isolate an ordinary app's
 default tmux socket; use this fixture instead of launching an extra app against
 the live server.
 
+The fixture uses an alternate-screen shell UI so old executing hints do not
+linger in scrollback. Its freeze preferences are private and disabled.
 After 105 seconds of quiet hidden execution, it checks an unattached attention
 transition through tmux activity, a silent external child's completion through
 the kernel exit event, a selected attached session, and the same selected
@@ -135,6 +142,23 @@ latencies and process snapshot count to `latency.json`. The ordinary tests use
 a virtual clock to assert the stricter scheduling intervals without wall-clock
 flakiness. The fixture's performance report retains the production slow-event
 filter, so a fast run may contain no supervisor timing events.
+
+On 2026-10-07, after integrating the freeze foundation, the runtime fixture
+passed with five process snapshots during its 105-second warmup (seven executing
+sessions, no attached terminal clients), and 11 snapshots over the whole run:
+
+| Transition | Observed latency |
+| --- | --- |
+| Hidden, never attached: attention | 15.35 s |
+| Hidden: silent child completion, kernel exit event | 2.04 s |
+| Selected and attached: attention | 2.18 s |
+| Hidden after terminal-view eviction: attention | 2.04 s |
+
+The evicted case follows recent activity; the never-attached case verifies the
+quiet hidden path after warmup. These are one isolated run, not live provider
+or physical CPU-wakeup measurements. Its `perf report --since 1d --json`
+contained no supervisor events at the 150 ms slow-event threshold; there is no
+runtime supervisor percentile distribution to infer from that empty population.
 
 For physical CPU wakeups and subprocess/CPU accounting, capture the isolated
 test PID with Instruments Energy Log/System Trace for the same quiet and output
