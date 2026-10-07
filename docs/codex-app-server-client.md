@@ -194,11 +194,23 @@ that ID; the older remote-control preference cannot rewrite this command.
 fallback rows as `backend: "tmux"`, and includes their `codex` binding with
 `cliFallbackReason` for fallback provenance.
 
-Handoff waits for all native turns and pending requests to finish. Banyan then
+Handoff first loads the installed CLI's configuration with the exact persisted
+overrides (`features list`); `--help` alone cannot catch retired policy settings.
+A rejected configuration leaves native ownership and the row unchanged. For
+example, App Server 0.160.0 accepts RPC `untrusted`, but its interactive CLI
+rejects explicit `approval_policy="untrusted"`. Banyan reports that refusal;
+it never migrates the policy to `on-request` implicitly. Keep using the native
+thread, or explicitly choose CLI-compatible settings before retrying.
+
+Handoff waits for all native turns and pending requests to finish, including
+work arriving while CLI configuration is validated. Banyan then
 stops and reaps its shared private server before allowing the CLI to acquire a
 writer. It never kills a busy sibling thread just to hand off an idle one.
 Other idle native sessions preserve their mappings and can reconnect later.
 The native toggle may remain disabled while the fallback runs.
+Fallback passes `--no-daemon` explicitly, so the owned CLI does not join a
+Desktop/CLI-managed server. Native threads remain outside the terminal process
+freeze policy; they use App Server subscription and unload events instead.
 
 A startup compatibility failure is reported before any Banyan row is inserted;
 the rejected child is reaped. Choose Terminal with command `codex`, or update
@@ -233,8 +245,13 @@ cover unsupported versions, a child ignoring SIGTERM, capability failures,
 uncertain starts, busy-thread refusal, rollout toggling, persistence, and
 unified CLI output.
 
-Live validation should use a tested `0.146.x`, `0.160.0`, or `0.160.1` CLI. Verify a completed thread across an app/server restart,
-pending approval while changing selection, and coexistence with an external
-writer. The server's 30-minute unload grace and mobile handoff require live
-checks; fast fixture tests prove client subscription decisions, not RSS savings
-or external-client writer release.
+The [integrated native verification](codex-native-integration.md) also exercises
+successful turns, tools, approvals/input, steering, interruption, restart,
+native rendering, interactive CLI handoff, unload notifications, and matched
+idle RSS with a real server and a local Responses fixture. Unload timing is
+version-dependent: the original 0.146.0 spike observed 30 minutes, while
+0.160.0 unloaded private threads after about 60 seconds. The UI explains the
+server's inactivity grace period without promising a universal duration.
+Desktop/mobile handoff and external-client writer behavior remain separate
+live checks; neither a local fixture nor unsubscribe proves external writer
+release.

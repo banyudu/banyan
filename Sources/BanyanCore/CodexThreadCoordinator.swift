@@ -154,17 +154,27 @@ public final class CodexThreadCoordinator {
             await flushPersistence?()
         }
         _ = try CodexCLIFallback.command(binding: state.binding)
+        try checkCLIHandoffIdle()
+        let current = epoch
+        try await service.validateCLIFallback(binding: state.binding)
+        try checkEpoch(current)
+        // Notifications still apply while CLI config loads. Never reap work
+        // or approvals that arrived during this new asynchronous boundary.
+        try checkCLIHandoffIdle()
+        try await service.disconnectForHandoff()
+        disconnected("Codex server released for CLI fallback. Reconnect native sessions when needed.")
+        cliSessionIDs.insert(sessionID)
+        if selectedSessionID == sessionID { selectedSessionID = nil }
+        return state.binding
+    }
+
+    private func checkCLIHandoffIdle() throws {
         guard states.values.allSatisfy({
             $0.runtime.type != "active" && $0.activeTurnID == nil && !$0.needsAttention
                 && (!$0.isSubscribed || $0.runtime.type == "idle")
         }) else {
             throw CodexAppServerError.protocolViolation("Finish active native Codex turns and pending requests before switching to the CLI")
         }
-        try await service.disconnectForHandoff()
-        disconnected("Codex server released for CLI fallback. Reconnect native sessions when needed.")
-        cliSessionIDs.insert(sessionID)
-        if selectedSessionID == sessionID { selectedSessionID = nil }
-        return state.binding
     }
 
     private func checkEnabled() throws {
