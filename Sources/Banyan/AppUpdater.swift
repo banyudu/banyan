@@ -204,17 +204,10 @@ final class AppUpdater: ObservableObject {
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/banyudu/banyan/releases/latest")!)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Banyan/\(currentVersion.major).\(currentVersion.minor).\(currentVersion.patch)", forHTTPHeaderField: "User-Agent")
-        let start = DispatchTime.now()
-        let (data, response) = try await session.data(for: request)
-        let httpResponse = response as? HTTPURLResponse
-        let statusCode = httpResponse?.statusCode ?? 0
-        axiomExporter?.sendHTTPRequest(
-            service: "github",
-            method: "GET",
-            url: "api.github.com/repos/releases/latest",
-            statusCode: statusCode,
-            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        let (data, response) = try await TracedHTTP.data(
+            for: request, session: session, exporter: axiomExporter, service: "github"
         )
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(statusCode) else {
             throw UpdateError.invalidResponse
         }
@@ -225,7 +218,9 @@ final class AppUpdater: ObservableObject {
         guard let asset = release.packageAsset else { throw UpdateError.packageNotFound }
         var request = URLRequest(url: asset.browserDownloadURL)
         request.setValue("Banyan/\(currentVersion.major).\(currentVersion.minor).\(currentVersion.patch)", forHTTPHeaderField: "User-Agent")
-        let (temporaryURL, response) = try await session.download(for: request)
+        let (temporaryURL, response) = try await TracedHTTP.download(
+            for: request, session: session, exporter: axiomExporter, service: "github"
+        )
         guard let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
             throw UpdateError.invalidResponse
         }

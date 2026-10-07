@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import BanyanCore
 
@@ -133,4 +134,23 @@ import Testing
         #expect(config.isActive == false)
         #expect(config.enabled == false)
     }
+}
+
+@Test func telemetryLoadHonorsFilePrecedenceAndDisabledGatingOverEnvironment() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let configDirectory = home.appendingPathComponent(".banyan")
+    try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let env = ["AXIOM_API_TOKEN": "xaat-env-fixture", "AXIOM_DATASET": "env-dataset"]
+    #expect(TelemetryConfig.load(homeDirectory: home, environment: env).axiomDataset == "env-dataset")
+    let legacy = configDirectory.appendingPathComponent("config.yml")
+    try "telemetry:\n  axiom_api_token: xaat-file-fixture\n".write(to: legacy, atomically: true, encoding: .utf8)
+    #expect(TelemetryConfig.load(homeDirectory: home, environment: env).axiomAPIToken == "xaat-file-fixture")
+    try "telemetry:\n  enabled: false\n".write(to: legacy, atomically: true, encoding: .utf8)
+    #expect(!TelemetryConfig.load(homeDirectory: home, environment: env).isActive)
+    let dedicated = configDirectory.appendingPathComponent("telemetry.yml")
+    try "axiom_api_token: xaat-dedicated-fixture\naxiom_dataset: dedicated\n".write(to: dedicated, atomically: true, encoding: .utf8)
+    #expect(TelemetryConfig.load(homeDirectory: home, environment: env).axiomDataset == "dedicated")
+    try "enabled: false\n".write(to: dedicated, atomically: true, encoding: .utf8)
+    #expect(!TelemetryConfig.load(homeDirectory: home, environment: env).isActive)
 }

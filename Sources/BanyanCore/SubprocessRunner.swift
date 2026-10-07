@@ -27,7 +27,12 @@ import Darwin
 /// draining to `EAGAIN`/EOF right then is complete by construction rather than
 /// after a timed guess.
 public enum SubprocessRunner {
-    public static var axiomExporter: AxiomExporter?
+    private static let exporterLock = NSLock()
+    private static var exporter: AxiomExporter?
+    public static var axiomExporter: AxiomExporter? {
+        get { exporterLock.lock(); defer { exporterLock.unlock() }; return exporter }
+        set { exporterLock.lock(); exporter = newValue; exporterLock.unlock() }
+    }
 
     public struct Output {
         public let terminationStatus: Int32
@@ -95,9 +100,12 @@ public enum SubprocessRunner {
         environment: [String: String],
         timeout: TimeInterval,
         isCancelled: @escaping @Sendable () -> Bool = { false },
-        standardInput: FileHandle? = nil
+        standardInput: FileHandle? = nil,
+        tracingExporter: AxiomExporter? = SubprocessRunner.axiomExporter
     ) async throws -> Output {
-        let start = DispatchTime.now()
+        let span = tracingExporter?.startSpan("subprocess.run", attributes: [
+            "process.executable.name": TelemetryPrivacy.command(arguments.first ?? "unknown"),
+        ])
         let signal = RunSignal()
         let result: Output
         do {
@@ -128,21 +136,11 @@ public enum SubprocessRunner {
                 signal.cancel()
             }
         } catch {
-            let command = arguments.first ?? "unknown"
-            axiomExporter?.sendSubprocess(
-                command: command,
-                exitCode: -1,
-                durationMS: PerformanceTelemetry.elapsedMS(since: start),
-                error: error.localizedDescription
-            )
+            span?.end(errorType: TelemetryPrivacy.errorType(error))
             throw error
         }
-        let command = arguments.first ?? "unknown"
-        axiomExporter?.sendSubprocess(
-            command: command,
-            exitCode: result.terminationStatus,
-            durationMS: PerformanceTelemetry.elapsedMS(since: start)
-        )
+        span?.end(attributes: ["process.exit.code": String(result.terminationStatus)],
+                  errorType: result.terminationStatus == 0 ? nil : "nonzero_exit")
         return result
     }
 
@@ -158,17 +156,25 @@ public enum SubprocessRunner {
         environment: [String: String],
         timeout: TimeInterval,
         isCancelled: @escaping @Sendable () -> Bool = { false },
-        standardInput: FileHandle? = nil
+        standardInput: FileHandle? = nil,
+        tracingExporter: AxiomExporter? = SubprocessRunner.axiomExporter
     ) throws -> Output {
-        try run(
-            arguments: arguments,
-            cwd: cwd,
-            environment: environment,
-            timeout: timeout,
-            isCancelled: isCancelled,
-            standardInput: standardInput,
-            signal: RunSignal()
-        )
+        let span = tracingExporter?.startSpan("subprocess.run", attributes: [
+            "process.executable.name": TelemetryPrivacy.command(arguments.first ?? "unknown"),
+        ])
+        do {
+            let output = try run(
+                arguments: arguments, cwd: cwd, environment: environment,
+                timeout: timeout, isCancelled: isCancelled,
+                standardInput: standardInput, signal: RunSignal()
+            )
+            span?.end(attributes: ["process.exit.code": String(output.terminationStatus)],
+                      errorType: output.terminationStatus == 0 ? nil : "nonzero_exit")
+            return output
+        } catch {
+            span?.end(errorType: TelemetryPrivacy.errorType(error))
+            throw error
+        }
     }
 
     private static func run(
