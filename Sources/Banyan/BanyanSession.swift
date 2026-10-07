@@ -60,6 +60,9 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var isSuspended: Bool
     /// Actual agent process-group STOP, independent of frontend parking.
     @Published var isFrozen = false
+    @Published var isDeepSuspended = false
+    @Published var isDeepResuming = false
+    @Published var isDeepTerminating = false
     @Published var parentSessionID: String?
     /// Underlying coding-agent session UUID (codex/claude), resolved by matching
     /// live sessions against imported transcript history. Used to build a resume

@@ -8,6 +8,7 @@ import Darwin
 struct ProcessCommandLine: Sendable {
     let name: String
     let arguments: String
+    var argumentVector: [String]? = nil
 }
 
 /// One process as the kernel lists it, before any agent classification.
@@ -204,7 +205,7 @@ private extension ProcessTableSource {
 
         return ProcessCommandLine(
             name: executable,
-            arguments: arguments.joined(separator: " ")
+            arguments: arguments.joined(separator: " "), argumentVector: arguments
         )
     }
 }

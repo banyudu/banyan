@@ -354,7 +354,7 @@ final class ControlServer {
                 }
                 return
 
-            case .freeze, .unfreeze:
+            case .freeze, .unfreeze, .deepSuspend, .deepResume:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
                 try route.validate(body)
@@ -362,6 +362,8 @@ final class ControlServer {
                 Task { @MainActor in
                     do {
                         if route == .freeze { try await store.freezeAgent(id: id) }
+                        else if route == .deepSuspend { try await store.deepSuspendAgent(id: id) }
+                        else if route == .deepResume { try store.deepResumeAgent(id: id) }
                         else { try store.unfreezeAgent(id: id) }
                         guard let session = store.sessions.first(where: { $0.id == id }) else {
                             throw ControlError.notFound(id)
@@ -370,7 +372,7 @@ final class ControlServer {
                     } catch let error as ControlError {
                         respond(.failure(error.httpStatus, error.code, error.localizedDescription))
                     } catch {
-                        respond(.failure(409, "agent_freeze_refused", error.localizedDescription))
+                        respond(.failure(409, route == .deepSuspend || route == .deepResume ? "agent_deep_suspend_refused" : "agent_freeze_refused", error.localizedDescription))
                     }
                 }
                 return
@@ -715,6 +717,7 @@ final class ControlServer {
             // read the frozen status as a live one.
             "isSuspended": reading.isSuspended,
             "isFrozen": reading.isFrozen,
+            "isDeepSuspended": reading.isDeepSuspended,
             "visibleText": reading.visibleText
         ]
         if let session = store.sessions.first(where: { $0.id == id }) {
@@ -890,6 +893,10 @@ final class ControlServer {
             "isProcessStarted": session.isProcessStarted,
             "isSuspended": session.isSuspended,
             "isFrozen": session.isFrozen,
+            "isDeepSuspended": session.isDeepSuspended,
+            "isDeepResuming": session.isDeepResuming,
+            "isDeepTerminating": session.isDeepTerminating,
+            "deepRecoveryIsUncertain": (session as? TerminalSession)?.deepRecoveryIsUncertain ?? false,
             "projectGroupID": session.projectGroupID,
             "projectGroupTitle": session.projectGroupTitle,
             "displayContextDegraded": session.displayContextDegraded,

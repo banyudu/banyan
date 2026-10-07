@@ -295,8 +295,16 @@ extension TerminalSession {
 
     func restartBackingSession() {
         guard !isImportedHistory else { return }
+        cancelDeepLifecycle()
         do { try prepareFrozenAgentForTeardown() }
         catch { freezeError = error.localizedDescription; return }
+        suspendTicket = nil
+        deepRecoveryIsUncertain = false
+        hasLoadedDeepSuspendTicket = false
+        deepSuspendError = nil
+        isDeepSuspended = false
+        isDeepTerminating = false
+        isDeepResuming = false
         trackedPaneIdentity = nil
         invalidateTerminalClientWork()
         if let terminalView = loadedTerminalView {
@@ -354,6 +362,7 @@ extension TerminalSession {
     }
 
     func killBackingSession() {
+        cancelDeepLifecycle()
         do { try prepareFrozenAgentForTeardown() }
         catch { freezeError = error.localizedDescription; return }
         freezeGeneration = UUID()
@@ -410,6 +419,7 @@ extension TerminalSession {
         view.displayUpdatesEnabled = false
         view.processDelegate = nil
         view.onOutput = nil
+        view.permitsInput = nil
         view.onCommittedInput = nil
         view.terminate()
         view.removeFromSuperview()

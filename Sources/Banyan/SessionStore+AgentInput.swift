@@ -17,6 +17,7 @@ struct SessionPaneTarget: Sendable {
     /// operation has to decide what to do about one rather than quietly resume it.
     let isSuspended: Bool
     let isFrozen: Bool
+    var isDeepSuspended: Bool = false
 }
 
 /// One reading of a session's pane: what it shows, and what — if anything — it is
@@ -34,6 +35,7 @@ struct SessionPaneReading: Sendable {
     let observation: SessionStatusObservation?
     let isSuspended: Bool
     let isFrozen: Bool
+    var isDeepSuspended: Bool = false
 }
 
 struct SessionInputReceipt: Sendable {
@@ -89,6 +91,10 @@ extension SessionStore {
         let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession
         terminal?.freezeInputInFlight += 1
         defer { terminal?.freezeInputInFlight -= 1 }
+        try terminal?.beginDeepResume()
+        guard terminal?.isDeepSuspended != true else {
+            throw ControlError.badRequest("Agent is resuming; retry input when isDeepResuming is false")
+        }
         try terminal?.unfreezeAgent()
         let target = try paneTarget(id: id)
         try Self.refuseIfSuspended(target)
@@ -129,6 +135,10 @@ extension SessionStore {
         let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession
         terminal?.freezeInputInFlight += 1
         defer { terminal?.freezeInputInFlight -= 1 }
+        try terminal?.beginDeepResume()
+        guard terminal?.isDeepSuspended != true else {
+            throw ControlError.badRequest("Agent is resuming; read a fresh prompt after startup")
+        }
         try terminal?.unfreezeAgent()
         try Self.refuseIfSuspended(paneTarget(id: id))
         let reading = try await readPaneOutput(id: id, lines: nil)
@@ -177,7 +187,7 @@ extension SessionStore {
     ) -> SessionPaneReading? {
         guard let pane = backend.primaryPaneSnapshot(named: target.tmuxSessionName) else { return nil }
 
-        guard !target.isSuspended && !target.isFrozen else {
+        guard !target.isSuspended && !target.isFrozen && !target.isDeepSuspended else {
             // Read the pane, observe nothing. One capture in answer to an explicit
             // request is not the supervision loop parking switched off.
             return SessionPaneReading(
@@ -190,7 +200,8 @@ extension SessionStore {
                 prompt: nil,
                 observation: nil,
                 isSuspended: target.isSuspended,
-                isFrozen: target.isFrozen
+                isFrozen: target.isFrozen,
+                isDeepSuspended: target.isDeepSuspended
             )
         }
 

@@ -51,6 +51,9 @@ The toolbar is intentionally small:
 - Restored sessions attach to existing `tmux` sessions when possible.
 - Optional [agent freezing](docs/agent-freeze.md) stops inactive terminal agent
   process groups and resumes them on interaction. Automatic mode is off by default.
+- [Deep suspension](docs/agent-deep-suspend.md) terminates verified idle agent
+  processes to reclaim RAM and resumes their saved conversations in the same
+  pane on focus. Per-provider policies support memory-pressure-aware LRU selection.
 
 ## Quick start
 

@@ -291,6 +291,7 @@ struct PuckStoreFixture {
     }
 
     func makeStore(codexService: (any CodexThreadService)? = nil,
+                   historyBackend: (any SessionHistoryBackend)? = nil,
                    tmuxBackend: TmuxBackend? = nil,
                    sessionBackend: (any TmuxClientBackend)? = nil,
                    processTable: (any ProcessTableProvider)? = nil,
@@ -307,7 +308,7 @@ struct PuckStoreFixture {
             tmuxBackend: tmux,
             sessionBackend: sessionBackend ?? tmux,
             processTable: processTable ?? EmptyPuckTestProcessTable(),
-            historyBackend: EmptyPuckTestHistoryBackend(),
+            historyBackend: historyBackend ?? EmptyPuckTestHistoryBackend(),
             detector: AgentStateDetector(rules: []),
             host: HostRuntimeContext(
                 environment: [

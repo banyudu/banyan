@@ -21,6 +21,8 @@ extension SessionStore {
         // Invalidates pending freeze preparations even before a group is stopped.
         terminal.freezeGeneration = UUID()
         terminal.lastFreezeInteractionAt = Date()
+        do { try terminal.beginDeepResume() }
+        catch { terminal.deepSuspendError = error.localizedDescription }
         // A restored frontend may be selected before its asynchronous journal
         // read finishes. Consult tmux at that boundary instead of leaving an
         // unknown frozen agent stopped behind the selected terminal.
@@ -41,7 +43,7 @@ extension SessionStore {
     func freezeAgent(id: String, automatic: Bool = false) async throws {
         guard !isAgentFreezeShuttingDown else { throw AgentFreezeError.unsafe("Application is shutting down") }
         guard let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession,
-              terminal.status != .closed, !terminal.isImportedHistory, !terminal.isSuspended else {
+              terminal.status != .closed, !terminal.isImportedHistory, !terminal.isSuspended, !terminal.isDeepSuspended else {
             throw ControlError.badRequest("freeze requires a live, unparked terminal agent session")
         }
         guard !terminal.isFrozen else { return }
@@ -183,7 +185,10 @@ extension SessionStore {
 
     func prepareForAgentFreezeShutdown() {
         isAgentFreezeShuttingDown = true
-        for session in terminalSessions { session.freezeGeneration = UUID() }
+        for session in terminalSessions {
+            session.freezeGeneration = UUID()
+            session.cancelDeepLifecycle()
+        }
         resumeAllFrozenAgents()
     }
 

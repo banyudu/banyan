@@ -12,6 +12,32 @@ private var hostedProcessGroup: pid_t = 0
 /// foreground group. waitpid without WUNTRACED keeps the host asleep on STOP.
 public enum AgentProcessHost {
     public static let subcommand = "__process-host"
+    public static let persistentFlag = "--persistent"
+    public static let inheritedFlag = "--inherited"
+
+    /// A literal provider invocation can run inside a surviving login shell.
+    /// The inner one-shot host still owns foreground job control, including
+    /// exec launches. Rich shell programs keep the original one-shot lifecycle.
+    public static func supportsPersistentShell(command: String) -> Bool {
+        guard let invocation = AgentDeepSuspend.launchArguments(command), let executable = invocation.words.first else { return false }
+        return ["claude", "codex", "opencode"].contains((executable as NSString).lastPathComponent)
+    }
+
+    public static func runPersistent(shell: String, command: String, executable: String) throws -> Int32 {
+        guard supportsPersistentShell(command: command) else {
+            throw AgentFreezeError.unsafe("Persistent hosting requires a literal provider invocation")
+        }
+        let quote = AgentLaunchCommand.shellQuote
+        let identity = AgentProcessSample.read(pid: getpid())?.identity
+        defer { if let identity { AgentProviderIdentity.cleanup(root: identity) } }
+        // No exec in the outer shell: even `exec provider` exits only the inner
+        // host. cwd and exported login environment survive into the prompt and
+        // subsequent resume commands. No shell startup files are written.
+        let script = "\(quote(executable)) \(subcommand) \(inheritedFlag) \(quote(shell)) \(quote(command))\n"
+            + "printf '\\n[Banyan] Agent exited; shell available. Suspended agents resume on focus.\\n'\n"
+            + "exec \(quote(shell)) -i"
+        return try run(shell: shell, command: script)
+    }
 
     public static func executableURL(environment: [String: String]) -> URL? {
         #if os(macOS)
@@ -32,8 +58,8 @@ public enum AgentProcessHost {
     }
 
     /// Called before constructing the CLI/control client. No network or app state.
-    public static func run(shell: String, command: String) throws -> Int32 {
-        let arguments = [shell, "-lc", command]
+    public static func run(shell: String, command: String, loginShell: Bool = true) throws -> Int32 {
+        let arguments = [shell, loginShell ? "-lc" : "-c", command]
         let argv = arguments.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         #if canImport(Darwin)

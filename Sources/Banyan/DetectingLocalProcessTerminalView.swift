@@ -5,6 +5,20 @@ import QuartzCore
 import SwiftTerm
 final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     var onOutput: ((String) -> Void)?
+    var permitsInput: (() -> Bool)?
+    private var isReplyingToTerminalQuery = false
+
+    override func send(source: Terminal, data: ArraySlice<UInt8>) {
+        // Device/cursor queries are part of provider startup, not user input.
+        isReplyingToTerminalQuery = true
+        defer { isReplyingToTerminalQuery = false }
+        super.send(source: source, data: data)
+    }
+
+    override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        guard isReplyingToTerminalQuery || permitsInput?() != false else { return }
+        super.send(source: source, data: data)
+    }
     /// Receives text after AppKit has committed it to the terminal input.
     /// This is intentionally sourced from NSTextInputClient rather than raw
     /// key events so paste and IME composition (for example, Chinese input)
@@ -447,6 +461,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     }
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
+        guard permitsInput?() != false else { return }
         if let text = string as? NSString {
             let committedText = text as String
             if !committedText.isEmpty {
@@ -463,6 +478,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     /// submitted-input buffer (and its prompt title) would miss every pasted
     /// prompt — the common case for long first prompts.
     override func paste(_ sender: Any) {
+        guard permitsInput?() != false else { return }
         if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
             onCommittedInput?(text)
         }

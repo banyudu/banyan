@@ -49,6 +49,15 @@ final class TerminalSession: BanyanSession {
     let sessionRuntime: any SessionRuntimeBackend
     var trackedPaneIdentity: AgentProcessIdentity?
     var frozenTicket: AgentFreezeTicket?
+    var suspendTicket: AgentSuspendTicket?
+    var deepResumeTask: Task<Void, Never>?
+    var deepTerminationSource: DispatchSourceProcess?
+    var pendingDeepResume = false
+    var deepLifecycleGeneration = UUID()
+    var hasLoadedDeepSuspendTicket = false
+    var deepRecoveryIsUncertain = false
+    var deepProcessPresence: (AgentProcessIdentity) -> AgentProcessSample.Presence = AgentProcessSample.presence
+    @Published var deepSuspendError: String?
     var freezeGeneration = UUID()
     var freezeInputInFlight = 0
     var lastFreezeInteractionAt = Date()
@@ -239,6 +248,7 @@ final class TerminalSession: BanyanSession {
     }
 
     override func terminate(markClosed: Bool = true) {
+        cancelDeepLifecycle()
         try? unfreezeAgent()
         stopTerminalClient()
         super.terminate(markClosed: markClosed)
@@ -335,6 +345,18 @@ final class TerminalSession: BanyanSession {
         appliedFontFamily = pendingFontFamily
         appliedFontSize = pendingFontSize
         view.processDelegate = delegate
+        view.permitsInput = { [weak self] in
+            guard let self else { return false }
+            do {
+                try self.beginDeepResume()
+                guard !self.isDeepSuspended else { return false }
+                if self.isFrozen || self.frozenTicket != nil { try self.unfreezeAgent() }
+                return true
+            } catch {
+                self.deepSuspendError = error.localizedDescription
+                return false
+            }
+        }
         view.onOutput = { [weak self] text in
             self?.onOutput?(text)
         }

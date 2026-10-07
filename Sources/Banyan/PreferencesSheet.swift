@@ -73,6 +73,20 @@ struct PreferencesSheet: View {
                     .font(.headline)
 
                 Toggle("Automatically freeze inactive agents", isOn: $store.autoFreezeAgents)
+                ForEach([CodingAgentProvider.claude, .codex, .opencode]) { provider in
+                    let policy = store.deepSuspendPolicy(for: provider)
+                    Toggle("Deep suspend \(provider.displayName) automatically", isOn: Binding(
+                        get: { store.deepSuspendPolicy(for: provider).automatic },
+                        set: { store.setDeepSuspendPolicy(.init(automatic: $0, idleMinutes: policy.idleMinutes), for: provider) }))
+                    Stepper("\(provider.displayName) deep idle: \(Int(policy.idleMinutes)) min", value: Binding(
+                        get: { store.deepSuspendPolicy(for: provider).idleMinutes },
+                        set: { store.setDeepSuspendPolicy(.init(automatic: policy.automatic, idleMinutes: $0), for: provider) }),
+                        in: 1...1440, step: 5)
+                        .disabled(!policy.automatic)
+                }
+                Text("Deep suspend terminates verified idle agents to release RAM. Memory pressure shortens the threshold to one quiet minute. Exact disk identity and a surviving shell are required; focus resumes the same conversation. Off by default.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 HStack {
                     Text("Idle threshold")
                     Stepper("\(Int(store.agentFreezeIdleMinutes)) min", value: $store.agentFreezeIdleMinutes, in: 1...120, step: 1)

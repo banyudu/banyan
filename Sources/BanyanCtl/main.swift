@@ -4,9 +4,46 @@ import Foundation
 import FoundationNetworking
 #endif
 
+if CommandLine.arguments.dropFirst().first == AgentProviderIdentity.helper {
+    do {
+        if CommandLine.arguments.count == 6, CommandLine.arguments[2] == "query",
+           let pid = Int32(CommandLine.arguments[3]), let provider = CodingAgentProvider(rawValue: CommandLine.arguments[4]),
+           let identity = AgentProcessSample.read(pid: pid)?.identity {
+            guard let disk = try AgentProviderIdentity.query(process: identity, provider: provider, cwd: CommandLine.arguments[5]) else {
+                throw AgentFreezeError.unsafe("Provider identity adapter is absent")
+            }
+            print(String(decoding: try JSONEncoder().encode(disk), as: UTF8.self)); exit(0)
+        }
+        if CommandLine.arguments.count == 5, CommandLine.arguments[2] == "wait" {
+            guard let request = try AgentProviderIdentity.waitForRequest(directory: URL(fileURLWithPath: CommandLine.arguments[3]), excluding: CommandLine.arguments[4]) else { exit(75) }
+            print(request); exit(0)
+        }
+        print(try AgentProviderIdentity.owningProviderPID()); exit(0)
+    }
+    catch {
+        if CommandLine.arguments.dropFirst(2).first == "query" { FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8)) }
+        exit(1)
+    }
+}
+
 if CommandLine.arguments.dropFirst().first == AgentProcessHost.subcommand {
-    guard CommandLine.arguments.count == 4 else { exit(64) }
-    do { exit(try AgentProcessHost.run(shell: CommandLine.arguments[2], command: CommandLine.arguments[3])) }
+    let persistent = CommandLine.arguments.dropFirst(2).first == AgentProcessHost.persistentFlag
+    let inherited = CommandLine.arguments.dropFirst(2).first == AgentProcessHost.inheritedFlag
+    let offset = persistent || inherited ? 3 : 2
+    guard CommandLine.arguments.count == offset + 2 else { exit(64) }
+    do {
+        if persistent {
+            exit(try AgentProcessHost.runPersistent(shell: CommandLine.arguments[offset],
+                command: CommandLine.arguments[offset + 1], executable: CommandLine.arguments[0]))
+        }
+        let original = CommandLine.arguments[offset + 1]
+        var command = original
+        if inherited {
+            do { command = try AgentProviderIdentity.prepare(command: original, executable: CommandLine.arguments[0]) }
+            catch { FileHandle.standardError.write(Data("[Banyan] Current-session adapter unavailable; deep suspension requires verified identity.\n".utf8)) }
+        }
+        exit(try AgentProcessHost.run(shell: CommandLine.arguments[offset], command: command, loginShell: !inherited))
+    }
     catch {
         FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))
         exit(1)
@@ -168,14 +205,19 @@ struct BanyanCtl {
         case "new", "spawn":
             try post("/spawn", payload: withDefaultParent(parsePayload(Array(args.dropFirst()))))
         case "suspend":
-            try post("/suspend", payload: parsePayload(Array(args.dropFirst())))
+            try post("/agent-suspend", payload: sessionLifecyclePayload(Array(args.dropFirst())))
         case "freeze", "unfreeze":
             try post("/\(subcommand)", payload: parsePayload(Array(args.dropFirst())))
         case "resume":
-            try post("/resume", payload: parsePayload(Array(args.dropFirst())))
+            try post("/agent-resume", payload: sessionLifecyclePayload(Array(args.dropFirst())))
         default:
             throw CLIError.message("unknown session subcommand '\(subcommand)'")
         }
+    }
+
+    func sessionLifecyclePayload(_ args: [String]) throws -> [String: String] {
+        if args.count == 1, let id = args.first, !id.hasPrefix("-") { return ["id": id] }
+        return try parsePayload(args)
     }
 
     /// One catalog for shell and daemon sessions. The daemon half remains
@@ -733,7 +775,8 @@ struct BanyanCtl {
         result["agentProfile"] = profileID ?? provider?.rawValue
         result["agentPrompt"] = prompt ?? positionalPrompt
         if let provider {
-            result["command"] = AgentLaunchCommand.command(provider: provider, prompt: prompt ?? positionalPrompt)
+            result["command"] = AgentLaunchCommand.command(provider: provider, prompt: prompt ?? positionalPrompt,
+                ownedForSuspension: true)
         }
         return result
     }
@@ -863,6 +906,8 @@ struct BanyanCtl {
           banyanctl resume  --id ID
           banyanctl session freeze --id ID
           banyanctl session unfreeze --id ID
+          banyanctl session suspend ID
+          banyanctl session resume ID
           banyanctl close  --id ID
           banyanctl respawn --id ID
           banyanctl restart --id ID
@@ -879,7 +924,11 @@ struct BanyanCtl {
         suspend parks a session: Banyan stops supervising and rendering it, while
         its tmux session and any agent inside keep running. resume is lossless and
         keeps the status the session had when it was parked. Neither one signals or
-        terminates the agent. `banyanctl session suspend|resume --id ID` are aliases.
+        terminates the agent. `session suspend ID` instead deep-suspends a verified
+        idle agent with agent-only SIGTERM; `session resume ID` restores its exact
+        disk session inside the surviving pane. --id ID is also accepted.
+        Focus resumes deep-suspended agents. Per-provider automatic policies are
+        off by default. See docs/agent-deep-suspend.md for owned launch requirements.
         freeze sends SIGSTOP to verified idle agent process groups; unfreeze sends
         SIGCONT. Select another session and detach external tmux clients first.
         Interaction resumes frozen agents. Automatic freezing is off by default;

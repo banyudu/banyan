@@ -120,13 +120,31 @@ public protocol TmuxTerminalBackend: AgentSupervisorBackend, TmuxSessionLifecycl
 public protocol TmuxFreezeJournalBackend: Sendable {
     func freezeTicket(named name: String) -> AgentFreezeTicket?
     func writeFreezeTicket(_ ticket: AgentFreezeTicket?, named name: String) throws
+    func suspendTicket(named name: String) -> AgentSuspendTicket?
+    func readSuspendJournal(named name: String) -> AgentSuspendJournalState
+    func writeSuspendTicket(_ ticket: AgentSuspendTicket?, named name: String) throws
 }
 
 public extension TmuxFreezeJournalBackend {
+    func suspendTicket(named name: String) -> AgentSuspendTicket? { nil }
+    /// Backends supporting deep suspension must distinguish read failures from
+    /// absence. Backends without journal support have no deep recovery state.
+    func readSuspendJournal(named name: String) -> AgentSuspendJournalState {
+        suspendTicket(named: name).map(AgentSuspendJournalState.valid) ?? .absent
+    }
+    func writeSuspendTicket(_ ticket: AgentSuspendTicket?, named name: String) throws {
+        throw AgentFreezeError.unsafe("Backend does not support recoverable deep suspension")
+    }
     func freezeTicket(named name: String) -> AgentFreezeTicket? { nil }
     func writeFreezeTicket(_ ticket: AgentFreezeTicket?, named name: String) throws {
         throw AgentFreezeError.unsafe("Backend does not support recoverable process freezing")
     }
+}
+
+public enum AgentSuspendJournalState: Equatable, Sendable {
+    case absent
+    case valid(AgentSuspendTicket)
+    case unavailable(String)
 }
 
 /// Additional controls used by an embedded terminal client.
