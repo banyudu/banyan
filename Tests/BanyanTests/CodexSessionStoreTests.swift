@@ -13,6 +13,7 @@ private final class NativeSessionServer: CodexThreadService {
     var onStart: (() -> Void)?
     var connectionError: CodexAppServerError?
     var requestError: CodexAppServerError?
+    var requestErrorMethod: String?
     var handoffs = 0
     var effectiveHome: String?
     func storageHome() async -> String? { effectiveHome }
@@ -31,7 +32,7 @@ private final class NativeSessionServer: CodexThreadService {
     func setServerRequestHandler(_ handler: CodexAppServerClient.RequestHandler?) async {}
     func request(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue {
         calls.append((method, params))
-        if let requestError { throw requestError }
+        if let requestError, requestErrorMethod == nil || requestErrorMethod == method { throw requestError }
         if method == "thread/start" { onStart?(); starts += 1 }
         if method == "thread/resume", failResume {
             throw CodexAppServerError.remote(code: -32600, message: "thread already has an active writer")
@@ -99,6 +100,26 @@ struct NativeCodexSessionTests {
         } catch { #expect(error.localizedDescription.contains("thread/start unavailable")) }
         #expect(store.sessions.isEmpty)
         #expect(fixture.persistence.load().isEmpty)
+        #expect(!store.codexThreads.reserves(sessionID: "rejected"))
+        #expect(store.codexThreads.selectedSessionID == nil)
+    }
+
+    @Test func failedSelectedCreationRestoresThePreviousNativeSelection() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = NativeSessionServer()
+        let store = fixture.makeNativeStore(codexService: server)
+        let previous = try await store.createCodexSession(cwd: fixture.project.path, id: "previous")
+        #expect(previous.state.isSubscribed)
+        server.requestErrorMethod = "thread/start"
+        server.requestError = .remote(code: -32601, message: "thread/start unavailable")
+        await #expect(throws: CodexAppServerError.self) {
+            try await store.createCodexSession(cwd: fixture.project.path, id: "rejected")
+        }
+        #expect(store.sessions.map(\.id) == [previous.id])
+        #expect(store.selectedSessionID == previous.id)
+        #expect(store.codexThreads.selectedSessionID == previous.id)
+        #expect(previous.state.isSubscribed)
+        #expect(previous.state.binding.threadID == "native-thread-1")
         #expect(!store.codexThreads.reserves(sessionID: "rejected"))
     }
 

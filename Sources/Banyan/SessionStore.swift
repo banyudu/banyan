@@ -536,6 +536,12 @@ final class SessionStore: ObservableObject {
             session.apply(state)
             self.saveChangedSession(session)
         }
+        codexThreads.onEvent = { [weak self] id, method, params in
+            (self?.sessions.first(where: { $0.id == id }) as? CodexSession)?.receive(method: method, params: params)
+        }
+        codexThreads.onHydrate = { [weak self] id, thread in
+            (self?.sessions.first(where: { $0.id == id }) as? CodexSession)?.hydrate(thread: thread)
+        }
         codexThreads.flushPersistence = { [weak self] in
             guard let queue = self?.sessionPersistenceQueue else { return }
             await withCheckedContinuation { continuation in
@@ -2575,7 +2581,10 @@ final class SessionStore: ObservableObject {
         sessions.append(session)
         saveSessions()
         do {
-            try await codexThreads.connect(sessionID: id)
+            // A selected conversation must be subscribed when creation returns
+            // so its first send and streamed items cannot race a queued select.
+            if select { try await codexThreads.select(sessionID: id) }
+            else { try await codexThreads.connect(sessionID: id) }
         } catch {
             // Keep only rows that may own a thread. Definite pre-start failures
             // must not leave a half-created row behind.
@@ -2585,6 +2594,9 @@ final class SessionStore: ObservableObject {
                 if selectedSessionID == id { selectedSessionID = nil }
                 saveSessions()
                 await codexThreads.flushPersistence?()
+                // Restore the actual UI selection after removing a failed
+                // creation; never leave native selection pointing at no row.
+                if select { try? await codexThreads.select(sessionID: (selectedSession as? CodexSession)?.id) }
             }
             throw error
         }
