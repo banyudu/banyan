@@ -30,6 +30,7 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     try """
     #!/bin/sh
     stty -echo
+    printf '\\033[?1049h'
     if [ "$1" = silent ]; then
       printf '\\033[2J\\033[999;1HDone.'
       /bin/cat "$2" >/dev/null
@@ -50,10 +51,13 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     let telemetry = PerformanceTelemetry(store: PerformanceEventStore(databaseURL: PerformanceEventStore.defaultDatabaseURL(host: host)))
     let processes = RuntimeFixtureProcesses()
     let daemon = FakePuckDaemon()
+    let preferencesName = "supervisor-runtime-\(UUID().uuidString)"
+    let preferences = try #require(UserDefaults(suiteName: preferencesName))
+    defer { preferences.removePersistentDomain(forName: preferencesName) }
     let store = SessionStore(persistence: persistence, tmuxBackend: backend, sessionBackend: backend,
                              processTable: processes, historyBackend: DefaultSessionHistoryBackend(homeDirectory: home),
                              detector: AgentStateDetector(rules: []), host: host, telemetry: telemetry,
-                             attentionNotifier: AttentionNotifier(), puckDaemon: daemon)
+                             attentionNotifier: AttentionNotifier(), puckDaemon: daemon, freezePreferences: preferences)
     let names = (0..<7).map { "banyan-fixture-\($0)" }
     defer {
         store.stopPuckObservation()
@@ -89,6 +93,11 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     FileHandle.standardError.write(Data("Supervisor fixture warmup: process_snapshots=\(processes.count)\n".utf8))
 
     var measurements: [String: Double] = [:]
+    func record(_ name: String, _ value: Double) throws {
+        measurements[name] = value
+        try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys])
+            .write(to: root.appendingPathComponent("latency.json"))
+    }
     func send(_ command: String, index: Int) throws {
         let pane = try #require(backend.primaryPaneSnapshot(named: names[index]))
         try backend.sendLiteral(paneID: pane.paneID, text: command)
@@ -102,7 +111,7 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     let hiddenStart = ContinuousClock.now
     try send("attention", index: 0) // Bypasses API invalidation: no PTY callback.
     try await runtimeFixtureWait(seconds: 42) { hidden.status == .asking }
-    measurements["hidden_unattached_attention_s"] = elapsed(hiddenStart)
+    try record("hidden_unattached_attention_s", elapsed(hiddenStart))
 
     let silent = try #require(store.terminalSessions.first { $0.id == "fixture-1" })
     let exitStart = ContinuousClock.now
@@ -110,7 +119,7 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     try writer.write(contentsOf: Data("finished\n".utf8))
     try writer.close() // EOF ends only this fixture's cat child, without output.
     try await runtimeFixtureWait(seconds: 6) { silent.status == .needInput }
-    measurements["hidden_silent_completion_s"] = elapsed(exitStart)
+    try record("hidden_silent_completion_s", elapsed(exitStart))
 
     let selected = try #require(store.terminalSessions.first { $0.id == "fixture-2" })
     store.selectedSessionID = selected.id
@@ -120,7 +129,7 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     let attachedStart = ContinuousClock.now
     try send("attention", index: 2)
     try await runtimeFixtureWait(seconds: 6) { selected.status == .asking }
-    measurements["selected_attached_attention_s"] = elapsed(attachedStart)
+    try record("selected_attached_attention_s", elapsed(attachedStart))
 
     // Recreate the cache-eviction condition, rather than relying only on a
     // session that was never attached. The pane survives; the PTY disappears.
@@ -131,10 +140,8 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     let evictedStart = ContinuousClock.now
     try send("attention", index: 2)
     try await runtimeFixtureWait(seconds: 42) { selected.status == .asking }
-    measurements["hidden_evicted_attention_s"] = elapsed(evictedStart)
-    measurements["process_snapshots"] = Double(processes.count)
-    try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys])
-        .write(to: root.appendingPathComponent("latency.json"))
+    try record("hidden_evicted_attention_s", elapsed(evictedStart))
+    try record("process_snapshots", Double(processes.count))
 }
 
 @MainActor

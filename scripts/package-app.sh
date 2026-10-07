@@ -60,6 +60,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$DIST_DIR/bin"
 
 cp "$BUILD_PRODUCTS_DIR/Banyan" "$MACOS_DIR/Banyan"
 cp "$BUILD_PRODUCTS_DIR/banyanctl" "$DIST_DIR/bin/banyanctl"
+cp "$BUILD_PRODUCTS_DIR/banyanctl" "$MACOS_DIR/banyanctl"
 if [[ ! -f "$ICON_FILE" ]]; then
   "$ROOT_DIR/scripts/generate-icons.sh"
 fi
@@ -111,7 +112,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
-chmod +x "$MACOS_DIR/Banyan" "$DIST_DIR/bin/banyanctl"
+chmod +x "$MACOS_DIR/Banyan" "$MACOS_DIR/banyanctl" "$DIST_DIR/bin/banyanctl"
 
 # Sign with a stable identity so macOS keeps granted permissions across rebuilds.
 # An ad-hoc signature's designated requirement is a bare cdhash, which changes on

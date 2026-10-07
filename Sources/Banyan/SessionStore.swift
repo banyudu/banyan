@@ -139,8 +139,30 @@ final class SessionStore: ObservableObject {
     @Published var addSessionDraft: AddSessionDraft?
     private(set) var sessionSwitchRequestedAt: DispatchTime?
     let selection = SessionSelection()
+    var pendingAgentFreezeIDs: Set<String> = []
+    var isAutoFreezeRunning = false
+    var nextAutoFreezeProbeAt = Date.distantPast
+    var isFrozenReconciliationRunning = false
+    var isAgentFreezeShuttingDown = false
+    let freezePreferences: UserDefaults
+    @Published var autoFreezeAgents = false {
+        didSet {
+            freezePreferences.set(autoFreezeAgents, forKey: "autoFreezeAgents")
+            nextAutoFreezeProbeAt = .distantPast
+            if !autoFreezeAgents { resumeAllFrozenAgents() }
+            if didStartSupervisor { rescheduleSupervisor() }
+        }
+    }
+    @Published var agentFreezeIdleMinutes: Double = 10 {
+        didSet {
+            freezePreferences.set(agentFreezeIdleMinutes, forKey: "agentFreezeIdleMinutes")
+            nextAutoFreezeProbeAt = .distantPast
+            if didStartSupervisor { rescheduleSupervisor() }
+        }
+    }
     @Published var selectedSessionID: String? {
         didSet {
+            resumeFrozenForInteraction(id: selectedSessionID)
             selection.syncFromStore(selectedSessionID)
             if oldValue != selectedSessionID {
                 sessionSwitchRequestedAt = .now()
@@ -510,10 +532,12 @@ final class SessionStore: ObservableObject {
         attentionNotifier: AttentionNotifier,
         puckDaemon: (any PuckDaemonService)? = nil,
         codexService: (any CodexThreadService)? = nil,
+        freezePreferences: UserDefaults = .standard,
         makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
             ControlServer(store: $0, host: $1)
         }
     ) {
+        self.freezePreferences = freezePreferences
         self.makeControlServer = makeControlServer
         self.codexThreads = CodexThreadCoordinator(service: codexService ?? CodexAppServerClient(environment: host.environment))
         self.puckDaemon = puckDaemon ?? PuckDaemonClient(
@@ -548,6 +572,10 @@ final class SessionStore: ObservableObject {
             }
         }
         let defaults = UserDefaults.standard
+        autoFreezeAgents = freezePreferences.bool(forKey: "autoFreezeAgents")
+        if let minutes = freezePreferences.object(forKey: "agentFreezeIdleMinutes") as? Double {
+            agentFreezeIdleMinutes = min(120, max(1, minutes.isFinite ? minutes : 10))
+        }
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
            let theme = TerminalTheme.fromPersistedRawValue(rawTheme) {
@@ -2108,6 +2136,7 @@ final class SessionStore: ObservableObject {
         let startedSessions = sessions.reduce(into: 0) { count, session in
             guard session.status != .closed else { return }
             if let terminal = session as? TerminalSession {
+                guard !terminal.isFrozen else { return }
                 if SessionLifecyclePolicy.participatesInSupervisorTick(
                     isProcessStarted: terminal.isProcessStarted,
                     isRestored: terminal.isRestored,
@@ -2124,6 +2153,7 @@ final class SessionStore: ObservableObject {
             // counts as active work without counting toward the fleet size.
             let isObserved: Bool
             if let terminal = session as? TerminalSession {
+                guard !terminal.isFrozen else { return }
                 // Restored/unattached panes are still inspected. Excluding them
                 // here gave a hidden executing fleet the 300s idle cadence.
                 isObserved = SessionLifecyclePolicy.participatesInSupervisorTick(
@@ -2161,7 +2191,13 @@ final class SessionStore: ObservableObject {
 
     private var supervisorInterval: TimeInterval {
         let baseInterval = supervisorBaseInterval
-        let terminalInterval = terminalSupervisorInterval(baseInterval: baseInterval)
+        var terminalInterval = terminalSupervisorInterval(baseInterval: baseInterval)
+        if autoFreezeAgents && terminalSessions.contains(where: { $0.status != .closed && !$0.isSuspended && !$0.isFrozen }) {
+            terminalInterval = min(terminalInterval, AgentInactivityPolicy.probeInterval(threshold: agentFreezeThreshold))
+        }
+        if terminalSessions.contains(where: \.isFrozen) {
+            terminalInterval = min(terminalInterval, 15)
+        }
         if puckObservation != nil { return min(terminalInterval, puckCatalogInterval) }
         return isPuckDaemonReachable ? min(terminalInterval, baseInterval) : terminalInterval
     }
@@ -2175,7 +2211,7 @@ final class SessionStore: ObservableObject {
     /// batched activity probe for unattached/evicted panes without PTY callbacks.
     private func terminalSupervisorInterval(baseInterval: TimeInterval) -> TimeInterval {
         let participatingSessions = terminalSessions.filter {
-            $0.status != .closed
+            $0.status != .closed && !$0.isFrozen
                 && SessionLifecyclePolicy.participatesInSupervisorTick(
                     isProcessStarted: $0.isProcessStarted,
                     isRestored: $0.isRestored,
@@ -2233,6 +2269,8 @@ final class SessionStore: ObservableObject {
         supervisorTimer = nil
         runSupervisorTick()
         syncPuckSessions()
+        runAutoFreezePassIfNeeded()
+        reconcileFrozenAgents()
         sweepSuspendedSessionLivenessIfNeeded()
         // Focus, thermal, power, or session count may have changed since the timer
         // was installed; adopt the new cadence for the next fire.
@@ -2290,8 +2328,14 @@ final class SessionStore: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.rescheduleSupervisor() }
         }
+        let onTerminate = center.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.prepareForAgentFreezeShutdown() }
+        }
         supervisorLifecycleObservers = [
             onActive, onResign, onHide, onUnhide, onOcclusion, onThermal, onPower,
+            onTerminate,
         ]
     }
 
@@ -3117,6 +3161,7 @@ final class SessionStore: ObservableObject {
         guard session.canRestart, let session = session as? TerminalSession else {
             throw ControlError.badRequest("session '\(id)' has no launch command to restart")
         }
+        try session.prepareFrozenAgentForTeardown()
         unparkForAttach(session)
         session.restartBackingSession()
         selectedSessionID = id
@@ -3200,6 +3245,7 @@ final class SessionStore: ObservableObject {
     /// sets its own runtime state, so this only has to drop the gate — otherwise
     /// they would leave a row claiming to be parked while its client attaches.
     private func unparkForAttach(_ session: BanyanSession) {
+        resumeFrozenForInteraction(id: session.id)
         guard session.isSuspended else { return }
         session.isSuspended = false
         supervisorObservationStates.removeValue(forKey: session.id)
@@ -3568,7 +3614,8 @@ final class SessionStore: ObservableObject {
             cwd: session.cwd,
             createdAt: session.createdAt,
             environment: session.environment,
-            isSuspended: session.isSuspended
+            isSuspended: session.isSuspended,
+            isFrozen: session.isFrozen
         )
     }
 
@@ -4049,6 +4096,7 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        try (session as? TerminalSession)?.prepareFrozenAgentForTeardown()
         let replacementID = selectedSessionID == id
             ? preferredSelectionAfterClosing(id: id)
             : nil
@@ -4073,6 +4121,7 @@ final class SessionStore: ObservableObject {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        try (sessions[index] as? TerminalSession)?.prepareFrozenAgentForTeardown()
         if let native = sessions[index] as? CodexSession,
            native.state.runtime.type == "active" || native.state.activeTurnID != nil || native.state.needsAttention {
             throw ControlError.badRequest("Finish the active Codex turn and answer pending requests before removing this session. Close it to history if you need to hide it; it can still be reopened.")
@@ -4654,6 +4703,29 @@ final class SessionStore: ObservableObject {
     }
 
     private func attach(_ session: BanyanSession) {
+        if let terminal = session as? TerminalSession, terminal.isRestored, terminal.status != .closed {
+            let backend = terminal.tmuxBackend
+            let name = terminal.tmuxSessionName
+            let generation = terminal.freezeGeneration
+            Task.detached(priority: .utility) { [weak self, weak terminal] in
+                let identity = backend.primaryPaneSnapshot(named: name)
+                    .flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
+                let ticket = backend.freezeTicket(named: name)
+                await MainActor.run { [weak self, weak terminal] in
+                    guard let self, let terminal, terminal.status != .closed,
+                          terminal.freezeGeneration == generation,
+                          self.sessions.contains(where: { $0 === terminal }) else { return }
+                    if terminal.trackedPaneIdentity == nil { terminal.trackedPaneIdentity = identity }
+                    if let ticket, ticket.root == identity {
+                        terminal.frozenTicket = ticket
+                        terminal.isFrozen = true
+                        if !self.autoFreezeAgents || self.selectedSessionID == terminal.id {
+                            self.resumeFrozenForInteraction(id: terminal.id)
+                        }
+                    }
+                }
+            }
+        }
         session.onDidChange = { [weak self, weak session] in
             Task { @MainActor in
                 // A native row may have been replaced by a terminal with the
@@ -4670,6 +4742,9 @@ final class SessionStore: ObservableObject {
             telemetry.noteSessionFirstOutput(sessionID: session.id)
             self.resetSupervisorObservationBackoff(for: session.id, invalidatesObservation: false)
             self.detectAttention(in: text, for: session)
+            if let terminal = session as? TerminalSession, !terminal.isFrozen {
+                terminal.freezeGeneration = UUID()
+            }
         }
         session.onUserSubmittedInput = { [weak self, weak session] submittedInput in
             guard let self, let session else { return }
@@ -5013,7 +5088,7 @@ final class SessionStore: ObservableObject {
         let now = Date()
         if force || sessionID != nil {
             for session in terminalSessions where session.status != .closed
-                && !session.isSuspended && (sessionID == nil || session.id == sessionID) {
+                && !session.isSuspended && !session.isFrozen && (sessionID == nil || session.id == sessionID) {
                 supervisorObservationStates[session.id, default: .init()].noteActivity(at: now)
                 pendingSupervisorActivityIDs.insert(session.id)
             }
@@ -5025,7 +5100,7 @@ final class SessionStore: ObservableObject {
         supervisorTimer?.invalidate()
         supervisorTimer = nil
         let candidates = terminalSessions.compactMap { session -> SessionStatusObservationInput? in
-            guard session.status != .closed && (sessionID == nil || session.id == sessionID),
+            guard session.status != .closed && !session.isFrozen && (sessionID == nil || session.id == sessionID),
                   SessionLifecyclePolicy.participatesInSupervisorTick(
                       isProcessStarted: session.isProcessStarted,
                       isRestored: session.isRestored,
@@ -5042,10 +5117,10 @@ final class SessionStore: ObservableObject {
                 environment: session.environment
             )
         }
-        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended }.map(\.id))
+        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended && !$0.isFrozen }.map(\.id))
         supervisorProcessExitMonitor.retainSessions(liveIDs)
         pendingSupervisorActivityIDs.formIntersection(Set(terminalSessions.filter {
-            $0.status != .closed && SessionLifecyclePolicy.participatesInSupervisorTick(
+            $0.status != .closed && !$0.isFrozen && SessionLifecyclePolicy.participatesInSupervisorTick(
                 isProcessStarted: $0.isProcessStarted, isRestored: $0.isRestored, isSuspended: $0.isSuspended
             )
         }.map(\.id)))
@@ -5093,7 +5168,7 @@ final class SessionStore: ObservableObject {
                 // due state. State signals may also have superseded this result.
                 let currentResults = observations.filter {
                     let id = $0.id
-                    return self.sessions.contains(where: { $0.id == id && $0.status != .closed && !$0.isSuspended })
+                    return self.sessions.contains(where: { $0.id == id && $0.status != .closed && !$0.isSuspended && !$0.isFrozen })
                         && (self.supervisorObservationStates[id]?.resultRevision ?? 0) == (states[id]?.resultRevision ?? 0)
                 }
                 self.updateSupervisorObservationStates(
@@ -5117,7 +5192,7 @@ final class SessionStore: ObservableObject {
     }
 
     func resetSupervisorObservationBackoff(for sessionID: String, invalidatesObservation: Bool = true) {
-        guard sessions.contains(where: { $0.id == sessionID && $0.status != .closed && !$0.isSuspended && $0 is TerminalSession }) else { return }
+        guard sessions.contains(where: { $0.id == sessionID && $0.status != .closed && !$0.isSuspended && !$0.isFrozen && $0 is TerminalSession }) else { return }
         supervisorObservationStates[sessionID, default: .init()].noteActivity(at: Date(), invalidatesObservation: invalidatesObservation)
         pendingSupervisorActivityIDs.insert(sessionID)
         if didStartSupervisor { rescheduleSupervisor() }
@@ -5134,7 +5209,7 @@ final class SessionStore: ObservableObject {
         let resultsByID = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
         for input in inputs {
             guard let session = sessions.first(where: { $0.id == input.id }),
-                  session.status != .closed, !session.isSuspended else { continue }
+                  session.status != .closed, !session.isSuspended, !session.isFrozen else { continue }
             let result = resultsByID[input.id]
             supervisorObservationStates[input.id, default: .init()].record(
                 result,
@@ -5148,7 +5223,7 @@ final class SessionStore: ObservableObject {
                 supervisorProcessExitMonitor.update(sessionID: input.id, processIDs: result.liveProcessIDs)
             }
         }
-        let liveIDs = Set(sessions.filter { $0.status != .closed && !$0.isSuspended }.map(\.id))
+        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended && !$0.isFrozen }.map(\.id))
         supervisorObservationStates = supervisorObservationStates.filter { liveIDs.contains($0.key) }
         supervisorProcessExitMonitor.retainSessions(liveIDs)
     }
@@ -5420,6 +5495,7 @@ final class SessionStore: ObservableObject {
         var didChangePersistentState = false
         for result in results {
             guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
+                  !session.isFrozen,
                   let reconciliation = SessionObservationPolicy.reconcile(
                       currentStatus: session.status,
                       currentTone: session.tone,

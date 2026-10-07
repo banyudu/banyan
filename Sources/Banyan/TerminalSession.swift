@@ -47,6 +47,12 @@ final class TerminalSession: BanyanSession {
     var delegate: TerminalSessionDelegate?
     let tmuxBackend: any TmuxClientBackend
     let sessionRuntime: any SessionRuntimeBackend
+    var trackedPaneIdentity: AgentProcessIdentity?
+    var frozenTicket: AgentFreezeTicket?
+    var freezeGeneration = UUID()
+    var freezeInputInFlight = 0
+    var lastFreezeInteractionAt = Date()
+    @Published var freezeError: String?
 
     var launchRequest: SessionLaunchRequest {
         SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command, banyanSessionID: id)
@@ -233,6 +239,7 @@ final class TerminalSession: BanyanSession {
     }
 
     override func terminate(markClosed: Bool = true) {
+        try? unfreezeAgent()
         stopTerminalClient()
         super.terminate(markClosed: markClosed)
     }

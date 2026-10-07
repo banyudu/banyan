@@ -75,6 +75,8 @@ extension TerminalSession {
                 }
                 return
             }
+            let paneIdentity = backend.primaryPaneSnapshot(named: tmuxName)
+                .flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
             backend.configureTerminalTheme(style: themeStyle, for: tmuxName)
             await MainActor.run { [weak self, weak terminalView] in
                 guard let self, let terminalView,
@@ -83,6 +85,7 @@ extension TerminalSession {
                       !self.isImportedHistory, !self.isSuspended, self.status != .closed,
                       !terminalView.process.running else { return }
                 self.isRestored = false
+                self.trackedPaneIdentity = paneIdentity
                 self.isProcessStarted = true
                 self.attemptedBlankTerminalRecovery = false
                 self.status = .running
@@ -270,11 +273,15 @@ extension TerminalSession {
         guard ensureProjectFolderAccess() else { return }
         let runtime = sessionRuntime
         let request = launchRequest
+        let backend = tmuxBackend
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try runtime.ensureBackingSession(request)
+                let identity = backend.primaryPaneSnapshot(named: request.sessionName)
+                    .flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
                 await MainActor.run { [weak self] in
                     guard let self else { return }
+                    self.trackedPaneIdentity = identity
                     self.isProcessStarted = true
                     self.touch()
                 }
@@ -288,6 +295,9 @@ extension TerminalSession {
 
     func restartBackingSession() {
         guard !isImportedHistory else { return }
+        do { try prepareFrozenAgentForTeardown() }
+        catch { freezeError = error.localizedDescription; return }
+        trackedPaneIdentity = nil
         invalidateTerminalClientWork()
         if let terminalView = loadedTerminalView {
             if terminalView.process.running {
@@ -324,6 +334,7 @@ extension TerminalSession {
             }
         }
         tmuxBackend.configureTerminalTheme(style: pendingTheme.tmuxDefaultStyle, for: tmuxSessionName)
+        trackPaneIdentityIfNeeded()
         isRestored = false
         isProcessStarted = true
         if resetBlankRecoveryAttempt {
@@ -343,6 +354,10 @@ extension TerminalSession {
     }
 
     func killBackingSession() {
+        do { try prepareFrozenAgentForTeardown() }
+        catch { freezeError = error.localizedDescription; return }
+        freezeGeneration = UUID()
+        trackedPaneIdentity = nil
         status = .closed
         isSuspended = false
         stopTerminalClient()

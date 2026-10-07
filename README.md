@@ -49,6 +49,8 @@ The toolbar is intentionally small:
 - Banyan checks GitHub Releases for updates, downloads new packages in the background, and offers to install and relaunch after confirmation.
 - Sidebar options, including sort order and custom session creation, live behind the small sidebar menu.
 - Restored sessions attach to existing `tmux` sessions when possible.
+- Optional [agent freezing](docs/agent-freeze.md) stops inactive terminal agent
+  process groups and resumes them on interaction. Automatic mode is off by default.
 
 ## Quick start
 

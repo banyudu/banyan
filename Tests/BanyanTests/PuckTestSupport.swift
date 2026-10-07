@@ -292,6 +292,9 @@ struct PuckStoreFixture {
 
     func makeStore(codexService: (any CodexThreadService)? = nil,
                    tmuxBackend: TmuxBackend? = nil,
+                   sessionBackend: (any TmuxClientBackend)? = nil,
+                   processTable: (any ProcessTableProvider)? = nil,
+                   freezePreferences: UserDefaults = .standard,
                    makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
                        ControlServer(store: $0, host: $1)
                    }) -> SessionStore {
@@ -302,8 +305,8 @@ struct PuckStoreFixture {
         return SessionStore(
             persistence: persistence,
             tmuxBackend: tmux,
-            sessionBackend: tmux,
-            processTable: EmptyPuckTestProcessTable(),
+            sessionBackend: sessionBackend ?? tmux,
+            processTable: processTable ?? EmptyPuckTestProcessTable(),
             historyBackend: EmptyPuckTestHistoryBackend(),
             detector: AgentStateDetector(rules: []),
             host: HostRuntimeContext(
@@ -319,6 +322,7 @@ struct PuckStoreFixture {
             attentionNotifier: AttentionNotifier(),
             puckDaemon: daemon,
             codexService: codexService,
+            freezePreferences: freezePreferences,
             makeControlServer: makeControlServer
         )
     }

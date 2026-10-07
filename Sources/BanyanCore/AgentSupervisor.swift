@@ -682,6 +682,11 @@ public struct ProcessTable: Sendable {
 }
 
 public struct ProcessInfoRow: Sendable {
+    public var isBanyanProcessHost: Bool {
+        ExecutablePath.lowercasedName(commandName) == "banyanctl" && arguments.contains(AgentProcessHost.subcommand)
+    }
+    /// Classification only; signaling also requires kernel identity/group checks.
+    public var isSupportedAgentForFreezing: Bool { isSupportedAgent && !isExited && !isCodexRuntimeHelper }
     public let pid: Int
     public let parentPID: Int
     public let state: String
@@ -725,6 +730,7 @@ public struct ProcessInfoRow: Sendable {
 
         let isBanyanAgentWrapper = executable == "banyan-agent-wrapper"
             || scan.contains(Self.banyanAgentWrapperMarker)
+            || (executable == "banyanctl" && arguments.contains(AgentProcessHost.subcommand))
 
         let isCodexRuntimeHelper = scan.contains(anyOf: Self.codexRuntimeHelperMarkers)
         self.isCodexRuntimeHelper = isCodexRuntimeHelper
@@ -735,7 +741,7 @@ public struct ProcessInfoRow: Sendable {
         self.supportedAgentProvider = provider
         self.isSupportedAgent = !isBanyanAgentWrapper && !isCodexRuntimeHelper && !isExited && provider != nil
 
-        self.isShellOrWrapper = Self.shellNames.contains(executable)
+        self.isShellOrWrapper = Self.shellNames.contains(executable) || isBanyanAgentWrapper
 
         self.isBanyanAgentLogProcess = executable == "tee" && arguments.contains("banyan-agent-process.log")
         self.isTmuxPlumbing = executable == "tmux" || executable == "reattach-to-user-namespace"
