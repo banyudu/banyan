@@ -7,6 +7,34 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct AgentAdmissionTransportTests {
+    @Test func actualCLIAcceptsOneHundredSlotsAndRestoresTheSavedLimit() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let preferences = privateDefaults()
+        let store = fixture.makeStore(sessionBackend: AdmissionTerminalBackend(), freezePreferences: preferences)
+        let server = ControlServer(store: store, host: store.host, port: .any)
+        server.start()
+        defer { server.stop(); store.stopPuckObservation() }
+        try await waitForPuckState { server.listeningPort != nil }
+
+        let result = try await cli(store: store, server: server, arguments: ["agent", "queue", "limit", "100"])
+        #expect(result.terminationStatus == 0)
+        #expect(store.maximumConcurrentAgents == 100 && store.agentAdmission.limit == 100)
+        #expect(preferences.integer(forKey: AgentAdmissionController.defaultsKey) == 100)
+
+        let restored = fixture.makeStore(sessionBackend: AdmissionTerminalBackend(), freezePreferences: preferences)
+        defer { restored.stopPuckObservation() }
+        #expect(restored.maximumConcurrentAgents == 100 && restored.agentAdmission.limit == 100)
+
+        let refused = try await cli(store: store, server: server, arguments: ["agent", "queue", "limit", "101"])
+        #expect(refused.terminationStatus != 0)
+        #expect(store.maximumConcurrentAgents == 100)
+
+        preferences.removeObject(forKey: AgentAdmissionController.defaultsKey)
+        let fresh = fixture.makeStore(sessionBackend: AdmissionTerminalBackend(), freezePreferences: preferences)
+        defer { fresh.stopPuckObservation() }
+        #expect(fresh.maximumConcurrentAgents == 100 && fresh.agentAdmission.limit == 100)
+    }
+
     @Test func actualCLITerminalSpawnReturnsItsQueuedRowAndCancelPreventsLaunch() async throws {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let backend = AdmissionTerminalBackend()

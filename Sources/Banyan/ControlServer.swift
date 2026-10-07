@@ -285,8 +285,8 @@ final class ControlServer {
             case .agentLimit:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
-                guard let limit = body.limit?.value, (1...64).contains(limit) else {
-                    throw ControlError.badRequest("agent limit must be between 1 and 64")
+                guard let limit = body.limit?.value, (1...AgentAdmissionController.maximumLimit).contains(limit) else {
+                    throw ControlError.badRequest("agent limit must be between 1 and \(AgentAdmissionController.maximumLimit)")
                 }
                 store.maximumConcurrentAgents = limit
                 return respond(.ok(admissionSummary(store)))

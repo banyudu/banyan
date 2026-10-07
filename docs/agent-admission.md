@@ -1,7 +1,7 @@
 # Concurrent agent admission
 
-Banyan defaults to four concurrent agent slots. Set **Preferences → Sessions →
-Concurrent agent slots**, or use `banyanctl agent queue limit 4` (range 1–64).
+Banyan defaults to 100 concurrent agent slots. Set **Preferences → Sessions →
+Concurrent agent slots**, or use `banyanctl agent queue limit 100` (range 1–100).
 The setting applies to new admissions immediately. Lowering it never stops,
 renices, moves, or terminates running work.
 
@@ -69,7 +69,7 @@ banyanctl agent queue
 banyanctl agent queue prioritize session-id
 banyanctl agent queue cancel session-id
 banyanctl agent queue retry session-id
-banyanctl agent queue limit 4
+banyanctl agent queue limit 100
 ```
 
 `GET /agent-queue` reports `limit`, `running`, and FIFO `queued` IDs. Session

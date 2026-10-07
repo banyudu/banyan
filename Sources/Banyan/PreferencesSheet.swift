@@ -72,7 +72,7 @@ struct PreferencesSheet: View {
                 Text("Sessions")
                     .font(.headline)
 
-                Stepper("Concurrent agent slots: \(store.maximumConcurrentAgents)", value: $store.maximumConcurrentAgents, in: 1...64)
+                Stepper("Concurrent agent slots: \(store.maximumConcurrentAgents)", value: $store.maximumConcurrentAgents, in: 1...AgentAdmissionController.maximumLimit)
                 Text("New managed commands and active native turns share this budget. Existing work is preserved when lowering it. Plain shells remain available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

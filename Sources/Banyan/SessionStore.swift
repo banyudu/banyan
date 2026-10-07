@@ -155,7 +155,7 @@ final class SessionStore: ObservableObject {
     }
     @Published var maximumConcurrentAgents: Int = AgentAdmissionController.defaultLimit {
         didSet {
-            let bounded = min(64, max(1, maximumConcurrentAgents))
+            let bounded = min(AgentAdmissionController.maximumLimit, max(1, maximumConcurrentAgents))
             if maximumConcurrentAgents != bounded { maximumConcurrentAgents = bounded }
             freezePreferences.set(maximumConcurrentAgents, forKey: AgentAdmissionController.defaultsKey)
             agentAdmission.setLimit(maximumConcurrentAgents)
@@ -572,7 +572,7 @@ final class SessionStore: ObservableObject {
     ) {
         self.freezePreferences = freezePreferences
         let storedLimit = freezePreferences.integer(forKey: AgentAdmissionController.defaultsKey)
-        let admission = AgentAdmissionController(limit: storedLimit > 0 ? min(64, storedLimit) : AgentAdmissionController.defaultLimit)
+        let admission = AgentAdmissionController(limit: storedLimit > 0 ? min(AgentAdmissionController.maximumLimit, storedLimit) : AgentAdmissionController.defaultLimit)
         self.agentAdmission = admission
         self.makeControlServer = makeControlServer
         self.codexThreads = CodexThreadCoordinator(service: codexService ?? CodexAppServerClient(environment: host.environment), admission: admission)

@@ -299,7 +299,7 @@ struct BanyanCtl {
             if action == "status" { try get("/agent-queue"); return }
             guard args.count == 3 else { throw CLIError.message("agent queue requires cancel|prioritize|retry ID or limit N") }
             if action == "limit" {
-                guard let limit = Int(args[2]), (1...64).contains(limit) else { throw CLIError.message("agent limit must be between 1 and 64") }
+                guard let limit = Int(args[2]), (1...AgentAdmissionController.maximumLimit).contains(limit) else { throw CLIError.message("agent limit must be between 1 and \(AgentAdmissionController.maximumLimit)") }
                 try post("/agent-limit", payload: ["limit": String(limit)])
             } else {
                 guard ["cancel", "prioritize", "retry"].contains(action) else { throw CLIError.message("unknown agent queue action") }

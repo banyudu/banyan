@@ -17,7 +17,8 @@ public struct AgentLaunchQueueState: Codable, Equatable, Sendable {
 /// actor so capacity cannot be read and claimed concurrently across frontends.
 @MainActor
 public final class AgentAdmissionController {
-    nonisolated public static let defaultLimit = 4
+    nonisolated public static let defaultLimit = 100
+    nonisolated public static let maximumLimit = 100
     nonisolated public static let defaultsKey = "maximumConcurrentAgents"
     /// A queued launch or turn may take a reservation away from a verified-idle
     /// terminal command once its pane has been silent this long. Idle commands
