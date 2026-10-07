@@ -1531,6 +1531,7 @@ struct ContentView: View {
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
+                if let session = store.selectedSession { AgentAdmissionBanner(session: session, store: store) }
                 if let terminal = store.selectedSession as? TerminalSession,
                    terminal.agentProvider == .codex, !terminal.isImportedHistory {
                     CodexTUIHandoffView(store: store, session: terminal)
@@ -2641,6 +2642,13 @@ private struct SessionRow: View {
                 ShellSessionIcon()
             }
 
+            if let position = session.agentQueuePosition {
+                Text("Queued #\(position)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("session.\(session.id).queued")
+            }
+
             if session.isFrozen {
                 Image(systemName: "snowflake")
                     .foregroundStyle(.secondary)
@@ -2666,7 +2674,7 @@ private struct SessionRow: View {
                     .accessibilityIdentifier(AccessibilityID.sessionRowSuspendedBadge(session.id))
             }
 
-            if !session.isImportedHistory && session.status != .closed && !hidesStatusEmoji {
+            if !session.isImportedHistory && session.status != .closed && !hidesStatusEmoji && session.agentQueuePosition == nil {
                 Text(session.status.emoji)
                     .font(.system(size: 12))
                     .frame(width: 16, height: 18)

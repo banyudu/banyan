@@ -486,7 +486,7 @@ private struct DeepSuspendFixture {
     let transcript: URL
 
     init(provider: CodingAgentProvider, mode: String = "normal", shellBackground: Bool = false, legacy: Bool = false,
-         unquotedAbsoluteExecutable: Bool = false) async throws {
+         unquotedAbsoluteExecutable: Bool = false, admissionLimit: Int = 4) async throws {
         fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         diskID = provider == .opencode ? "ses_syntheticExactIdentity" : UUID().uuidString.lowercased()
         transcript = fixture.root.appendingPathComponent("transcript.jsonl")
@@ -520,8 +520,10 @@ private struct DeepSuspendFixture {
         backend = TmuxBackend(environment: environment, workingDirectory: fixture.project.path,
             socketName: "banyan-deep-test-\(UUID().uuidString)")
         let history = SyntheticDeepHistory(transcript: transcript, provider: provider, id: diskID, cwd: fixture.project.path)
+        let preferences = try #require(UserDefaults(suiteName: backend.socketName))
+        preferences.set(admissionLimit, forKey: AgentAdmissionController.defaultsKey)
         store = fixture.makeStore(historyBackend: history, tmuxBackend: backend,
-            processTable: DeepLiveProcessTable(), freezePreferences: try #require(UserDefaults(suiteName: backend.socketName)))
+            processTable: DeepLiveProcessTable(), freezePreferences: preferences)
         let options = provider == .codex ? "--no-daemon resume" : provider == .claude ? "--session-id" : "--session"
         let literal = (unquotedAbsoluteExecutable ? executable.path : AgentLaunchCommand.shellQuote(executable.path)) + " " + options + " " + diskID
         let command = legacy ? "cd . && " + literal + " '--persistent'" : literal
@@ -666,7 +668,9 @@ private struct DeepSuspendFixture {
         signal.signal(signal.SIGTERM, delayed_exit)
     print('OpenAI Codex (v0.synthetic)\n' + ('Ask anything...' if provider == 'opencode' else '> '), flush=True)
     (root / 'pid').write_text(str(os.getpid()))
-    for line in sys.stdin: print('received ' + line.strip(), flush=True)
+    for line in sys.stdin:
+        if line.strip() == 'fixture:quit': break
+        print('received ' + line.strip(), flush=True)
     """#
 }
 
@@ -687,4 +691,135 @@ private struct SyntheticDeepHistory: SessionHistoryBackend {
     func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? { nil }
     func resumeCommand(provider: CodingAgentProvider, sourceID: String, cwd: String, prompt: String?) -> String? { nil }
     func prepareTrimmedTranscript(provider: CodingAgentProvider, sourceID: String, cwd: String, transcriptURL: URL?) -> String? { nil }
+}
+
+
+@Suite(.serialized)
+@MainActor
+struct AgentAdmissionDeepIntegrationTests {
+    @Test func ordinaryProviderExitFreesSlotWhileFocusShellStaysFreeAndRestartQueues() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex, admissionLimit: 1)
+        defer { f.session.stopTerminalClient(); f.cleanup() }
+        try await waitForPuckState { f.session.admissionProviderIdentity != nil }
+        let job = try #require(f.session.admissionProviderIdentity)
+        let oldWatch = try #require(f.session.admissionWatchKey)
+        #expect(job.pid != f.pane.rootPID && f.store.agentAdmission.running == [f.session.id])
+        _ = try await f.store.injectInput(id: f.session.id, keys: [], text: "fixture:quit", submit: true)
+        try await waitForPuckState { f.store.agentAdmission.running.isEmpty }
+        #expect(AgentProcessSample.presence(of: job) == .exited)
+        #expect(AgentProcessSample.read(pid: f.agentPID) == nil)
+        #expect(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName)?.rootPID == f.pane.rootPID)
+        f.store.flushPendingSessionSaves()
+        let restored = f.fixture.makeStore(tmuxBackend: f.backend, freezePreferences: f.store.freezePreferences)
+        restored.loadPersistedSessionsIfNeeded()
+        #expect(restored.agentAdmission.running.isEmpty)
+        let shellRow = try #require(restored.sessions.first { $0.id == f.session.id } as? TerminalSession)
+        defer { shellRow.stopTerminalClient() }
+        restored.agentAdmission.adopt("restored-other-work")
+        restored.selectedSessionID = shellRow.id
+        shellRow.start()
+        #expect(restored.agentAdmission.running == ["restored-other-work"] && restored.agentAdmission.queuedIDs.isEmpty)
+        f.store.agentAdmission.adopt("other-work")
+        f.store.selectedSessionID = f.session.id
+        f.session.start()
+        #expect(f.store.agentAdmission.running == ["other-work"] && f.store.agentAdmission.queuedIDs.isEmpty)
+        f.session.stopTerminalClient()
+        try await waitForPuckState { !f.session.terminalView.process.running }
+        f.session.startAsync()
+        try await waitForPuckState { f.session.terminalView.process.running }
+        #expect(f.store.agentAdmission.running == ["other-work"] && f.store.agentAdmission.queuedIDs.isEmpty)
+        try f.store.restart(id: f.session.id)
+        #expect(f.session.agentQueuePosition == 1)
+        #expect(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName)?.rootPID == f.pane.rootPID)
+        f.store.agentAdmission.release("other-work")
+        try await waitForPuckState { f.currentAgentPID() != f.agentPID && f.session.admissionProviderIdentity != nil }
+        f.store.noteAgentAdmissionProcessExit(key: oldWatch)
+        f.store.confirmAgentProviderExit(id: f.session.id, identity: job)
+        #expect(f.store.agentAdmission.running == [f.session.id])
+    }
+
+    @Test func delayedTERMDoesNotReleaseUntilActualProviderExit() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex, mode: "delay", admissionLimit: 1)
+        defer { f.cleanup() }
+        let termination = Task { try await f.store.deepSuspendAgent(id: f.session.id) }
+        try await waitForPuckState { f.session.isDeepTerminating }
+        let next = f.store.spawn(id: "after-exit", cwd: f.fixture.project.path, command: "/bin/sleep 30", select: false)
+        defer { f.backend.killSession(named: next.tmuxSessionName) }
+        #expect(f.session.isDeepSuspended && f.store.agentAdmission.running == [f.session.id])
+        #expect(next.agentQueuePosition == 1 && !next.isProcessStarted)
+        await #expect(throws: (any Error).self) { try await termination.value }
+        #expect(f.store.agentAdmission.running == [f.session.id])
+        try await waitForPuckState { next.isProcessStarted }
+        #expect(f.store.agentAdmission.running == [next.id])
+        #expect(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName)?.rootPID == f.pane.rootPID)
+    }
+
+    @Test func actualCLIInputFailsBeforeQueueAndCancelledDeepResumeRestoresSafely() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex, admissionLimit: 1)
+        defer { f.cleanup() }
+        try await f.store.deepSuspendAgent(id: f.session.id)
+        try await waitForPuckState { f.store.agentAdmission.running.isEmpty && ProcessTable.snapshot().descendants(of: f.pane.rootPID).count == 2 }
+        f.store.agentAdmission.adopt("other-work")
+        let server = ControlServer(store: f.store, host: f.store.host, port: .any)
+        server.start()
+        defer { server.stop() }
+        try await waitForPuckState { server.listeningPort != nil }
+        let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        var environment = f.store.host.environment
+        environment["BANYAN_FIXTURE_CONTROL_URL"] = "http://127.0.0.1:\(try #require(server.listeningPort))"
+        let input = try await SubprocessRunner.runAsync(arguments: [package.appendingPathComponent(".build/debug/banyanctl").path,
+            "send", "--id", f.session.id, "--text", "Must never run later", "--submit"], cwd: f.fixture.project.path,
+            environment: environment, timeout: 8)
+        #expect(input.terminationStatus != 0)
+        #expect(String(decoding: input.standardOutput, as: UTF8.self).contains("Nothing was queued"))
+        #expect(f.store.agentAdmission.queuedIDs.isEmpty && f.backend.suspendTicket(named: f.session.tmuxSessionName)?.phase == .suspended)
+        try f.store.deepResumeAgent(id: f.session.id)
+        #expect(f.session.agentQueuePosition == 1 && f.session.agentLaunchQueue?.purpose == .deepResume)
+        #expect(f.currentAgentPID() == f.agentPID && !f.session.isDeepResuming)
+        f.store.cancelQueuedAgent(id: f.session.id)
+        f.store.agentAdmission.release("other-work")
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.currentAgentPID() == f.agentPID && f.store.agentAdmission.running.isEmpty)
+        f.store.flushPendingSessionSaves()
+        let restored = f.fixture.makeStore(tmuxBackend: f.backend, freezePreferences: f.store.freezePreferences)
+        restored.loadPersistedSessionsIfNeeded()
+        let row = try #require(restored.sessions.first { $0.id == f.session.id } as? TerminalSession)
+        defer { row.cancelDeepLifecycle() }
+        #expect(row.agentLaunchQueue?.cancelled == true && row.agentLaunchQueue?.purpose == .deepResume)
+        #expect(restored.agentAdmission.running.isEmpty)
+        try restored.deepResumeAgent(id: row.id)
+        #expect(restored.agentAdmission.running == [row.id])
+        try await waitForPuckState(timeout: .seconds(10)) { !row.isDeepSuspended }
+        #expect(f.currentAgentPID() != f.agentPID)
+        #expect(f.backend.primaryPaneSnapshot(named: row.tmuxSessionName)?.rootPID == f.pane.rootPID)
+        #expect(restored.agentAdmission.running == [row.id])
+    }
+
+    @Test func restoredResumingJournalRetainsSlotUntilExactProviderIsKnown() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex, mode: "delayed-ready", admissionLimit: 1)
+        defer { f.cleanup() }
+        try await f.store.deepSuspendAgent(id: f.session.id)
+        try await waitForPuckState { f.store.agentAdmission.running.isEmpty && ProcessTable.snapshot().descendants(of: f.pane.rootPID).count == 2 }
+        try f.store.deepResumeAgent(id: f.session.id)
+        let starting = f.fixture.root.appendingPathComponent("starting-pid")
+        try await waitForPuckState { FileManager.default.fileExists(atPath: starting.path) }
+        let startingPID = try String(contentsOf: starting, encoding: .utf8)
+        f.store.flushPendingSessionSaves()
+        let restored = f.fixture.makeStore(tmuxBackend: f.backend, freezePreferences: f.store.freezePreferences)
+        restored.loadPersistedSessionsIfNeeded()
+        let row = try #require(restored.sessions.first { $0.id == f.session.id } as? TerminalSession)
+        defer { row.cancelDeepLifecycle() }
+        #expect(restored.agentAdmission.running == [row.id])
+        let queued = restored.spawn(id: "wait-for-startup", cwd: f.fixture.project.path, command: "/bin/sleep 30", select: false)
+        defer { f.backend.killSession(named: queued.tmuxSessionName) }
+        #expect(queued.agentQueuePosition == 1 && !queued.isProcessStarted)
+        try restored.deepResumeAgent(id: row.id)
+        #expect(try String(contentsOf: starting, encoding: .utf8) == startingPID)
+        #expect(restored.agentAdmission.running == [row.id])
+        try Data().write(to: f.fixture.root.appendingPathComponent("allow-ready"))
+        try await waitForPuckState(timeout: .seconds(10)) { !row.isDeepSuspended }
+        #expect(restored.agentAdmission.running == [row.id] && !queued.isProcessStarted)
+        #expect(try String(contentsOf: f.fixture.root.appendingPathComponent("pid"), encoding: .utf8) == startingPID)
+        restored.cancelQueuedAgent(id: queued.id)
+    }
 }

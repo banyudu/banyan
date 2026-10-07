@@ -25,7 +25,7 @@ public struct SessionDatabase: Sendable {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding
+            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding, agent_launch_queue, agent_slot_reserved, agent_slot_pane_identity, agent_slot_provider_identity
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -68,6 +68,16 @@ public struct SessionDatabase: Sendable {
                     parentSessionID: columnText(statement, 11),
                     agentSessionID: columnText(statement, 14),
                     isSuspended: sqlite3_column_int(statement, 16) != 0,
+                    agentLaunchQueue: columnText(statement, 22).flatMap {
+                        try? JSONDecoder().decode(AgentLaunchQueueState.self, from: Data($0.utf8))
+                    },
+                    agentSlotReserved: sqlite3_column_int(statement, 23) != 0,
+                    agentSlotPaneIdentity: columnText(statement, 24).flatMap {
+                        try? JSONDecoder().decode(AgentProcessIdentity.self, from: Data($0.utf8))
+                    },
+                    agentSlotProviderIdentity: columnText(statement, 25).flatMap {
+                        try? JSONDecoder().decode(AgentProcessIdentity.self, from: Data($0.utf8))
+                    },
                     createdAt: createdAt,
                     updatedAt: updatedAt,
                     backend: backend,
@@ -281,6 +291,10 @@ public struct SessionDatabase: Sendable {
         try? execute(database, "ALTER TABLE sessions ADD COLUMN puck_account TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN puck_model TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN codex_binding TEXT")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN agent_launch_queue TEXT")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN agent_slot_reserved INTEGER NOT NULL DEFAULT 0")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN agent_slot_pane_identity TEXT")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN agent_slot_provider_identity TEXT")
         try execute(database, """
         CREATE TABLE IF NOT EXISTS workspace_state (
             key TEXT PRIMARY KEY,
@@ -301,8 +315,8 @@ public struct SessionDatabase: Sendable {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding, agent_launch_queue, agent_slot_reserved, agent_slot_pane_identity, agent_slot_provider_identity
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
@@ -325,7 +339,11 @@ public struct SessionDatabase: Sendable {
             puck_provider = excluded.puck_provider,
             puck_account = excluded.puck_account,
             puck_model = excluded.puck_model,
-            codex_binding = excluded.codex_binding
+            codex_binding = excluded.codex_binding,
+            agent_launch_queue = excluded.agent_launch_queue,
+            agent_slot_reserved = excluded.agent_slot_reserved,
+            agent_slot_pane_identity = excluded.agent_slot_pane_identity,
+            agent_slot_provider_identity = excluded.agent_slot_provider_identity
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -358,6 +376,13 @@ public struct SessionDatabase: Sendable {
         let codexData = try snapshot.codex.map { try JSONEncoder().encode($0) }
         bindText(statement, 23, codexData.flatMap { String(data: $0, encoding: .utf8) })
 
+        let queueData = try snapshot.agentLaunchQueue.map { try JSONEncoder().encode($0) }
+        bindText(statement, 24, queueData.flatMap { String(data: $0, encoding: .utf8) })
+        sqlite3_bind_int(statement, 25, snapshot.agentSlotReserved ? 1 : 0)
+        let identityData = try snapshot.agentSlotPaneIdentity.map { try JSONEncoder().encode($0) }
+        bindText(statement, 26, identityData.flatMap { String(data: $0, encoding: .utf8) })
+        let providerData = try snapshot.agentSlotProviderIdentity.map { try JSONEncoder().encode($0) }
+        bindText(statement, 27, providerData.flatMap { String(data: $0, encoding: .utf8) })
         guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
     }
 

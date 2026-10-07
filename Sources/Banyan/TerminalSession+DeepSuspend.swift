@@ -49,6 +49,7 @@ extension TerminalSession {
         isDeepTerminating = ticket.phase == .terminating && deepProcessPresence(ticket.agent) != .exited
         if isDeepTerminating { watchDeepTermination(ticket) }
         else if ticket.phase == .terminating { completeDeepTermination(ticket) }
+        onAgentRuntimeChanged?()
     }
 
     func watchDeepTermination(_ ticket: AgentSuspendTicket) {
@@ -84,6 +85,7 @@ extension TerminalSession {
         telemetry.recordDuration("agent.deep_suspend", durationMS: 0, sessionID: id,
             detail: "provider=\(ticket.disk.provider.rawValue) rss_released=\(ticket.residentBytes)")
         touch()
+        onAgentRuntimeChanged?()
         if pendingDeepResume {
             let generation = deepLifecycleGeneration
             // The exit event precedes the host's waitpid/TTY handback. Bound the
@@ -101,7 +103,7 @@ extension TerminalSession {
 
     /// Called synchronously before focus/attach/input. Input is refused while
     /// startup is pending so it can never land at the shell prompt.
-    func beginDeepResume() throws {
+    func beginDeepResume(queueIfBusy: Bool = true) throws {
         guard status != .closed else { throw AgentFreezeError.unsafe("Closed session cannot resume an agent") }
         freezeGeneration = UUID()
         lastFreezeInteractionAt = Date()
@@ -120,9 +122,10 @@ extension TerminalSession {
             // failure. Retry reconciles the observed exit instead of waiting
             // for a notification that has already fired.
             completeDeepTermination(ticket)
-            if !isDeepTerminating { try beginDeepResume(); return }
+            if !isDeepTerminating { try beginDeepResume(queueIfBusy: queueIfBusy); return }
         }
         if isDeepTerminating {
+            guard queueIfBusy else { throw ControlError.conflict(code: "agent_terminating", message: "Agent is terminating; nothing was queued. Retry after confirmed exit.") }
             pendingDeepResume = true
             return
         }
@@ -138,7 +141,7 @@ extension TerminalSession {
                 suspended.phase = .suspended
                 try tmuxBackend.writeSuspendTicket(suspended, named: tmuxSessionName)
                 suspendTicket = suspended
-                try beginDeepResume()
+                try beginDeepResume(queueIfBusy: queueIfBusy)
                 return
             }
             isDeepResuming = true
@@ -163,15 +166,27 @@ extension TerminalSession {
         guard let input = tmuxBackend as? any TmuxInputBackend else {
             throw AgentFreezeError.unsafe("Backend does not support same-pane recovery input")
         }
+        guard requestAgentAdmission(queueIfBusy: queueIfBusy, purpose: .deepResume, retry: { [weak self] in
+            guard let self else { return }
+            do { try self.beginDeepResume() }
+            catch { self.deepSuspendError = error.localizedDescription; self.onAgentRuntimeChanged?() }
+        }) else {
+            if !queueIfBusy { throw ControlError.conflict(code: "agent_capacity_busy", message: "All agent slots are in use. Nothing was queued; use Resume in the app to wait, or retry later.") }
+            return
+        }
+        admissionProcessIdentity = ticket.root
+        admissionPanePID = ticket.root.pid
         var resuming = ticket
         resuming.phase = .resuming
         // A write failure leaves the earlier suspended recovery metadata intact.
-        try tmuxBackend.writeSuspendTicket(resuming, named: tmuxSessionName)
+        do { try tmuxBackend.writeSuspendTicket(resuming, named: tmuxSessionName) }
+        catch { onAgentRuntimeChanged?(); throw error }
         suspendTicket = resuming
         pendingDeepResume = false
         isDeepResuming = true
         isDeepSuspended = true
         deepSuspendError = nil
+        admissionLaunchSucceeded = true
         // Journal before sending anything. An interrupted send is uncertain,
         // so reconcile startup rather than blindly issuing a second command.
         do {
@@ -202,9 +217,9 @@ extension TerminalSession {
                     let backend = self.tmuxBackend
                     let name = self.tmuxSessionName
                     let environment = self.environment
-                    let recovered = await Task.detached(priority: .utility) {
+                    let recovered: AgentProcessIdentity? = await Task.detached(priority: .utility) {
                         guard let current = backend.primaryPaneSnapshot(named: name), current.paneID == ticket.paneID,
-                              AgentProcessSample.read(pid: Int32(current.rootPID))?.identity == ticket.root else { return false }
+                              AgentProcessSample.read(pid: Int32(current.rootPID))?.identity == ticket.root else { return nil }
                         let table = ProcessTable.snapshot()
                         let rows = table.descendants(of: current.rootPID)
                         guard let provider = rows.first(where: {
@@ -213,7 +228,7 @@ extension TerminalSession {
                                   sample.sessionID == ticket.root.pid, sample.foregroundGroupID == sample.groupID,
                                   !ticket.survivors.contains(sample.identity) else { return false }
                             return AgentDeepSuspend.confirmsRecovery(ticket.disk, process: $0)
-                        }) else { return false }
+                        }) else { return nil }
                         // Exact identity confirmation may renew Claude's owned
                         // bridge helper. Inspect the current tree, excluding only
                         // that verified idle wait helper from turn classification.
@@ -231,19 +246,22 @@ extension TerminalSession {
                                 !helpers.contains { Int($0.pid) == row.pid }
                             }, agentPID: provider.pid)).inspect(tmuxSessionName: name,
                             launchCommand: ticket.resumeCommand, currentStatus: .running, cwd: ticket.disk.cwd,
-                            environment: environment, paneSnapshot: current) else { return false }
+                            environment: environment, paneSnapshot: current) else { return nil }
                         let text = backend.captureVisibleText(paneID: current.paneID, lineLimit: 24)
                         return result.provider != nil && [.idle, .needInput, .asking].contains(result.status)
                             && AgentDeepSuspend.hasReadyPrompt(provider: ticket.disk.provider, text: text)
+                            ? AgentProcessSample.read(pid: Int32(provider.pid))?.identity : nil
                     }.value
                     guard !Task.isCancelled, self.status != .closed, self.deepLifecycleGeneration == generation,
                           self.suspendTicket?.agent == ticket.agent else { return }
-                    if recovered {
+                    if let recovered {
                         try self.tmuxBackend.writeSuspendTicket(nil, named: self.tmuxSessionName)
                         self.suspendTicket = nil
                         self.isDeepSuspended = false
                         self.isDeepResuming = false
                         self.status = .running
+                        self.onAgentProviderIdentityRecorded?(recovered)
+                        self.onAgentRuntimeChanged?()
                         self.telemetry.recordDuration("agent.deep_resume", durationMS: Date().timeIntervalSince(started) * 1000,
                             sessionID: self.id, detail: "provider=\(ticket.disk.provider.rawValue)")
                         self.touch()

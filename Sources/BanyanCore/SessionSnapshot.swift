@@ -21,6 +21,11 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// suspended row still carries the last observed agent state and resuming
     /// restores it rather than resetting it.
     public let isSuspended: Bool
+    /// Persist uncertain or hidden daemon work independently of display status.
+    public let agentSlotProviderIdentity: AgentProcessIdentity?
+    public let agentSlotPaneIdentity: AgentProcessIdentity?
+    public let agentSlotReserved: Bool
+    public let agentLaunchQueue: AgentLaunchQueueState?
     public let createdAt: Date
     public let updatedAt: Date
     /// Which runtime owns the session. Rows written before puck sessions
@@ -47,6 +52,10 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         parentSessionID: String? = nil,
         agentSessionID: String? = nil,
         isSuspended: Bool = false,
+        agentLaunchQueue: AgentLaunchQueueState? = nil,
+        agentSlotReserved: Bool = false,
+        agentSlotPaneIdentity: AgentProcessIdentity? = nil,
+        agentSlotProviderIdentity: AgentProcessIdentity? = nil,
         createdAt: Date,
         updatedAt: Date,
         backend: SessionBackendKind = .terminal,
@@ -68,6 +77,10 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.parentSessionID = parentSessionID
         self.agentSessionID = agentSessionID
         self.isSuspended = isSuspended
+        self.agentLaunchQueue = agentLaunchQueue
+        self.agentSlotReserved = agentSlotReserved
+        self.agentSlotPaneIdentity = agentSlotPaneIdentity
+        self.agentSlotProviderIdentity = agentSlotProviderIdentity
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.backend = backend
@@ -88,7 +101,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         case id, tmuxSessionName, title, titleURL, titleURLWasAutoDetected
         case reportedTitle, generatedTitle, isTitlePinned, cwd, command
         case status, tone, parentSessionID, agentSessionID, isSuspended, createdAt, updatedAt
-        case backend, puck, codex
+        case backend, puck, codex, agentLaunchQueue, agentSlotReserved, agentSlotPaneIdentity, agentSlotProviderIdentity
     }
 
     public init(from decoder: Decoder) throws {
@@ -109,6 +122,10 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             parentSessionID: try container.decodeIfPresent(String.self, forKey: .parentSessionID),
             agentSessionID: try container.decodeIfPresent(String.self, forKey: .agentSessionID),
             isSuspended: try container.decodeIfPresent(Bool.self, forKey: .isSuspended) ?? false,
+            agentLaunchQueue: try container.decodeIfPresent(AgentLaunchQueueState.self, forKey: .agentLaunchQueue),
+            agentSlotReserved: try container.decodeIfPresent(Bool.self, forKey: .agentSlotReserved) ?? false,
+            agentSlotPaneIdentity: try container.decodeIfPresent(AgentProcessIdentity.self, forKey: .agentSlotPaneIdentity),
+            agentSlotProviderIdentity: try container.decodeIfPresent(AgentProcessIdentity.self, forKey: .agentSlotProviderIdentity),
             createdAt: try container.decode(Date.self, forKey: .createdAt),
             updatedAt: try container.decode(Date.self, forKey: .updatedAt),
             backend: try container.decodeIfPresent(SessionBackendKind.self, forKey: .backend) ?? .terminal,
@@ -140,6 +157,10 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             parentSessionID: parentSessionID,
             agentSessionID: agentSessionID,
             isSuspended: isSuspended ?? self.isSuspended,
+            agentLaunchQueue: agentLaunchQueue,
+            agentSlotReserved: agentSlotReserved,
+            agentSlotPaneIdentity: agentSlotPaneIdentity,
+            agentSlotProviderIdentity: agentSlotProviderIdentity,
             createdAt: createdAt,
             updatedAt: updatedAt,
             backend: backend,

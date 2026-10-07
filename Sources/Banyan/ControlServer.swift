@@ -226,6 +226,45 @@ final class ControlServer {
             case .list:
                 return respond(.ok(["sessions": store.sessions.map(summary)]))
 
+            case .puckTurn:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                guard let id = body.id, let prompt = body.text, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      let expires = body.ttl?.value else { throw ControlError.badRequest("puck-turn requires id, text, and expiry ttl") }
+                let expiresAt = min(Date(timeIntervalSince1970: Double(expires)), Date().addingTimeInterval(4))
+                Task { @MainActor in
+                    do {
+                        let session = try await store.startPuckTurnImmediately(id: id, prompt: prompt, expiresAt: expiresAt)
+                        respond(.ok(["session": self.summary(session)]))
+                    } catch { respond(self.failure(for: error)) }
+                }
+                return
+
+            case .agentQueue:
+                if request.method == "POST" {
+                    let body = try request.decode(ControlPayload.self)
+                    try validateVersion(body.apiVersion)
+                    guard let id = body.id, store.sessions.contains(where: { $0.id == id }) else {
+                        throw ControlError.badRequest("agent queue action requires an existing session ID")
+                    }
+                    switch body.detail {
+                    case "cancel": store.cancelQueuedAgent(id: id)
+                    case "prioritize": store.prioritizeQueuedAgent(id: id)
+                    case "retry": store.retryQueuedAgent(id: id)
+                    default: throw ControlError.badRequest("agent queue action must be cancel, prioritize, or retry")
+                    }
+                }
+                return respond(.ok(admissionSummary(store)))
+
+            case .agentLimit:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                guard let limit = body.limit?.value, (1...64).contains(limit) else {
+                    throw ControlError.badRequest("agent limit must be between 1 and 64")
+                }
+                store.maximumConcurrentAgents = limit
+                return respond(.ok(admissionSummary(store)))
+
             case .select:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
@@ -510,6 +549,7 @@ final class ControlServer {
         select: Bool,
         respond: @escaping @MainActor (Response) -> Void
     ) {
+        let expiresAt = Date().addingTimeInterval(4)
         Task { @MainActor in
             do {
                 let session = try await store.createPuckSession(
@@ -520,9 +560,12 @@ final class ControlServer {
                     titleURL: body.titleURL,
                     parentSessionID: parentSessionID,
                     tone: tone,
-                    prompt: body.agentPrompt,
+                    prompt: nil,
                     select: select
                 )
+                if let prompt = body.agentPrompt, !prompt.isEmpty {
+                    _ = try await store.startPuckTurnImmediately(id: session.id, prompt: prompt, expiresAt: expiresAt)
+                }
                 respond(.ok(["session": self.summary(session)]))
             } catch let error as PuckTurnError {
                 respond(.failure(502, "puck_turn_failed", error.localizedDescription))
@@ -872,6 +915,13 @@ final class ControlServer {
     }
 
     @MainActor
+    private func admissionSummary(_ store: SessionStore) -> [String: Any] {
+        ["limit": store.maximumConcurrentAgents,
+         "running": store.agentAdmission.running.sorted(),
+         "queued": store.agentAdmission.queuedIDs]
+    }
+
+    @MainActor
     func summary(_ session: BanyanSession) -> [String: Any] {
         var summary: [String: Any] = [
             "id": session.id,
@@ -897,6 +947,9 @@ final class ControlServer {
             "isDeepResuming": session.isDeepResuming,
             "isDeepTerminating": session.isDeepTerminating,
             "deepRecoveryIsUncertain": (session as? TerminalSession)?.deepRecoveryIsUncertain ?? false,
+            "agentQueuePosition": session.agentQueuePosition as Any? ?? NSNull(),
+            "agentLaunchCancelled": session.agentLaunchQueue?.cancelled ?? false,
+            "usesAgentSlot": store?.agentAdmission.running.contains(session.id) ?? false,
             "projectGroupID": session.projectGroupID,
             "projectGroupTitle": session.projectGroupTitle,
             "displayContextDegraded": session.displayContextDegraded,

@@ -42,6 +42,10 @@ final class PuckSession: BanyanSession {
     private var lastSummary: PuckSessionSummary?
     private var followTask: Task<Void, Never>?
     private var followGeneration = 0
+    @Published private(set) var admissionTurnInFlight = false
+    @Published var draft = ""
+    var onAdmissionTurnStarting: (() -> Void)?
+    private var summaryRevision = 0
 
     deinit { followTask?.cancel() }
 
@@ -161,6 +165,7 @@ final class PuckSession: BanyanSession {
 
     /// Mirrors one daemon summary into the shared session state.
     func apply(summary: PuckSessionSummary) {
+        summaryRevision += 1
         lastSummary = summary
         daemonError = nil
         let reported = PuckSessionBinding(summary: summary)
@@ -190,12 +195,22 @@ final class PuckSession: BanyanSession {
                 }
             }
         }
+        reconcileAdmissionFromSummary()
         // A closed row stays closed until the user reopens it, and a parked one
         // keeps what it last showed: Banyan was asked to stop watching both.
         guard status != .closed, !isSuspended else { return }
         let next = PuckSessionStatusPolicy.status(for: summary)
         guard next != status else { return }
         mark(status: next, tone: PuckSessionStatusPolicy.tone(for: next))
+    }
+
+    private func reconcileAdmissionFromSummary() {
+        guard let summary = lastSummary else { return }
+        if summary.position == "running" || summary.position == "parked" || summary.pendingApproval != nil || summary.pendingQuestion != nil {
+            if agentAdmission?.running.contains(id) != true { agentAdmission?.adopt(id) }
+        } else if !admissionTurnInFlight && ["idle", "interrupted", "hibernated"].contains(summary.position) {
+            agentAdmission?.release(id)
+        }
     }
 
     /// Brings a closed session back into the working set. Its status is the
@@ -285,6 +300,7 @@ final class PuckSession: BanyanSession {
         Task { [weak self] in
             do {
                 try await self?.startTurn(prompt)
+                if self?.draft == prompt { self?.draft = "" }
             } catch {
                 self?.daemonError = error.localizedDescription
             }
@@ -294,12 +310,50 @@ final class PuckSession: BanyanSession {
     func startTurn(_ prompt: String) async throws {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        guard !admissionTurnInFlight else { throw ControlError.badRequest("A turn is already starting for this session") }
+        admissionTurnInFlight = true
+        var accepted = false
+        var sent = false
+        var definiteRejection = false
+        var reconciledAfterResponse = false
+        defer {
+            admissionTurnInFlight = false
+            if reconciledAfterResponse { reconcileAdmissionFromSummary() }
+            else if !accepted && (!sent || definiteRejection) {
+                reconcileAdmissionFromSummary()
+                if lastSummary == nil { agentAdmission?.release(id) }
+            }
+        }
+        onAdmissionTurnStarting?()
+        try await agentAdmission?.acquire(id)
+        try Task.checkCancellation()
+        guard turnUnavailableReason == nil else { throw ControlError.badRequest(turnUnavailableReason!) }
         markSubmittedPromptTitle(text)
         let daemon = self.daemon
         let id = self.id
-        try await Task.detached(priority: .userInitiated) {
-            try daemon.turn(id, prompt: text)
-        }.value
+        sent = true
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try daemon.turn(id, prompt: text)
+            }.value
+        } catch {
+            if case .rejected = error as? PuckDaemonError { definiteRejection = true }
+            throw error
+        }
+        accepted = true
+        // A short turn can finish before turn() returns. Query after the ACK,
+        // keeping its slot during the query and respecting a newer watch update.
+        let revision = summaryRevision
+        do {
+            let summary = try await Task.detached(priority: .utility) { try daemon.get(id) }.value
+            if summaryRevision == revision { apply(summary: summary) }
+            reconciledAfterResponse = true
+        } catch {
+            // A dropped response cannot establish exit. The dashboard watch or
+            // a later catalog reconciliation resolves the reservation.
+            daemonError = error.localizedDescription
+        }
+        if reconciledAfterResponse { return }
         // Running is known the moment the daemon accepts the turn; the event
         // stream and the next listing confirm it.
         guard status != .closed, !isSuspended, status != .executing else { return }

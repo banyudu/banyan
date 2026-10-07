@@ -56,6 +56,67 @@ private final class NativeSessionServer: CodexThreadService {
 @Suite(.serialized)
 @MainActor
 struct NativeCodexSessionTests {
+    @Test func queuedNativeCreationPreservesSettingsOnCancelAndNeverStealsLaterSelection() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = NativeSessionServer()
+        let store = fixture.makeStore(codexService: server,
+            freezePreferences: UserDefaults(suiteName: "banyan-admission-\(UUID().uuidString)")!)
+        store.enableNativeCodex = true
+        store.maximumConcurrentAgents = 1
+        store.agentAdmission.adopt("existing-work")
+        let settings = CodexThreadSettings(model: "synthetic-model", approvalPolicy: "untrusted")
+        let creation = Task { try await store.createCodexSession(settings: settings, cwd: fixture.project.path, id: "queued", select: true) }
+        try await waitForPuckState { store.sessions.first { $0.id == "queued" }?.agentQueuePosition == 1 }
+        #expect(store.selectedSessionID == "queued" && server.starts == 0)
+        store.cancelQueuedAgent(id: "queued")
+        await #expect(throws: CancellationError.self) { try await creation.value }
+        let row = try #require(store.sessions.first as? CodexSession)
+        #expect(row.state.binding.settings == settings && row.state.binding.threadID == nil)
+        store.selectedSessionID = nil
+        store.agentAdmission.release("existing-work")
+        try await store.codexThreads.connect(sessionID: row.id)
+        #expect(store.selectedSessionID == nil && server.starts == 1)
+    }
+
+    @Test func admittedNativeCreationRespectsSelectionChangedWhileQueued() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = NativeSessionServer()
+        let store = fixture.makeStore(codexService: server,
+            freezePreferences: UserDefaults(suiteName: "banyan-admission-\(UUID().uuidString)")!)
+        store.enableNativeCodex = true
+        store.maximumConcurrentAgents = 1
+        store.agentAdmission.adopt("existing-work")
+        let creation = Task { try await store.createCodexSession(cwd: fixture.project.path, id: "queued", select: true) }
+        try await waitForPuckState { store.agentAdmission.queuedIDs == ["queued"] }
+        store.selectedSessionID = nil
+        try await waitForPuckState { store.codexThreads.selectedSessionID == nil }
+        store.agentAdmission.release("existing-work")
+        _ = try await creation.value
+        #expect(store.selectedSessionID == nil && server.starts == 0)
+    }
+
+    @Test func restoredHiddenAndUnknownNativeWorkKeepsDurableAdmissionReservations() throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let snapshots = [SessionStatus.closed, .failed].enumerated().map { index, status in
+            SessionSnapshot(id: "uncertain-\(index)", tmuxSessionName: nil, title: "Synthetic native work",
+                reportedTitle: nil, cwd: fixture.project.path, command: "", status: status, tone: .neutral,
+                agentSlotReserved: true, createdAt: Date(), updatedAt: Date(), backend: .codex,
+                codex: .init(threadID: "stored-\(index)", cwd: fixture.project.path))
+        }
+        fixture.persistence.save(snapshots)
+        let defaults = UserDefaults(suiteName: "banyan-admission-\(UUID().uuidString)")!
+        defaults.set(1, forKey: AgentAdmissionController.defaultsKey)
+        let server = NativeSessionServer()
+        let store = fixture.makeStore(codexService: server, sessionBackend: AdmissionTerminalBackend(), freezePreferences: defaults)
+        store.enableNativeCodex = false
+        store.loadPersistedSessionsIfNeeded()
+        #expect(store.agentAdmission.running == Set(snapshots.map(\.id)))
+        #expect(store.sessions.map(\.persistenceSnapshot).allSatisfy { $0.agentSlotReserved })
+        let queued = store.spawn(id: "queued", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        #expect(queued.agentQueuePosition == 1)
+        #expect(server.starts == 0)
+    }
+
     @Test func nativeProvenanceUsesEffectiveServerHomeInsteadOfRawHostHome() async throws {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let server = NativeSessionServer()

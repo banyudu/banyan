@@ -83,6 +83,22 @@ final class TerminalSession: BanyanSession {
     var terminalRefreshTask: Task<Void, Never>?
     /// Invalidates asynchronous work that was launched for a previous client.
     var terminalClientGeneration = UUID()
+    var backingLaunchInFlight = false
+    var admissionGeneration = UUID()
+    var admissionProcessIdentity: AgentProcessIdentity?
+    var admissionPanePID: Int32?
+    var admissionWatchKey: String?
+    var admissionConfirmedExitPID: Int32?
+    var admissionLaunchSucceeded = false
+    var admissionProviderIdentity: AgentProcessIdentity?
+    var admissionCaptureTask: Task<Void, Never>?
+    var onAgentProviderIdentityRecorded: ((AgentProcessIdentity) -> Void)?
+    var admissionProcessProbe: @Sendable (Int32, AgentProcessIdentity?) -> AgentAdmissionProcessInspection = {
+        AgentAdmissionProcessInspection.inspect(pid: $0, expected: $1)
+    }
+    @Published var admissionInspectionError: String?
+    var onAgentRuntimeChanged: (() -> Void)?
+    var onAgentBackendReady: (() -> Void)?
 
     init(
         id: String,
@@ -258,6 +274,10 @@ final class TerminalSession: BanyanSession {
     /// session and agent process keep running untouched.
     override func suspend() {
         guard !isImportedHistory, status != .closed, !isSuspended else { return }
+        if agentAdmission?.position(of: id) != nil {
+            agentLaunchQueue = .init(cancelled: true)
+            agentAdmission?.cancel(id)
+        }
         isSuspended = true
         // Drops the SwiftTerm client only. Reattaching later rebuilds the buffer
         // from the live pane, so no scrollback is lost.

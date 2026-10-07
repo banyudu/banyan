@@ -110,6 +110,23 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
             .filter { $0.hasPrefix("banyan-") }
     }
 
+    public func agentAdmissionPane(named name: String) -> AgentAdmissionPaneInspection {
+        if let pane = primaryPaneSnapshot(named: name) { return .present(pane) }
+        do {
+            let names = try run(["list-sessions", "-F", "#{session_name}"])
+                .split(separator: "\n").map(String.init)
+            return names.contains(name) ? .unknown : .absent
+        } catch BackendError.commandFailed(_, let message) {
+            // These tmux diagnostics prove there is no server/socket. A timeout,
+            // denied socket, bad executable, or failed pane parse stays unknown.
+            if message.hasPrefix("no server running on ") ||
+                (message.hasPrefix("error connecting to ") && message.hasSuffix("(No such file or directory)")) {
+                return .absent
+            }
+            return .unknown
+        } catch { return .unknown }
+    }
+
     public func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? {
         let format = [
             "#{pane_id}",
@@ -467,7 +484,9 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
     }
 
     private var baseArguments: [String] {
-        ["-L", socketName]
+        // Keep control output (including tab field separators) intact even
+        // when a launch environment has no UTF-8 locale. Preserve caller LANG.
+        ["-u", "-L", socketName]
     }
 
     /// Safety cap so a wedged tmux server can never hang a supervisor tick (or the

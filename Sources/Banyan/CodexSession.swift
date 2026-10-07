@@ -105,7 +105,8 @@ final class CodexSession: BanyanSession {
                 _ = try await coordinator.startTurn(sessionID: id, input: input)
             }
             if draft == text { draft = "" }
-        } catch { actionError = error.localizedDescription }
+        } catch is CancellationError { actionError = "Queued turn cancelled. Your draft is preserved." }
+        catch { actionError = error.localizedDescription }
     }
 
     func interrupt() async {

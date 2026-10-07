@@ -51,6 +51,12 @@ extension TerminalSession {
             start()
             return
         }
+        if canReuseCompletedAgentPane { start(); return }
+        guard !backingLaunchInFlight else { return }
+        guard ensureProjectFolderAccess() else { return }
+        guard requestAgentAdmission(retry: { [weak self] in self?.startBackgroundBackendIfNeeded() }) else { return }
+        backingLaunchInFlight = true
+        admissionGeneration = UUID()
         isDetachingTerminalClient = false
         let runtime = sessionRuntime
         let request = launchRequest
@@ -68,18 +74,28 @@ extension TerminalSession {
             } catch {
                 let message = error.localizedDescription
                 await MainActor.run { [weak self, weak terminalView] in
-                    guard let self, let terminalView,
+                    guard let self else { return }
+                    self.backingLaunchInFlight = false
+                    self.onAgentRuntimeChanged?()
+                    guard let terminalView,
                           self.terminalClientGeneration == generation,
                           self.loadedTerminalView === terminalView else { return }
                     self.failToStart(message)
                 }
                 return
             }
-            let paneIdentity = backend.primaryPaneSnapshot(named: tmuxName)
-                .flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
+            let admissionPane = backend.primaryPaneSnapshot(named: tmuxName)
+            let paneIdentity = admissionPane.flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
             backend.configureTerminalTheme(style: themeStyle, for: tmuxName)
             await MainActor.run { [weak self, weak terminalView] in
-                guard let self, let terminalView,
+                guard let self else { return }
+                self.backingLaunchInFlight = false
+                self.admissionLaunchSucceeded = true
+                self.admissionPanePID = admissionPane.flatMap { Int32(exactly: $0.rootPID) }
+                self.admissionProcessIdentity = paneIdentity
+                if self.status == .closed { self.sessionRuntime.removeBackingSession(named: tmuxName) }
+                self.onAgentRuntimeChanged?()
+                guard let terminalView,
                       self.terminalClientGeneration == generation,
                       self.loadedTerminalView === terminalView,
                       !self.isImportedHistory, !self.isSuspended, self.status != .closed,
@@ -270,23 +286,44 @@ extension TerminalSession {
     }
 
     func startBackingSessionInBackground() {
+        guard !backingLaunchInFlight else { return }
+        if canReuseCompletedAgentPane {
+            isProcessStarted = true
+            onAgentBackendReady?()
+            return
+        }
         guard ensureProjectFolderAccess() else { return }
+        guard requestAgentAdmission(retry: { [weak self] in self?.startBackgroundBackendIfNeeded() }) else { return }
         let runtime = sessionRuntime
         let request = launchRequest
         let backend = tmuxBackend
+        backingLaunchInFlight = true
+        admissionGeneration = UUID()
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try runtime.ensureBackingSession(request)
-                let identity = backend.primaryPaneSnapshot(named: request.sessionName)
-                    .flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
+                let admissionPane = backend.primaryPaneSnapshot(named: request.sessionName)
+                let identity = admissionPane.flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
                 await MainActor.run { [weak self] in
                     guard let self else { return }
+                    self.backingLaunchInFlight = false
+                    self.admissionLaunchSucceeded = true
+                    self.admissionPanePID = admissionPane.flatMap { Int32(exactly: $0.rootPID) }
+                    self.admissionProcessIdentity = identity
+                    if self.status == .closed {
+                        self.sessionRuntime.removeBackingSession(named: request.sessionName)
+                        self.onAgentRuntimeChanged?()
+                        return
+                    }
                     self.trackedPaneIdentity = identity
                     self.isProcessStarted = true
+                    self.onAgentRuntimeChanged?()
                     self.touch()
+                    self.onAgentBackendReady?()
                 }
             } catch {
                 await MainActor.run { [weak self] in
+                    self?.backingLaunchInFlight = false
                     self?.failToStart(error.localizedDescription)
                 }
             }
@@ -294,10 +331,14 @@ extension TerminalSession {
     }
 
     func restartBackingSession() {
-        guard !isImportedHistory else { return }
+        guard !isImportedHistory, !backingLaunchInFlight else { return }
+        // A restart of already-running work keeps its existing slot.
+        guard ensureProjectFolderAccess() else { return }
+        guard requestAgentAdmission(purpose: .restart, retry: { [weak self] in self?.restartBackingSession() }) else { return }
+        admissionGeneration = UUID()
         cancelDeepLifecycle()
         do { try prepareFrozenAgentForTeardown() }
-        catch { freezeError = error.localizedDescription; return }
+        catch { freezeError = error.localizedDescription; onAgentRuntimeChanged?(); return }
         suspendTicket = nil
         deepRecoveryIsUncertain = false
         hasLoadedDeepSuspendTicket = false
@@ -305,6 +346,8 @@ extension TerminalSession {
         isDeepSuspended = false
         isDeepTerminating = false
         isDeepResuming = false
+        admissionProviderIdentity = nil
+        admissionConfirmedExitPID = nil
         trackedPaneIdentity = nil
         invalidateTerminalClientWork()
         if let terminalView = loadedTerminalView {
@@ -325,11 +368,29 @@ extension TerminalSession {
         startTerminalClient(backingSessionAlreadyEnsured: true)
     }
 
+    func attachAdmittedTerminalClientIfNeeded() {
+        guard !isSuspended, status != .closed, isProcessStarted,
+              let view = loadedTerminalView, !view.process.running,
+              view.bounds.width > 80, view.bounds.height > 80 else { return }
+        startTerminalClient(backingSessionAlreadyEnsured: true)
+    }
+
     private func startTerminalClient(
         resetBlankRecoveryAttempt: Bool = true,
         backingSessionAlreadyEnsured: Bool = false
     ) {
+        guard !backingLaunchInFlight else { return }
         guard ensureProjectFolderAccess() else { return }
+        // Attaching an existing pane cannot start its old configured command.
+        // In particular, the persistent host may now contain only a plain shell.
+        let existingPane: Bool
+        if backingSessionAlreadyEnsured { existingPane = true }
+        else if case .present(let pane) = tmuxBackend.agentAdmissionPane(named: tmuxSessionName) { existingPane = !pane.isDead }
+        else { existingPane = false }
+        if !existingPane {
+            guard requestAgentAdmission(retry: { [weak self] in self?.startBackgroundBackendIfNeeded() }) else { return }
+            admissionGeneration = UUID()
+        }
         // Set the server default before creating a new pane. Codex probes OSC
         // 10/11 during startup, before SwiftTerm has necessarily attached.
         tmuxBackend.configureTerminalTheme(style: pendingTheme.tmuxDefaultStyle, for: nil)
@@ -343,6 +404,10 @@ extension TerminalSession {
         }
         tmuxBackend.configureTerminalTheme(style: pendingTheme.tmuxDefaultStyle, for: tmuxSessionName)
         trackPaneIdentityIfNeeded()
+        admissionLaunchSucceeded = true
+        admissionPanePID = tmuxBackend.primaryPaneSnapshot(named: tmuxSessionName).flatMap { Int32(exactly: $0.rootPID) }
+        admissionProcessIdentity = trackedPaneIdentity
+        onAgentRuntimeChanged?()
         isRestored = false
         isProcessStarted = true
         if resetBlankRecoveryAttempt {
@@ -370,7 +435,9 @@ extension TerminalSession {
         status = .closed
         isSuspended = false
         stopTerminalClient()
+        agentAdmission?.cancel(id)
         sessionRuntime.removeBackingSession(named: tmuxSessionName)
+        onAgentRuntimeChanged?()
         touch()
     }
 
@@ -486,6 +553,7 @@ extension TerminalSession {
         status = .failed
         feedOrQueue("Banyan could not attach this session.\r\n\r\n\(message)\r\n")
         onStatusSignal?(status)
+        onAgentRuntimeChanged?()
         touch()
     }
 

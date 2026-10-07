@@ -44,6 +44,9 @@ public final class CodexThreadCoordinator {
     public var onEvent: ((String, String, CodexJSONValue) -> Void)?
 
     private let service: any CodexThreadService
+    public let admission: AgentAdmissionController?
+    private var admissionOperations: [String: Int] = [:]
+    private var unresolvedWork: Set<String> = []
     private var observation: Task<Void, Never>?
     private var setup: Task<Void, Never>?
     private var epoch = 0
@@ -52,7 +55,39 @@ public final class CodexThreadCoordinator {
     private var replies: [String: CheckedContinuation<CodexServerReply, Never>] = [:]
     private var sessionIDByThreadID: [String: String] = [:]
 
-    public init(service: any CodexThreadService) { self.service = service }
+    public init(service: any CodexThreadService, admission: AgentAdmissionController? = nil) {
+        self.service = service
+        self.admission = admission
+    }
+
+    public func adoptRestoredWork(sessionID: String) {
+        guard !cliSessionIDs.contains(sessionID) else { return }
+        unresolvedWork.insert(sessionID)
+        admission?.adopt(sessionID)
+    }
+
+    private func admitted<T>(_ id: String, operation: () async throws -> T) async throws -> T {
+        guard !cliSessionIDs.contains(id) else { throw CodexAppServerError.protocolViolation("This session is owned by the CLI") }
+        admissionOperations[id, default: 0] += 1
+        defer {
+            admissionOperations[id, default: 1] -= 1
+            reconcileAdmission(id)
+        }
+        try await admission?.acquire(id)
+        try Task.checkCancellation()
+        guard !cliSessionIDs.contains(id) else { throw CodexAppServerError.protocolViolation("This session is owned by the CLI") }
+        return try await operation()
+    }
+
+    private func reconcileAdmission(_ id: String) {
+        guard !cliSessionIDs.contains(id) else { return }
+        guard let state = states[id] else { admission?.release(id); return }
+        if state.runtime.type == "active" || state.activeTurnID != nil || state.needsAttention || unresolvedWork.contains(id) {
+            if admission?.running.contains(id) != true { admission?.adopt(id) }
+        } else if admissionOperations[id, default: 0] == 0 {
+            admission?.release(id)
+        }
+    }
 
     deinit {
         observation?.cancel()
@@ -90,11 +125,19 @@ public final class CodexThreadCoordinator {
     /// The gate changes synchronously; reconcile under the same lifecycle lock
     /// as connect/turn/fallback. Selection intent survives disable/re-enable.
     public func synchronizeRollout() async throws {
+        if isEnabled, let id = selectedSessionID {
+            try await admitted(id) { try await synchronizeRolloutAdmitted() }
+        } else { try await synchronizeRolloutAdmitted() }
+    }
+
+    private func synchronizeRolloutAdmitted() async throws {
         await acquire()
         defer { release() }
         if isEnabled {
             serverReleasedForDisable = false
-            if let selectedSessionID { try await attach(selectedSessionID) }
+            if let selectedSessionID, admission == nil || admission?.running.contains(selectedSessionID) == true {
+                try await attach(selectedSessionID)
+            }
         }
         var failure: Error?
         for id in Array(states.keys) {
@@ -163,7 +206,10 @@ public final class CodexThreadCoordinator {
         try checkCLIHandoffIdle()
         try await service.disconnectForHandoff()
         disconnected("Codex server released for CLI fallback. Reconnect native sessions when needed.")
+        unresolvedWork.remove(sessionID)
         cliSessionIDs.insert(sessionID)
+        admission?.cancel(sessionID)
+        admission?.release(sessionID)
         if selectedSessionID == sessionID { selectedSessionID = nil }
         return state.binding
     }
@@ -191,11 +237,17 @@ public final class CodexThreadCoordinator {
     /// changes cannot leave a late-resumed idle thread subscribed in background.
     public func select(sessionID: String?) async throws {
         selectedSessionID = sessionID
+        if isEnabled, let sessionID {
+            try await admitted(sessionID) { try await selectAdmitted(sessionID: sessionID) }
+        } else { try await selectAdmitted(sessionID: sessionID) }
+    }
+
+    private func selectAdmitted(sessionID: String?) async throws {
         await ensureObservation()
         await acquire()
         defer { release() }
         var failure: Error?
-        if isEnabled, let selected = selectedSessionID {
+        if isEnabled, let selected = selectedSessionID, selected == sessionID {
             do { try await attach(selected) } catch { failure = error }
         }
         for id in Array(states.keys) where !isEnabled || id != selectedSessionID {
@@ -208,9 +260,14 @@ public final class CodexThreadCoordinator {
     /// Used for explicit background creation and reconnect/retry. Never starts
     /// a new thread when a mapped thread cannot be resumed.
     public func connect(sessionID: String) async throws {
+        try await admitted(sessionID) { try await connectAdmitted(sessionID: sessionID) }
+    }
+
+    private func connectAdmitted(sessionID: String) async throws {
         await ensureObservation()
         await acquire()
         defer { release() }
+        try Task.checkCancellation()
         try await attach(sessionID)
         if selectedSessionID != sessionID { try await releaseIdle(sessionID) }
     }
@@ -239,10 +296,15 @@ public final class CodexThreadCoordinator {
     /// Resolve an uncertain start using an explicitly chosen stored thread.
     /// Existing mappings are immutable; this cannot replace a failed resume.
     public func recoverCreation(sessionID: String, threadID: String) async throws {
+        try await admitted(sessionID) { try await recoverCreationAdmitted(sessionID: sessionID, threadID: threadID) }
+    }
+
+    private func recoverCreationAdmitted(sessionID: String, threadID: String) async throws {
         try checkEnabled()
         await ensureObservation()
         await acquire()
         defer { release() }
+        try Task.checkCancellation()
         try checkEnabled()
         guard let state = states[sessionID], state.binding.threadID == nil,
               sessionIDByThreadID[threadID] == nil else {
@@ -261,17 +323,24 @@ public final class CodexThreadCoordinator {
     }
 
     public func startTurn(sessionID: String, input: [CodexJSONValue]) async throws -> CodexJSONValue {
+        try await admitted(sessionID) { try await startTurnAdmitted(sessionID: sessionID, input: input) }
+    }
+
+    private func startTurnAdmitted(sessionID: String, input: [CodexJSONValue]) async throws -> CodexJSONValue {
         try checkEnabled()
         await ensureObservation()
         await acquire()
         defer { release() }
+        try Task.checkCancellation()
         try await attach(sessionID)
+        try Task.checkCancellation()
         try checkEnabled()
         guard let state = states[sessionID], !state.needsAttention,
               state.runtime.type == "idle", state.activeTurnID == nil else {
             throw CodexAppServerError.protocolViolation("Finish the active turn or answer the pending request first")
         }
         let current = epoch
+        let revision = state.revision
         update(sessionID) { $0.runtime = .init(type: "active"); $0.lastTurnStatus = nil }
         do {
             let result = try await service.request("turn/start", params: .object([
@@ -284,6 +353,12 @@ public final class CodexThreadCoordinator {
             }
             return result
         } catch {
+            // A definite RPC rejection did not launch a turn. Timeouts and
+            // disconnects remain reserved until reconnect resolves uncertainty.
+            if case .remote = error as? CodexAppServerError,
+               states[sessionID]?.revision == revision, states[sessionID]?.activeTurnID == nil {
+                update(sessionID) { $0.runtime = .init(type: "idle") }
+            }
             recordFailure(error, sessionID: sessionID)
             throw error
         }
@@ -423,6 +498,7 @@ public final class CodexThreadCoordinator {
         do {
             if !observingExisting { try checkEnabled() }
             let result: CodexJSONValue
+            try Task.checkCancellation()
             requestSent = true
             if !isEnabled && observingExisting {
                 result = try await service.requestWhileConnected(method, params: .object(params))
@@ -450,6 +526,10 @@ public final class CodexThreadCoordinator {
                 }
             }
             sessionIDByThreadID[threadID] = id
+            if ["idle", "active", "notLoaded"].contains(states[id]?.runtime.type ?? "unknown") {
+                unresolvedWork.remove(id)
+            } else { unresolvedWork.insert(id) }
+            reconcileAdmission(id)
             onHydrate?(id, thread)
             await flushPersistence?()
         } catch {
@@ -465,6 +545,10 @@ public final class CodexThreadCoordinator {
                     }
                 }
                 if definitelyUncreated { update(id) { $0.binding.creationAttempted = false } }
+                else { unresolvedWork.insert(id) }
+            } else if requestSent {
+                // Resume may have loaded work even if its reply was lost.
+                unresolvedWork.insert(id)
             }
             recordFailure(error, sessionID: id)
             throw error
@@ -519,6 +603,11 @@ public final class CodexThreadCoordinator {
             }
             let lifecycleChanged = ["thread/status/changed", "turn/started", "turn/completed", "serverRequest/resolved", "thread/closed"].contains(method)
             if lifecycleChanged {
+                if method == "thread/status/changed" {
+                    let type = CodexThreadRuntime(object?["status"]).type
+                    if ["idle", "active", "notLoaded"].contains(type) { unresolvedWork.remove(id) }
+                    else if admission?.running.contains(id) == true { unresolvedWork.insert(id) }
+                } else if ["turn/completed", "thread/closed"].contains(method) { unresolvedWork.remove(id) }
                 update(id) { state in
                     state.revision += 1
                     switch method {
@@ -539,6 +628,7 @@ public final class CodexThreadCoordinator {
                     case "serverRequest/resolved":
                         state.pendingRequests.removeAll { $0.id == object?["requestId"] }
                     case "thread/closed":
+                        state.activeTurnID = nil
                         state.isSubscribed = false
                         state.runtime = .init(type: "notLoaded")
                         state.connection = .unsubscribed
@@ -558,7 +648,11 @@ public final class CodexThreadCoordinator {
                 replies.removeValue(forKey: replyKey(threadID, requestID))?.resume(
                     returning: .error(code: -32000, message: "Codex request was resolved by another client"))
             }
-            if method == "thread/closed" { clearReplies(threadID: threadID) }
+            if method == "thread/closed" {
+                unresolvedWork.remove(id)
+                reconcileAdmission(id)
+                clearReplies(threadID: threadID)
+            }
             onEvent?(id, method, params)
             if lifecycleChanged, (!isEnabled || id != selectedSessionID), states[id]?.canReleaseSubscription == true {
                 Task { [weak self] in
@@ -595,6 +689,9 @@ public final class CodexThreadCoordinator {
         hasNativeConnection = false
         epoch += 1
         for id in Array(states.keys) {
+            if let state = states[id], state.runtime.type == "active" || state.activeTurnID != nil || state.needsAttention {
+                unresolvedWork.insert(id)
+            }
             update(id) {
                 $0.isSubscribed = false
                 $0.connection = .failed(message)
@@ -631,6 +728,7 @@ public final class CodexThreadCoordinator {
         guard var state = states[id] else { return }
         mutation(&state)
         states[id] = state
+        reconcileAdmission(id)
         onChange?(id, state)
     }
 

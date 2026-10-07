@@ -141,13 +141,15 @@ public struct ControlPayload: Codable {
     /// `/suggest`: `session` or `background`, matching a palette command's `run`.
     public let run: String?
     /// `/suggest`: how many seconds the suggestion stays live, holding the
-    /// pending slot and suppressing its own key.
+    /// pending slot and suppressing its own key. `/puck-turn` uses an absolute
+    /// Unix expiry bounded by the server to its synchronous transport deadline.
     public let ttl: LenientInt?
     /// `/prune`: the retention window to apply, in days. Absent uses the app's
     /// configured one; `0` keeps everything.
     public let days: LenientInt?
     /// `/prune`: report what would be removed and remove nothing.
     public let dryRun: LenientBool?
+    public let limit: LenientInt?
 
     public init(
         apiVersion: String? = ControlProtocol.version,
@@ -179,8 +181,10 @@ public struct ControlPayload: Codable {
         run: String? = nil,
         ttl: Int? = nil,
         days: Int? = nil,
-        dryRun: Bool? = nil
+        dryRun: Bool? = nil,
+        limit: Int? = nil
     ) {
+        self.limit = limit.map(LenientInt.init(value:))
         self.apiVersion = apiVersion
         self.id = id
         self.title = title
@@ -288,6 +292,9 @@ public enum ControlRoute: Equatable {
     case resume
     case freeze
     case unfreeze
+    case agentQueue
+    case puckTurn
+    case agentLimit
     case codexHandoff
     case deepSuspend
     case deepResume
@@ -324,6 +331,9 @@ public enum ControlRoute: Equatable {
         case ("POST", "/resume"): return .resume
         case ("POST", "/freeze"): return .freeze
         case ("POST", "/unfreeze"): return .unfreeze
+        case ("GET", "/agent-queue"), ("POST", "/agent-queue"): return .agentQueue
+        case ("POST", "/puck-turn"): return .puckTurn
+        case ("POST", "/agent-limit"): return .agentLimit
         case ("POST", "/codex-handoff"): return .codexHandoff
         case ("POST", "/agent-suspend"): return .deepSuspend
         case ("POST", "/agent-resume"): return .deepResume
@@ -360,7 +370,7 @@ public enum ControlRoute: Equatable {
         case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
              .output, .input, .answer: return true
         case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest,
-             .prune: return false
+             .prune, .agentQueue, .agentLimit, .puckTurn: return false
         }
     }
 
