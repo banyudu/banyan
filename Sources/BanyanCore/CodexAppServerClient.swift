@@ -62,7 +62,7 @@ public enum CodexAppServerError: Error, Sendable, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .launch(let reason): return "Codex App Server could not start: \(reason)"
-        case .incompatibleVersion(let version): return "Codex App Server \(version) is not in Banyan's tested 0.146.x protocol range. Update Banyan or use the Codex CLI fallback."
+        case .incompatibleVersion(let version): return "Codex App Server \(version) is not in Banyan's tested 0.146.x / 0.160.0 / 0.160.1 protocol versions. Update Banyan or use the Codex CLI fallback."
         case .protocolViolation(let reason): return "Codex App Server protocol error: \(reason)"
         case .disconnected(let reason): return "Codex App Server disconnected: \(reason). Retry the operation to reconnect."
         case .timedOut(let method): return "Codex App Server request timed out: \(method)"
@@ -111,6 +111,7 @@ public actor CodexAppServerClient {
     private var reader: Task<Void, Never>?
     private var priorExit: Task<Void, Never>?
     private var connectTask: Task<Void, Error>?
+    private var connectionAttemptID: UUID?
     private var generation = 0
     private var ready = false
     private var hostStopped = false
@@ -119,6 +120,7 @@ public actor CodexAppServerClient {
     private var eventStreams: [UUID: AsyncStream<CodexAppServerEvent>.Continuation] = [:]
     private var requestHandler: RequestHandler?
     private var buffer = Data()
+    private var effectiveStorageHome: String?
 
     public init(
         executable: String = "codex",
@@ -131,6 +133,17 @@ public actor CodexAppServerClient {
         self.environmentProvider = environmentProvider ?? { environment }
         self.clientVersion = clientVersion
         self.requestTimeout = requestTimeout
+    }
+
+    public func storageHome() async -> String? {
+        if let effectiveStorageHome { return effectiveStorageHome }
+        return Self.storageHome(environment: environmentProvider())
+    }
+
+    private static func storageHome(environment: [String: String]) -> String {
+        let home = environment["CODEX_HOME"] ?? URL(fileURLWithPath: environment["HOME"] ?? NSHomeDirectory())
+            .appendingPathComponent(".codex").path
+        return URL(fileURLWithPath: home).standardizedFileURL.path
     }
 
     public func events() -> AsyncStream<CodexAppServerEvent> {
@@ -153,14 +166,31 @@ public actor CodexAppServerClient {
         guard !hostStopped else { throw CodexAppServerError.disconnected("Banyan is closing") }
         if ready { return }
         if let connectTask { return try await connectTask.value }
+        let attemptID = UUID()
+        connectionAttemptID = attemptID
         let task = Task { try await startAndInitialize() }
         connectTask = task
-        defer { connectTask = nil }
+        defer {
+            if connectionAttemptID == attemptID {
+                connectTask = nil
+                connectionAttemptID = nil
+            }
+        }
         try await task.value
     }
 
     public func request(_ method: String, params: CodexJSONValue = .object([:])) async throws -> CodexJSONValue {
         try await connect()
+        try Task.checkCancellation()
+        return try await sendRequest(method, params: params, generation: generation)
+    }
+
+    /// Existing-turn actions may remain available with rollout disabled, but
+    /// must never silently launch a new child if the old connection was lost.
+    public func requestWhileConnected(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue {
+        guard ready, !hostStopped else {
+            throw CodexAppServerError.disconnected("Native Codex is disabled or its existing connection was lost")
+        }
         try Task.checkCancellation()
         return try await sendRequest(method, params: params, generation: generation)
     }
@@ -177,11 +207,18 @@ public actor CodexAppServerClient {
         await shutdown()
     }
 
+    /// Unlike stop(), handoff permits a later native reconnect.
+    public func disconnectForHandoff() async throws {
+        await shutdown()
+    }
+
     private func shutdown() async {
         generation += 1
+        let current = generation
         ready = false
         connectTask?.cancel()
         connectTask = nil
+        connectionAttemptID = nil
         failPending(.disconnected("Banyan is closing"))
         reader?.cancel()
         reader = nil
@@ -193,9 +230,14 @@ public actor CodexAppServerClient {
         input = nil
         output = nil
         buffer.removeAll()
-        if let oldProcess { await Self.terminateAndReap(oldProcess) }
-        await priorExit?.value
-        priorExit = nil
+        let earlierExit = priorExit
+        let reap = Task {
+            if let oldProcess { await Self.terminateAndReap(oldProcess) }
+            await earlierExit?.value
+        }
+        priorExit = reap
+        await reap.value
+        if generation == current { priorExit = nil }
     }
 
     private func startAndInitialize() async throws {
@@ -209,7 +251,9 @@ public actor CodexAppServerClient {
         let child = Process()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         child.arguments = [executable, "app-server", "--listen", "stdio://"]
-        child.environment = environmentProvider()
+        let environment = environmentProvider()
+        child.environment = environment
+        effectiveStorageHome = Self.storageHome(environment: environment)
         let stdin = Pipe()
         let stdout = Pipe()
         child.standardInput = stdin
@@ -253,17 +297,24 @@ public actor CodexAppServerClient {
                 ])
             ]), generation: current)
             guard generation == current else { throw CodexAppServerError.disconnected("connection replaced") }
+            if let serverHome = result.objectValue?["codexHome"]?.stringValue,
+               serverHome.hasPrefix("/"), !serverHome.contains("\0") {
+                effectiveStorageHome = URL(fileURLWithPath: serverHome).standardizedFileURL.path
+            }
             guard let userAgent = result.objectValue?["userAgent"]?.stringValue,
                   let version = Self.serverVersion(from: userAgent) else {
                 throw CodexAppServerError.protocolViolation("initialize omitted a recognizable server version")
             }
-            guard version.major == 0, version.minor == 146 else {
+            guard version.major == 0,
+                  version.minor == 146 || (version.minor == 160 && [0, 1].contains(version.patch)) else {
                 throw CodexAppServerError.incompatibleVersion(version.description)
             }
             try send(.object(["method": .string("initialized"), "params": .object([:])]), generation: current)
             ready = true
         } catch {
-            await shutdown()
+            // A cancelled handshake must not shut down a newer connection that
+            // was started after CLI handoff finished reaping the old child.
+            if generation == current { await shutdown() }
             throw error
         }
     }

@@ -46,6 +46,7 @@ struct CodexConversationUITests {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let server = ConversationServer()
         let store = fixture.makeStore(codexService: server)
+        store.enableNativeCodex = true
         let session = try await store.createCodexSession(cwd: fixture.project.path, id: "large-history", select: false)
         let threadID = try #require(session.state.binding.threadID)
         let turns: [CodexJSONValue] = (0..<300).map { index in
@@ -70,6 +71,7 @@ struct CodexConversationUITests {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let server = ConversationServer()
         let store = fixture.makeStore(codexService: server)
+        store.enableNativeCodex = true
         var previous: CodexSession?
         var first: CodexSession?
         for index in 0..<12 {
@@ -113,6 +115,7 @@ struct CodexConversationUITests {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let server = ConversationServer()
         let store = fixture.makeStore(codexService: server)
+        store.enableNativeCodex = true
         let first = try await store.createCodexSession(settings: .init(approvalPolicy: "untrusted", sandbox: "read-only"), cwd: fixture.project.path, id: "first")
         first.draft = "Implement a feature"
         await first.sendDraft()
@@ -145,6 +148,7 @@ struct CodexConversationUITests {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let server = ConversationServer()
         let store = fixture.makeStore(codexService: server)
+        store.enableNativeCodex = true
         let first = try await store.createCodexSession(cwd: fixture.project.path, id: "first")
         first.draft = "Start"
         await first.sendDraft()
@@ -193,6 +197,7 @@ struct CodexConversationUITests {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let server = ConversationServer()
         let store = fixture.makeStore(codexService: server)
+        store.enableNativeCodex = true
         let session = try await store.createCodexSession(cwd: fixture.project.path, id: "render")
         session.receive(method: "item/completed", params: .object([
             "threadId": .string("thread-1"), "turnId": .string("turn-1"), "item": .object([
@@ -241,7 +246,8 @@ struct CodexConversationUITests {
         // approval replies and interruption visible and preserving the draft.
         session.draft = "Preserve this draft"
         let callsBeforeDisable = server.calls.count
-        hosting.rootView = CodexSessionDetail(session: session, nativeModeEnabled: false).environmentObject(store)
+        store.enableNativeCodex = false
+        hosting.rootView = CodexSessionDetail(session: session, nativeModeEnabled: store.enableNativeCodex).environmentObject(store)
         try await Task.sleep(for: .milliseconds(150))
         hosting.layoutSubtreeIfNeeded()
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)

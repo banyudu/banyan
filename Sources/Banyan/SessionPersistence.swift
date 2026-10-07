@@ -10,6 +10,7 @@ struct WorkspaceSnapshot {
     let enableCodexAppServerMode: Bool
     /// How long a closed session stays in `state.sqlite`. `0` keeps everything.
     let sessionRetentionDays: Int
+    var enableNativeCodex = false
 }
 
 struct LinearIssueListCacheSnapshot: Codable {
@@ -93,7 +94,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             terminalFontFamily: state["terminalFontFamily"] ?? defaults.terminalFontFamily,
             terminalFontSize: state["terminalFontSize"].flatMap(Double.init) ?? defaults.terminalFontSize,
             enableCodexAppServerMode: state["enableCodexAppServerMode"].flatMap(Bool.init) ?? defaults.enableCodexAppServerMode,
-            sessionRetentionDays: state["sessionRetentionDays"].flatMap(Int.init) ?? defaults.sessionRetentionDays
+            sessionRetentionDays: state["sessionRetentionDays"].flatMap(Int.init) ?? defaults.sessionRetentionDays,
+            enableNativeCodex: state["enableNativeCodex"].flatMap(Bool.init) ?? defaults.enableNativeCodex
         )
     }
 
@@ -105,6 +107,7 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             "terminalFontFamily": workspace.terminalFontFamily,
             "terminalFontSize": String(workspace.terminalFontSize),
             "enableCodexAppServerMode": String(workspace.enableCodexAppServerMode),
+            "enableNativeCodex": String(workspace.enableNativeCodex),
             "sessionRetentionDays": String(workspace.sessionRetentionDays)
         ]
         sessionDatabase.saveState(values)
