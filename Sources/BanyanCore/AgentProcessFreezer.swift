@@ -75,7 +75,7 @@ public enum AgentFreezeError: LocalizedError {
 /// every group in the pane tree, so MCP children using job control are covered.
 public enum AgentProcessFreezer {
     public static func snapshot(rootPID: Int32) throws -> [AgentProcessSample] {
-        let rows = ProcessTableSource.rows().filter { !$0.state.hasPrefix("Z") }
+        let rows = try ProcessTableSource.rowsForSignaling().filter { !$0.state.hasPrefix("Z") }
         var tree: Set<Int32> = [rootPID]
         var pending = [rootPID]
         let children = Dictionary(grouping: rows, by: \.parentPID)

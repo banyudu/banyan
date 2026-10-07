@@ -66,7 +66,9 @@ outside the pane tree. Banyan's process and process group are protected. Detache
 descendants, unreadable members, shared groups, and stale identities cause a
 refusal. The final focus/input guard and STOP run without an actor suspension;
 group identity is checked immediately before signaling. A tree change during
-STOP causes rollback with CONT. macOS has no atomic “signal group if start time
+STOP causes rollback with CONT. Signaling snapshots use kernel enumeration
+only and fail closed on a read failure; they never fall back to a `ps` subprocess
+on the UI actor. macOS has no atomic “signal group if start time
 matches” syscall, so identity checking narrows the kernel exit/reuse race rather
 than claiming to eliminate it.
 

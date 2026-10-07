@@ -14,6 +14,10 @@ private let root = process(100, parent: 99)
 private let agent = process(101, group: 101)
 private let mcp = process(102, parent: 101, group: 102)
 
+@Test func agentFreezeKernelEnumerationFailureRefusesSignaling() {
+    #expect(throws: AgentFreezeError.self) { try ProcessTableSource.rowsForSignaling(kernelReader: { [] }) }
+}
+
 private func plan(_ rows: [AgentProcessSample], identity: AgentProcessIdentity = root.identity) throws -> AgentFreezeTicket {
     try AgentProcessFreezer.plan(root: identity, agentPIDs: [101], samples: rows,
                                 protectedPID: 900, protectedGroup: 900, userID: 501)
