@@ -296,6 +296,9 @@ public enum ControlRoute: Equatable {
     case puckTurn
     case agentLimit
     case codexHandoff
+    case codexRemote
+    case codexRemoteConfigure
+    case codexRemoteResolve
     case deepSuspend
     case deepResume
     /// Reads a session's pane: its text, and the prompt it is blocked on.
@@ -335,6 +338,9 @@ public enum ControlRoute: Equatable {
         case ("POST", "/puck-turn"): return .puckTurn
         case ("POST", "/agent-limit"): return .agentLimit
         case ("POST", "/codex-handoff"): return .codexHandoff
+        case ("POST", "/codex-remote"): return .codexRemote
+        case ("POST", "/codex-remote-configure"): return .codexRemoteConfigure
+        case ("POST", "/codex-remote-resolve"): return .codexRemoteResolve
         case ("POST", "/agent-suspend"): return .deepSuspend
         case ("POST", "/agent-resume"): return .deepResume
         case ("POST", "/input"): return .input
@@ -370,7 +376,7 @@ public enum ControlRoute: Equatable {
         case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
              .output, .input, .answer: return true
         case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest,
-             .prune, .agentQueue, .agentLimit, .puckTurn: return false
+             .prune, .agentQueue, .agentLimit, .puckTurn, .codexRemote, .codexRemoteConfigure, .codexRemoteResolve: return false
         }
     }
 

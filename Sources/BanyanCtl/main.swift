@@ -117,6 +117,17 @@ struct BanyanCtl {
                 try get("/output", query: parseOutputOptions(Array(arguments.dropFirst())))
             case "send":
                 try postJSON("/input", payload: parseSendPayload(Array(arguments.dropFirst())))
+            case "codex-remote":
+                let payload = try parsePayload(Array(arguments.dropFirst(2)))
+                switch arguments.dropFirst().first {
+                case "configure":
+                    guard let path = payload["path"] else { throw NSError(domain: "BanyanCtl", code: 64, userInfo: [NSLocalizedDescriptionKey: "configure requires --path policy.json"]) }
+                    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+                    let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+                    try postJSON("/codex-remote-configure", payload: object)
+                case "resolve": try post("/codex-remote-resolve", payload: payload)
+                default: throw NSError(domain: "BanyanCtl", code: 64, userInfo: [NSLocalizedDescriptionKey: "Use codex-remote configure --path policy.json or resolve --workspace ID --operationID ID"])
+                }
             case "codex-handoff":
                 try post("/codex-handoff", payload: parsePayload(Array(arguments.dropFirst())))
             case "answer":
@@ -902,6 +913,8 @@ struct BanyanCtl {
           banyanctl puck answer --id ID --call-id CALL --selections JSON
 
         Usage:
+          banyanctl codex-remote configure --path policy.json
+          banyanctl codex-remote resolve --workspace ID --operationID ID
           banyanctl codex-handoff --id ID [--detail prepare|check]
           banyanctl session list
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]

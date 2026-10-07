@@ -11,6 +11,7 @@ final class CodexSession: BanyanSession {
     @Published private(set) var isSending = false
     @Published private(set) var submittedRequestIDs: Set<String> = []
     @Published var draft = ""
+    @Published var remoteStatus: String?
     let coordinator: CodexThreadCoordinator
 
     init(snapshot: SessionSnapshot, coordinator: CodexThreadCoordinator,
