@@ -6,6 +6,7 @@ import SwiftUI
 enum SessionLaunchSpec: Equatable {
     case terminal(command: String)
     case puck(PuckSessionBinding)
+    case codex(CodexThreadSettings)
 }
 
 /// A user-selectable command for creating a session in a project group.

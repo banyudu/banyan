@@ -26,6 +26,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     /// Which runtime owns the session. Rows written before puck sessions
     /// existed are terminal sessions.
     public let backend: SessionBackendKind
+    /// The native thread identity and settings of a `.codex` row.
+    public let codex: CodexThreadBinding?
     /// The daemon runtime of a `.puck` row; `nil` for terminal sessions.
     public let puck: PuckSessionBinding?
 
@@ -48,7 +50,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         createdAt: Date,
         updatedAt: Date,
         backend: SessionBackendKind = .terminal,
-        puck: PuckSessionBinding? = nil
+        puck: PuckSessionBinding? = nil,
+        codex: CodexThreadBinding? = nil
     ) {
         self.id = id
         self.tmuxSessionName = tmuxSessionName
@@ -69,6 +72,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.updatedAt = updatedAt
         self.backend = backend
         self.puck = puck
+        self.codex = codex
     }
 
     public var launchRequest: SessionLaunchRequest {
@@ -84,7 +88,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         case id, tmuxSessionName, title, titleURL, titleURLWasAutoDetected
         case reportedTitle, generatedTitle, isTitlePinned, cwd, command
         case status, tone, parentSessionID, agentSessionID, isSuspended, createdAt, updatedAt
-        case backend, puck
+        case backend, puck, codex
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,7 +112,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             createdAt: try container.decode(Date.self, forKey: .createdAt),
             updatedAt: try container.decode(Date.self, forKey: .updatedAt),
             backend: try container.decodeIfPresent(SessionBackendKind.self, forKey: .backend) ?? .terminal,
-            puck: try container.decodeIfPresent(PuckSessionBinding.self, forKey: .puck)
+            puck: try container.decodeIfPresent(PuckSessionBinding.self, forKey: .puck),
+            codex: try container.decodeIfPresent(CodexThreadBinding.self, forKey: .codex)
         )
     }
 
@@ -138,7 +143,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             createdAt: createdAt,
             updatedAt: updatedAt,
             backend: backend,
-            puck: puck
+            puck: puck,
+            codex: codex
         )
     }
 }

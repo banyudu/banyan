@@ -8,6 +8,8 @@ public enum SessionBackendKind: String, Codable, Sendable, CaseIterable {
     /// Durable state in the local `puckd`, shared with other frontends such as
     /// Slack. Banyan attaches to it; it does not own the process.
     case puck
+    /// A thread on the Banyan-owned Codex App Server.
+    case codex
 }
 
 /// The model runtime a puck session runs on. Persisted with the row so the

@@ -25,7 +25,7 @@ public struct SessionDatabase: Sendable {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model
+            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -79,7 +79,10 @@ public struct SessionDatabase: Sendable {
                                 model: columnText(statement, 20)
                             )
                         }
-                        : nil
+                        : nil,
+                    codex: columnText(statement, 21).flatMap { value in
+                        try? JSONDecoder().decode(CodexThreadBinding.self, from: Data(value.utf8))
+                    }
                 ))
             }
             return snapshots
@@ -277,6 +280,7 @@ public struct SessionDatabase: Sendable {
         try? execute(database, "ALTER TABLE sessions ADD COLUMN puck_provider TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN puck_account TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN puck_model TEXT")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN codex_binding TEXT")
         try execute(database, """
         CREATE TABLE IF NOT EXISTS workspace_state (
             key TEXT PRIMARY KEY,
@@ -297,8 +301,8 @@ public struct SessionDatabase: Sendable {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
@@ -320,7 +324,8 @@ public struct SessionDatabase: Sendable {
             backend = excluded.backend,
             puck_provider = excluded.puck_provider,
             puck_account = excluded.puck_account,
-            puck_model = excluded.puck_model
+            puck_model = excluded.puck_model,
+            codex_binding = excluded.codex_binding
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -350,6 +355,8 @@ public struct SessionDatabase: Sendable {
         bindText(statement, 20, snapshot.puck?.provider)
         bindText(statement, 21, snapshot.puck?.account)
         bindText(statement, 22, snapshot.puck?.model)
+        let codexData = try snapshot.codex.map { try JSONEncoder().encode($0) }
+        bindText(statement, 23, codexData.flatMap { String(data: $0, encoding: .utf8) })
 
         guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
     }
