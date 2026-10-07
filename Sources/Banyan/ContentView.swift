@@ -33,6 +33,7 @@ struct ContentView: View {
     private let selection: SessionSelection
     @State private var showingPreferences = false
     @State private var showingCommandPalette = false
+    @State private var codexHandoffSession: TerminalSession?
     @State private var draggingSidebarSessionID: String?
     @State private var lastAutoScrolledSidebarSessionID: String?
 
@@ -131,6 +132,9 @@ struct ContentView: View {
         .sheet(isPresented: $showingPreferences) {
             PreferencesSheet()
                 .environmentObject(store)
+        }
+        .sheet(item: $codexHandoffSession, onDismiss: { store.focusSelectedTerminal() }) { session in
+            CodexTUIHandoffView(store: store, session: session)
         }
         .onChange(of: store.commandPaletteRequestID) {
             showingCommandPalette = true
@@ -1306,6 +1310,9 @@ struct ContentView: View {
             onHandoff: {
                 store.dispatchHandoff(id: item.session.id)
             },
+            onCodexRemoteHandoff: {
+                codexHandoffSession = item.session as? TerminalSession
+            },
             onRemove: {
                 try? store.remove(id: item.session.id)
             },
@@ -1544,10 +1551,6 @@ struct ContentView: View {
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let session = store.selectedSession { AgentAdmissionBanner(session: session, store: store) }
-                if let terminal = store.selectedSession as? TerminalSession,
-                   terminal.agentProvider == .codex, !terminal.isImportedHistory {
-                    CodexTUIHandoffView(store: store, session: terminal)
-                }
             }
             // SwiftTerm owns a Metal-backed surface. During restoration SwiftUI
             // can briefly propose the panel's fixed width before it proposes the
@@ -2553,6 +2556,7 @@ private struct SessionRow: View {
     let isHandoffAvailable: Bool
     let isHandoffPending: Bool
     let onHandoff: () -> Void
+    let onCodexRemoteHandoff: () -> Void
     let onRemove: () -> Void
     let onToggleSuspended: () -> Void
     let onSetFrozen: (Bool) -> Void
@@ -2791,6 +2795,9 @@ private struct SessionRow: View {
             }
             if !session.isImportedHistory && session.status != .closed {
                 if session is TerminalSession {
+                    if session.agentProvider == .codex {
+                        Button("Continue in ChatGPT Remote…", action: onCodexRemoteHandoff)
+                    }
                     Button(session.isDeepSuspended ? "Resume Agent" : "Deep Suspend Agent") {
                         onSetDeepSuspended(!session.isDeepSuspended)
                     }

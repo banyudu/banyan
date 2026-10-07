@@ -4,8 +4,9 @@ An interactive Codex CLI can retain its thread's writer after a completed turn.
 Detaching Banyan's terminal display or a tmux client does not exit that CLI.
 Changing the launch preference only affects new sessions.
 
-Select the existing Codex terminal in Banyan and use its **Codex CLI ownership**
-panel:
+Normal Codex CLI use does not require a handoff. To continue an existing
+conversation in ChatGPT Remote, right-click its session in Banyan's sidebar
+and choose **Continue in ChatGPT Remote…**:
 
 1. Finish the turn and answer pending approvals/questions. Save any composer draft.
 2. Click **Prepare Remote Handoff**. Wait for **Completed turn — ready to exit CLI**.
