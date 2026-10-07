@@ -185,6 +185,10 @@ def main():
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 36, 120, 0, 0))
             os.kill(client.pid, signal.SIGWINCH)
             screen = Screen(rows=36, columns=120)
+            # SIGWINCH and tmux's PTY resize notification are asynchronous.
+            # Observe the backing pane size before executing the stty probe.
+            wait(lambda: command("display-message", "-p", "-t", first,
+                                 "#{pane_height} #{pane_width}") == "32 85", "backing pane resize notification")
             send("stty size\r")
             wait(lambda: screen.terminal_line("32 85"), "resize reaches backing pane")
 
