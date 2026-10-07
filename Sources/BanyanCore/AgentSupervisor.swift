@@ -18,6 +18,8 @@ public struct AgentSupervisor: Sendable {
         /// later. Those two can disagree, and the whole point of gating on the
         /// supervisor is that they must not.
         public let visibleText: String?
+        /// Kernel exit events for these processes wake deferred observations.
+        public let liveProcessIDs: Set<Int32>
 
         public init(
             status: SessionStatus,
@@ -26,7 +28,8 @@ public struct AgentSupervisor: Sendable {
             modelID: String? = nil,
             modelIDIsExact: Bool = false,
             currentPath: String?,
-            visibleText: String? = nil
+            visibleText: String? = nil,
+            liveProcessIDs: Set<Int32> = []
         ) {
             self.status = status
             self.tone = tone
@@ -35,6 +38,7 @@ public struct AgentSupervisor: Sendable {
             self.modelIDIsExact = modelIDIsExact
             self.currentPath = currentPath
             self.visibleText = visibleText
+            self.liveProcessIDs = liveProcessIDs
         }
     }
 
@@ -102,6 +106,7 @@ public struct AgentSupervisor: Sendable {
         }
 
         let descendants = processTable.descendants(of: pane.rootPID)
+        let liveProcessIDs = Set(descendants.filter { !$0.isExited }.compactMap { Int32(exactly: $0.pid) })
         // Only treat this as an agent session when an agent process is actually
         // alive in the pane. A launch command like `banyan-worktree --claude …`
         // names the agent forever, so keying provider detection off it pinned a
@@ -121,7 +126,7 @@ public struct AgentSupervisor: Sendable {
             : nil
 
         guard let baseProvider else {
-            return Result(status: .running, tone: .blue, provider: nil, currentPath: pane.currentPath)
+            return Result(status: .running, tone: .blue, provider: nil, currentPath: pane.currentPath, liveProcessIDs: liveProcessIDs)
         }
 
         let hasLiveOpenCode = Self.hasLiveOpenCodeProcess(paneCommand: pane.currentCommand, descendants: descendants)
@@ -215,7 +220,8 @@ public struct AgentSupervisor: Sendable {
                 modelID: modelIdentity?.modelID,
                 modelIDIsExact: modelIdentity?.isExactModelID ?? false,
                 currentPath: pane.currentPath,
-                visibleText: capturedText
+                visibleText: capturedText,
+                liveProcessIDs: liveProcessIDs
             )
         }
     }

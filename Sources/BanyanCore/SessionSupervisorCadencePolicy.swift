@@ -26,6 +26,16 @@ public enum SupervisorActivityLevel: Sendable {
 /// Calculates supervisor polling cadence without depending on a UI framework
 /// or a platform process-information API.
 public enum SessionSupervisorCadencePolicy {
+    /// Activity probes stay bounded even when expensive classification backs
+    /// off. One batched list-panes wakes a deferred session as soon as its pane
+    /// changes; PTY/process events can wake it earlier without another poller.
+    public static let activityProbeMaxInterval: TimeInterval = 30
+
+    /// Scheduled polling rests for a full interval *after* completion. A slow
+    /// tick consumes timer deadlines instead of accumulating catch-up work.
+    public static func nextScheduledTick(after completion: Date, interval: TimeInterval) -> Date {
+        completion.addingTimeInterval(max(1, interval))
+    }
     /// Ceiling while any part of the UI is on screen. Past this a status dot
     /// reads as broken rather than merely late.
     public static let visibleMaxInterval: TimeInterval = 30.0

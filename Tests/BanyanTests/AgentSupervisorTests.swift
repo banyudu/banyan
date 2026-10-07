@@ -1410,3 +1410,15 @@ private final class CountingSupervisorBackend: AgentSupervisorBackend, @unchecke
     // Still one capture: neither transition needed the pane re-read.
     #expect(backend.captureCount == 1)
 }
+
+@Test func supervisorPublishesLiveProcessIDsForExitDrivenObservation() {
+    let result = makeSupervisor(
+        processes: [
+            agentProcess("codex"),
+            process(pid: 102, parentPID: 101, commandName: "make", arguments: "make", elapsed: 3),
+            process(pid: 103, parentPID: 101, commandName: "make", arguments: "make", elapsed: 3, state: "Z")
+        ]
+    ).inspect(tmuxSessionName: "agent", launchCommand: "codex", currentStatus: .executing)
+    #expect(result?.status == .executing)
+    #expect(result?.liveProcessIDs == [101, 102])
+}

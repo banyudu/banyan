@@ -27,9 +27,9 @@ import Testing
     ) == SessionSupervisorBackoffPolicy.maxInterval)
 }
 
-@Test func supervisorBackoffKeepsActiveWorkFrequent() {
+@Test func supervisorBackoffBoundsUnchangedActiveWork() {
     for status in [SessionStatus.executing, .longRunningShell, .subagents] {
-        #expect(SessionSupervisorBackoffPolicy.requiresFrequentObservation(
+        #expect(!SessionSupervisorBackoffPolicy.requiresFrequentObservation(
             status: status,
             stableObservations: 100
         ))
@@ -37,7 +37,7 @@ import Testing
             baseInterval: 6,
             status: status,
             stableObservations: 100
-        ) == 6)
+        ) == SessionSupervisorBackoffPolicy.activeMaxInterval)
     }
 }
 
@@ -50,4 +50,19 @@ import Testing
         status: .running,
         stableObservations: 3
     ))
+}
+
+@Test func supervisorBackoffReopensFastWindowForOutputOrSelection() {
+    for status in [SessionStatus.executing, .longRunningShell, .subagents, .needInput] {
+        #expect(SessionSupervisorBackoffPolicy.interval(
+            baseInterval: 2, status: status, stableObservations: 10, hasRecentActivity: true
+        ) == 2)
+        #expect(SessionSupervisorBackoffPolicy.interval(
+            baseInterval: 2, status: status, stableObservations: 10, isSelectedAttached: true
+        ) == 2)
+    }
+    // Power/thermal constraints can already exceed the active-work ceiling.
+    #expect(SessionSupervisorBackoffPolicy.interval(
+        baseInterval: 180, status: .executing, stableObservations: 10
+    ) == 180)
 }
