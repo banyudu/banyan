@@ -39,6 +39,7 @@ public struct SessionStatusObservation: Sendable, Equatable {
     public let modelID: String?
     public let modelIDIsExact: Bool
     public let currentPath: String?
+    public let liveProcessIDs: Set<Int32>
 
     public init(
         id: String,
@@ -47,7 +48,8 @@ public struct SessionStatusObservation: Sendable, Equatable {
         provider: CodingAgentProvider?,
         modelID: String? = nil,
         modelIDIsExact: Bool = false,
-        currentPath: String?
+        currentPath: String?,
+        liveProcessIDs: Set<Int32> = []
     ) {
         self.id = id
         self.status = status
@@ -56,6 +58,7 @@ public struct SessionStatusObservation: Sendable, Equatable {
         self.modelID = modelID
         self.modelIDIsExact = modelIDIsExact
         self.currentPath = currentPath
+        self.liveProcessIDs = liveProcessIDs
     }
 }
 
@@ -83,6 +86,7 @@ public struct SessionStatusSynchronizer: Sendable {
     /// restored rows that have not been attached yet.
     public func observe(
         _ inputs: [SessionStatusObservationInput],
+        paneSnapshots suppliedPaneSnapshots: [String: TmuxPaneSnapshot]? = nil,
         onSessionObserved: @Sendable (String, Double) -> Void = { _, _ in }
     ) -> [SessionStatusObservation] {
         guard !inputs.isEmpty else { return [] }
@@ -93,7 +97,7 @@ public struct SessionStatusSynchronizer: Sendable {
             cache: cache
         )
         let collector = ObservationCollector()
-        let paneSnapshots = backend.primaryPaneSnapshots(
+        let paneSnapshots = suppliedPaneSnapshots ?? backend.primaryPaneSnapshots(
             named: Set(inputs.map(\.tmuxSessionName))
         )
         DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
@@ -126,7 +130,8 @@ public struct SessionStatusSynchronizer: Sendable {
                 provider: result.provider,
                 modelID: result.modelID,
                 modelIDIsExact: result.modelIDIsExact,
-                currentPath: result.currentPath
+                currentPath: result.currentPath,
+                liveProcessIDs: result.liveProcessIDs
             ))
         }
         return collector.drain()

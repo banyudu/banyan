@@ -2,7 +2,7 @@ import Foundation
 
 /// The pane state needed by session supervision, independent of how tmux is
 /// launched or how a frontend renders the terminal.
-public struct TmuxPaneSnapshot: Sendable {
+public struct TmuxPaneSnapshot: Sendable, Equatable {
     public let paneID: String
     public let rootPID: Int
     public let currentCommand: String

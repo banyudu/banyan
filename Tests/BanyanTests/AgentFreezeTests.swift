@@ -12,7 +12,8 @@ import Testing
 @MainActor
 struct AgentFreezeTests {
     @Test func syntheticAgentFreezeStopsMCPRetainsMemoryAndReconnects() async throws {
-        let f = try await FreezeFixture()
+        let processes = FreezeInspectionCounter()
+        let f = try await FreezeFixture(processTable: processes)
         defer { f.cleanup() }
         let before = try #require(AgentProcessSample.read(pid: f.agentPID))
         #expect(before.residentBytes > 32 * 1024 * 1024)
@@ -23,6 +24,15 @@ struct AgentFreezeTests {
         #expect(ticket.groups.count >= 2) // dedicated MCP job-control group
         #expect(f.backend.freezeTicket(named: f.session.tmuxSessionName) == ticket)
         try await waitForPuckState { f.allStopped(ticket) }
+        let frozenStatus = f.session.status
+        let inspectionCount = processes.count
+        try f.store.tick(id: f.session.id)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(processes.count == inspectionCount) // Frozen rows incur no classification.
+        #expect(!f.store.applySupervisorResults([
+            .init(id: f.session.id, status: .executing, tone: .blue, provider: .codex, currentPath: nil)
+        ])) // An inspection started before STOP must not overwrite the frozen row.
+        #expect(f.session.status == frozenStatus)
         #expect(AgentProcessSample.read(pid: f.rootPID)?.isStopped == false) // tmux host stays alive
         let heartbeat = f.heartbeat()
         try await Task.sleep(for: .milliseconds(250))
@@ -236,7 +246,7 @@ private struct FreezeFixture {
     let paneID: String
     let cleanupTicket: AgentFreezeTicket
 
-    init(agedActivity: Bool = false) async throws {
+    init(agedActivity: Bool = false, processTable: any ProcessTableProvider = LiveProcessTableProvider()) async throws {
         fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         var environment = ProcessInfo.processInfo.environment
         environment["HOME"] = fixture.home.path
@@ -264,7 +274,7 @@ private struct FreezeFixture {
         try await waitForPuckState { FileManager.default.fileExists(atPath: port.path) }
         store = fixture.makeStore(tmuxBackend: backend,
                                   sessionBackend: agedActivity ? AgedFreezeBackend(base: backend) : nil,
-                                  processTable: LiveProcessTableProvider(),
+                                  processTable: processTable,
                                   freezePreferences: try #require(UserDefaults(suiteName: backend.socketName)))
         let command = "exec /usr/bin/python3 " + AgentLaunchCommand.shellQuote(agentScript.path) + " " + AgentLaunchCommand.shellQuote(directory)
         session = store.spawn(id: "synthetic-freeze", title: "Synthetic agent", cwd: fixture.project.path,
@@ -359,6 +369,16 @@ private struct FreezeFixture {
         (root / 'heartbeat').write_text(str(time.monotonic_ns()))
         time.sleep(0.1)
     """#
+}
+
+private final class FreezeInspectionCounter: ProcessTableProvider, @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshots = 0
+    var count: Int { lock.lock(); defer { lock.unlock() }; return snapshots }
+    func snapshot() -> ProcessTable {
+        lock.lock(); snapshots += 1; lock.unlock()
+        return .snapshot()
+    }
 }
 
 /// Alters time only. All process sampling, group signals, tmux input, journal
