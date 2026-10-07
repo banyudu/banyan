@@ -13,10 +13,43 @@ protocol TUIInput {
     func readLine(prompt: String) -> String?
     func enterRaw()
     func restore()
+    func readEvent(events: TUIEvents) -> TUIEvent?
+    var layout: TerminalLayout { get }
+}
+
+extension TUIInput {
+    func readEvent(events: TUIEvents) -> TUIEvent? { readAction().map(TUIEvent.action) }
+    var layout: TerminalLayout { TerminalLayout(columns: 80, rows: 24) }
 }
 
 final class TerminalMode: TUIInput {
     private var original: termios?
+
+    var layout: TerminalLayout {
+        var size = winsize()
+        guard ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &size) == 0, size.ws_col > 0, size.ws_row > 0 else {
+            return TerminalLayout(columns: 80, rows: 24)
+        }
+        return TerminalLayout(columns: Int(size.ws_col), rows: Int(size.ws_row))
+    }
+
+    func readEvent(events: TUIEvents) -> TUIEvent? {
+        while true {
+            if let event = events.take() { return event }
+            var descriptors = [pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
+                               pollfd(fd: events.descriptor, events: Int16(POLLIN), revents: 0)]
+            let result = poll(&descriptors, 2, -1)
+            if result < 0 && errno == EINTR { continue }
+            guard result > 0 else { return nil }
+            if descriptors[1].revents != 0 { continue }
+            if descriptors[0].revents != 0 {
+                var bytes = [UInt8](repeating: 0, count: 16384)
+                let count = read(STDIN_FILENO, &bytes, bytes.count)
+                if count < 0 && errno == EINTR { continue }
+                return count > 0 ? .input(Array(bytes.prefix(count))) : nil
+            }
+        }
+    }
 
     init() {
         var attributes = termios()
@@ -49,26 +82,25 @@ final class TerminalMode: TUIInput {
 
     func readLine(prompt: String) -> String? {
         restore()
-        print(prompt, terminator: "")
+        print("\u{1b}[?7h\u{1b}[?25h\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1006l\u{1b}[?2004l\r\n" + prompt, terminator: "")
         fflush(stdout)
         let line = Swift.readLine()
         enterRaw()
+        print("\u{1b}[?7l", terminator: "")
         return line
     }
 
     func enterRaw() {
         guard let original else { return }
         var raw = original
-        raw.c_lflag &= ~tcflag_t(ICANON | ECHO)
-        raw.c_cc.0 = 1
-        raw.c_cc.1 = 0
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw)
+        cfmakeraw(&raw)
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw)
     }
 
     func restore() {
         guard let original else { return }
         var attributes = original
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &attributes)
+        tcsetattr(STDIN_FILENO, TCSANOW, &attributes)
     }
 
     private func readAvailableByte(timeoutMilliseconds: Int32) -> UInt8? {
@@ -83,6 +115,6 @@ final class TerminalMode: TUIInput {
 
     deinit {
         restore()
-        print("\u{1b}[0m\u{1b}[2J\u{1b}[H", terminator: "")
+        print("\u{1b}[0m", terminator: "")
     }
 }

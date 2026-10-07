@@ -8,6 +8,7 @@ var packageProducts: [Product] = [
 ]
 
 var packageTargets: [Target] = [
+        .target(name: "CTerminalPTY", linkerSettings: [.linkedLibrary("util", .when(platforms: [.linux]))]),
         .systemLibrary(
             name: "CSQLite",
             path: "Sources/CSQLite"
@@ -22,7 +23,7 @@ var packageTargets: [Target] = [
         ),
         .executableTarget(
             name: "BanyanTUI",
-            dependencies: ["BanyanCore"]
+            dependencies: ["BanyanCore", "CTerminalPTY", .product(name: "SwiftTerm", package: "SwiftTerm")]
         ),
         .testTarget(
             name: "BanyanCtlTests",

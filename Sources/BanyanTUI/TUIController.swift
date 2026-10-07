@@ -7,10 +7,18 @@ struct BanyanTUI {
     private let actions: any SessionListActions
     private let input: any TUIInput
     private let output: any TUIOutput
-    private let renderer: any TUIRenderer
     private let currentDirectory: String
     private let puckClient: PuckDaemonClient?
     private var model: SessionListModel
+    private let events: TUIEvents
+    private let terminal: EmbeddedTerminal
+    private let environment: [String: String]
+    private var screenRenderer = EmbeddedScreenRenderer()
+    private var focused = false
+    private var inputRouter = TerminalInputRouter()
+    private var inputGeneration = 0
+    private var sidebarInput = SidebarInputRouter()
+    private var navigationGeneration = 0
 
     init(
         backend: any TmuxTerminalBackend,
@@ -19,9 +27,10 @@ struct BanyanTUI {
         input: any TUIInput,
         output: any TUIOutput,
         processRunner: any TUIProcessRunner,
-        renderer: any TUIRenderer,
         puckClient: PuckDaemonClient? = nil,
-        currentDirectory: String
+        currentDirectory: String,
+        events: TUIEvents,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) {
         self.tmux = backend
         self.attachment = TUIAttachment(
@@ -33,19 +42,91 @@ struct BanyanTUI {
         self.actions = actions
         self.input = input
         self.output = output
-        self.renderer = renderer
         self.currentDirectory = currentDirectory
         self.puckClient = puckClient
+        self.events = events
+        self.terminal = EmbeddedTerminal { events.post(.redraw) }
+        self.environment = environment
     }
 
     mutating func run() {
-        while true {
-            reload()
-            render()
-
-            guard let action = input.readAction() else { break }
-            guard handle(action) else { return }
+        output.write("\u{1b}[?1049h\u{1b}[?7l", terminator: "")
+        defer {
+            terminal.stop()
+            output.write("\u{1b}[0m\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1006l\u{1b}[?2004l\u{1b}[?7h\u{1b}[0 q\u{1b}[?25h\u{1b}[?1049l", terminator: "")
         }
+        reload()
+        syncTerminal()
+        render()
+        while let event = input.readEvent(events: events) {
+            switch event {
+            case .quit: return
+            case .redraw: break
+            case .resize:
+                let layout = input.layout
+                terminal.resize(columns: layout.terminalColumns, rows: layout.terminalRows)
+            case .flushInput(let token):
+                if token == inputGeneration && focused { terminal.send(inputRouter.flushEscape()) }
+            case .flushNavigation(let token):
+                if token == navigationGeneration { sidebarInput.flushEscape() }
+            case .action(let action):
+                guard handle(action) else { return }
+                reload()
+                syncTerminal()
+            case .input(let bytes):
+                guard handleInput(bytes) else { return }
+                navigationGeneration += 1
+                if sidebarInput.hasPendingEscape {
+                    let token = navigationGeneration, events = events
+                    DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
+                        events.post(.flushNavigation(token))
+                    }
+                }
+            }
+            render()
+        }
+    }
+
+    private mutating func handleInput(_ bytes: [UInt8]) -> Bool {
+        if focused { return routeTerminalInput(bytes) }
+        for (index, byte) in bytes.enumerated() {
+            guard let event = sidebarInput.consume(byte) else { continue }
+            switch event {
+            case .fallback:
+                fallbackAttach()
+            case .action(let action):
+                guard handle(action) else { return false }
+            }
+            reload()
+            syncTerminal()
+            // Focus changes can share a read with the first shell/sidebar command.
+            if focused { return routeTerminalInput(Array(bytes.dropFirst(index + 1))) }
+        }
+        return true
+    }
+
+    private mutating func routeTerminalInput(_ bytes: [UInt8]) -> Bool {
+        let snapshot = terminal.snapshot()
+        for event in inputRouter.consume(bytes, layout: input.layout,
+                                         mouseEnabled: snapshot.grid?.mouseEnabled == true,
+                                         bracketedPaste: snapshot.grid?.bracketedPaste == true) {
+            switch event {
+            case .bytes(let bytes):
+                if focused { terminal.send(bytes) }
+                else if !handleInput(bytes) { return false }
+            case .sidebar: focused = false
+            case .next: model.moveNext(); syncTerminal()
+            case .previous: model.movePrevious(); syncTerminal()
+            }
+        }
+        inputGeneration += 1
+        if inputRouter.hasPendingEscape {
+            let token = inputGeneration, events = events
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) {
+                events.post(.flushInput(token))
+            }
+        }
+        return true
     }
 
     private mutating func handle(_ action: SessionListAction) -> Bool {
@@ -79,26 +160,34 @@ struct BanyanTUI {
             case .remove:
                 if !model.showingHistory { removeSelected() }
             case .activate:
-                input.restore()
                 if model.showingHistory {
                     resumeHistorySelected()
                 } else if let session = model.selectedPuckSession, let puckClient {
+                    suspendScreen()
+                    input.restore()
+                    screenRenderer.invalidate()
                     do {
                         try PuckTUI(input: input, output: output,
                                     currentDirectory: currentDirectory).attach(session.id, client: puckClient)
                     } catch {
                         model.showNotice("Puck: \(error.localizedDescription)")
                     }
+                    input.enterRaw()
+                    resumeScreen()
                 } else {
-                    attachSelected()
+                    if terminal.snapshot().message != nil { terminal.stop(); syncTerminal() }
+                    focused = terminal.sessionName != nil
                 }
-                input.enterRaw()
             case .trimResume:
                 if model.showingHistory { resumeHistorySelected(trimmed: true) }
             case .puck:
+                terminal.stop()
+                suspendScreen()
                 PuckTUI(input: input, output: output, currentDirectory: currentDirectory)
                     .run(client: puckClient ?? PuckDaemonClient())
                 model.refresh()
+                screenRenderer.invalidate()
+                resumeScreen()
             case .unknown:
                 break
         }
@@ -109,17 +198,46 @@ struct BanyanTUI {
         model.reload()
     }
 
-    private func render() {
-        let output = renderer.render(
-            sessions: model.sessions,
-            puckSessions: model.puckSessions,
-            history: model.history,
-            showingHistory: model.showingHistory,
-            selectedIndex: model.selectedIndex,
-            notice: model.notice,
-            tmux: tmux
-        )
-        self.output.write(output, terminator: "")
+    private mutating func render() {
+        let state = terminal.snapshot()
+        let frame = screenRenderer.render(model: model, layout: input.layout, grid: state.grid,
+                                          focused: focused, terminalMessage: state.message)
+        if !frame.isEmpty { output.write(frame, terminator: "") }
+    }
+
+    private mutating func syncTerminal() {
+        guard !model.showingHistory, let session = model.selectedSession else {
+            terminal.stop(); focused = false; inputRouter = TerminalInputRouter(); return
+        }
+        let name = session.launchRequest.sessionName
+        guard terminal.sessionName != name else { return }
+        inputRouter = TerminalInputRouter()
+        inputGeneration += 1
+        let layout = input.layout
+        terminal.connect(executable: tmux.executableURL, arguments: tmux.attachArguments(for: name),
+                         environment: environment, sessionName: name,
+                         columns: layout.terminalColumns, rows: layout.terminalRows)
+    }
+
+    private mutating func fallbackAttach() {
+        terminal.stop()
+        input.restore()
+        suspendScreen()
+        attachSelected()
+        input.enterRaw()
+        resumeScreen()
+        syncTerminal()
+    }
+
+    private func suspendScreen() {
+        output.write("\u{1b}[0m\u{1b}[?7h\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1006l\u{1b}[?2004l\u{1b}[?25h", terminator: "")
+    }
+
+    private mutating func resumeScreen() {
+        // DECSET 1049 is a mode, not a nested stack: an external tmux/Puck view
+        // may have left it. Re-enter before repainting to protect the host shell.
+        output.write("\u{1b}[?1049h\u{1b}[?7l", terminator: "")
+        screenRenderer.invalidate()
     }
 
     private func attachSelected() {
@@ -148,6 +266,7 @@ struct BanyanTUI {
     }
 
     private mutating func createCustomSession() {
+        screenRenderer.invalidate()
         guard let title = input.readLine(prompt: "Title (blank for Shell): "),
               let cwd = input.readLine(prompt: "Working directory (blank for current): "),
               let command = input.readLine(prompt: "Command (blank for shell): ") else {
@@ -166,6 +285,7 @@ struct BanyanTUI {
     }
 
     private mutating func renameSelected() {
+        screenRenderer.invalidate()
         guard let session = model.selectedSession else { return }
         let title = input.readLine(prompt: "New title (blank cancels): ")?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -175,6 +295,7 @@ struct BanyanTUI {
     }
 
     private mutating func searchHistory() {
+        screenRenderer.invalidate()
         let query = input.readLine(prompt: "History search (blank clears): ") ?? ""
         if !model.showingHistory { model.toggleHistory() }
         model.setHistoryFilter(query)

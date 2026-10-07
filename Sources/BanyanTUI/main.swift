@@ -1,10 +1,11 @@
 import BanyanCore
 import Foundation
 
-private func makeDefaultApp(host: HostRuntimeContext) -> BanyanTUI {
+private func makeDefaultApp(host: HostRuntimeContext) throws -> BanyanTUI {
     let backend = TmuxBackend(
         environment: host.environment,
-        workingDirectory: host.homeDirectory.path
+        workingDirectory: host.homeDirectory.path,
+        socketName: fixtureSocket(environment: host.environment) ?? TmuxBackend.socketName
     )
     let database = SessionDatabase(
         databaseURL: SessionDatabase.defaultDatabaseURL(
@@ -43,11 +44,22 @@ private func makeDefaultApp(host: HostRuntimeContext) -> BanyanTUI {
         input: TerminalMode(),
         output: output,
         processRunner: InteractiveProcessRunner(),
-        renderer: StandardTUIRenderer(),
         puckClient: PuckDaemonClient(environment: host.environment,
                                      homeDirectory: host.homeDirectory.path),
-        currentDirectory: host.currentDirectory
+        currentDirectory: host.currentDirectory,
+        events: try TUIEvents(watchSignals: true),
+        environment: host.environment
     )
+}
+
+// Runtime smoke fixtures must opt into BOTH a private data home and a private
+// socket. Never allow a fixture database to enumerate the live Banyan server.
+private func fixtureSocket(environment: [String: String]) -> String? {
+    guard BanyanDataDirectory.fixtureDataHome(environment: environment) != nil else { return nil }
+    guard let socket = environment["BANYAN_FIXTURE_TMUX_SOCKET"], socket.hasPrefix("banyan-tui-fixture-") else {
+        return "banyan-tui-fixture-\(UUID().uuidString.lowercased())"
+    }
+    return socket
 }
 
 private let environment = ProcessInfo.processInfo.environment
@@ -58,5 +70,10 @@ private let host = HostRuntimeContext(
     currentDirectory: FileManager.default.currentDirectoryPath
 )
 
-private var app = makeDefaultApp(host: host)
-app.run()
+do {
+    var app = try makeDefaultApp(host: host)
+    app.run()
+} catch {
+    FileHandle.standardError.write(Data("BanyanTUI: \(error.localizedDescription)\n".utf8))
+    exit(1)
+}
