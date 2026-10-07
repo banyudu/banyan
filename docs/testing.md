@@ -5,6 +5,14 @@ Banyan uses two testing layers:
 1. Object-oriented UI automation through stable accessibility identifiers.
 2. Visual validation through screenshots captured from the packaged app.
 
+Runtime startup has a windowless regression suite on macOS:
+`swift test --filter AppStartupTests`. It invokes the native app-delegate launch
+callback without creating a view, and checks authenticated control requests,
+restoration before default spawning, and repeat-start idempotency. The suite
+uses a private database, home directory, tmux socket, and ephemeral control port.
+`python3 scripts/tests/test_restart_app.py` checks restart recovery and bounded
+failure using fake OS commands, without launching or quitting a real app.
+
 ## Object Map
 
 These identifiers are defined in `Sources/Banyan/AccessibilityIdentifiers.swift`.

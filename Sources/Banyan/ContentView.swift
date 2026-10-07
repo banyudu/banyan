@@ -121,13 +121,6 @@ struct ContentView: View {
             PreferencesSheet()
                 .environmentObject(store)
         }
-        .onAppear {
-            store.loadPersistedSessionsIfNeeded()
-            store.spawnDefaultSessionIfEmpty()
-            store.refreshImportedHistoryIfNeeded()
-            store.startControlServer()
-            store.startSupervisor()
-        }
         .onChange(of: store.commandPaletteRequestID) {
             showingCommandPalette = true
         }

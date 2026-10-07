@@ -6,10 +6,11 @@ import Network
 final class ControlServer {
     private weak var store: SessionStore?
     private var listener: NWListener?
-    private let port: NWEndpoint.Port = 7842
+    private let port: NWEndpoint.Port
     private let token: String
     private let queue = DispatchQueue(label: "app.banyan.control-server")
     private var bindAttempts = 0
+    private var isStopped = false
     /// ~30s of retries at 1s each, enough to outlast a previous instance releasing
     /// the port on a quick restart, without looping forever.
     private let maxBindAttempts = 30
@@ -43,12 +44,29 @@ final class ControlServer {
         let respond: (Response) -> Void
     }
 
-    init(store: SessionStore, host: HostRuntimeContext) {
+    init(store: SessionStore, host: HostRuntimeContext, port: NWEndpoint.Port = 7842) {
         self.store = store
+        self.port = port
         self.token = (try? ControlToken.loadOrCreate(
             environment: host.environment,
             homeDirectory: host.homeDirectory
         )) ?? ""
+    }
+
+    /// The actual bound port, including when a private runtime requests `.any`.
+    var listeningPort: UInt16? {
+        queue.sync {
+            guard let listener, case .ready = listener.state else { return nil }
+            return listener.port?.rawValue
+        }
+    }
+
+    func stop() {
+        queue.sync {
+            // Pending bind retries must not resurrect a stopped server.
+            isStopped = true
+            if let listener { retire(listener, thenRetry: false) }
+        }
     }
 
     @MainActor
@@ -121,7 +139,7 @@ final class ControlServer {
         }
         bindAttempts += 1
         queue.asyncAfter(deadline: .now() + 1) { [weak self] in
-            guard let self, self.listener == nil else { return }
+            guard let self, !self.isStopped, self.listener == nil else { return }
             self.startListener()
         }
     }

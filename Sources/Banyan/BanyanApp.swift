@@ -56,7 +56,8 @@ struct BanyanApp: App {
     private static let jumpOverlayMonitor = JumpOverlayMonitor()
     private static let commandWTerminalCloseMonitor = CommandWTerminalCloseMonitor()
     private static let sessionRenameShortcutMonitor = SessionRenameShortcutMonitor()
-    @StateObject private var store = SessionStore(
+    /// The delegate and every window share one runtime, including windowless launches.
+    static let sessionStore = SessionStore(
         persistence: SessionPersistence(
             databaseURL: SessionDatabase.defaultDatabaseURL(
                 environment: Self.host.environment,
@@ -83,6 +84,7 @@ struct BanyanApp: App {
         telemetry: Self.telemetry,
         attentionNotifier: Self.attentionNotifier
     )
+    @StateObject private var store = Self.sessionStore
     @StateObject private var updater = AppUpdater()
 
     var body: some Scene {
@@ -326,6 +328,23 @@ struct BanyanApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let startRuntime: @MainActor () -> Void
+
+    override init() {
+        startRuntime = { BanyanApp.sessionStore.startRuntimeIfNeeded() }
+        super.init()
+    }
+
+    init(startRuntime: @escaping @MainActor () -> Void) {
+        self.startRuntime = startRuntime
+        super.init()
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Run before window restoration; a missing window must not disable the API.
+        startRuntime()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
             await BanyanApp.codexAppServer.stop()
