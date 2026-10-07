@@ -828,7 +828,7 @@ final class ControlServer {
     }
 
     @MainActor
-    private func summary(_ session: BanyanSession) -> [String: Any] {
+    func summary(_ session: BanyanSession) -> [String: Any] {
         var summary: [String: Any] = [
             "id": session.id,
             "backend": session.backendKind.rawValue,
@@ -854,6 +854,11 @@ final class ControlServer {
             "createdAt": ISO8601DateFormatter().string(from: session.createdAt),
             "updatedAt": ISO8601DateFormatter().string(from: session.updatedAt)
         ]
+        if let binding = session.codexBinding,
+           let data = try? JSONEncoder().encode(binding),
+           let provenance = try? JSONSerialization.jsonObject(with: data) {
+            summary["codex"] = provenance
+        }
         if let puck = session as? PuckSession {
             summary["puck"] = [
                 "provider": puck.binding.provider,

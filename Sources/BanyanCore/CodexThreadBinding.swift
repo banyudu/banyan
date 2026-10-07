@@ -37,10 +37,17 @@ public struct CodexThreadBinding: Codable, Equatable, Sendable {
     public let cwd: String
     public var settings: CodexThreadSettings
     public var creationAttempted: Bool
+    /// Original Codex storage root, retained if the app environment changes.
+    public var codexHome: String?
+    /// Set only when the same Banyan row has been handed to the CLI.
+    public var cliFallbackReason: String?
 
     public init(threadID: String? = nil, cwd: String, settings: CodexThreadSettings = .init(),
-                creationAttempted: Bool = false) {
+                creationAttempted: Bool = false, codexHome: String? = nil,
+                cliFallbackReason: String? = nil) {
         self.threadID = threadID
+        self.codexHome = codexHome
+        self.cliFallbackReason = cliFallbackReason
         self.cwd = cwd
         self.settings = settings
         self.creationAttempted = creationAttempted || threadID != nil
@@ -81,13 +88,25 @@ public struct CodexThreadRuntime: Equatable, Sendable {
 /// Small injectable boundary; production uses the one Banyan-owned client.
 public protocol CodexThreadService: Sendable {
     func connect() async throws
+    /// Storage actually used by the child, including shell-resolved CODEX_HOME.
+    func storageHome() async -> String?
+    /// Reap the shared child before a CLI acquires a thread writer.
+    func disconnectForHandoff() async throws
     func request(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue
+    func requestWhileConnected(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue
     func events() async -> AsyncStream<CodexAppServerEvent>
     func setServerRequestHandler(_ handler: CodexAppServerClient.RequestHandler?) async
 }
 
 public extension CodexThreadService {
     func connect() async throws {}
+    func storageHome() async -> String? { nil }
+    func requestWhileConnected(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue {
+        throw CodexAppServerError.disconnected("This Codex service cannot act without reconnecting")
+    }
+    func disconnectForHandoff() async throws {
+        throw CodexAppServerError.protocolViolation("This Codex service cannot safely release its writer for CLI handoff")
+    }
 }
 
 extension CodexAppServerClient: CodexThreadService {}

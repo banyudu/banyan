@@ -1461,6 +1461,7 @@ struct ContentView: View {
                         .background(.background)
                     } else if let native = session as? CodexSession {
                         CodexSessionDetail(session: native)
+                            .safeAreaInset(edge: .top, spacing: 0) { CodexRuntimeActions(session: native) }
                             .id(native.id)
                             .background(.background)
                     } else if let puck = session as? PuckSession {

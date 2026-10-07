@@ -11,13 +11,27 @@ private final class NativeSessionServer: CodexThreadService {
     var starts = 0
     var failResume = false
     var onStart: (() -> Void)?
+    var connectionError: CodexAppServerError?
+    var requestError: CodexAppServerError?
+    var handoffs = 0
+    var effectiveHome: String?
+    func storageHome() async -> String? { effectiveHome }
 
+    func connect() async throws {
+        if let connectionError { throw connectionError }
+    }
+    func disconnectForHandoff() async throws { handoffs += 1 }
+
+    func requestWhileConnected(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue {
+        try await request(method, params: params)
+    }
     func events() async -> AsyncStream<CodexAppServerEvent> {
         AsyncStream { continuations.append($0) }
     }
     func setServerRequestHandler(_ handler: CodexAppServerClient.RequestHandler?) async {}
     func request(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue {
         calls.append((method, params))
+        if let requestError { throw requestError }
         if method == "thread/start" { onStart?(); starts += 1 }
         if method == "thread/resume", failResume {
             throw CodexAppServerError.remote(code: -32600, message: "thread already has an active writer")
@@ -41,6 +55,128 @@ private final class NativeSessionServer: CodexThreadService {
 @Suite(.serialized)
 @MainActor
 struct NativeCodexSessionTests {
+    @Test func nativeProvenanceUsesEffectiveServerHomeInsteadOfRawHostHome() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = NativeSessionServer()
+        let resolvedHome = fixture.root.appendingPathComponent("shell-codex-home").path
+        server.effectiveHome = resolvedHome
+        let store = fixture.makeNativeStore(codexService: server)
+        let native = try await store.createCodexSession(cwd: fixture.project.path, id: "native")
+        #expect(native.codexBinding?.codexHome == resolvedHome)
+        #expect(native.codexBinding?.codexHome != fixture.home.appendingPathComponent(".codex").path)
+        try store.suspend(id: native.id)
+        try await waitForPuckState { !native.state.isSubscribed }
+        let fallback = try await store.fallbackCodexSessionToCLI(id: native.id)
+        #expect(fallback.command.contains("'CODEX_HOME=" + resolvedHome + "'"))
+        #expect(fixture.persistence.load().first?.codex?.codexHome == resolvedHome)
+    }
+
+    @Test func nativeStartupFailuresLeaveNoRowsOrReservedIDs() async throws {
+        for failure in [CodexAppServerError.launch("missing executable"), .incompatibleVersion("0.999.0")] {
+            let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+            let server = NativeSessionServer()
+            server.connectionError = failure
+            let store = fixture.makeNativeStore(codexService: server)
+            do {
+                _ = try await store.createCodexSession(cwd: fixture.project.path, id: "rejected")
+                Issue.record("Expected startup failure")
+            } catch { #expect(error as? CodexAppServerError == failure) }
+            #expect(store.sessions.isEmpty)
+            #expect(fixture.persistence.load().isEmpty)
+            #expect(!store.codexThreads.reserves(sessionID: "rejected"))
+            #expect(server.calls.isEmpty)
+        }
+    }
+
+    @Test func missingStartCapabilityRollsBackAnUncreatedRow() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = NativeSessionServer()
+        server.requestError = .remote(code: -32601, message: "thread/start unavailable")
+        let store = fixture.makeNativeStore(codexService: server)
+        do {
+            _ = try await store.createCodexSession(cwd: fixture.project.path, id: "rejected")
+            Issue.record("Expected unavailable capability")
+        } catch { #expect(error.localizedDescription.contains("thread/start unavailable")) }
+        #expect(store.sessions.isEmpty)
+        #expect(fixture.persistence.load().isEmpty)
+        #expect(!store.codexThreads.reserves(sessionID: "rejected"))
+    }
+
+    @Test func nativeRolloutGatePersistsIndependentlyAndDoesNotReconnectRestoredRows() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = NativeSessionServer()
+        let store = fixture.makeNativeStore(codexService: server)
+        let native = try await store.createCodexSession(cwd: fixture.project.path, id: "native")
+        store.enableCodexAppServerMode = true
+        store.enableNativeCodex = false
+        await store.codexThreads.flushPersistence?()
+        let restored = fixture.makeStore(codexService: server,
+            tmuxBackend: TmuxBackend(environment: ["PATH": "/usr/bin:/bin"],
+                workingDirectory: fixture.project.path, socketName: "banyan-native-disabled-test"))
+        restored.loadPersistedSessionsIfNeeded()
+        #expect(!restored.enableNativeCodex)
+        #expect(restored.enableCodexAppServerMode)
+        #expect(restored.sessions.first?.agentSessionID == native.agentSessionID)
+        do {
+            _ = try await restored.createCodexSession(cwd: fixture.project.path, id: "disabled")
+            Issue.record("Expected native rollout gate")
+        } catch { #expect(error.localizedDescription.contains("disabled")) }
+        #expect(server.starts == 1)
+        #expect(!server.calls.contains { $0.0 == "thread/resume" })
+    }
+
+    @Test func nativeFallbackAfterResumeFailurePreservesIdentitySettingsAndControlProvenance() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = NativeSessionServer()
+        let store = fixture.makeNativeStore(codexService: server)
+        let settings = CodexThreadSettings(model: "test-model", modelProvider: "custom",
+            approvalPolicy: "untrusted", sandbox: "read-only", config: ["model_reasoning_effort": .string("high")])
+        let native = try await store.createCodexSession(settings: settings, cwd: fixture.project.path, id: "native")
+        // Park to keep this test independent of installed terminal executables.
+        try store.suspend(id: native.id)
+        try await waitForPuckState { !native.state.isSubscribed }
+        for failure in [CodexAppServerError.launch("server missing"), .incompatibleVersion("0.999.0"), .remote(code: -32601, message: "thread/resume unavailable")] {
+            switch failure {
+            case .launch, .incompatibleVersion: server.connectionError = failure; server.requestError = nil
+            default: server.connectionError = nil; server.requestError = failure
+            }
+            do { try await store.codexThreads.connect(sessionID: native.id) } catch {}
+            #expect(native.agentSessionID == "native-thread-1")
+        }
+        store.enableCodexAppServerMode = true
+        let terminal = try await store.fallbackCodexSessionToCLI(id: native.id)
+        #expect(terminal.id == native.id)
+        #expect(terminal.agentSessionID == "native-thread-1")
+        #expect(terminal.agentProvider == .codex)
+        #expect(terminal.nativeCodexProvenance?.settings == settings)
+        #expect(terminal.nativeCodexProvenance?.codexHome == fixture.home.appendingPathComponent(".codex").path)
+        #expect(terminal.command.contains("'resume' 'native-thread-1'"))
+        #expect(!terminal.command.contains("remote-control"))
+        #expect(server.handoffs == 1)
+        #expect(server.starts == 1)
+        native.touch() // A queued callback from the replaced object cannot undo handoff.
+        await Task.yield()
+        await store.codexThreads.flushPersistence?()
+        #expect(fixture.persistence.load().first?.codex == terminal.nativeCodexProvenance)
+        #expect(fixture.persistence.load().first?.backend == .terminal)
+        let summary = ControlServer(store: store, host: HostRuntimeContext(environment: ["PATH": "/usr/bin:/bin"], homeDirectory: fixture.home, currentDirectory: fixture.project.path)).summary(terminal)
+        let binding = try #require(summary["codex"] as? [String: Any])
+        #expect(binding["threadID"] as? String == "native-thread-1")
+        #expect(binding["cliFallbackReason"] as? String != nil)
+        let restored = fixture.makeNativeStore(codexService: server)
+        restored.loadPersistedSessionsIfNeeded()
+        let row = try #require(restored.sessions.first as? TerminalSession)
+        #expect(row.id == native.id)
+        #expect(row.nativeCodexProvenance == terminal.nativeCodexProvenance)
+        #expect(row.command == terminal.command)
+        // Changing the legacy remote-control preference cannot rewrite fallback
+        // provenance when reopening from history.
+        try restored.close(id: row.id)
+        try restored.respawn(id: row.id)
+        #expect(row.command == terminal.command)
+        #expect(server.starts == 1)
+    }
+
     @Test func nativeCodexStorePersistsAndRestoresMappedSessionsWithoutTmux() async throws {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let server = NativeSessionServer()
@@ -211,9 +347,14 @@ private extension PuckStoreFixture {
                          makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
                              ControlServer(store: $0, host: $1)
                          }) -> SessionStore {
-        makeStore(codexService: codexService,
+        if let server = codexService as? NativeSessionServer, server.effectiveHome == nil {
+            server.effectiveHome = home.appendingPathComponent(".codex").path
+        }
+        let store = makeStore(codexService: codexService,
             tmuxBackend: TmuxBackend(environment: ["PATH": "/usr/bin:/bin"], workingDirectory: project.path,
                 socketName: "banyan-native-test-\(root.lastPathComponent)"),
             makeControlServer: makeControlServer)
+        store.enableNativeCodex = true
+        return store
     }
 }

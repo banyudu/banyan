@@ -13,12 +13,21 @@ private final class ThreadServer: CodexThreadService {
     var streams: [AsyncStream<CodexAppServerEvent>.Continuation] = []
     var starts = 0
     var connectionError: CodexAppServerError?
+    var onConnect: (() -> Void)?
     var effectiveModel: String?
+    var handoffs = 0
+    var effectiveHome: String? = "/tmp/codex-test-store"
+    func storageHome() async -> String? { effectiveHome }
+    func disconnectForHandoff() async throws { handoffs += 1 }
 
     func connect() async throws {
+        onConnect?()
         if let connectionError { throw connectionError }
     }
 
+    func requestWhileConnected(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue {
+        try await request(method, params: params)
+    }
     func events() async -> AsyncStream<CodexAppServerEvent> {
         AsyncStream { streams.append($0) }
     }
@@ -329,4 +338,172 @@ private func coordinator(_ server: ThreadServer, id: String = "session", threadI
     database.saveSession(updated, sortOrder: 0)
     #expect(database.load().first?.codex == binding)
     #expect(try JSONDecoder().decode(SessionSnapshot.self, from: JSONEncoder().encode(updated)) == updated)
+}
+
+@Test @MainActor func codexFallbackRejectsUncertainCreationAndBusySiblingThreads() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    server.failures["thread/start"] = .timedOut("thread/start")
+    do { try await manager.connect(sessionID: "session") } catch {}
+    do {
+        _ = try await manager.prepareForCLIFallback(sessionID: "session")
+        Issue.record("Uncertain creation must retain its identity for recovery")
+    } catch { #expect(error.localizedDescription.contains("Recover its stored thread ID")) }
+    #expect(server.handoffs == 0)
+
+    let server2 = ThreadServer()
+    let manager2 = try coordinator(server2)
+    try await manager2.select(sessionID: "session")
+    try manager2.register(sessionID: "other", binding: .init(cwd: "/tmp/other"))
+    try await manager2.connect(sessionID: "other")
+    server2.emit("thread/status/changed", id: "thread-2", fields: ["status": .object([
+        "type": .string("active"), "activeFlags": .array([.string("waitingOnApproval")])])])
+    try await eventually { manager2.states["other"]?.needsAttention == true }
+    do {
+        _ = try await manager2.prepareForCLIFallback(sessionID: "session")
+        Issue.record("Shared server cannot be stopped while another thread needs attention")
+    } catch { #expect(error.localizedDescription.contains("Finish active native")) }
+    #expect(server2.handoffs == 0)
+    #expect(manager2.states["session"]?.binding.threadID == "thread-1")
+}
+
+@Test @MainActor func codexFallbackReapsServerAndCannotBeReattachedByStaleSelection() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    let before = try #require(manager.states["session"]?.binding)
+    let handedOff = try await manager.prepareForCLIFallback(sessionID: "session")
+    #expect(handedOff == before)
+    #expect(server.handoffs == 1)
+    #expect(manager.states["session"]?.isSubscribed == false)
+    do { try await manager.select(sessionID: "session") } catch {}
+    #expect(server.count("thread/resume") == 0)
+    #expect(server.starts == 1)
+}
+
+@Test @MainActor func codexDisableReleasesSelectedIdleThreadAndReenableResumesSameIdentity() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    let original = try #require(manager.states["session"]?.binding)
+    manager.isEnabled = false
+    try await manager.synchronizeRollout()
+    #expect(manager.selectedSessionID == "session")
+    #expect(manager.states["session"]?.isSubscribed == false)
+    #expect(server.count("thread/unsubscribe") == 1)
+    #expect(server.handoffs == 1)
+    await #expect(throws: CodexAppServerError.self) { try await manager.connect(sessionID: "session") }
+    await #expect(throws: CodexAppServerError.self) { try await manager.startTurn(sessionID: "session", input: []) }
+    await #expect(throws: CodexAppServerError.self) { try await manager.read(sessionID: "session") }
+    await #expect(throws: CodexAppServerError.self) { try await manager.list() }
+    #expect(server.count("turn/start") == 0)
+    #expect(server.count("thread/resume") == 0)
+    manager.isEnabled = true
+    try await manager.synchronizeRollout()
+    #expect(manager.states["session"]?.binding == original)
+    #expect(manager.states["session"]?.isSubscribed == true)
+    #expect(server.count("thread/resume") == 1)
+    #expect(server.starts == 1)
+}
+
+@Test @MainActor func codexDisableKeepsBusySiblingAndPendingRepliesActionableUntilCompletion() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    try manager.register(sessionID: "busy", binding: .init(cwd: "/tmp/other"))
+    _ = try await manager.startTurn(sessionID: "busy", input: [])
+    let handler = try #require(server.handler)
+    let request = CodexServerRequest(id: .string("approval"), method: "item/commandExecution/requestApproval",
+        params: .object(["threadId": .string("thread-2")]))
+    let answer = Task { await handler(request) }
+    try await eventually { manager.states["busy"]?.needsAttention == true }
+    manager.isEnabled = false
+    try await manager.synchronizeRollout()
+    #expect(manager.states["session"]?.isSubscribed == false)
+    #expect(manager.states["busy"]?.isSubscribed == true)
+    #expect(server.handoffs == 0)
+    #expect(server.count("turn/interrupt") == 0)
+    _ = try await manager.read(sessionID: "busy")
+    try await manager.interrupt(sessionID: "busy")
+    #expect(server.count("turn/interrupt") == 1) // Explicit user interrupt remains available.
+    try manager.respond(sessionID: "busy", requestID: request.id, reply: .result(.object(["decision": .string("accept")])))
+    if case .result = await answer.value {} else { Issue.record("Existing pending reply must remain actionable") }
+    #expect(manager.states["busy"]?.needsAttention == true)
+    // Even selected busy work releases after completing while native is disabled.
+    try await manager.select(sessionID: "busy")
+    server.emit("turn/completed", id: "thread-2", fields: ["turn": .object(["id": .string("turn-1"), "status": .string("completed")])])
+    try await eventually { server.handoffs == 1 }
+    #expect(manager.states["busy"]?.isSubscribed == false)
+    #expect(server.count("thread/start") == 2)
+    #expect(server.count("thread/resume") == 0)
+    manager.isEnabled = true
+    try await manager.synchronizeRollout()
+    #expect(manager.states["busy"]?.binding.threadID == "thread-2")
+    #expect(server.count("thread/resume") == 1)
+}
+
+@Test @MainActor func codexDisableReobservesATurnThatStartsDuringIdleUnsubscribe() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    server.beforeResponse = { method in
+        if method == "thread/unsubscribe" {
+            server.emit("thread/status/changed", id: "thread-1", fields: ["status": .object([
+                "type": .string("active"), "activeFlags": .array([.string("waitingOnApproval")])])])
+            try? await eventually { manager.states["session"]?.needsAttention == true }
+        }
+    }
+    manager.isEnabled = false
+    try await manager.synchronizeRollout()
+    #expect(manager.states["session"]?.isSubscribed == true)
+    #expect(manager.states["session"]?.needsAttention == true)
+    #expect(server.handoffs == 0)
+    #expect(server.count("thread/resume") == 1)
+    #expect(server.count("turn/interrupt") == 0)
+}
+
+@Test @MainActor func codexOldBindingsLearnEffectiveStorageHomeAndRefuseAChangedNativeStore() async throws {
+    let server = ThreadServer()
+    server.effectiveHome = "/tmp/resolved-shell-store"
+    server.threads["original"] = .object(["id": .string("original"), "status": .object(["type": .string("idle")])])
+    let manager = try coordinator(server, threadID: "original")
+    try await manager.connect(sessionID: "session")
+    #expect(manager.states["session"]?.binding.codexHome == server.effectiveHome)
+    server.effectiveHome = "/tmp/another-store"
+    await #expect(throws: CodexAppServerError.self) { try await manager.connect(sessionID: "session") }
+    #expect(server.count("thread/resume") == 1)
+    let handedOff = try await manager.prepareForCLIFallback(sessionID: "session")
+    #expect(handedOff.codexHome == "/tmp/resolved-shell-store")
+    #expect(try CodexCLIFallback.command(binding: handedOff).contains("'CODEX_HOME=/tmp/resolved-shell-store'"))
+
+    // Old rows must also gain shell-resolved provenance when disabled and
+    // falling back without ever starting the native server.
+    let old = try coordinator(server, id: "old", threadID: "stored-old")
+    old.isEnabled = false
+    let fallback = try await old.prepareForCLIFallback(sessionID: "old")
+    #expect(fallback.codexHome == "/tmp/another-store")
+}
+
+@Test @MainActor func codexDisableDuringResumeCannotStartANewTurn() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.connect(sessionID: "session")
+    server.beforeResponse = { method in
+        if method == "thread/resume" { manager.isEnabled = false }
+    }
+    await #expect(throws: CodexAppServerError.self) { try await manager.startTurn(sessionID: "session", input: []) }
+    #expect(server.count("turn/start") == 0)
+    try await manager.synchronizeRollout()
+    #expect(manager.states["session"]?.isSubscribed == false)
+}
+
+@Test @MainActor func codexDisableDuringPreflightReapsAnUnclaimedServerWithoutCreatingARow() async throws {
+    let server = ThreadServer()
+    let manager = CodexThreadCoordinator(service: server)
+    server.onConnect = { manager.isEnabled = false }
+    await #expect(throws: CodexAppServerError.self) { try await manager.preflight() }
+    try await manager.synchronizeRollout()
+    #expect(manager.states.isEmpty)
+    #expect(server.starts == 0)
+    #expect(server.handoffs == 1)
 }

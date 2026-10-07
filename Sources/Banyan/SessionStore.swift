@@ -222,6 +222,18 @@ final class SessionStore: ObservableObject {
             saveWorkspace()
         }
     }
+    /// Independent rollout gate for the Banyan-owned native client.
+    @Published var enableNativeCodex = false {
+        didSet {
+            codexThreads.isEnabled = enableNativeCodex
+            Task { [weak self] in
+                guard let self else { return }
+                do { try await self.codexThreads.synchronizeRollout() }
+                catch { self.codexSessionError = error.localizedDescription }
+            }
+            saveWorkspace()
+        }
+    }
     /// How long a closed session stays in `state.sqlite`, in days. `0` keeps
     /// everything. Applied at launch before snapshots are built, and on demand
     /// from Preferences or `banyanctl prune` — never from the save path, which
@@ -562,6 +574,8 @@ final class SessionStore: ObservableObject {
         terminalFontFamily = workspace.terminalFontFamily
         terminalFontSize = workspace.terminalFontSize
         enableCodexAppServerMode = workspace.enableCodexAppServerMode
+        enableNativeCodex = workspace.enableNativeCodex
+        codexThreads.isEnabled = enableNativeCodex
         sessionRetentionDays = SessionRetentionPolicy.normalizedRetentionDays(workspace.sessionRetentionDays)
         terminalRenderer = TerminalRendererPreference.resolvedDefault
         if let stored = defaults.dictionary(forKey: Self.projectLaunchDefaultsKey) as? [String: String] {
@@ -961,7 +975,7 @@ final class SessionStore: ObservableObject {
                         githubReferenceCache: githubReferenceCache)
                     attach(session)
                     sessions.append(session)
-                    if snapshot.status == .executing || snapshot.status == .asking {
+                    if enableNativeCodex && (snapshot.status == .executing || snapshot.status == .asking) {
                         session.reconnect()
                     }
                 } catch { codexSessionError = error.localizedDescription }
@@ -1034,6 +1048,7 @@ final class SessionStore: ObservableObject {
                 githubReferenceCache: githubReferenceCache
             )
             session.reportedTitle = snapshot.reportedTitle
+            session.nativeCodexProvenance = snapshot.codex
             attach(session)
             sessions.append(session)
             if session.status != .closed {
@@ -2543,6 +2558,7 @@ final class SessionStore: ObservableObject {
     func createCodexSession(settings: CodexThreadSettings = .init(), cwd: String? = nil,
                             id proposedID: String? = nil, title: String? = nil,
                             parentSessionID: String? = nil, select: Bool = true) async throws -> CodexSession {
+        let codexHome = try await codexThreads.preflight()
         let plan = SessionCreationPolicy.plan(proposedID: proposedID, proposedTitle: title,
             proposedTitleURL: nil, proposedCWD: cwd, proposedCommand: "",
             proposedParentSessionID: parentSessionID, currentDirectory: currentDirectory, homeDirectory: homeDirectory)
@@ -2551,16 +2567,65 @@ final class SessionStore: ObservableObject {
             reportedTitle: nil, isTitlePinned: plan.isTitlePinned, cwd: plan.cwd, command: "",
             status: .idle, tone: .neutral, parentSessionID: plan.parentSessionID,
             createdAt: Date(), updatedAt: Date(), backend: .codex,
-            codex: CodexThreadBinding(cwd: plan.cwd, settings: settings))
+            codex: CodexThreadBinding(cwd: plan.cwd, settings: settings,
+                codexHome: codexHome))
         let session = try CodexSession(snapshot: snapshot, coordinator: codexThreads,
             telemetry: telemetry, host: host, githubReferenceCache: githubReferenceCache)
         attach(session)
         sessions.append(session)
         saveSessions()
+        do {
+            try await codexThreads.connect(sessionID: id)
+        } catch {
+            // Keep only rows that may own a thread. Definite pre-start failures
+            // must not leave a half-created row behind.
+            if codexThreads.states[id]?.binding.creationAttempted == false {
+                sessions.removeAll { $0.id == id }
+                codexThreads.discardUnstartedSession(sessionID: id)
+                if selectedSessionID == id { selectedSessionID = nil }
+                saveSessions()
+                await codexThreads.flushPersistence?()
+            }
+            throw error
+        }
         if select { selectedSessionID = id }
-        // Keep the row on failure: retry must recover this identity, never create a duplicate.
-        try await codexThreads.connect(sessionID: id)
         return session
+    }
+
+    /// Replace the runtime, not the row identity. Persist before any terminal
+    /// launch so a crash/restart still resumes the original thread and settings.
+    @discardableResult
+    func fallbackCodexSessionToCLI(id: String) async throws -> TerminalSession {
+        guard let native = sessions.first(where: { $0.id == id }) as? CodexSession else {
+            throw ControlError.notFound(id)
+        }
+        let reason = native.state.connection.message ?? "User selected Codex CLI"
+        var binding = try await codexThreads.prepareForCLIFallback(sessionID: id)
+        guard let index = sessions.firstIndex(where: { $0 === native }) else {
+            throw ControlError.notFound(id)
+        }
+        binding.cliFallbackReason = reason
+        let snapshot = native.persistenceSnapshot
+        let terminal = TerminalSession(id: id,
+            title: snapshot.title, titleURL: snapshot.titleURL,
+            titleURLWasAutoDetected: snapshot.titleURLWasAutoDetected,
+            generatedTitle: snapshot.generatedTitle, isTitlePinned: snapshot.isTitlePinned,
+            cwd: binding.cwd, command: try CodexCLIFallback.command(binding: binding),
+            status: snapshot.status == .closed ? .closed : .idle, tone: snapshot.tone,
+            parentSessionID: snapshot.parentSessionID, agentSessionID: binding.threadID,
+            createdAt: snapshot.createdAt, updatedAt: Date(), isSuspended: snapshot.isSuspended,
+            theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize,
+            tmuxBackend: sessionBackend, telemetry: telemetry, host: host,
+            githubReferenceCache: githubReferenceCache)
+        terminal.nativeCodexProvenance = binding
+        terminal.reportedTitle = snapshot.reportedTitle
+        attach(terminal)
+        sessions[index] = terminal
+        saveSessions()
+        await codexThreads.flushPersistence?()
+        if terminal.status != .closed && !terminal.isSuspended { terminal.startBackgroundBackendIfNeeded() }
+        requestTerminalFocus()
+        return terminal
     }
 
     func showChildSessionSheet() {
@@ -2699,7 +2764,7 @@ final class SessionStore: ObservableObject {
             }
         }
 
-        let recoveryCommand: String? = session.agentProvider.flatMap { provider in
+        let recoveryCommand: String? = try session.codexBinding.map(CodexCLIFallback.command) ?? session.agentProvider.flatMap { provider in
             guard let agentSessionID = session.agentSessionID,
                   ([.codex, .claude].contains(provider) || provider.isOpencodeBacked) else {
                 return nil
@@ -2982,7 +3047,9 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) as? TerminalSession else {
             throw ControlError.notFound(id)
         }
-        if let resumePlan = SessionRecoveryPolicy.resumePlan(
+        if let binding = session.codexBinding {
+            session.command = try CodexCLIFallback.command(binding: binding)
+        } else if let resumePlan = SessionRecoveryPolicy.resumePlan(
             status: session.status,
             provider: session.agentProvider,
             agentSessionID: session.agentSessionID,
@@ -4550,9 +4617,11 @@ final class SessionStore: ObservableObject {
     }
 
     private func attach(_ session: BanyanSession) {
-        session.onDidChange = { [weak self] in
+        session.onDidChange = { [weak self, weak session] in
             Task { @MainActor in
-                guard let self else { return }
+                // A native row may have been replaced by a terminal with the
+                // same ID while this callback was queued. Persist the owner.
+                guard let self, let session, self.sessions.contains(where: { $0 === session }) else { return }
                 self.saveChangedSession(session)
                 if self.selectedSessionID == session.id {
                     self.refreshSelectedContextInfo()
@@ -4746,7 +4815,8 @@ final class SessionStore: ObservableObject {
             terminalFontFamily: terminalFontFamily,
             terminalFontSize: terminalFontSize,
             enableCodexAppServerMode: enableCodexAppServerMode,
-            sessionRetentionDays: sessionRetentionDays
+            sessionRetentionDays: sessionRetentionDays,
+            enableNativeCodex: enableNativeCodex
         )
     }
 
