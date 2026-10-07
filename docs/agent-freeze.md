@@ -146,6 +146,15 @@ reconnects after input resumes it. STOP/CONT preserves its PID/start identity
 and allocated address space; the tests make no deterministic RSS-reclamation
 claim.
 
+Private installed-CLI startup checks on 2026-10-07 used fresh homes, workspaces
+and UUID sockets, without sending model prompts. Claude Code 2.1.286's
+startup/login UI survived STOP/CONT with the same kernel identity. Codex CLI
+0.160.0 and OpenCode 1.18.34 reached idle prompts but spawned descendants in
+detached kernel sessions; this shape fails the planner's ownership rule before
+STOP. Those versions' freeze/resume compatibility remains a concrete gap, not
+a successful provider verification. Shared/detached runtime ownership needs a
+provider-specific decision before relaxing that safety boundary.
+
 Live provider checks remain separate: in disposable sessions, verify Claude,
 Codex CLI and OpenCode at an idle prompt, after socket expiry, and during a
 long-running turn. Confirm idle freeze/resume preserves conversation state and
