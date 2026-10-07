@@ -77,10 +77,10 @@ extension SessionStore {
                       let shell = AgentProcessSample.read(pid: Int32(shellRow.pid))?.identity else {
                     throw AgentFreezeError.unsafe("Legacy one-shot pane has no surviving shell; relaunch using a literal provider command")
                 }
-                let agents = rows.filter { $0.isSupportedAgentForFreezing }
                 // Node launchers may parent the native agent. Signal only the
-                // single deepest provider process, never its launcher or MCPs.
-                let leaves = agents.filter { agent in !agents.contains { $0.parentPID == agent.pid } }
+                // single deepest provider process, including across intervening
+                // hosts/shells; independent provider branches remain ambiguous.
+                let leaves = AgentDeepSuspend.deepestProviderProcesses(in: rows)
                 guard leaves.count == 1, let agent = leaves.first else {
                     throw AgentFreezeError.unsafe("Agent PID is ambiguous")
                 }

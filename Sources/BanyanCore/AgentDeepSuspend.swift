@@ -94,6 +94,26 @@ public enum AgentDeepSuspend {
         }
         return ProcessTable(rows: rows.filter { pids.contains($0.pid) })
     }
+
+    /// Shell argv and launchers can identify the provider several generations
+    /// above its process. Keep only candidates with no provider descendant;
+    /// separate branches remain separate candidates and must be refused.
+    public static func deepestProviderProcesses(in rows: [ProcessInfoRow]) -> [ProcessInfoRow] {
+        let agents = rows.filter(\.isSupportedAgentForFreezing)
+        let agentPIDs = Set(agents.map(\.pid))
+        let byPID = Dictionary(rows.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+        var ancestors = Set<Int>()
+        for agent in agents {
+            var parentPID = agent.parentPID
+            var visited: Set<Int> = [agent.pid]
+            while let parent = byPID[parentPID], visited.insert(parent.pid).inserted {
+                if agentPIDs.contains(parent.pid) { ancestors.insert(parent.pid) }
+                parentPID = parent.parentPID
+            }
+        }
+        return agents.filter { !ancestors.contains($0.pid) }
+    }
+
     public static func launchArguments(_ command: String) -> (words: [String], environment: [String])? {
         guard var words = AgentSessionHistory.literalArguments(command), !words.isEmpty else { return nil }
         if words.first == "exec" { words.removeFirst() }
