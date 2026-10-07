@@ -96,13 +96,18 @@ external writer immediately: the server owns its unload grace period.
   creates a native row and connects it. `.codex(settings)` is also a launch spec,
   so sibling sessions preserve per-thread settings.
 - `CodexSession.state` publishes binding, connection, runtime status, active
-  turn ID, pending requests, and subscription state. The initial detail view
-  exposes lifecycle status and reconnect. Conversation rendering is separate.
+  turn ID, pending requests, and subscription state. `CodexSession.conversation`
+  owns its timeline independently of view selection. `CodexSessionDetail`
+  provides the native App Server conversation, separate from Puck and the
+  remote-control TUI launch preference.
 - `CodexThreadCoordinator.select/connect/detach` manage subscriptions.
   `list(cursor:cwd:)` returns server pagination; `read(sessionID:includeTurns:)`
-  hydrates history without subscribing. `onEvent` routes raw item/turn events
-  by Banyan session ID; consumers should read history when attaching.
-- `startTurn(sessionID:input:)`, `interrupt(sessionID:)`, and
+  reads history without subscribing. `onHydrate` delivers a transient resume
+  snapshot by Banyan session ID, and `onEvent` routes item/turn events. Neither
+  coordinator nor session lifecycle state retains raw history. Consumers must
+  protect events arriving during resume from its potentially older snapshot.
+- `startTurn(sessionID:input:)`, `steer(sessionID:expectedTurnID:input:)`,
+  `interrupt(sessionID:expectedTurnID:)`, and
   `respond(sessionID:requestID:reply:)` provide the conversation action boundary.
   Replies retain their pending marker until the server resolves them. A stale
   request cannot be answered after disconnect or resolution by another client.
@@ -110,8 +115,45 @@ external writer immediately: the server owns its unload grace period.
   thread to an uncertain creation after verifying its cwd. It cannot replace
   an existing mapping or map the same thread into two rows.
 
-The conversation UI and identity-preserving CLI handoff are follow-ups. Live
-validation should use a tested `0.146.x` CLI: the transport deliberately rejects
+The conversation has streamed Markdown, turn status, command/tool output, file
+diffs, and actionable command/file/input requests. Replies use the original
+JSON-RPC request ID and remain marked pending until the server resolves them.
+Input skip sends empty answers; cancel interrupts the requested turn before
+unblocking input. Unsupported requests can be inspected and explicitly rejected;
+unknown items and events remain inspectable and never become approval buttons.
+No action changes the thread's selected sandbox or approval policy. Open Shell
+creates a separate regular Banyan terminal in the same directory. The host can
+provide `CodexSessionDetail.onOpenCLIFallback` for its rollout/handoff action.
+
+## Conversation display budget
+
+The timeline is a bounded display cache, not a replacement for server history:
+
+- Retain the latest 40 turns and at most 200 items across those turns.
+- Limit each item's output and metadata/content tree to 64 KiB each. Streaming
+  output keeps its most recent bytes; completed items replace streamed content.
+- Limit each turn's aggregate diff to 64 KiB.
+- Retain the latest 200 diagnostics, each with an 8 KiB payload budget.
+- Show omission notices for shortened content, output, diffs, and earlier rows.
+- Clear the transcript and diagnostic cache on a confirmed safe unsubscribe.
+  Preserve drafts, thread identity/settings, pending requests, and active-turn
+  observation. Revisit hydrates the same server history on resume.
+- Deliver full resume history only through a transient hydration callback;
+  `CodexThreadState.thread` remains nil, including for selected/active sessions.
+  Retain only the bounded conversation display after the callback returns.
+
+Save Full History reads `thread/read(includeTurns: true)` and exports the
+server's unshortened completed history as JSON through the native save dialog.
+History still being produced by an active command may not yet be persisted by
+the server. The transport's frame limit remains in force; a history read that
+exceeds it reports an error instead of presenting a partial export as complete.
+Unknown payloads obey the same display budget and have a visible shortening
+notice. Approval/input request parameters are kept intact until resolution.
+
+Protocol fields were checked against the generated
+[0.146.0 schemas](https://github.com/openai/codex/tree/rust-v0.146.0/codex-rs/app-server-protocol/schema/typescript/v2)
+and the [official App Server documentation](https://learn.chatgpt.com/docs/app-server).
+Live validation should use a tested `0.146.x` CLI: the transport deliberately rejects
 other protocol families. Verify a completed thread across an app/server restart,
 pending approval while changing selection, and coexistence with an external
 writer. The server's 30-minute unload grace and mobile handoff require live

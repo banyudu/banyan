@@ -524,6 +524,12 @@ final class SessionStore: ObservableObject {
             session.apply(state)
             self.saveChangedSession(session)
         }
+        codexThreads.onEvent = { [weak self] id, method, params in
+            (self?.sessions.first(where: { $0.id == id }) as? CodexSession)?.receive(method: method, params: params)
+        }
+        codexThreads.onHydrate = { [weak self] id, thread in
+            (self?.sessions.first(where: { $0.id == id }) as? CodexSession)?.hydrate(thread: thread)
+        }
         codexThreads.flushPersistence = { [weak self] in
             guard let queue = self?.sessionPersistenceQueue else { return }
             await withCheckedContinuation { continuation in

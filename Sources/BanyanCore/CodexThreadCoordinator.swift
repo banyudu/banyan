@@ -8,7 +8,9 @@ public struct CodexThreadState: Sendable {
     public var lastTurnStatus: String?
     public var pendingRequests: [CodexServerRequest] = []
     public var isSubscribed = false
-    public var thread: CodexJSONValue?
+    /// Compatibility accessor: hydration snapshots are transient, never retained
+    /// in lifecycle state. Consumers receive them through onHydrate instead.
+    public var thread: CodexJSONValue? { nil }
     fileprivate var revision = 0
 
     public var needsAttention: Bool {
@@ -31,7 +33,10 @@ public final class CodexThreadCoordinator {
     public var onChange: ((String, CodexThreadState) -> Void)?
     /// Drain queued host writes before start and after learning thread identity.
     public var flushPersistence: (() async -> Void)?
-    /// UI consumers hydrate with read() and then consume these streamed events.
+    /// The response is borrowed only for this callback; consumers retain a
+    /// bounded presentation, never the full raw resume history.
+    public var onHydrate: ((String, CodexJSONValue) -> Void)?
+    /// Streamed events may arrive during resume, before its hydration callback.
     public var onEvent: ((String, String, CodexJSONValue) -> Void)?
 
     private let service: any CodexThreadService
@@ -166,10 +171,27 @@ public final class CodexThreadCoordinator {
         }
     }
 
-    public func interrupt(sessionID: String) async throws {
-        guard let turnID = states[sessionID]?.activeTurnID else { return }
+    public func interrupt(sessionID: String, expectedTurnID: String? = nil) async throws {
+        guard let state = states[sessionID] else { return }
+        let requestedTurn = expectedTurnID.flatMap { expected in
+            state.pendingRequests.contains { $0.params.objectValue?["turnId"]?.stringValue == expected } ? expected : nil
+        }
+        guard let turnID = state.activeTurnID ?? requestedTurn else { return }
+        guard expectedTurnID == nil || expectedTurnID == turnID else {
+            throw CodexAppServerError.protocolViolation("The active turn changed; review it before interrupting")
+        }
         _ = try await service.request("turn/interrupt", params: .object([
             "threadId": .string(try mappedID(sessionID)), "turnId": .string(turnID)
+        ]))
+    }
+
+    public func steer(sessionID: String, expectedTurnID: String, input: [CodexJSONValue]) async throws -> CodexJSONValue {
+        guard let state = states[sessionID], state.connection == .subscribed,
+              state.activeTurnID == expectedTurnID, !state.needsAttention else {
+            throw CodexAppServerError.protocolViolation("The active turn changed or needs a response; review it before steering")
+        }
+        return try await service.request("turn/steer", params: .object([
+            "threadId": .string(try mappedID(sessionID)), "expectedTurnId": .string(expectedTurnID), "input": .array(input)
         ]))
     }
 
@@ -266,7 +288,6 @@ public final class CodexThreadCoordinator {
                 if let provider = result.objectValue?["modelProvider"]?.stringValue { $0.binding.settings.modelProvider = provider }
                 $0.isSubscribed = true
                 $0.connection = .subscribed
-                $0.thread = thread
                 if $0.revision == revision {
                     $0.runtime = CodexThreadRuntime(thread.objectValue?["status"])
                     $0.activeTurnID = nil
@@ -278,6 +299,7 @@ public final class CodexThreadCoordinator {
                 }
             }
             sessionIDByThreadID[threadID] = id
+            onHydrate?(id, thread)
             await flushPersistence?()
         } catch {
             recordFailure(error, sessionID: id)
@@ -299,7 +321,6 @@ public final class CodexThreadCoordinator {
             update(id) {
                 $0.isSubscribed = false
                 $0.connection = .unsubscribed
-                $0.thread = nil
                 if status == "notLoaded" { $0.runtime = .init(type: "notLoaded") }
             }
             // An external turn or selection can arrive while unsubscribe awaits.
@@ -318,8 +339,17 @@ public final class CodexThreadCoordinator {
         case .disconnected(let error): disconnected(error.localizedDescription)
         case .notification(let method, let params):
             let object = params.objectValue
-            guard let threadID = object?["threadId"]?.stringValue ?? object?["thread"]?.objectValue?["id"]?.stringValue,
-                  let id = sessionIDByThreadID[threadID] else { return }
+            guard let threadID = object?["threadId"]?.stringValue ?? object?["thread"]?.objectValue?["id"]?.stringValue else {
+                // Global warnings/new events are inspectable, but never reduced
+                // as session/turn mutations without a thread identity.
+                for (id, state) in states where state.isSubscribed { onEvent?(id, method, params) }
+                return
+            }
+            guard let id = sessionIDByThreadID[threadID] else { return }
+            let completedTurnID = method == "turn/completed" ? object?["turn"]?.objectValue?["id"]?.stringValue : nil
+            let endingRequests = (states[id]?.pendingRequests ?? []).filter {
+                completedTurnID != nil && $0.params.objectValue?["turnId"]?.stringValue == completedTurnID
+            }
             let lifecycleChanged = ["thread/status/changed", "turn/started", "turn/completed", "serverRequest/resolved", "thread/closed"].contains(method)
             if lifecycleChanged {
                 update(id) { state in
@@ -333,22 +363,30 @@ public final class CodexThreadCoordinator {
                         state.lastTurnStatus = nil
                         state.activeTurnID = object?["turn"]?.objectValue?["id"]?.stringValue
                     case "turn/completed":
+                        let completedID = object?["turn"]?.objectValue?["id"]?.stringValue
+                        state.pendingRequests.removeAll { $0.params.objectValue?["turnId"]?.stringValue == completedID }
+                        guard state.activeTurnID == nil || state.activeTurnID == completedID else { break }
                         state.lastTurnStatus = object?["turn"]?.objectValue?["status"]?.stringValue
                         state.activeTurnID = nil
                         state.runtime = .init(type: "idle")
-                        state.pendingRequests = []
                     case "serverRequest/resolved":
                         state.pendingRequests.removeAll { $0.id == object?["requestId"] }
                     case "thread/closed":
                         state.isSubscribed = false
                         state.runtime = .init(type: "notLoaded")
                         state.connection = .unsubscribed
-                        state.thread = nil
+                        state.pendingRequests = []
                     default: break
                     }
                 }
             }
-            if method == "turn/completed" { clearReplies(threadID: threadID) }
+            if method == "turn/completed", let turnID = object?["turn"]?.objectValue?["id"]?.stringValue {
+                // A delayed completion must not cancel requests from a newer turn.
+                for request in endingRequests where request.params.objectValue?["turnId"]?.stringValue == turnID {
+                    replies.removeValue(forKey: replyKey(threadID, request.id))?.resume(
+                        returning: .error(code: -32000, message: "Codex turn ended"))
+                }
+            }
             if method == "serverRequest/resolved", let requestID = object?["requestId"] {
                 replies.removeValue(forKey: replyKey(threadID, requestID))?.resume(
                     returning: .error(code: -32000, message: "Codex request was resolved by another client"))
@@ -392,7 +430,6 @@ public final class CodexThreadCoordinator {
                 // Runtime is unknown, not hibernated: a turn may have been cut off.
                 $0.runtime = .init()
                 $0.pendingRequests = []
-                $0.thread = nil
                 $0.revision += 1
             }
         }
