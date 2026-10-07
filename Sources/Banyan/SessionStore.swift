@@ -390,6 +390,7 @@ final class SessionStore: ObservableObject {
     /// another `tmux capture-pane`. See `SupervisorInspectionCache`.
     private let supervisorInspectionCache = SupervisorInspectionCache()
     private var supervisorTimerDueAt = Date.distantPast
+    private var supervisorTimerGeneration = UUID()
     private var supervisorScheduledInterval: TimeInterval = 0
     /// Per-session observation state. Quiet sessions back off independently so
     /// one active agent does not force every stale session through tmux on each
@@ -2097,22 +2098,42 @@ final class SessionStore: ObservableObject {
         return app.occlusionState.contains(.visible) ? .backgroundVisible : .hidden
     }
 
-    /// Adaptive cadence for the supervisor poll. Each tick spawns `/bin/ps`, one
-    /// batched `tmux list-panes`, and captures text only for live coding agents.
+    /// Adaptive cadence for the supervisor poll. Each tick batches pane metadata,
+    /// and due observations share one process snapshot and cached pane captures.
     /// Stable sessions are deferred independently, and when every session is
     /// deferred the timer sleeps until the next one is due. The base interval is
     /// still adaptive to foreground/background, battery, thermal state, and
     /// session count so active work remains responsive.
     private var supervisorBaseInterval: TimeInterval {
         let startedSessions = sessions.reduce(into: 0) { count, session in
-            if session.status != .closed && session.isProcessStarted { count += 1 }
+            guard session.status != .closed else { return }
+            if let terminal = session as? TerminalSession {
+                if SessionLifecyclePolicy.participatesInSupervisorTick(
+                    isProcessStarted: terminal.isProcessStarted,
+                    isRestored: terminal.isRestored,
+                    isSuspended: terminal.isSuspended
+                ) { count += 1 }
+            } else if session.isProcessStarted {
+                count += 1
+            }
         }
         let activeSessions = sessions.reduce(into: 0) { count, session in
             guard session.status != .closed else { return }
             // A running puck turn can finish between listings just as a terminal
             // agent can between inspections. It adds no inspection cost, so it
             // counts as active work without counting toward the fleet size.
-            let isObserved = session is PuckSession ? puckObservation == nil && !session.isSuspended : session.isProcessStarted
+            let isObserved: Bool
+            if let terminal = session as? TerminalSession {
+                // Restored/unattached panes are still inspected. Excluding them
+                // here gave a hidden executing fleet the 300s idle cadence.
+                isObserved = SessionLifecyclePolicy.participatesInSupervisorTick(
+                    isProcessStarted: terminal.isProcessStarted,
+                    isRestored: terminal.isRestored,
+                    isSuspended: terminal.isSuspended
+                )
+            } else {
+                isObserved = session is PuckSession ? puckObservation == nil && !session.isSuspended : session.isProcessStarted
+            }
             guard isObserved else { return }
             if !session.status.isCodingAgentIdle && ![.completed, .failed].contains(session.status) {
                 count += 1
@@ -2194,8 +2215,11 @@ final class SessionStore: ObservableObject {
         supervisorTimerDueAt = dueAt
         let interval = max(0.01, dueAt.timeIntervalSince(now))
         supervisorScheduledInterval = interval
+        let generation = UUID()
+        supervisorTimerGeneration = generation
         let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
+                guard self?.supervisorTimerGeneration == generation else { return }
                 self?.supervisorTimerFired()
             }
         }
@@ -4996,6 +5020,8 @@ final class SessionStore: ObservableObject {
         }
         guard supervisorTickSchedule.begin() else { return }
         // One-shot scheduling consumes all deadlines while this tick is running.
+        // Also discard a timer callback already queued on the main actor.
+        supervisorTimerGeneration = UUID()
         supervisorTimer?.invalidate()
         supervisorTimer = nil
         let candidates = terminalSessions.compactMap { session -> SessionStatusObservationInput? in
@@ -5094,7 +5120,7 @@ final class SessionStore: ObservableObject {
         guard sessions.contains(where: { $0.id == sessionID && $0.status != .closed && !$0.isSuspended && $0 is TerminalSession }) else { return }
         supervisorObservationStates[sessionID, default: .init()].noteActivity(at: Date(), invalidatesObservation: invalidatesObservation)
         pendingSupervisorActivityIDs.insert(sessionID)
-        if didStartRuntime { rescheduleSupervisor() }
+        if didStartSupervisor { rescheduleSupervisor() }
     }
 
     private func updateSupervisorObservationStates(

@@ -141,6 +141,8 @@ test PID with Instruments Energy Log/System Trace for the same quiet and output
 phases in each build. Keep those raw captures local, and report aggregate counts
 with workload, duration, power/thermal state and attachment state. The fixture's
 short latency waits are test-process wakeups; distinguish them from supervisor
-timer firings. Repeat after integrating process freezing with freezing disabled
-and enabled, confirming frozen rows are excluded and reconcile/unfreeze events
-wake observation without restoring a repeating catch-up timer.
+timer firings. Swift Testing does not run `NSApplication.run()`, so the fixture
+also services its own Foundation run loop once per second during warmup and
+during latency waits. Repeat after integrating process freezing with freezing
+disabled and enabled, confirming frozen rows are excluded and reconcile/unfreeze
+events wake observation without restoring a repeating catch-up timer.

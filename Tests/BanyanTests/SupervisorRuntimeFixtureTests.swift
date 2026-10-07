@@ -29,6 +29,7 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     // its script name. No authentication, model API, or real agent is involved.
     try """
     #!/bin/sh
+    stty -echo
     if [ "$1" = silent ]; then
       printf '\\033[2J\\033[999;1HDone.'
       /bin/cat "$2" >/dev/null
@@ -76,9 +77,16 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     }
     #expect(store.terminalSessions.allSatisfy { $0.loadedTerminalView == nil })
     // Real hidden cadence (30s): warm through the three stable observations.
-    // Sleep once rather than introduce a measurement poller during warmup.
-    try await Task.sleep(for: .seconds(105))
+    // Swift Testing does not run NSApplication.run(). Service this private
+    // process's Foundation timers explicitly, as the real app run loop does.
+    for _ in 0..<105 {
+        serviceRuntimeRunLoop()
+        try await Task.sleep(for: .seconds(1))
+    }
+    serviceRuntimeRunLoop()
+    #expect(processes.count >= 4)
     #expect(processes.count < 10)
+    FileHandle.standardError.write(Data("Supervisor fixture warmup: process_snapshots=\(processes.count)\n".utf8))
 
     var measurements: [String: Double] = [:]
     func send(_ command: String, index: Int) throws {
@@ -133,9 +141,15 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
 private func runtimeFixtureWait(seconds: Int, until condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(seconds)
     while !condition() {
+        serviceRuntimeRunLoop()
         try #require(ContinuousClock.now < deadline, "Private supervisor fixture missed its latency bound")
         try await Task.sleep(for: .milliseconds(100))
     }
+}
+
+@MainActor
+private func serviceRuntimeRunLoop() {
+    _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
 }
 
 private final class RuntimeFixtureProcesses: ProcessTableProvider, @unchecked Sendable {

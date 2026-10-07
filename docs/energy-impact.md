@@ -12,9 +12,11 @@ app, tmux server, and agent processes separately.
 `banyanctl perf report --since 7d --json` records Banyan-owned work. In
 particular:
 
-- `supervisor.tick` identifies the periodic session-inspection batch. Its detail
-  includes total, frequently observed, and deferred session counts plus the
-  selected cadence.
+- `supervisor.tick` identifies the periodic session-inspection batch and is
+  retained when it takes at least 150 ms. Its detail includes total, observed,
+  and deferred session counts, the scheduled delay, and the next delay/effective
+  cadence after completion. Supervisor percentiles describe retained slow
+  samples, not a complete census.
 - `supervisor.session` is retained only when one tmux/process inspection takes
   at least 150 ms; it includes the Banyan session ID to identify a slow pane.
 - `history.import` measures a full local agent-history refresh. It is retained
@@ -27,10 +29,13 @@ particular:
   retains every sample instead of only the slow ones, which is what an A/B run
   needs to compute an average and a p95.
 
-The supervisor invokes `ps` once and batches pane metadata for all started
-sessions into one tmux command per tick. It still captures visible text only for
-sessions with a live coding agent, because that text is needed for status
-detection.
+The supervisor batches pane metadata into one tmux command per tick and takes
+one process snapshot only when classification is due. Darwin uses kernel APIs;
+other platforms use `ps`. Captures for live coding agents reuse unchanged pane
+text. Stable executing sessions back off, while output/process events and a
+bounded activity probe preserve responsiveness. See
+[supervisor cadence](supervisor-cadence.md) for scheduling, measured fixture
+counts, and the isolated runtime verification recipe.
 
 Closing a Banyan session moves its existing in-memory row into History and
 updates its recency; it does not import provider transcripts. The history
