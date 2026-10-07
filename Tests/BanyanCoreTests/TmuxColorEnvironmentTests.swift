@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import BanyanCore
 
-@Test(arguments: [nil, "", "1"] as [String?])
-func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) throws {
+@Test(.serialized, arguments: [nil, "", "1"] as [String?])
+func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) async throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("banyan-color-test-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -42,8 +42,8 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) throws {
         environment: environment,
         socketName: socket
     )
-    func runTmux(_ arguments: [String]) throws -> String {
-        let output = try SubprocessRunner.run(
+    func runTmux(_ arguments: [String]) async throws -> String {
+        let output = try await SubprocessRunner.runAsync(
             arguments: [wrapper.path, "-L", socket] + arguments,
             cwd: root.path,
             environment: environment,
@@ -52,7 +52,14 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) throws {
         try #require(output.terminationStatus == 0, "\(String(decoding: output.standardError, as: UTF8.self))")
         return String(decoding: output.standardOutput, as: UTF8.self)
     }
-    defer { _ = try? runTmux(["kill-server"]) }
+    defer {
+        _ = try? SubprocessRunner.run(
+            arguments: [wrapper.path, "-L", socket, "kill-server"],
+            cwd: root.path,
+            environment: environment,
+            timeout: 10
+        )
+    }
 
     let paneEnvironment = root.appendingPathComponent("pane.env")
     let tty = root.appendingPathComponent("tty")
@@ -62,13 +69,17 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) throws {
     \(colorTestQuote(wrapper.path)) -L \(colorTestQuote(socket)) wait-for -S color-probe; \
     exec /bin/cat
     """
-    try backend.ensureSession(named: "color-probe", cwd: root.path, command: command)
+    try await runBlockingTestWork {
+        try backend.ensureSession(named: "color-probe", cwd: root.path, command: command)
+    }
     // wait-for remembers an early signal, avoiding a sleep/poll race with the pane.
-    _ = try runTmux(["wait-for", "color-probe"])
+    _ = try await runTmux(["wait-for", "color-probe"])
     // Also exercise the existing-server path used when the frontend attaches.
-    try backend.ensureSession(named: "color-probe", cwd: root.path, command: command)
+    try await runBlockingTestWork {
+        try backend.ensureSession(named: "color-probe", cwd: root.path, command: command)
+    }
 
-    let global = colorTestEnvironment(try runTmux(["show-environment", "-g"]))
+    let global = colorTestEnvironment(try await runTmux(["show-environment", "-g"]))
     let pane = colorTestEnvironment(try String(contentsOf: paneEnvironment, encoding: .utf8))
     let process = colorTestEnvironment(try String(contentsOf: processEnvironment, encoding: .utf8))
     for values in [process, global, pane] {
@@ -89,11 +100,12 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) throws {
     #expect(!commands.contains("NO_COLOR"))
     // Older tmux versions have a different cold-start default; compare the
     // pane with the server's effective TERM as well as checking the setting above.
-    let defaultTerminal = try runTmux(["show-options", "-gv", "default-terminal"])
+    let defaultTerminal = try await runTmux(["show-options", "-gv", "default-terminal"])
         .trimmingCharacters(in: .whitespacesAndNewlines)
     #expect(pane["TERM"] == defaultTerminal)
-    #expect(try runTmux(["show-options", "-gv", "terminal-overrides"]).contains("xterm-256color:RGB"))
-    let updateEnvironment = try runTmux(["show-options", "-gv", "update-environment"])
+    let terminalOverrides = try await runTmux(["show-options", "-gv", "terminal-overrides"])
+    #expect(terminalOverrides.contains("xterm-256color:RGB"))
+    let updateEnvironment = try await runTmux(["show-options", "-gv", "update-environment"])
     #expect(!updateEnvironment.contains("CLICOLOR_FORCE"))
     #expect(!updateEnvironment.contains("FORCE_COLOR"))
     #expect(try String(contentsOf: tty, encoding: .utf8) == "yes\n")
