@@ -48,6 +48,7 @@ private final class ThreadServer: CodexThreadService {
         case "thread/unsubscribe": return .object(["status": .string("unsubscribed")])
         case "turn/start": return .object(["turn": .object(["id": .string("turn-1"), "status": .string("inProgress")])])
         case "turn/interrupt": return .object([:])
+        case "turn/steer": return .object(["turnId": params["expectedTurnId"] ?? .null])
         default: throw CodexAppServerError.protocolViolation("Unexpected method \(method)")
         }
     }
@@ -64,6 +65,93 @@ private final class ThreadServer: CodexThreadService {
         for stream in streams { stream.yield(.disconnected(.disconnected("test restart"))) }
     }
     func count(_ method: String) -> Int { calls.filter { $0.method == method }.count }
+}
+
+@Test @MainActor func codexSteeringAndInterruptKeepTheExpectedTurnAndPolicy() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    _ = try await manager.startTurn(sessionID: "session", input: [.object(["type": .string("text"), "text": .string("Start")])])
+    let input: [CodexJSONValue] = [.object(["type": .string("text"), "text": .string("Focus on tests")])]
+    _ = try await manager.steer(sessionID: "session", expectedTurnID: "turn-1", input: input)
+    #expect(server.calls.last?.params == ["threadId": .string("thread-1"), "expectedTurnId": .string("turn-1"), "input": .array(input)])
+    await #expect(throws: CodexAppServerError.self) { try await manager.steer(sessionID: "session", expectedTurnID: "old-turn", input: input) }
+    await #expect(throws: CodexAppServerError.self) { try await manager.interrupt(sessionID: "session", expectedTurnID: "old-turn") }
+    try await manager.interrupt(sessionID: "session", expectedTurnID: "turn-1")
+    #expect(server.calls.last?.params == ["threadId": .string("thread-1"), "turnId": .string("turn-1")])
+    #expect(manager.states["session"]?.binding.settings.approvalPolicy == "on-request")
+    #expect(manager.states["session"]?.binding.settings.sandbox == "workspace-write")
+}
+
+@Test @MainActor func codexLateTurnCompletionDoesNotClearANewerTurnOrRequest() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    server.emit("turn/started", id: "thread-1", fields: ["turn": .object(["id": .string("new-turn"), "status": .string("inProgress")])])
+    try await eventually { manager.states["session"]?.activeTurnID == "new-turn" }
+    let handler = try #require(server.handler)
+    let request = CodexServerRequest(id: .integer(9), method: "item/fileChange/requestApproval", params: .object([
+        "threadId": .string("thread-1"), "turnId": .string("new-turn")]))
+    let reply = Task { await handler(request) }
+    try await eventually { manager.states["session"]?.pendingRequests.count == 1 }
+    server.emit("turn/completed", id: "thread-1", fields: ["turn": .object(["id": .string("old-turn"), "status": .string("completed")])])
+    // The routed event is a deterministic barrier for the observation task.
+    var routed = false
+    manager.onEvent = { _, method, _ in if method == "turn/completed" { routed = true } }
+    try await eventually { routed }
+    #expect(manager.states["session"]?.activeTurnID == "new-turn")
+    #expect(manager.states["session"]?.pendingRequests.count == 1)
+    try manager.respond(sessionID: "session", requestID: request.id,
+        reply: CodexConversationRequest(request).approvalReply(.decline))
+    if case .result(let value) = await reply.value { #expect(value.objectValue?["decision"] == .string("decline")) }
+    else { Issue.record("The newer request was canceled by an older turn") }
+}
+
+@Test @MainActor func codexTurnCompletionReleasesUnansweredContinuationsForThatTurn() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    let handler = try #require(server.handler)
+    let request = CodexServerRequest(id: .integer(11), method: "item/tool/requestUserInput", params: .object([
+        "threadId": .string("thread-1"), "turnId": .string("turn-1")]))
+    var finished = false
+    let reply = Task { let result = await handler(request); finished = true; return result }
+    try await eventually { manager.states["session"]?.pendingRequests.count == 1 }
+    server.emit("turn/completed", id: "thread-1", fields: ["turn": .object(["id": .string("turn-1"), "status": .string("interrupted")])])
+    try await eventually { finished }
+    #expect(manager.states["session"]?.pendingRequests.isEmpty == true)
+    if case .error = await reply.value {} else { Issue.record("Unanswered input should be invalidated on turn end") }
+}
+
+@Test @MainActor func codexHydrationIsTransientAndPreservesEventsDuringResume() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    try await manager.select(sessionID: nil)
+    server.threads["thread-1"] = .object(["id": .string("thread-1"), "status": .object(["type": .string("idle")]),
+        "turns": .array([.object(["id": .string("turn-1"), "status": .string("inProgress"), "items": .array([
+            .object(["id": .string("message"), "type": .string("agentMessage"), "text": .string("Stale")])])])])])
+    var conversation = CodexConversation()
+    var streamed = false
+    manager.onEvent = { _, method, params in
+        conversation.receive(method: method, params: params, threadID: "thread-1")
+        streamed = true
+    }
+    manager.onChange = { _, state in if state.connection == .connecting { conversation.beginHydration() } }
+    manager.onHydrate = { id, thread in
+        #expect(manager.states[id]?.thread == nil)
+        conversation.hydrate(thread: thread, threadID: "thread-1")
+    }
+    server.beforeResponse = { method in
+        if method == "thread/resume" {
+            server.emit("item/agentMessage/delta", id: "thread-1", fields: [
+                "turnId": .string("turn-1"), "itemId": .string("message"), "delta": .string("Newest")])
+            try? await eventually { streamed }
+        }
+    }
+    try await manager.select(sessionID: "session")
+    #expect(manager.states["session"]?.thread == nil)
+    #expect(conversation.turns[0].items[0].text == "Newest")
 }
 
 @MainActor

@@ -1,4 +1,12 @@
 enum AccessibilityID {
+    static let codexSessionDetail = "banyan.codex.detail"
+    static let codexTimeline = "banyan.codex.timeline"
+    static let codexMessageField = "banyan.codex.message"
+    static let codexSend = "banyan.codex.send"
+    static let codexInterrupt = "banyan.codex.interrupt"
+    static let codexReconnect = "banyan.codex.reconnect"
+    static let codexOpenShell = "banyan.codex.open-shell"
+    static let codexProtocolDetails = "banyan.codex.protocol-details"
     static let root = "banyan.root"
     static let sidebar = "banyan.sidebar"
     static let sidebarList = "banyan.sidebar.list"

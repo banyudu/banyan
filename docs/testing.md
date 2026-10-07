@@ -69,6 +69,25 @@ Terminal text selection, clipboard shortcuts, and wheel scrolling are intentiona
 
 ## Visual Validation
 
+The native Codex conversation also has a fixture-driven, isolated macOS render
+test. It uses a private database/home and in-memory App Server, and renders an
+offscreen window without restarting Banyan or touching a live tmux session:
+
+```sh
+BANYAN_CODEX_RENDER_DIR=/tmp/banyan-codex-ui swift test --filter CodexConversationUITests
+swift test --filter 'codexConversation|codexSteering|codexLateTurn|codexTurnCompletion'
+```
+
+Inspect `/tmp/banyan-codex-ui/conversation.png` for Markdown, command output,
+reviewable file diffs, request buttons, and the composer. The suite also checks
+background session routing, steering, error/draft preservation, approval and
+input response payloads, cancellation, and safe cache release/revisit. Core
+stress coverage streams 8 MiB into a command and exercises history/item and
+unknown-payload budgets. Live checks still need an authenticated supported
+Codex CLI: complete a real prompt, approve/decline command and file requests,
+answer/skip/cancel input, switch sessions while streaming, interrupt, and
+reconnect to the same thread after restarting an isolated app/server.
+
 Use `scripts/validate-ui.sh` to exercise the packaged app and write screenshots to `artifacts/ui-validation/`.
 
 The script captures visual artifacts through Banyan itself:
