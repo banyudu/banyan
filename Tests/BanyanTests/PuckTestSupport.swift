@@ -290,14 +290,19 @@ struct PuckStoreFixture {
         self.daemon = daemon
     }
 
-    func makeStore() -> SessionStore {
+    func makeStore(codexService: (any CodexThreadService)? = nil,
+                   tmuxBackend: TmuxBackend? = nil,
+                   makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
+                       ControlServer(store: $0, host: $1)
+                   }) -> SessionStore {
         // The store reads `NSApp` for its background-refresh budget, which is nil
         // in a test process until the shared application exists.
         _ = NSApplication.shared
+        let tmux = tmuxBackend ?? banyanTestTmuxBackend
         return SessionStore(
             persistence: persistence,
-            tmuxBackend: banyanTestTmuxBackend,
-            sessionBackend: banyanTestTmuxBackend,
+            tmuxBackend: tmux,
+            sessionBackend: tmux,
             processTable: EmptyPuckTestProcessTable(),
             historyBackend: EmptyPuckTestHistoryBackend(),
             detector: AgentStateDetector(rules: []),
@@ -312,7 +317,9 @@ struct PuckStoreFixture {
             ),
             telemetry: banyanTestTelemetry,
             attentionNotifier: AttentionNotifier(),
-            puckDaemon: daemon
+            puckDaemon: daemon,
+            codexService: codexService,
+            makeControlServer: makeControlServer
         )
     }
 

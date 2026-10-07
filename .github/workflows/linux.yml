@@ -19,6 +19,9 @@ jobs:
       - name: Test restart recovery with fake OS commands
         run: python3 scripts/tests/test_restart_app.py
 
+      - name: Test app resource packaging with fake build commands
+        run: python3 scripts/tests/test_package_app.py
+
       # Swift ships signed Linux toolchains, so the toolchain is installed
       # straight from swift.org rather than through swift-actions/setup-swift:
       # its v2 line cannot install anything newer than 6.2, and v3.0.0-beta.1

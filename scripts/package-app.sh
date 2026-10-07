@@ -43,25 +43,30 @@ APP_VERSION="${BANYAN_VERSION:-0.4.1}"
 cd "$ROOT_DIR"
 rm -rf "$ROOT_DIR/.build/arm64-apple-macosx/release/ModuleCache"
 swift build -c release
+BUILD_PRODUCTS_DIR="$(swift build -c release --show-bin-path)"
+
+# SwiftPM can use Products/Release or an architecture-specific release directory.
+# Resolve its actual path and fail before replacing an installed app if resources
+# are missing: Bundle.module otherwise traps when a model icon first renders.
+for bundle in Banyan_Banyan.bundle SwiftTerm_SwiftTerm.bundle; do
+  if [[ ! -d "$BUILD_PRODUCTS_DIR/$bundle" ]]; then
+    echo "package-app: required resource bundle missing: $BUILD_PRODUCTS_DIR/$bundle" >&2
+    exit 1
+  fi
+done
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$DIST_DIR/bin"
 
-cp "$ROOT_DIR/.build/release/Banyan" "$MACOS_DIR/Banyan"
-cp "$ROOT_DIR/.build/release/banyanctl" "$DIST_DIR/bin/banyanctl"
+cp "$BUILD_PRODUCTS_DIR/Banyan" "$MACOS_DIR/Banyan"
+cp "$BUILD_PRODUCTS_DIR/banyanctl" "$DIST_DIR/bin/banyanctl"
 if [[ ! -f "$ICON_FILE" ]]; then
   "$ROOT_DIR/scripts/generate-icons.sh"
 fi
 cp "$ICON_FILE" "$RESOURCES_DIR/Banyan.icns"
 
-SWIFTTERM_BUNDLE="$(find "$ROOT_DIR/.build" -path '*release*' -name '*SwiftTerm*.bundle' -type d | head -n 1 || true)"
-if [[ -n "$SWIFTTERM_BUNDLE" ]]; then
-  cp -R "$SWIFTTERM_BUNDLE" "$RESOURCES_DIR/"
-fi
-BANYAN_RESOURCE_BUNDLE="$(find "$ROOT_DIR/.build" -path '*release*' -name 'Banyan_Banyan.bundle' -type d | head -n 1 || true)"
-if [[ -n "$BANYAN_RESOURCE_BUNDLE" ]]; then
-  cp -R "$BANYAN_RESOURCE_BUNDLE" "$RESOURCES_DIR/"
-fi
+cp -R "$BUILD_PRODUCTS_DIR/SwiftTerm_SwiftTerm.bundle" "$RESOURCES_DIR/"
+cp -R "$BUILD_PRODUCTS_DIR/Banyan_Banyan.bundle" "$RESOURCES_DIR/"
 
 # Stamp the build so About/Info.plist identifies which commit a stable install is.
 GIT_BUILD="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"

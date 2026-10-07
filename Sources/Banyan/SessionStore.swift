@@ -159,6 +159,10 @@ final class SessionStore: ObservableObject {
                     closePullRequestPreview()
                 }
             }
+            if !codexThreads.states.isEmpty {
+                let nativeID = (selectedSession as? CodexSession).flatMap { $0.status != .closed && !$0.isSuspended ? $0.id : nil }
+                Task { [weak self] in try? await self?.codexThreads.select(sessionID: nativeID) }
+            }
             saveWorkspaceSoon()
             requestTerminalFocus()
             refreshSelectedContextInfo(force: true)
@@ -334,6 +338,9 @@ final class SessionStore: ObservableObject {
     private static let expandedParentsDefaultsKey = "sidebarManuallyExpandedParentIDs"
     private static let showFinishedChildrenDefaultsKey = "sidebarShowFinishedChildren"
 
+    let codexThreads: CodexThreadCoordinator
+    @Published var codexSessionError: String?
+
     private var controlServer: ControlServer?
     private let makeControlServer: (SessionStore, HostRuntimeContext) -> ControlServer
     private var didStartRuntime = false
@@ -491,11 +498,13 @@ final class SessionStore: ObservableObject {
         telemetry: PerformanceTelemetry,
         attentionNotifier: AttentionNotifier,
         puckDaemon: (any PuckDaemonService)? = nil,
+        codexService: (any CodexThreadService)? = nil,
         makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
             ControlServer(store: $0, host: $1)
         }
     ) {
         self.makeControlServer = makeControlServer
+        self.codexThreads = CodexThreadCoordinator(service: codexService ?? CodexAppServerClient(environment: host.environment))
         self.puckDaemon = puckDaemon ?? PuckDaemonClient(
             environment: host.environment,
             homeDirectory: host.homeDirectory.path
@@ -510,6 +519,17 @@ final class SessionStore: ObservableObject {
         self.host = host
         self.telemetry = telemetry
         self.attentionNotifier = attentionNotifier
+        codexThreads.onChange = { [weak self] id, state in
+            guard let self, let session = self.sessions.first(where: { $0.id == id }) as? CodexSession else { return }
+            session.apply(state)
+            self.saveChangedSession(session)
+        }
+        codexThreads.flushPersistence = { [weak self] in
+            guard let queue = self?.sessionPersistenceQueue else { return }
+            await withCheckedContinuation { continuation in
+                queue.async { continuation.resume() }
+            }
+        }
         let defaults = UserDefaults.standard
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
@@ -933,6 +953,19 @@ final class SessionStore: ObservableObject {
                 )
                 displayContextsByCWD[snapshot.cwd] = resolved
                 displayContext = resolved
+            }
+            if snapshot.backend == .codex {
+                do {
+                    let session = try CodexSession(snapshot: snapshot, coordinator: codexThreads,
+                        displayContext: displayContext, telemetry: telemetry, host: host,
+                        githubReferenceCache: githubReferenceCache)
+                    attach(session)
+                    sessions.append(session)
+                    if snapshot.status == .executing || snapshot.status == .asking {
+                        session.reconnect()
+                    }
+                } catch { codexSessionError = error.localizedDescription }
+                continue
             }
             if snapshot.backend == .puck {
                 // A puck row without its runtime cannot be followed, and must
@@ -2371,6 +2404,15 @@ final class SessionStore: ObservableObject {
         select: Bool = true
     ) -> BanyanSession? {
         switch launch {
+        case .codex(let settings):
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.createCodexSession(settings: settings, cwd: cwd, id: id, title: title,
+                        parentSessionID: parentSessionID, select: select)
+                } catch { self.codexSessionError = error.localizedDescription }
+            }
+            return nil
         case .terminal(let command):
             return spawn(
                 id: id,
@@ -2496,6 +2538,31 @@ final class SessionStore: ObservableObject {
         addSessionDraft = .sibling(cwd: cwd)
     }
 
+    /// Explicit native entry point, independent of the legacy remote-control/TUI preference.
+    @discardableResult
+    func createCodexSession(settings: CodexThreadSettings = .init(), cwd: String? = nil,
+                            id proposedID: String? = nil, title: String? = nil,
+                            parentSessionID: String? = nil, select: Bool = true) async throws -> CodexSession {
+        let plan = SessionCreationPolicy.plan(proposedID: proposedID, proposedTitle: title,
+            proposedTitleURL: nil, proposedCWD: cwd, proposedCommand: "",
+            proposedParentSessionID: parentSessionID, currentDirectory: currentDirectory, homeDirectory: homeDirectory)
+        let id = uniqueID(plan.baseID, avoidingLiveTmuxSessions: false)
+        let snapshot = SessionSnapshot(id: id, tmuxSessionName: nil, title: plan.title,
+            reportedTitle: nil, isTitlePinned: plan.isTitlePinned, cwd: plan.cwd, command: "",
+            status: .idle, tone: .neutral, parentSessionID: plan.parentSessionID,
+            createdAt: Date(), updatedAt: Date(), backend: .codex,
+            codex: CodexThreadBinding(cwd: plan.cwd, settings: settings))
+        let session = try CodexSession(snapshot: snapshot, coordinator: codexThreads,
+            telemetry: telemetry, host: host, githubReferenceCache: githubReferenceCache)
+        attach(session)
+        sessions.append(session)
+        saveSessions()
+        if select { selectedSessionID = id }
+        // Keep the row on failure: retry must recover this identity, never create a duplicate.
+        try await codexThreads.connect(sessionID: id)
+        return session
+    }
+
     func showChildSessionSheet() {
         guard let selectedSession else { return }
         addSessionDraft = .child(of: selectedSession)
@@ -2569,6 +2636,12 @@ final class SessionStore: ObservableObject {
         unparkForAttach(session)
         // The daemon kept a closed puck session whole, so reopening it is only
         // a matter of following it again.
+        if let native = session as? CodexSession {
+            native.reopen()
+            selectedSessionID = id
+            saveSessions()
+            return
+        }
         if let session = session as? PuckSession {
             session.reopen()
             selectedSessionID = id
@@ -2962,6 +3035,10 @@ final class SessionStore: ObservableObject {
         }
         guard !session.isSuspended else { return }
 
+        if let native = session as? CodexSession,
+           native.state.runtime.type == "active" || native.state.activeTurnID != nil || native.state.needsAttention {
+            throw ControlError.badRequest("Finish the active Codex turn and pending requests before parking this session")
+        }
         session.suspend()
         // Its backoff state describes a session nothing is observing any more.
         supervisorObservationStates.removeValue(forKey: id)
@@ -3006,6 +3083,9 @@ final class SessionStore: ObservableObject {
         runSupervisorTick(sessionID: id)
         if session is PuckSession {
             syncPuckSessions()
+        }
+        if let native = session as? CodexSession {
+            native.reconnect()
         }
         saveSessions()
         rescheduleSupervisor()
@@ -3888,6 +3968,10 @@ final class SessionStore: ObservableObject {
     func remove(id: String) throws {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
+        }
+        if let native = sessions[index] as? CodexSession,
+           native.state.runtime.type == "active" || native.state.activeTurnID != nil || native.state.needsAttention {
+            throw ControlError.badRequest("Finish the active Codex turn and answer pending requests before removing this session. Close it to history if you need to hide it; it can still be reopened.")
         }
         let replacementID = selectedSessionID == id
             ? preferredSelectionAfterClosing(id: id)
@@ -5238,7 +5322,7 @@ final class SessionStore: ObservableObject {
         var didUpdateProvider = false
         var didChangePersistentState = false
         for result in results {
-            guard let session = sessions.first(where: { $0.id == result.id }),
+            guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
                   let reconciliation = SessionObservationPolicy.reconcile(
                       currentStatus: session.status,
                       currentTone: session.tone,
@@ -5487,6 +5571,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func isAvailableID(_ id: String, avoidingLiveTmuxSessions: Bool) -> Bool {
+        guard !codexThreads.reserves(sessionID: id) else { return false }
         guard !sessions.contains(where: { $0.id == id }) else {
             return false
         }

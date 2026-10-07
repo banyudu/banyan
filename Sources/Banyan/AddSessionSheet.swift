@@ -96,9 +96,12 @@ struct AddSessionSheet: View {
                 Picker("Runtime", selection: $backend) {
                     Text("Terminal").tag(SessionBackendKind.terminal)
                     Text("Puck").tag(SessionBackendKind.puck)
+                    Text("Codex (Native)").tag(SessionBackendKind.codex)
                 }
                 .pickerStyle(.segmented)
                 switch backend {
+                case .codex:
+                    Text("Native Codex thread")
                 case .terminal:
                     TextField("Command", text: $command)
                 case .puck:
@@ -147,6 +150,8 @@ struct AddSessionSheet: View {
 
     private var launch: SessionLaunchSpec {
         switch backend {
+        case .codex:
+            return .codex(.init())
         case .terminal:
             return .terminal(command: command)
         case .puck:

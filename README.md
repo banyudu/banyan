@@ -643,6 +643,18 @@ terminal applications can use ANSI, 256-color, and truecolor escape sequences
 for syntax highlighting and colorized output. Banyan exposes app theme and
 terminal font controls in Preferences.
 
+Banyan advertises `TERM=tmux-256color` in panes and `COLORTERM=truecolor`
+with `CLICOLOR=1`. It leaves color detection to each tool, so piped output
+can remain suitable for parsing, and preserves an inherited `NO_COLOR`.
+It does not add `CLICOLOR_FORCE` or `FORCE_COLOR`.
+
+Upgrading the app does not clear the environment of an already-running tmux
+server or its panes. A server started by an older version can retain the old
+forcing variables; newly created panes inherit that server's environment.
+After those variables are cleared from the server, existing panes and their
+descendants still keep their old environment until restarted. Restarting only
+the Banyan client does not refresh it.
+
 The embedded terminal supports normal desktop text selection and clipboard shortcuts. Drag to select visible terminal text, use `Cmd+C` to copy the selection, and use `Cmd+V` to paste into the active tmux-backed session.
 
 Theme options:

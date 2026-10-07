@@ -145,6 +145,14 @@ struct ContentView: View {
         } message: {
             Text(store.puckSessionError ?? "")
         }
+        .alert("Codex session error", isPresented: Binding(
+            get: { store.codexSessionError != nil },
+            set: { if !$0 { store.codexSessionError = nil } }
+        )) {
+            Button("OK") { store.codexSessionError = nil }
+        } message: {
+            Text(store.codexSessionError ?? "")
+        }
         .background(WindowTitleConfigurator(trigger: titlebarConfigurationTrigger))
         .preferredColorScheme(store.terminalTheme.colorScheme)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("AppleInterfaceThemeChangedNotification"))) { _ in
@@ -1451,6 +1459,10 @@ struct ContentView: View {
                             Spacer()
                         }
                         .background(.background)
+                    } else if let native = session as? CodexSession {
+                        CodexSessionDetail(session: native)
+                            .id(native.id)
+                            .background(.background)
                     } else if let puck = session as? PuckSession {
                         PuckSessionDetail(session: puck)
                             .id(puck.id)
