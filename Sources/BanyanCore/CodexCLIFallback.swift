@@ -8,11 +8,23 @@ public enum CodexCLIFallback {
     }
 
     public static func command(binding: CodexThreadBinding, executable: String) throws -> String {
+        let arguments = try arguments(binding: binding, executable: executable)
+        var command = arguments.map(AgentLaunchCommand.shellQuote).joined(separator: " ")
+        if let home = binding.codexHome {
+            command = "env " + AgentLaunchCommand.shellQuote("CODEX_HOME=" + home) + " " + command
+        }
+        return command
+    }
+
+    /// Share exact overrides with the CLI bootstrap probe. `--help` parses
+    /// flags but does not load config or reject retired permission policies.
+    static func arguments(binding: CodexThreadBinding, executable: String,
+                          validateOnly: Bool = false) throws -> [String] {
         guard binding.threadID != nil || !binding.creationAttempted else {
             throw CodexAppServerError.protocolViolation("Codex thread creation is uncertain. Recover its stored thread ID before switching to the CLI; starting again could lose the original thread.")
         }
-        var arguments = [executable]
-        if let threadID = binding.threadID { arguments += ["resume", threadID] }
+        // The standalone TUI must never auto-attach to another managed daemon.
+        var arguments = [executable, "--no-daemon"]
         arguments += ["-C", binding.cwd]
         var overrides = binding.settings.config
         if let model = binding.settings.model { overrides["model"] = .string(model) }
@@ -22,11 +34,9 @@ public enum CodexCLIFallback {
         for key in overrides.keys.sorted() {
             arguments += ["-c", key + "=" + (try toml(overrides[key]!))]
         }
-        var command = arguments.map(AgentLaunchCommand.shellQuote).joined(separator: " ")
-        if let home = binding.codexHome {
-            command = "env " + AgentLaunchCommand.shellQuote("CODEX_HOME=" + home) + " " + command
-        }
-        return command
+        if validateOnly { arguments += ["features", "list"] }
+        else if let threadID = binding.threadID { arguments += ["resume", threadID] }
+        return arguments
     }
 
     private static func toml(_ value: CodexJSONValue) throws -> String {

@@ -238,6 +238,7 @@ struct CodexConversationUITests {
         #expect(recognized.contains("Example.swift"))
         #expect(recognized.contains("Decline"))
         #expect(recognized.contains("Message Codex"))
+        #expect(recognized.contains("inactivity grace period"))
         let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["BANYAN_CODEX_RENDER_DIR"] ?? NSTemporaryDirectory() + "banyan-codex-render")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try png.write(to: directory.appendingPathComponent("conversation.png"))

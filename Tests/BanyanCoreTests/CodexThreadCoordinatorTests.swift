@@ -18,8 +18,14 @@ private final class ThreadServer: CodexThreadService {
     var handoffs = 0
     var connectedRequests: [String] = []
     var effectiveHome: String? = "/tmp/codex-test-store"
+    var fallbackValidationError: CodexAppServerError?
+    var duringFallbackValidation: (() async -> Void)?
     func storageHome() async -> String? { effectiveHome }
     func disconnectForHandoff() async throws { handoffs += 1 }
+    func validateCLIFallback(binding: CodexThreadBinding) async throws {
+        await duringFallbackValidation?()
+        if let fallbackValidationError { throw fallbackValidationError }
+    }
 
     func connect() async throws {
         onConnect?()
@@ -76,6 +82,40 @@ private final class ThreadServer: CodexThreadService {
         for stream in streams { stream.yield(.disconnected(.disconnected("test restart"))) }
     }
     func count(_ method: String) -> Int { calls.filter { $0.method == method }.count }
+}
+
+@Test @MainActor func codexCLIConfigRejectionPreservesNativeOwnershipAndSettings() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    let binding = try #require(manager.states["session"]?.binding)
+    server.fallbackValidationError = .protocolViolation("CLI no longer supports this approval policy")
+    await #expect(throws: CodexAppServerError.self) {
+        try await manager.prepareForCLIFallback(sessionID: "session")
+    }
+    #expect(server.handoffs == 0)
+    #expect(manager.states["session"]?.binding == binding)
+    #expect(manager.states["session"]?.isSubscribed == true)
+    #expect(manager.selectedSessionID == "session")
+    server.fallbackValidationError = nil
+    _ = try await manager.startTurn(sessionID: "session", input: [])
+    #expect(server.count("turn/start") == 1)
+}
+
+@Test @MainActor func codexFallbackDoesNotReapWorkArrivingDuringCLIConfigValidation() async throws {
+    let server = ThreadServer()
+    let manager = try coordinator(server)
+    try await manager.select(sessionID: "session")
+    server.duringFallbackValidation = {
+        server.emit("turn/started", id: "thread-1", fields: ["turn": .object(["id": .string("external-turn")])])
+        try? await eventually { manager.states["session"]?.activeTurnID == "external-turn" }
+    }
+    await #expect(throws: CodexAppServerError.self) {
+        try await manager.prepareForCLIFallback(sessionID: "session")
+    }
+    #expect(server.handoffs == 0)
+    #expect(manager.states["session"]?.activeTurnID == "external-turn")
+    #expect(manager.states["session"]?.isSubscribed == true)
 }
 
 @Test @MainActor func codexSteeringAndInterruptKeepTheExpectedTurnAndPolicy() async throws {
