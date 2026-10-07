@@ -613,7 +613,7 @@ public final class CodexThreadCoordinator {
         let lower = message.lowercased()
         let connection: CodexThreadConnection
         if lower.contains("active writer") || lower.contains("already being controlled") {
-            connection = .writerConflict("Another Codex client holds this thread's writer. Exit or detach its CLI/TUI, or finish its active turn, then reconnect here. The thread and working directory are preserved. Server: \(message)")
+            connection = .writerConflict("Another Codex client holds this thread's writer. Exit or detach its CLI/TUI using that client's supported lifecycle, then reconnect here. For Banyan CLI terminals, use Prepare Remote Handoff, enter /quit after the turn finishes, then Check CLI Exit. Detaching only the terminal display does not release the writer. The thread and working directory are preserved. Server: \(message)")
         } else if lower.contains("no rollout") || lower.contains("not found") || lower.contains("does not exist") {
             connection = .unavailable("This Codex thread has no resumable history or is unavailable. New threads may have no rollout until their first turn. Restore its history or choose an existing thread; Banyan will preserve this ID. Server: \(message)")
         } else { connection = .failed(message) }
