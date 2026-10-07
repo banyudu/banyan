@@ -67,6 +67,7 @@ class PackageAppTests(unittest.TestCase):
         result = self.package(self.products(layout))
         self.assertEqual(result.returncode, 0, result.stderr)
         for app in (self.root / "dist/Banyan.app", self.install / "Banyan.app"):
+            self.assertEqual((app / "Contents/MacOS/banyanctl").read_bytes(), b"banyanctl")
             for name in ("Banyan_Banyan.bundle", "SwiftTerm_SwiftTerm.bundle"):
                 self.assertEqual((app / "Contents/Resources" / name / "resource.txt").read_text(), name)
 

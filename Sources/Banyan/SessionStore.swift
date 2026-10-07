@@ -145,8 +145,30 @@ final class SessionStore: ObservableObject {
     @Published var addSessionDraft: AddSessionDraft?
     private(set) var sessionSwitchRequestedAt: DispatchTime?
     let selection = SessionSelection()
+    var pendingAgentFreezeIDs: Set<String> = []
+    var isAutoFreezeRunning = false
+    var nextAutoFreezeProbeAt = Date.distantPast
+    var isFrozenReconciliationRunning = false
+    var isAgentFreezeShuttingDown = false
+    let freezePreferences: UserDefaults
+    @Published var autoFreezeAgents = false {
+        didSet {
+            freezePreferences.set(autoFreezeAgents, forKey: "autoFreezeAgents")
+            nextAutoFreezeProbeAt = .distantPast
+            if !autoFreezeAgents { resumeAllFrozenAgents() }
+            if didStartRuntime { rescheduleSupervisor() }
+        }
+    }
+    @Published var agentFreezeIdleMinutes: Double = 10 {
+        didSet {
+            freezePreferences.set(agentFreezeIdleMinutes, forKey: "agentFreezeIdleMinutes")
+            nextAutoFreezeProbeAt = .distantPast
+            if didStartRuntime { rescheduleSupervisor() }
+        }
+    }
     @Published var selectedSessionID: String? {
         didSet {
+            resumeFrozenForInteraction(id: selectedSessionID)
             selection.syncFromStore(selectedSessionID)
             if oldValue != selectedSessionID {
                 sessionSwitchRequestedAt = .now()
@@ -511,10 +533,12 @@ final class SessionStore: ObservableObject {
         attentionNotifier: AttentionNotifier,
         puckDaemon: (any PuckDaemonService)? = nil,
         codexService: (any CodexThreadService)? = nil,
+        freezePreferences: UserDefaults = .standard,
         makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
             ControlServer(store: $0, host: $1)
         }
     ) {
+        self.freezePreferences = freezePreferences
         self.makeControlServer = makeControlServer
         self.codexThreads = CodexThreadCoordinator(service: codexService ?? CodexAppServerClient(environment: host.environment))
         self.puckDaemon = puckDaemon ?? PuckDaemonClient(
@@ -549,6 +573,10 @@ final class SessionStore: ObservableObject {
             }
         }
         let defaults = UserDefaults.standard
+        autoFreezeAgents = freezePreferences.bool(forKey: "autoFreezeAgents")
+        if let minutes = freezePreferences.object(forKey: "agentFreezeIdleMinutes") as? Double {
+            agentFreezeIdleMinutes = min(120, max(1, minutes.isFinite ? minutes : 10))
+        }
         var defaultTheme: TerminalTheme = .system
         if let rawTheme = defaults.string(forKey: "terminalTheme"),
            let theme = TerminalTheme.fromPersistedRawValue(rawTheme) {
@@ -2138,7 +2166,13 @@ final class SessionStore: ObservableObject {
 
     private var supervisorInterval: TimeInterval {
         let baseInterval = supervisorBaseInterval
-        let terminalInterval = terminalSupervisorInterval(baseInterval: baseInterval)
+        var terminalInterval = terminalSupervisorInterval(baseInterval: baseInterval)
+        if autoFreezeAgents && terminalSessions.contains(where: { $0.status != .closed && !$0.isSuspended && !$0.isFrozen }) {
+            terminalInterval = min(terminalInterval, AgentInactivityPolicy.probeInterval(threshold: agentFreezeThreshold))
+        }
+        if terminalSessions.contains(where: \.isFrozen) {
+            terminalInterval = min(terminalInterval, 15)
+        }
         if puckObservation != nil { return min(terminalInterval, puckCatalogInterval) }
         return isPuckDaemonReachable ? min(terminalInterval, baseInterval) : terminalInterval
     }
@@ -2207,6 +2241,8 @@ final class SessionStore: ObservableObject {
     private func supervisorTimerFired() {
         runSupervisorTick()
         syncPuckSessions()
+        runAutoFreezePassIfNeeded()
+        reconcileFrozenAgents()
         refreshBranchContextsIfNeeded()
         sweepSuspendedSessionLivenessIfNeeded()
         // Focus, thermal, power, or session count may have changed since the timer
@@ -2265,8 +2301,14 @@ final class SessionStore: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.rescheduleSupervisor() }
         }
+        let onTerminate = center.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.prepareForAgentFreezeShutdown() }
+        }
         supervisorLifecycleObservers = [
             onActive, onResign, onHide, onUnhide, onOcclusion, onThermal, onPower,
+            onTerminate,
         ]
     }
 
@@ -3092,6 +3134,7 @@ final class SessionStore: ObservableObject {
         guard session.canRestart, let session = session as? TerminalSession else {
             throw ControlError.badRequest("session '\(id)' has no launch command to restart")
         }
+        try session.prepareFrozenAgentForTeardown()
         unparkForAttach(session)
         session.restartBackingSession()
         selectedSessionID = id
@@ -3175,6 +3218,7 @@ final class SessionStore: ObservableObject {
     /// sets its own runtime state, so this only has to drop the gate — otherwise
     /// they would leave a row claiming to be parked while its client attaches.
     private func unparkForAttach(_ session: BanyanSession) {
+        resumeFrozenForInteraction(id: session.id)
         guard session.isSuspended else { return }
         session.isSuspended = false
         supervisorObservationStates.removeValue(forKey: session.id)
@@ -3543,7 +3587,8 @@ final class SessionStore: ObservableObject {
             cwd: session.cwd,
             createdAt: session.createdAt,
             environment: session.environment,
-            isSuspended: session.isSuspended
+            isSuspended: session.isSuspended,
+            isFrozen: session.isFrozen
         )
     }
 
@@ -4024,6 +4069,7 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        try (session as? TerminalSession)?.prepareFrozenAgentForTeardown()
         let replacementID = selectedSessionID == id
             ? preferredSelectionAfterClosing(id: id)
             : nil
@@ -4048,6 +4094,7 @@ final class SessionStore: ObservableObject {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        try (sessions[index] as? TerminalSession)?.prepareFrozenAgentForTeardown()
         if let native = sessions[index] as? CodexSession,
            native.state.runtime.type == "active" || native.state.activeTurnID != nil || native.state.needsAttention {
             throw ControlError.badRequest("Finish the active Codex turn and answer pending requests before removing this session. Close it to history if you need to hide it; it can still be reopened.")
@@ -4629,6 +4676,29 @@ final class SessionStore: ObservableObject {
     }
 
     private func attach(_ session: BanyanSession) {
+        if let terminal = session as? TerminalSession, terminal.isRestored, terminal.status != .closed {
+            let backend = terminal.tmuxBackend
+            let name = terminal.tmuxSessionName
+            let generation = terminal.freezeGeneration
+            Task.detached(priority: .utility) { [weak self, weak terminal] in
+                let identity = backend.primaryPaneSnapshot(named: name)
+                    .flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
+                let ticket = backend.freezeTicket(named: name)
+                await MainActor.run { [weak self, weak terminal] in
+                    guard let self, let terminal, terminal.status != .closed,
+                          terminal.freezeGeneration == generation,
+                          self.sessions.contains(where: { $0 === terminal }) else { return }
+                    if terminal.trackedPaneIdentity == nil { terminal.trackedPaneIdentity = identity }
+                    if let ticket, ticket.root == identity {
+                        terminal.frozenTicket = ticket
+                        terminal.isFrozen = true
+                        if !self.autoFreezeAgents || self.selectedSessionID == terminal.id {
+                            self.resumeFrozenForInteraction(id: terminal.id)
+                        }
+                    }
+                }
+            }
+        }
         session.onDidChange = { [weak self, weak session] in
             Task { @MainActor in
                 // A native row may have been replaced by a terminal with the
@@ -4644,6 +4714,9 @@ final class SessionStore: ObservableObject {
             guard let self, let session else { return }
             telemetry.noteSessionFirstOutput(sessionID: session.id)
             self.detectAttention(in: text, for: session)
+            if let terminal = session as? TerminalSession, !terminal.isFrozen {
+                terminal.freezeGeneration = UUID()
+            }
         }
         session.onUserSubmittedInput = { [weak self, weak session] submittedInput in
             guard let self, let session else { return }
@@ -4988,6 +5061,7 @@ final class SessionStore: ObservableObject {
         // Only a terminal session has a pane to observe; puck sessions are
         // kept current by `syncPuckSessions`.
         let inputs = terminalSessions.compactMap { session -> SessionStatusObservationInput? in
+            guard !session.isFrozen else { return nil }
             guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
                 return nil
             }
@@ -5405,6 +5479,7 @@ final class SessionStore: ObservableObject {
         var didChangePersistentState = false
         for result in results {
             guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
+                  !session.isFrozen,
                   let reconciliation = SessionObservationPolicy.reconcile(
                       currentStatus: session.status,
                       currentTone: session.tone,

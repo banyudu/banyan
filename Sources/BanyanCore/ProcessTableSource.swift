@@ -37,6 +37,25 @@ struct ProcessTableRow: Sendable {
 /// output the kernel truncates to 16 characters — reports the full executable
 /// path. `ps` remains the reader on other platforms.
 enum ProcessTableSource {
+    /// Signaling runs after the UI's final focus/input guard. Never fall back
+    /// to a subprocess wait there, even when kernel enumeration fails.
+    static func rowsForSignaling(kernelReader: (() -> [ProcessTableRow])? = nil) throws -> [ProcessTableRow] {
+        let rows: [ProcessTableRow]
+        if let kernelReader {
+            rows = kernelReader()
+        } else {
+        #if canImport(Darwin)
+            rows = kernelRows()
+        #else
+            throw AgentFreezeError.unsafe("Process freezing requires macOS kernel process enumeration")
+        #endif
+        }
+        guard !rows.isEmpty else {
+            throw AgentFreezeError.unsafe("Kernel process enumeration failed; refused to signal agent groups")
+        }
+        return rows
+    }
+
     static func rows() -> [ProcessTableRow] {
         #if canImport(Darwin)
         // An empty table is never a real answer — the reader itself failed — so

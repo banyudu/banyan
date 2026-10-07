@@ -16,6 +16,7 @@ final class SessionSelection: ObservableObject {
     @Published var selectedSessionID: String? {
         didSet {
             if oldValue != selectedSessionID {
+                store?.resumeFrozenForInteraction(id: selectedSessionID)
                 changedAt = .now()
                 let clickAt = pendingClickAt.flatMap { timestamp in
                     PerformanceTelemetry.elapsedMS(since: timestamp) <= 1_000 ? timestamp : nil

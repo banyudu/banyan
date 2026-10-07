@@ -104,7 +104,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
             "#{pane_in_mode}",
             "#{window_activity}",
             "#{pane_width}",
-            "#{pane_height}"
+            "#{pane_height}",
+            "#{session_attached}"
         ].joined(separator: "\t")
         guard let output = try? run(["list-panes", "-t", name, "-F", format]),
               let line = output.split(separator: "\n", omittingEmptySubsequences: true).first
@@ -125,7 +126,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
             isInMode: parts[5] == "1",
             lastActivityAt: parts.count >= 7 ? Self.activityDate(parts[6]) : nil,
             width: parts.count >= 8 ? Int(parts[7]) ?? 0 : 0,
-            height: parts.count >= 9 ? Int(parts[8]) ?? 0 : 0
+            height: parts.count >= 9 ? Int(parts[8]) ?? 0 : 0,
+            hasAttachedClients: parts.count >= 10 ? (Int(parts[9]) ?? 1) > 0 : true
         )
     }
 
@@ -142,7 +144,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
             "#{pane_in_mode}",
             "#{window_activity}",
             "#{pane_width}",
-            "#{pane_height}"
+            "#{pane_height}",
+            "#{session_attached}"
         ].joined(separator: "\t")
 
         guard let output = try? run(["list-panes", "-a", "-F", format]) else {
@@ -173,7 +176,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
                 isInMode: parts[6] == "1",
                 lastActivityAt: parts.count >= 8 ? Self.activityDate(parts[7]) : nil,
                 width: parts.count >= 9 ? Int(parts[8]) ?? 0 : 0,
-                height: parts.count >= 10 ? Int(parts[9]) ?? 0 : 0
+                height: parts.count >= 10 ? Int(parts[9]) ?? 0 : 0,
+                hasAttachedClients: parts.count >= 11 ? (Int(parts[10]) ?? 1) > 0 : true
             )
         }
         return snapshots
@@ -285,7 +289,11 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedCommand.isEmpty {
             arguments.append(contentsOf: [shell, "-l"])
+        } else if let host = AgentProcessHost.executableURL(environment: environment) {
+            arguments.append(contentsOf: [host.path, AgentProcessHost.subcommand, shell, trimmedCommand])
         } else {
+            // Legacy/unpackaged launchers still work, but a pane-root agent is
+            // deliberately ineligible for freezing because tmux CONTs it.
             arguments.append(contentsOf: [shell, "-lc", trimmedCommand])
         }
         do {
@@ -325,7 +333,28 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
     }
 
     public func killSession(named name: String) {
+        // SIGTERM/SIGHUP cannot be handled by stopped agents. Continue our
+        // verified groups before tmux tears down their controlling terminal.
+        if let ticket = freezeTicket(named: name) {
+            do { try AgentProcessFreezer.terminate(ticket) }
+            catch { return }
+        }
         _ = try? run(["kill-session", "-t", name])
+    }
+
+    public func freezeTicket(named name: String) -> AgentFreezeTicket? {
+        guard let text = try? run(["show-options", "-qv", "-t", name, "@banyan-freeze"]),
+              let data = text.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(AgentFreezeTicket.self, from: data)
+    }
+
+    public func writeFreezeTicket(_ ticket: AgentFreezeTicket?, named name: String) throws {
+        if let ticket {
+            let data = try JSONEncoder().encode(ticket)
+            try run(["set-option", "-t", name, "@banyan-freeze", String(decoding: data, as: UTF8.self)])
+        } else {
+            try run(["set-option", "-qu", "-t", name, "@banyan-freeze"])
+        }
     }
 
     /// A banyan tmux server exits once its last session closes, so a server that

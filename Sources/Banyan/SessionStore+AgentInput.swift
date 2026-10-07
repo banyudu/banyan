@@ -16,6 +16,7 @@ struct SessionPaneTarget: Sendable {
     /// Parked sessions are deliberately outside the supervision loop, so a pane
     /// operation has to decide what to do about one rather than quietly resume it.
     let isSuspended: Bool
+    let isFrozen: Bool
 }
 
 /// One reading of a session's pane: what it shows, and what — if anything — it is
@@ -32,6 +33,7 @@ struct SessionPaneReading: Sendable {
     /// session, which was not observed at all.
     let observation: SessionStatusObservation?
     let isSuspended: Bool
+    let isFrozen: Bool
 }
 
 struct SessionInputReceipt: Sendable {
@@ -84,6 +86,10 @@ extension SessionStore {
     /// The bounded, prompt-aware path a delivery target is meant to use is
     /// `answerPrompt`.
     func injectInput(id: String, keys: [TmuxKey], text: String?, submit: Bool) async throws -> SessionInputReceipt {
+        let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession
+        terminal?.freezeInputInFlight += 1
+        defer { terminal?.freezeInputInFlight -= 1 }
+        try terminal?.unfreezeAgent()
         let target = try paneTarget(id: id)
         try Self.refuseIfSuspended(target)
         let backend = tmuxBackend
@@ -120,6 +126,10 @@ extension SessionStore {
     /// saw some time ago, and the only way to know it is still on screen is to
     /// look now. Every rejection path returns before a single keystroke is sent.
     func answerPrompt(id: String, request: AgentAnswerRequest) async throws -> SessionAnswerReceipt {
+        let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession
+        terminal?.freezeInputInFlight += 1
+        defer { terminal?.freezeInputInFlight -= 1 }
+        try terminal?.unfreezeAgent()
         try Self.refuseIfSuspended(paneTarget(id: id))
         let reading = try await readPaneOutput(id: id, lines: nil)
         let decision = decideAnswer(id: id, request: request, reading: reading)
@@ -167,7 +177,7 @@ extension SessionStore {
     ) -> SessionPaneReading? {
         guard let pane = backend.primaryPaneSnapshot(named: target.tmuxSessionName) else { return nil }
 
-        guard !target.isSuspended else {
+        guard !target.isSuspended && !target.isFrozen else {
             // Read the pane, observe nothing. One capture in answer to an explicit
             // request is not the supervision loop parking switched off.
             return SessionPaneReading(
@@ -179,7 +189,8 @@ extension SessionStore {
                 ),
                 prompt: nil,
                 observation: nil,
-                isSuspended: true
+                isSuspended: target.isSuspended,
+                isFrozen: target.isFrozen
             )
         }
 
@@ -224,7 +235,8 @@ extension SessionStore {
                     currentPath: result.currentPath
                 )
             },
-            isSuspended: false
+            isSuspended: false,
+            isFrozen: false
         )
     }
 }
