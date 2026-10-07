@@ -8,7 +8,9 @@ public struct CodexThreadState: Sendable {
     public var lastTurnStatus: String?
     public var pendingRequests: [CodexServerRequest] = []
     public var isSubscribed = false
-    public var thread: CodexJSONValue?
+    /// Compatibility accessor: hydration snapshots are transient, never retained
+    /// in lifecycle state. Consumers receive them through onHydrate instead.
+    public var thread: CodexJSONValue? { nil }
     fileprivate var revision = 0
 
     public var needsAttention: Bool {
@@ -28,10 +30,17 @@ public struct CodexThreadState: Sendable {
 public final class CodexThreadCoordinator {
     public private(set) var states: [String: CodexThreadState] = [:]
     public private(set) var selectedSessionID: String?
+    public var isEnabled = true
+    private var cliSessionIDs: Set<String> = []
+    private var serverReleasedForDisable = false
+    private var hasNativeConnection = false
     public var onChange: ((String, CodexThreadState) -> Void)?
     /// Drain queued host writes before start and after learning thread identity.
     public var flushPersistence: (() async -> Void)?
-    /// UI consumers hydrate with read() and then consume these streamed events.
+    /// The response is borrowed only for this callback; consumers retain a
+    /// bounded presentation, never the full raw resume history.
+    public var onHydrate: ((String, CodexJSONValue) -> Void)?
+    /// Streamed events may arrive during resume, before its hydration callback.
     public var onEvent: ((String, String, CodexJSONValue) -> Void)?
 
     private let service: any CodexThreadService
@@ -71,6 +80,99 @@ public final class CodexThreadCoordinator {
         if let threadID = binding.threadID { sessionIDByThreadID[threadID] = sessionID }
     }
 
+    public func discardUnstartedSession(sessionID: String) {
+        guard let state = states[sessionID], !state.binding.creationAttempted,
+              state.binding.threadID == nil, !state.isSubscribed else { return }
+        states.removeValue(forKey: sessionID)
+        if selectedSessionID == sessionID { selectedSessionID = nil }
+    }
+
+    /// The gate changes synchronously; reconcile under the same lifecycle lock
+    /// as connect/turn/fallback. Selection intent survives disable/re-enable.
+    public func synchronizeRollout() async throws {
+        await acquire()
+        defer { release() }
+        if isEnabled {
+            serverReleasedForDisable = false
+            if let selectedSessionID { try await attach(selectedSessionID) }
+        }
+        var failure: Error?
+        for id in Array(states.keys) {
+            do { try await releaseIdle(id) } catch { failure = failure ?? error }
+        }
+        // Even an unavailable unsubscribe capability can be handled by reaping
+        // an entirely idle server; busy sibling work must stay connected.
+        if try await finishDisableIfIdle() { return }
+        if let failure { throw failure }
+    }
+
+    @discardableResult
+    private func finishDisableIfIdle() async throws -> Bool {
+        guard !isEnabled, !serverReleasedForDisable, (hasNativeConnection || !states.isEmpty),
+              states.values.allSatisfy({
+                  $0.runtime.type != "active" && $0.activeTurnID == nil && !$0.needsAttention
+                      && (!$0.isSubscribed || $0.runtime.type == "idle")
+              }) else { return false }
+        try await service.disconnectForHandoff()
+        disconnected("Native Codex is disabled. Enable it in Preferences to reconnect, or use Codex CLI.")
+        for id in Array(states.keys) {
+            update(id) { $0.connection = .unsubscribed; $0.runtime = .init(type: "notLoaded") }
+        }
+        serverReleasedForDisable = true
+        return true
+    }
+
+    /// Probe startup before inserting a Banyan row. A rejected version cannot
+    /// leave a partial session. Recheck the gate after the asynchronous probe.
+    public func preflight() async throws -> String? {
+        await acquire()
+        defer { release() }
+        try checkEnabled()
+        try await service.connect()
+        hasNativeConnection = true
+        try checkEnabled()
+        let home = await service.storageHome()
+        try checkEnabled()
+        return home
+    }
+
+    /// The shared server owns writers beyond unsubscribe's grace period. Reap
+    /// it before launching the CLI, only when every native thread is safe.
+    /// Keep mappings reserved so an in-flight selection cannot restart a thread.
+    public func prepareForCLIFallback(sessionID: String) async throws -> CodexThreadBinding {
+        await acquire()
+        defer { release() }
+        guard var state = states[sessionID] else {
+            throw CodexAppServerError.protocolViolation("Unknown Banyan Codex session")
+        }
+        if state.binding.codexHome == nil {
+            guard let home = await service.storageHome() else {
+                throw CodexAppServerError.protocolViolation("Cannot determine this thread's Codex storage location. Reconnect once to record it before CLI fallback.")
+            }
+            state.binding.codexHome = home
+            update(sessionID) { $0.binding.codexHome = state.binding.codexHome }
+            await flushPersistence?()
+        }
+        _ = try CodexCLIFallback.command(binding: state.binding)
+        guard states.values.allSatisfy({
+            $0.runtime.type != "active" && $0.activeTurnID == nil && !$0.needsAttention
+                && (!$0.isSubscribed || $0.runtime.type == "idle")
+        }) else {
+            throw CodexAppServerError.protocolViolation("Finish active native Codex turns and pending requests before switching to the CLI")
+        }
+        try await service.disconnectForHandoff()
+        disconnected("Codex server released for CLI fallback. Reconnect native sessions when needed.")
+        cliSessionIDs.insert(sessionID)
+        if selectedSessionID == sessionID { selectedSessionID = nil }
+        return state.binding
+    }
+
+    private func checkEnabled() throws {
+        guard isEnabled else {
+            throw CodexAppServerError.protocolViolation("Native Codex is disabled. Enable it in Preferences or use the Codex CLI runtime.")
+        }
+    }
+
     /// Removed rows can still own busy work. Reserve their IDs for this app
     /// lifetime so a later spawn cannot inherit that work or its settings.
     public func reserves(sessionID: String) -> Bool { states[sessionID] != nil }
@@ -83,12 +185,13 @@ public final class CodexThreadCoordinator {
         await acquire()
         defer { release() }
         var failure: Error?
-        if let selected = selectedSessionID {
+        if isEnabled, let selected = selectedSessionID {
             do { try await attach(selected) } catch { failure = error }
         }
-        for id in Array(states.keys) where id != selectedSessionID {
+        for id in Array(states.keys) where !isEnabled || id != selectedSessionID {
             do { try await releaseIdle(id) } catch { failure = failure ?? error }
         }
+        if try await finishDisableIfIdle() { return }
         if let failure { throw failure }
     }
 
@@ -103,6 +206,7 @@ public final class CodexThreadCoordinator {
     }
 
     public func list(cursor: String? = nil, cwd: String? = nil) async throws -> CodexJSONValue {
+        try checkEnabled()
         var params: [String: CodexJSONValue] = [:]
         if let cursor { params["cursor"] = .string(cursor) }
         if let cwd { params["cwd"] = .string(cwd) }
@@ -112,17 +216,24 @@ public final class CodexThreadCoordinator {
     /// Read is deliberately subscription-free, including during writer conflicts.
     public func read(sessionID: String, includeTurns: Bool = true) async throws -> CodexJSONValue {
         let threadID = try mappedID(sessionID)
-        return try await service.request("thread/read", params: .object([
-            "threadId": .string(threadID), "includeTurns": .bool(includeTurns)
-        ]))
+        let params: CodexJSONValue = .object(["threadId": .string(threadID), "includeTurns": .bool(includeTurns)])
+        if !isEnabled {
+            guard states[sessionID]?.isSubscribed == true else {
+                throw CodexAppServerError.protocolViolation("Native Codex is disabled; this idle thread has been released. Enable it in Preferences to read history.")
+            }
+            return try await service.requestWhileConnected("thread/read", params: params)
+        }
+        return try await service.request("thread/read", params: params)
     }
 
     /// Resolve an uncertain start using an explicitly chosen stored thread.
     /// Existing mappings are immutable; this cannot replace a failed resume.
     public func recoverCreation(sessionID: String, threadID: String) async throws {
+        try checkEnabled()
         await ensureObservation()
         await acquire()
         defer { release() }
+        try checkEnabled()
         guard let state = states[sessionID], state.binding.threadID == nil,
               sessionIDByThreadID[threadID] == nil else {
             throw CodexAppServerError.protocolViolation("This session or thread already has a mapping")
@@ -140,10 +251,12 @@ public final class CodexThreadCoordinator {
     }
 
     public func startTurn(sessionID: String, input: [CodexJSONValue]) async throws -> CodexJSONValue {
+        try checkEnabled()
         await ensureObservation()
         await acquire()
         defer { release() }
         try await attach(sessionID)
+        try checkEnabled()
         guard let state = states[sessionID], !state.needsAttention,
               state.runtime.type == "idle", state.activeTurnID == nil else {
             throw CodexAppServerError.protocolViolation("Finish the active turn or answer the pending request first")
@@ -166,10 +279,30 @@ public final class CodexThreadCoordinator {
         }
     }
 
-    public func interrupt(sessionID: String) async throws {
-        guard let turnID = states[sessionID]?.activeTurnID else { return }
-        _ = try await service.request("turn/interrupt", params: .object([
+    public func interrupt(sessionID: String, expectedTurnID: String? = nil) async throws {
+        guard let state = states[sessionID] else { return }
+        let requestedTurn = expectedTurnID.flatMap { expected in
+            state.pendingRequests.contains { $0.params.objectValue?["turnId"]?.stringValue == expected } ? expected : nil
+        }
+        guard let turnID = state.activeTurnID ?? requestedTurn else { return }
+        guard expectedTurnID == nil || expectedTurnID == turnID else {
+            throw CodexAppServerError.protocolViolation("The active turn changed; review it before interrupting")
+        }
+        let params: CodexJSONValue = .object([
             "threadId": .string(try mappedID(sessionID)), "turnId": .string(turnID)
+        ])
+        if isEnabled { _ = try await service.request("turn/interrupt", params: params) }
+        else { _ = try await service.requestWhileConnected("turn/interrupt", params: params) }
+    }
+
+    public func steer(sessionID: String, expectedTurnID: String, input: [CodexJSONValue]) async throws -> CodexJSONValue {
+        try checkEnabled()
+        guard let state = states[sessionID], state.connection == .subscribed,
+              state.activeTurnID == expectedTurnID, !state.needsAttention else {
+            throw CodexAppServerError.protocolViolation("The active turn changed or needs a response; review it before steering")
+        }
+        return try await service.request("turn/steer", params: .object([
+            "threadId": .string(try mappedID(sessionID)), "expectedTurnId": .string(expectedTurnID), "input": .array(input)
         ]))
     }
 
@@ -222,11 +355,36 @@ public final class CodexThreadCoordinator {
         setup = nil
     }
 
-    private func attach(_ id: String) async throws {
+    private func attach(_ id: String, observeBusyWhileDisabled: Bool = false) async throws {
+        let observingExisting = observeBusyWhileDisabled && states[id]?.binding.threadID != nil
+            && (states[id]?.runtime.type == "active" || states[id]?.needsAttention == true)
+        do {
+            if !observingExisting { try checkEnabled() }
+            guard !cliSessionIDs.contains(id) else {
+                throw CodexAppServerError.protocolViolation("This session now uses the Codex CLI")
+            }
+        } catch { recordFailure(error, sessionID: id); throw error }
         guard let state = states[id] else { throw CodexAppServerError.protocolViolation("Unknown Banyan Codex session") }
         if state.isSubscribed && state.connection == .subscribed { return }
         let current = epoch
         let revision = state.revision
+        do {
+            // Existing-turn observation must not implicitly connect while disabled.
+            if isEnabled || !observingExisting {
+                try await service.connect()
+                hasNativeConnection = true
+            }
+            try checkEpoch(current)
+            if let home = await service.storageHome() {
+                if let recorded = state.binding.codexHome, recorded != home {
+                    throw CodexAppServerError.protocolViolation("Native Codex storage location changed. Use Codex CLI to resume this thread from its recorded storage location.")
+                }
+                if state.binding.codexHome == nil {
+                    update(id) { $0.binding.codexHome = home }
+                    await flushPersistence?()
+                }
+            }
+        } catch { recordFailure(error, sessionID: id); throw error }
         var params = state.binding.settings.parameters(cwd: state.binding.cwd)
         let method: String
         if let threadID = state.binding.threadID {
@@ -240,7 +398,6 @@ public final class CodexThreadCoordinator {
             }
             method = "thread/start"
             do {
-                try await service.connect()
                 try checkEpoch(current)
                 try Task.checkCancellation()
             } catch {
@@ -252,8 +409,14 @@ public final class CodexThreadCoordinator {
             await flushPersistence?()
         }
         update(id) { $0.connection = .connecting }
+        var requestSent = false
         do {
-            let result = try await service.request(method, params: .object(params))
+            if !observingExisting { try checkEnabled() }
+            let result: CodexJSONValue
+            requestSent = true
+            if !isEnabled && observingExisting {
+                result = try await service.requestWhileConnected(method, params: .object(params))
+            } else { result = try await service.request(method, params: .object(params)) }
             try checkEpoch(current)
             guard let thread = result.objectValue?["thread"],
                   let threadID = thread.objectValue?["id"]?.stringValue, !threadID.isEmpty,
@@ -266,7 +429,6 @@ public final class CodexThreadCoordinator {
                 if let provider = result.objectValue?["modelProvider"]?.stringValue { $0.binding.settings.modelProvider = provider }
                 $0.isSubscribed = true
                 $0.connection = .subscribed
-                $0.thread = thread
                 if $0.revision == revision {
                     $0.runtime = CodexThreadRuntime(thread.objectValue?["status"])
                     $0.activeTurnID = nil
@@ -278,19 +440,36 @@ public final class CodexThreadCoordinator {
                 }
             }
             sessionIDByThreadID[threadID] = id
+            onHydrate?(id, thread)
             await flushPersistence?()
         } catch {
+            // JSON-RPC method-not-found proves thread/start did not create one.
+            // A timeout or malformed reply remains uncertain and must be recovered.
+            if method == "thread/start" {
+                var definitelyUncreated = !requestSent
+                if let serverError = error as? CodexAppServerError {
+                    switch serverError {
+                    case .remote(code: -32601, message: _), .launch, .incompatibleVersion, .timedOut("initialize"):
+                        definitelyUncreated = true
+                    default: break
+                    }
+                }
+                if definitelyUncreated { update(id) { $0.binding.creationAttempted = false } }
+            }
             recordFailure(error, sessionID: id)
             throw error
         }
     }
 
     private func releaseIdle(_ id: String) async throws {
-        guard id != selectedSessionID, let state = states[id], state.canReleaseSubscription,
+        guard (!isEnabled || id != selectedSessionID), let state = states[id], state.canReleaseSubscription,
               let threadID = state.binding.threadID else { return }
         let current = epoch
         do {
-            let result = try await service.request("thread/unsubscribe", params: .object(["threadId": .string(threadID)]))
+            let params: CodexJSONValue = .object(["threadId": .string(threadID)])
+            let result: CodexJSONValue
+            if isEnabled { result = try await service.request("thread/unsubscribe", params: params) }
+            else { result = try await service.requestWhileConnected("thread/unsubscribe", params: params) }
             try checkEpoch(current)
             guard let status = result.objectValue?["status"]?.stringValue,
                   ["unsubscribed", "notSubscribed", "notLoaded"].contains(status) else {
@@ -299,13 +478,12 @@ public final class CodexThreadCoordinator {
             update(id) {
                 $0.isSubscribed = false
                 $0.connection = .unsubscribed
-                $0.thread = nil
                 if status == "notLoaded" { $0.runtime = .init(type: "notLoaded") }
             }
             // An external turn or selection can arrive while unsubscribe awaits.
             // Reattach immediately rather than hiding its work or approvals.
-            if selectedSessionID == id || states[id]?.runtime.type == "active" || states[id]?.needsAttention == true {
-                try await attach(id)
+            if (isEnabled && selectedSessionID == id) || states[id]?.runtime.type == "active" || states[id]?.needsAttention == true {
+                try await attach(id, observeBusyWhileDisabled: !isEnabled)
             }
         } catch {
             recordFailure(error, sessionID: id)
@@ -318,8 +496,17 @@ public final class CodexThreadCoordinator {
         case .disconnected(let error): disconnected(error.localizedDescription)
         case .notification(let method, let params):
             let object = params.objectValue
-            guard let threadID = object?["threadId"]?.stringValue ?? object?["thread"]?.objectValue?["id"]?.stringValue,
-                  let id = sessionIDByThreadID[threadID] else { return }
+            guard let threadID = object?["threadId"]?.stringValue ?? object?["thread"]?.objectValue?["id"]?.stringValue else {
+                // Global warnings/new events are inspectable, but never reduced
+                // as session/turn mutations without a thread identity.
+                for (id, state) in states where state.isSubscribed { onEvent?(id, method, params) }
+                return
+            }
+            guard let id = sessionIDByThreadID[threadID] else { return }
+            let completedTurnID = method == "turn/completed" ? object?["turn"]?.objectValue?["id"]?.stringValue : nil
+            let endingRequests = (states[id]?.pendingRequests ?? []).filter {
+                completedTurnID != nil && $0.params.objectValue?["turnId"]?.stringValue == completedTurnID
+            }
             let lifecycleChanged = ["thread/status/changed", "turn/started", "turn/completed", "serverRequest/resolved", "thread/closed"].contains(method)
             if lifecycleChanged {
                 update(id) { state in
@@ -333,34 +520,45 @@ public final class CodexThreadCoordinator {
                         state.lastTurnStatus = nil
                         state.activeTurnID = object?["turn"]?.objectValue?["id"]?.stringValue
                     case "turn/completed":
+                        let completedID = object?["turn"]?.objectValue?["id"]?.stringValue
+                        state.pendingRequests.removeAll { $0.params.objectValue?["turnId"]?.stringValue == completedID }
+                        guard state.activeTurnID == nil || state.activeTurnID == completedID else { break }
                         state.lastTurnStatus = object?["turn"]?.objectValue?["status"]?.stringValue
                         state.activeTurnID = nil
                         state.runtime = .init(type: "idle")
-                        state.pendingRequests = []
                     case "serverRequest/resolved":
                         state.pendingRequests.removeAll { $0.id == object?["requestId"] }
                     case "thread/closed":
                         state.isSubscribed = false
                         state.runtime = .init(type: "notLoaded")
                         state.connection = .unsubscribed
-                        state.thread = nil
+                        state.pendingRequests = []
                     default: break
                     }
                 }
             }
-            if method == "turn/completed" { clearReplies(threadID: threadID) }
+            if method == "turn/completed", let turnID = object?["turn"]?.objectValue?["id"]?.stringValue {
+                // A delayed completion must not cancel requests from a newer turn.
+                for request in endingRequests where request.params.objectValue?["turnId"]?.stringValue == turnID {
+                    replies.removeValue(forKey: replyKey(threadID, request.id))?.resume(
+                        returning: .error(code: -32000, message: "Codex turn ended"))
+                }
+            }
             if method == "serverRequest/resolved", let requestID = object?["requestId"] {
                 replies.removeValue(forKey: replyKey(threadID, requestID))?.resume(
                     returning: .error(code: -32000, message: "Codex request was resolved by another client"))
             }
             if method == "thread/closed" { clearReplies(threadID: threadID) }
             onEvent?(id, method, params)
-            if lifecycleChanged, id != selectedSessionID, states[id]?.canReleaseSubscription == true {
+            if lifecycleChanged, (!isEnabled || id != selectedSessionID), states[id]?.canReleaseSubscription == true {
                 Task { [weak self] in
                     guard let self else { return }
                     await self.acquire()
                     defer { self.release() }
-                    try? await self.releaseIdle(id) // releaseIdle publishes errors.
+                    do {
+                        try await self.releaseIdle(id)
+                        try await self.finishDisableIfIdle()
+                    } catch { self.recordFailure(error, sessionID: id) }
                 }
             }
         }
@@ -384,6 +582,7 @@ public final class CodexThreadCoordinator {
     }
 
     private func disconnected(_ message: String) {
+        hasNativeConnection = false
         epoch += 1
         for id in Array(states.keys) {
             update(id) {
@@ -392,7 +591,6 @@ public final class CodexThreadCoordinator {
                 // Runtime is unknown, not hibernated: a turn may have been cut off.
                 $0.runtime = .init()
                 $0.pendingRequests = []
-                $0.thread = nil
                 $0.revision += 1
             }
         }

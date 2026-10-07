@@ -113,7 +113,12 @@ struct PreferencesSheet: View {
                 Text("Codex")
                     .font(.headline)
 
-                Toggle("Enable Codex app-server mode", isOn: $store.enableCodexAppServerMode)
+                Toggle("Enable native Codex client (preview)", isOn: $store.enableNativeCodex)
+                Text("Allows new native sessions and turns. Disabling releases idle threads; active turns and pending replies stay connected until finished. CLI and Puck runtimes are independent.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Enable Codex remote-control TUI", isOn: $store.enableCodexAppServerMode)
 
                 Text(codexConnectionDescription)
                     .font(.caption)

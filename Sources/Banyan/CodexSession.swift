@@ -2,11 +2,15 @@ import BanyanCore
 import Foundation
 import SwiftUI
 
-/// Native thread identity and lifecycle. Transcript rendering and approval
-/// controls can consume state/pendingRequests plus coordinator.read/onEvent.
+/// Native thread identity, conversation, and actions survive view selection.
 @MainActor
 final class CodexSession: BanyanSession {
     @Published private(set) var state: CodexThreadState
+    @Published private(set) var conversation = CodexConversation()
+    @Published private(set) var actionError: String?
+    @Published private(set) var isSending = false
+    @Published private(set) var submittedRequestIDs: Set<String> = []
+    @Published var draft = ""
     let coordinator: CodexThreadCoordinator
 
     init(snapshot: SessionSnapshot, coordinator: CodexThreadCoordinator,
@@ -45,6 +49,9 @@ final class CodexSession: BanyanSession {
     }
 
     func apply(_ next: CodexThreadState) {
+        if next.connection == .connecting, state.connection != .connecting { conversation.beginHydration() }
+        if next.connection == .unsubscribed, state.connection != .unsubscribed { conversation.releaseHistory() }
+        submittedRequestIDs.formIntersection(next.pendingRequests.map { $0.id.inspectableText })
         state = next
         agentSessionID = next.binding.threadID
         markDetectedAgentModel(next.binding.settings.model, isExact: true)
@@ -62,6 +69,89 @@ final class CodexSession: BanyanSession {
         }
         mark(status: nextStatus, tone: PuckSessionStatusPolicy.tone(for: nextStatus))
         touch()
+    }
+
+    func receive(method: String, params: CodexJSONValue) {
+        // Queued item deltas after a safe unsubscribe must not recreate an
+        // idle background cache. Active work/requests still own observation.
+        if state.connection == .unsubscribed, state.activeTurnID == nil, !state.needsAttention { return }
+        guard let threadID = state.binding.threadID else { return }
+        conversation.receive(method: method, params: params, threadID: threadID)
+    }
+
+    func hydrate(thread: CodexJSONValue) {
+        guard let threadID = state.binding.threadID else { return }
+        conversation.hydrate(thread: thread, threadID: threadID)
+    }
+
+    var canSend: Bool {
+        !isSending && state.connection == .subscribed && !state.needsAttention
+            && (state.activeTurnID != nil || state.runtime.type == "idle")
+            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func sendDraft() async {
+        guard canSend else { return }
+        let text = draft
+        let turnID = state.activeTurnID
+        isSending = true
+        actionError = nil
+        defer { isSending = false }
+        do {
+            let input: [CodexJSONValue] = [.object(["type": .string("text"), "text": .string(text)])]
+            if let turnID {
+                _ = try await coordinator.steer(sessionID: id, expectedTurnID: turnID, input: input)
+            } else {
+                _ = try await coordinator.startTurn(sessionID: id, input: input)
+            }
+            if draft == text { draft = "" }
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func interrupt() async {
+        actionError = nil
+        do { try await coordinator.interrupt(sessionID: id) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func respond(_ request: CodexServerRequest, decision: CodexApprovalDecision) {
+        do { try submit(request, reply: CodexConversationRequest(request).approvalReply(decision)) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func answer(_ request: CodexServerRequest, answers: [String: String]) {
+        do { try submit(request, reply: CodexConversationRequest(request).inputReply(answers)) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func skipInput(_ request: CodexServerRequest) {
+        do { try submit(request, reply: CodexConversationRequest(request).skippedInputReply) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    func cancelInput(_ request: CodexServerRequest) async {
+        actionError = nil
+        do {
+            // Interrupt the requested turn before unblocking its tool. Never
+            // send a made-up option or interrupt a successor turn.
+            if let turnID = request.params.objectValue?["turnId"]?.stringValue {
+                try await coordinator.interrupt(sessionID: id, expectedTurnID: turnID)
+            }
+            if state.pendingRequests.contains(where: { $0.id == request.id }), !submittedRequestIDs.contains(request.id.inspectableText) {
+                try submit(request, reply: CodexConversationRequest(request).skippedInputReply)
+            }
+        } catch { actionError = error.localizedDescription }
+    }
+
+    func rejectUnsupported(_ request: CodexServerRequest) {
+        do { try submit(request, reply: .error(code: -32601, message: "Banyan does not support this request: \(request.method)")) }
+        catch { actionError = error.localizedDescription }
+    }
+
+    private func submit(_ request: CodexServerRequest, reply: CodexServerReply) throws {
+        try coordinator.respond(sessionID: id, requestID: request.id, reply: reply)
+        submittedRequestIDs.insert(request.id.inspectableText)
+        actionError = nil
     }
 
     func reconnect() {
@@ -94,28 +184,5 @@ final class CodexSession: BanyanSession {
             guard let self else { return }
             try? await coordinator.detach(sessionID: id)
         }
-    }
-}
-
-/// Lifecycle surface until the conversation view is integrated.
-struct CodexSessionDetail: View {
-    @ObservedObject var session: CodexSession
-
-    var body: some View {
-        ContentUnavailableView {
-            Label("Codex Thread", systemImage: "bubble.left.and.bubble.right")
-        } description: {
-            Text(session.state.connection.message ?? statusDescription)
-            if let threadID = session.state.binding.threadID { Text(threadID).font(.caption).textSelection(.enabled) }
-        } actions: {
-            Button("Reconnect") { session.reconnect() }
-        }
-    }
-
-    private var statusDescription: String {
-        if session.state.needsAttention { return "Codex is waiting for a response. The subscription remains active." }
-        if session.state.runtime.type == "active" { return "A Codex turn is running." }
-        if session.state.connection == .connecting { return "Connecting to Codex…" }
-        return "Thread connected. Conversation controls will be available in the native conversation view."
     }
 }

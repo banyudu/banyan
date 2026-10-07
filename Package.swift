@@ -25,6 +25,10 @@ var packageTargets: [Target] = [
             dependencies: ["BanyanCore"]
         ),
         .testTarget(
+            name: "BanyanCtlTests",
+            dependencies: ["BanyanCtl"]
+        ),
+        .testTarget(
             name: "BanyanCoreTests",
             dependencies: ["BanyanCore"]
         ),
