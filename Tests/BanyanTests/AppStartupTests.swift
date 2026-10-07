@@ -1,12 +1,61 @@
 import AppKit
 import BanyanCore
 import Foundation
+import Network
 import Testing
 @testable import Banyan
 
 @Suite(.serialized)
 @MainActor
 struct AppStartupTests {
+    @Test func stoppingDuringBindRetryCannotResurrectTheListener() async throws {
+        let ownerFixture = try StartupFixture()
+        let ownerStore = ownerFixture.makeStore()
+        defer { ownerFixture.stop(ownerStore) }
+        ownerStore.startRuntimeIfNeeded()
+        let owner = try #require(ownerFixture.server)
+        try await waitForPuckState { owner.listeningPort != nil }
+        let port = NWEndpoint.Port(rawValue: try #require(owner.listeningPort))!
+
+        let fixture = try StartupFixture()
+        let store = fixture.makeStore()
+        defer { fixture.stop(store) }
+        let server = ControlServer(store: store, host: fixture.host, port: port)
+        defer { server.stop() }
+        server.start()
+        try await waitForPuckState { server.hasPendingBindRetry }
+        #expect(server.listeningPort == nil)
+
+        server.stop()
+        owner.stop()
+        #expect(!server.hasPendingBindRetry)
+        // Starting again must also respect permanent shutdown, even once the
+        // old owner has released the port and the original retry is due.
+        server.start()
+        try await Task.sleep(for: .milliseconds(1_200))
+        #expect(server.listeningPort == nil)
+        #expect(!server.hasPendingBindRetry)
+
+        let successor = ControlServer(store: store, host: fixture.host, port: port)
+        defer { successor.stop() }
+        successor.start()
+        try await waitForPuckState { successor.listeningPort == port.rawValue }
+    }
+
+    @Test func stopBeforeFirstStartPreventsBinding() async throws {
+        let fixture = try StartupFixture()
+        let store = fixture.makeStore()
+        defer { fixture.stop(store) }
+        let server = ControlServer(store: store, host: fixture.host, port: .any)
+        defer { server.stop() }
+
+        server.stop()
+        server.start()
+        // These synchronous snapshots drain the queued initial start.
+        #expect(server.listeningPort == nil)
+        #expect(!server.hasPendingBindRetry)
+    }
+
     @Test func windowlessLifecycleRestoresSessionsBeforeServingRequests() async throws {
         let fixture = try StartupFixture()
         fixture.persistence.save([SessionSnapshot(
@@ -73,9 +122,9 @@ private final class StartupFixture {
     let home: URL
     let persistence: SessionPersistence
     let daemon = FakePuckDaemon()
-    private let host: HostRuntimeContext
+    let host: HostRuntimeContext
     private let tmux: TmuxBackend
-    private var server: ControlServer?
+    private(set) var server: ControlServer?
     private(set) var sessionsAtServerCreation: [[String]] = []
 
     init() throws {
