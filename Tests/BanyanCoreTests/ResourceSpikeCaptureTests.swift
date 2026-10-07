@@ -94,14 +94,23 @@ import Darwin
         var store = ResourceSpikeCaptureStore(directoryURL: directory)
         store.maxCaptures = 2
         store.maxStackBytes = 64
-        let oldest = record(createdAt: Date().addingTimeInterval(-20))
+        let now = Date()
+        let oldest = record(createdAt: now.addingTimeInterval(-20))
         try store.prepare(oldest)
         // An interrupted capture has no readable JSON but must still be pruned.
         try FileManager.default.removeItem(at: store.captureDirectory(id: oldest.id).appendingPathComponent("capture.json"))
-        let next = record(createdAt: Date().addingTimeInterval(-10))
+        // Retention orders directory mtimes, not JSON dates. Set distinct ages
+        // after mutations, including deletion of the incomplete capture's JSON.
+        try FileManager.default.setAttributes([.modificationDate: oldest.createdAt],
+            ofItemAtPath: store.captureDirectory(id: oldest.id).path)
+        let next = record(createdAt: now.addingTimeInterval(-10))
         try store.prepare(next)
-        let newest = record(createdAt: Date())
+        try FileManager.default.setAttributes([.modificationDate: next.createdAt],
+            ofItemAtPath: store.captureDirectory(id: next.id).path)
+        let newest = record(createdAt: now)
         try store.prepare(newest)
+        try FileManager.default.setAttributes([.modificationDate: newest.createdAt],
+            ofItemAtPath: store.captureDirectory(id: newest.id).path)
         #expect(!FileManager.default.fileExists(atPath: store.captureDirectory(id: oldest.id).path))
         let raw = store.captureDirectory(id: newest.id).appendingPathComponent("sample.partial")
         try Data(repeating: 65, count: 200).write(to: raw)
