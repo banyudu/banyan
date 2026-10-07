@@ -77,12 +77,6 @@ private struct PendingLinearDescriptionUpdate {
     let newDescription: String
 }
 
-private struct SupervisorObservationState {
-    let lastObservation: SessionStatusObservation?
-    let stableObservations: Int
-    let nextDueAt: Date
-}
-
 private enum HandoffDispatchError: Error {
     case commandUnavailable(String)
     case failed(Int32, String)
@@ -156,14 +150,14 @@ final class SessionStore: ObservableObject {
             freezePreferences.set(autoFreezeAgents, forKey: "autoFreezeAgents")
             nextAutoFreezeProbeAt = .distantPast
             if !autoFreezeAgents { resumeAllFrozenAgents() }
-            if didStartRuntime { rescheduleSupervisor() }
+            if didStartSupervisor { rescheduleSupervisor() }
         }
     }
     @Published var agentFreezeIdleMinutes: Double = 10 {
         didSet {
             freezePreferences.set(agentFreezeIdleMinutes, forKey: "agentFreezeIdleMinutes")
             nextAutoFreezeProbeAt = .distantPast
-            if didStartRuntime { rescheduleSupervisor() }
+            if didStartSupervisor { rescheduleSupervisor() }
         }
     }
     @Published var selectedSessionID: String? {
@@ -412,21 +406,26 @@ final class SessionStore: ObservableObject {
     private let attentionNotifier: AttentionNotifier
     private var didLoadPersistedSessions = false
     private var supervisorTimer: Timer?
+    private var didStartSupervisor = false
     /// Outlives individual ticks so a pane that produced no output since the last
     /// observation is classified from the text already in hand instead of paying
     /// another `tmux capture-pane`. See `SupervisorInspectionCache`.
     private let supervisorInspectionCache = SupervisorInspectionCache()
-    /// Effective cadence the live `supervisorTimer` was installed with, so we can
-    /// skip re-installing the timer when the adaptive interval is unchanged.
-    private var currentSupervisorInterval: TimeInterval = 0
+    private var supervisorTimerDueAt = Date.distantPast
+    private var supervisorTimerGeneration = UUID()
+    private var supervisorScheduledInterval: TimeInterval = 0
     /// Per-session observation state. Quiet sessions back off independently so
     /// one active agent does not force every stale session through tmux on each
     /// global timer fire.
-    private var supervisorObservationStates: [String: SupervisorObservationState] = [:]
+    private var supervisorObservationStates: [String: SessionSupervisorObservationState] = [:]
+    private lazy var supervisorProcessExitMonitor = SupervisorProcessExitMonitor { [weak self] id in
+        self?.resetSupervisorObservationBackoff(for: id)
+    }
     /// App-lifecycle / thermal / power observers that re-evaluate the supervisor
     /// cadence. Installed once; retained so they outlive `addObserver`.
     private var supervisorLifecycleObservers: [NSObjectProtocol] = []
-    private var isSupervisorTickRunning = false
+    private var supervisorTickSchedule = SessionSupervisorTickSchedule()
+    private var pendingSupervisorActivityIDs: Set<String> = []
     /// Watches Codex's session index so a thread renamed mid-conversation
     /// reaches the sidebar without waiting for the next launch.
     private var codexTitleWatcher: CodexSessionIndexWatcher?
@@ -484,8 +483,8 @@ final class SessionStore: ObservableObject {
     private static let linearIssueListRefreshInterval: TimeInterval = 30 * 60
     private static let linearIssueListLoadTimeout: TimeInterval = 45
     private var branchRefreshTimer: Timer?
-    /// Effective cadence the live `branchRefreshTimer` was installed with, mirroring
-    /// `currentSupervisorInterval` so a reschedule that changes nothing is free.
+    /// Effective cadence the live branch timer was installed with, so a
+    /// reschedule that changes nothing is free.
     private var currentBranchRefreshInterval: TimeInterval = 0
     private var branchRefreshTask: Task<Void, Never>?
     private var lastBranchRefreshByCWD: [String: Date] = [:]
@@ -1450,7 +1449,10 @@ final class SessionStore: ObservableObject {
         branchRefreshTimer?.invalidate()
         currentBranchRefreshInterval = interval
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshBranchContextsIfNeeded() }
+            Task { @MainActor in
+                self?.refreshBranchContextsIfNeeded()
+                self?.refreshSelectedContextInfoIfStale()
+            }
         }
         // Let macOS coalesce these wakeups with other timers to cut energy use.
         timer.tolerance = interval * 0.3
@@ -2095,7 +2097,8 @@ final class SessionStore: ObservableObject {
         installSupervisorLifecycleObserversIfNeeded()
         rescheduleBranchRefreshTimer()
         installCodexTitleWatcherIfNeeded()
-        guard supervisorTimer == nil else { return }
+        guard !didStartSupervisor else { return }
+        didStartSupervisor = true
         rescheduleSupervisor(runImmediately: true)
         startPuckObservation()
     }
@@ -2123,22 +2126,44 @@ final class SessionStore: ObservableObject {
         return app.occlusionState.contains(.visible) ? .backgroundVisible : .hidden
     }
 
-    /// Adaptive cadence for the supervisor poll. Each tick spawns `/bin/ps`, one
-    /// batched `tmux list-panes`, and captures text only for live coding agents.
+    /// Adaptive cadence for the supervisor poll. Each tick batches pane metadata,
+    /// and due observations share one process snapshot and cached pane captures.
     /// Stable sessions are deferred independently, and when every session is
     /// deferred the timer sleeps until the next one is due. The base interval is
     /// still adaptive to foreground/background, battery, thermal state, and
     /// session count so active work remains responsive.
     private var supervisorBaseInterval: TimeInterval {
         let startedSessions = sessions.reduce(into: 0) { count, session in
-            if session.status != .closed && session.isProcessStarted { count += 1 }
+            guard session.status != .closed else { return }
+            if let terminal = session as? TerminalSession {
+                guard !terminal.isFrozen else { return }
+                if SessionLifecyclePolicy.participatesInSupervisorTick(
+                    isProcessStarted: terminal.isProcessStarted,
+                    isRestored: terminal.isRestored,
+                    isSuspended: terminal.isSuspended
+                ) { count += 1 }
+            } else if session.isProcessStarted {
+                count += 1
+            }
         }
         let activeSessions = sessions.reduce(into: 0) { count, session in
             guard session.status != .closed else { return }
             // A running puck turn can finish between listings just as a terminal
             // agent can between inspections. It adds no inspection cost, so it
             // counts as active work without counting toward the fleet size.
-            let isObserved = session is PuckSession ? puckObservation == nil && !session.isSuspended : session.isProcessStarted
+            let isObserved: Bool
+            if let terminal = session as? TerminalSession {
+                guard !terminal.isFrozen else { return }
+                // Restored/unattached panes are still inspected. Excluding them
+                // here gave a hidden executing fleet the 300s idle cadence.
+                isObserved = SessionLifecyclePolicy.participatesInSupervisorTick(
+                    isProcessStarted: terminal.isProcessStarted,
+                    isRestored: terminal.isRestored,
+                    isSuspended: terminal.isSuspended
+                )
+            } else {
+                isObserved = session is PuckSession ? puckObservation == nil && !session.isSuspended : session.isProcessStarted
+            }
             guard isObserved else { return }
             if !session.status.isCodingAgentIdle && ![.completed, .failed].contains(session.status) {
                 count += 1
@@ -2177,11 +2202,16 @@ final class SessionStore: ObservableObject {
         return isPuckDaemonReachable ? min(terminalInterval, baseInterval) : terminalInterval
     }
 
-    /// The cadence the terminals alone need: the base interval while any of
-    /// them is busy, backing off as they stay quiet.
+    private func isSelectedAttached(_ session: BanyanSession) -> Bool {
+        session.id == selectedSessionID
+            && (session as? TerminalSession)?.loadedTerminalView?.process.running == true
+    }
+
+    /// Back off expensive observations independently, but retain a bounded
+    /// batched activity probe for unattached/evicted panes without PTY callbacks.
     private func terminalSupervisorInterval(baseInterval: TimeInterval) -> TimeInterval {
-        let participatingSessions = sessions.filter {
-            $0.status != .closed
+        let participatingSessions = terminalSessions.filter {
+            $0.status != .closed && !$0.isFrozen
                 && SessionLifecyclePolicy.participatesInSupervisorTick(
                     isProcessStarted: $0.isProcessStarted,
                     isRestored: $0.isRestored,
@@ -2190,45 +2220,42 @@ final class SessionStore: ObservableObject {
         }
         guard !participatingSessions.isEmpty else { return baseInterval }
 
-        let requiresFrequentObservation = participatingSessions.contains { session in
-            guard let state = supervisorObservationStates[session.id],
-                  state.lastObservation != nil else {
-                return true
-            }
-            return SessionSupervisorBackoffPolicy.requiresFrequentObservation(
-                status: session.status,
-                stableObservations: state.stableObservations
-            )
-        }
-        guard !requiresFrequentObservation else { return baseInterval }
-
         let now = Date()
-        guard let nextDueAt = participatingSessions
-            .compactMap({ supervisorObservationStates[$0.id]?.nextDueAt })
-            .min()
-        else {
-            return baseInterval
-        }
-        return max(1, nextDueAt.timeIntervalSince(now))
+        return participatingSessions.map { session in
+            (supervisorObservationStates[session.id] ?? .init()).nextProbeInterval(
+                baseInterval: baseInterval,
+                status: session.status,
+                isSelectedAttached: isSelectedAttached(session),
+                at: now
+            )
+        }.min() ?? baseInterval
     }
 
     /// Re-evaluate the adaptive cadence and reinstall the timer only when it
     /// actually changed. `runImmediately` fires a tick now (used on launch and when
     /// the app regains focus, so the sidebar refreshes without waiting a full cycle).
     private func rescheduleSupervisor(runImmediately: Bool = false) {
+        guard didStartSupervisor else { return }
         if runImmediately {
             runSupervisorTick(force: true)
         }
 
-        let interval = supervisorInterval
-        if supervisorTimer != nil, abs(interval - currentSupervisorInterval) < 0.01 {
-            return
-        }
-
+        // A tick owns the next deadline until it completes. Timer/lifecycle
+        // requests during it are coalesced into the per-session due state.
+        let now = Date()
+        let intervalRequested = pendingSupervisorActivityIDs.isEmpty ? supervisorInterval : min(2, supervisorBaseInterval)
+        guard let dueAt = supervisorTickSchedule.nextFire(at: now, interval: intervalRequested) else { return }
+        // Never postpone a pending event every time another output chunk lands.
+        if supervisorTimer != nil, supervisorTimerDueAt <= dueAt { return }
         supervisorTimer?.invalidate()
-        currentSupervisorInterval = interval
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+        supervisorTimerDueAt = dueAt
+        let interval = max(0.01, dueAt.timeIntervalSince(now))
+        supervisorScheduledInterval = interval
+        let generation = UUID()
+        supervisorTimerGeneration = generation
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
+                guard self?.supervisorTimerGeneration == generation else { return }
                 self?.supervisorTimerFired()
             }
         }
@@ -2239,11 +2266,11 @@ final class SessionStore: ObservableObject {
     }
 
     private func supervisorTimerFired() {
+        supervisorTimer = nil
         runSupervisorTick()
         syncPuckSessions()
         runAutoFreezePassIfNeeded()
         reconcileFrozenAgents()
-        refreshBranchContextsIfNeeded()
         sweepSuspendedSessionLivenessIfNeeded()
         // Focus, thermal, power, or session count may have changed since the timer
         // was installed; adopt the new cadence for the next fire.
@@ -4713,6 +4740,7 @@ final class SessionStore: ObservableObject {
         session.onOutput = { [weak self, weak session] text in
             guard let self, let session else { return }
             telemetry.noteSessionFirstOutput(sessionID: session.id)
+            self.resetSupervisorObservationBackoff(for: session.id, invalidatesObservation: false)
             self.detectAttention(in: text, for: session)
             if let terminal = session as? TerminalSession, !terminal.isFrozen {
                 terminal.freezeGeneration = UUID()
@@ -4750,6 +4778,7 @@ final class SessionStore: ObservableObject {
         }
         session.onProcessExit = { [weak self, weak session] _ in
             guard let self, let session = session as? TerminalSession, session.status != .closed else { return }
+            self.resetSupervisorObservationBackoff(for: session.id)
             if self.tmuxBackend.hasSession(named: session.tmuxSessionName) {
                 session.detachTerminalClient()
             } else {
@@ -5056,25 +5085,27 @@ final class SessionStore: ObservableObject {
     }
 
     private func runSupervisorTick(sessionID: String? = nil, force: Bool = false) {
-        guard !isSupervisorTickRunning else { return }
         let now = Date()
-        // Only a terminal session has a pane to observe; puck sessions are
-        // kept current by `syncPuckSessions`.
-        let inputs = terminalSessions.compactMap { session -> SessionStatusObservationInput? in
-            guard !session.isFrozen else { return nil }
-            guard session.status != .closed && (sessionID == nil || session.id == sessionID) else {
-                return nil
+        if force || sessionID != nil {
+            for session in terminalSessions where session.status != .closed
+                && !session.isSuspended && !session.isFrozen && (sessionID == nil || session.id == sessionID) {
+                supervisorObservationStates[session.id, default: .init()].noteActivity(at: now)
+                pendingSupervisorActivityIDs.insert(session.id)
             }
-            guard SessionLifecyclePolicy.participatesInSupervisorTick(
-                isProcessStarted: session.isProcessStarted,
-                isRestored: session.isRestored,
-                isSuspended: session.isSuspended
-            ) else {
-                return nil
-            }
-            guard force || sessionID != nil || isSupervisorObservationDue(for: session, at: now) else {
-                return nil
-            }
+        }
+        guard supervisorTickSchedule.begin() else { return }
+        // One-shot scheduling consumes all deadlines while this tick is running.
+        // Also discard a timer callback already queued on the main actor.
+        supervisorTimerGeneration = UUID()
+        supervisorTimer?.invalidate()
+        supervisorTimer = nil
+        let candidates = terminalSessions.compactMap { session -> SessionStatusObservationInput? in
+            guard session.status != .closed && !session.isFrozen && (sessionID == nil || session.id == sessionID),
+                  SessionLifecyclePolicy.participatesInSupervisorTick(
+                      isProcessStarted: session.isProcessStarted,
+                      isRestored: session.isRestored,
+                      isSuspended: session.isSuspended
+                  ) else { return nil }
             return SessionStatusObservationInput(
                 id: session.id,
                 tmuxSessionName: session.tmuxSessionName,
@@ -5086,130 +5117,115 @@ final class SessionStore: ObservableObject {
                 environment: session.environment
             )
         }
-        guard !inputs.isEmpty else { return }
+        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended && !$0.isFrozen }.map(\.id))
+        supervisorProcessExitMonitor.retainSessions(liveIDs)
+        pendingSupervisorActivityIDs.formIntersection(Set(terminalSessions.filter {
+            $0.status != .closed && !$0.isFrozen && SessionLifecyclePolicy.participatesInSupervisorTick(
+                isProcessStarted: $0.isProcessStarted, isRestored: $0.isRestored, isSuspended: $0.isSuspended
+            )
+        }.map(\.id)))
+        pendingSupervisorActivityIDs.subtract(candidates.map(\.id))
+        guard !candidates.isEmpty else {
+            supervisorTickSchedule.finish(at: now, minimumRest: 1)
+            rescheduleSupervisor()
+            return
+        }
 
-        isSupervisorTickRunning = true
         let backend = tmuxBackend
         let processTableProvider = processTable
         let inspectionCache = supervisorInspectionCache
-        let frequentSessionCount = inputs.filter {
-            guard let state = supervisorObservationStates[$0.id],
-                  state.lastObservation != nil else {
-                return true
-            }
-            return SessionSupervisorBackoffPolicy.requiresFrequentObservation(
-                status: $0.status,
-                stableObservations: state.stableObservations
-            )
-        }.count
-        let cadence = supervisorInterval
-
+        let states = supervisorObservationStates
+        let cadence = force || sessionID != nil ? supervisorInterval : supervisorScheduledInterval
         let telemetry = self.telemetry
         Task.detached(priority: .utility) { [weak self, telemetry] in
             let tickStartedAt = DispatchTime.now()
-            let synchronizer = SessionStatusSynchronizer(
-                backend: backend,
-                processTable: processTableProvider.snapshot(),
-                cache: inspectionCache
-            )
-            let results = synchronizer.observe(inputs) { sessionID, durationMS in
-                telemetry.recordDurationIfSlow(
-                    "supervisor.session",
-                    durationMS: durationMS,
-                    sessionID: sessionID
-                )
+            // Probe all participating panes once. Changed activity wakes a
+            // deferred session in this tick, without a second list-panes call.
+            let panes = backend.primaryPaneSnapshots(named: Set(candidates.map(\.tmuxSessionName)))
+            let inputs = candidates.filter {
+                force || sessionID != nil || states[$0.id]?.isDue(pane: panes[$0.tmuxSessionName], at: now) != false
             }
-
-            telemetry.recordDurationLocalIfSlow(
-                "supervisor.tick",
-                durationMS: PerformanceTelemetry.elapsedMS(since: tickStartedAt),
-                detail: "sessions=\(inputs.count) frequent=\(frequentSessionCount) deferred=\(inputs.count - frequentSessionCount) cadence_s=\(Int(cadence.rounded()))"
-            )
-
+            var results: [SessionStatusObservation] = []
+            if !inputs.isEmpty {
+                let synchronizer = SessionStatusSynchronizer(
+                    backend: backend,
+                    processTable: processTableProvider.snapshot(),
+                    cache: inspectionCache
+                )
+                results = synchronizer.observe(inputs, paneSnapshots: panes) { sessionID, durationMS in
+                    telemetry.recordDurationIfSlow(
+                        "supervisor.session",
+                        durationMS: durationMS,
+                        sessionID: sessionID
+                    )
+                }
+            }
+            let durationMS = PerformanceTelemetry.elapsedMS(since: tickStartedAt)
+            let observations = results
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.applySupervisorResults(results)
+                // Events received while the subprocesses were running keep their
+                // due state. State signals may also have superseded this result.
+                let currentResults = observations.filter {
+                    let id = $0.id
+                    return self.sessions.contains(where: { $0.id == id && $0.status != .closed && !$0.isSuspended && !$0.isFrozen })
+                        && (self.supervisorObservationStates[id]?.resultRevision ?? 0) == (states[id]?.resultRevision ?? 0)
+                }
                 self.updateSupervisorObservationStates(
                     for: inputs,
-                    results: results,
+                    results: currentResults,
+                    panes: panes,
+                    startedStates: states,
                     observedAt: Date()
                 )
-                self.isSupervisorTickRunning = false
-                self.refreshSelectedContextInfoIfStale()
+                self.applySupervisorResults(currentResults)
+                self.supervisorTickSchedule.finish(at: Date(), minimumRest: min(2, self.supervisorBaseInterval))
                 self.rescheduleSupervisor()
+                let nextDelay = max(0, self.supervisorTimerDueAt.timeIntervalSinceNow)
+                telemetry.recordDurationLocalIfSlow(
+                    "supervisor.tick",
+                    durationMS: durationMS,
+                    detail: "sessions=\(candidates.count) observed=\(inputs.count) deferred=\(candidates.count - inputs.count) cadence_s=\(Int(cadence.rounded())) next_delay_s=\(Int(nextDelay.rounded())) effective_cadence_s=\(String(format: "%.2f", durationMS / 1000 + nextDelay)) schedule=after_completion"
+                )
             }
         }
     }
 
-    private func isSupervisorObservationDue(for session: BanyanSession, at now: Date) -> Bool {
-        guard let state = supervisorObservationStates[session.id] else { return true }
-        if state.lastObservation == nil {
-            return state.nextDueAt <= now
-        }
-        if SessionSupervisorBackoffPolicy.requiresFrequentObservation(
-            status: session.status,
-            stableObservations: state.stableObservations
-        ) {
-            return true
-        }
-        return state.nextDueAt <= now
-    }
-
-    func resetSupervisorObservationBackoff(for sessionID: String) {
-        guard let state = supervisorObservationStates[sessionID] else { return }
-        supervisorObservationStates[sessionID] = SupervisorObservationState(
-            lastObservation: nil,
-            stableObservations: 0,
-            nextDueAt: Date()
-        )
-        if supervisorTimer != nil, state.nextDueAt > Date() {
-            rescheduleSupervisor()
-        }
+    func resetSupervisorObservationBackoff(for sessionID: String, invalidatesObservation: Bool = true) {
+        guard sessions.contains(where: { $0.id == sessionID && $0.status != .closed && !$0.isSuspended && !$0.isFrozen && $0 is TerminalSession }) else { return }
+        supervisorObservationStates[sessionID, default: .init()].noteActivity(at: Date(), invalidatesObservation: invalidatesObservation)
+        pendingSupervisorActivityIDs.insert(sessionID)
+        if didStartSupervisor { rescheduleSupervisor() }
     }
 
     private func updateSupervisorObservationStates(
         for inputs: [SessionStatusObservationInput],
         results: [SessionStatusObservation],
+        panes: [String: TmuxPaneSnapshot],
+        startedStates: [String: SessionSupervisorObservationState],
         observedAt: Date
     ) {
         let baseInterval = supervisorBaseInterval
         let resultsByID = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
         for input in inputs {
             guard let session = sessions.first(where: { $0.id == input.id }),
-                  session.status != .closed else {
-                continue
-            }
-
-            guard let result = resultsByID[input.id] else {
-                supervisorObservationStates[input.id] = SupervisorObservationState(
-                    lastObservation: nil,
-                    stableObservations: 0,
-                    nextDueAt: observedAt.addingTimeInterval(baseInterval)
-                )
-                continue
-            }
-
-            let previous = supervisorObservationStates[input.id]
-            let stableObservations: Int
-            if previous?.lastObservation == result {
-                stableObservations = (previous?.stableObservations ?? 0) + 1
-            } else {
-                stableObservations = 0
-            }
-            let interval = SessionSupervisorBackoffPolicy.interval(
+                  session.status != .closed, !session.isSuspended, !session.isFrozen else { continue }
+            let result = resultsByID[input.id]
+            supervisorObservationStates[input.id, default: .init()].record(
+                result,
+                pane: panes[input.tmuxSessionName],
+                startedRevision: startedStates[input.id]?.revision ?? 0,
+                at: observedAt,
                 baseInterval: baseInterval,
-                status: result.status,
-                stableObservations: stableObservations
+                isSelectedAttached: isSelectedAttached(session)
             )
-            supervisorObservationStates[input.id] = SupervisorObservationState(
-                lastObservation: result,
-                stableObservations: stableObservations,
-                nextDueAt: observedAt.addingTimeInterval(interval)
-            )
+            if let result {
+                supervisorProcessExitMonitor.update(sessionID: input.id, processIDs: result.liveProcessIDs)
+            }
         }
-
-        let liveIDs = Set(sessions.filter { $0.status != .closed }.map(\.id))
+        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended && !$0.isFrozen }.map(\.id))
         supervisorObservationStates = supervisorObservationStates.filter { liveIDs.contains($0.key) }
+        supervisorProcessExitMonitor.retainSessions(liveIDs)
     }
 
     /// Returns a non-expired cached context for `input`, reidentified to the current

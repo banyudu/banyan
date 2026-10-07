@@ -173,7 +173,10 @@ extension SessionStore {
 
     func resumeAllFrozenAgents() {
         for session in terminalSessions where session.isFrozen || session.frozenTicket != nil || session.isRestored {
-            do { try session.unfreezeAgent() }
+            do {
+                try session.unfreezeAgent()
+                if !isAgentFreezeShuttingDown { resetSupervisorObservationBackoff(for: session.id) }
+            }
             catch { session.freezeError = error.localizedDescription }
         }
     }
@@ -210,7 +213,10 @@ extension SessionStore {
                 for (id, _, ticket) in resume {
                     guard let session = self.terminalSessions.first(where: { $0.id == id }),
                           session.frozenTicket == ticket else { continue }
-                    do { try session.unfreezeAgent() }
+                    do {
+                        try session.unfreezeAgent()
+                        self.resetSupervisorObservationBackoff(for: id)
+                    }
                     catch { session.freezeError = error.localizedDescription }
                 }
             }
