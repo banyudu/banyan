@@ -49,7 +49,8 @@ extension BanyanSession {
             createdAt: createdAt,
             updatedAt: updatedAt,
             backend: backendKind,
-            puck: puckBinding
+            puck: puckBinding,
+            codex: codexBinding
         )
     }
 

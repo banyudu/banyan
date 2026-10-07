@@ -11,8 +11,8 @@ struct BanyanApp: App {
         currentDirectory: FileManager.default.currentDirectoryPath
     )
     /// Host-owned native Codex transport. It starts on the first native client
-    /// operation and is stopped before Banyan exits; terminal sessions keep
-    /// their existing launch path until the native session UI is integrated.
+    /// operation and is stopped before Banyan exits. Native Codex rows share
+    /// this client; terminal sessions keep their configured launch path.
     static let codexAppServer: CodexAppServerClient = {
         let environment = Self.host.environment
         return CodexAppServerClient(
@@ -82,7 +82,8 @@ struct BanyanApp: App {
         ),
         host: Self.host,
         telemetry: Self.telemetry,
-        attentionNotifier: Self.attentionNotifier
+        attentionNotifier: Self.attentionNotifier,
+        codexService: Self.codexAppServer
     )
     @StateObject private var store = Self.sessionStore
     @StateObject private var updater = AppUpdater()

@@ -257,6 +257,7 @@ class BanyanSession: ObservableObject, Identifiable {
 
     /// The daemon runtime a puck row persists. `nil` for other backends.
     var puckBinding: PuckSessionBinding? { nil }
+    var codexBinding: CodexThreadBinding? { nil }
 
     /// Seeds the automatic title before the agent or a prompt names the
     /// session. A terminal session's ID is usually a readable name
