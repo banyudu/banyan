@@ -335,6 +335,27 @@ final class ControlServer {
                 }
                 return respond(.ok(["session": summary(session)]))
 
+            case .freeze, .unfreeze:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let id = body.id!
+                Task { @MainActor in
+                    do {
+                        if route == .freeze { try await store.freezeAgent(id: id) }
+                        else { try store.unfreezeAgent(id: id) }
+                        guard let session = store.sessions.first(where: { $0.id == id }) else {
+                            throw ControlError.notFound(id)
+                        }
+                        respond(.ok(["session": summary(session)]))
+                    } catch let error as ControlError {
+                        respond(.failure(error.httpStatus, error.code, error.localizedDescription))
+                    } catch {
+                        respond(.failure(409, "agent_freeze_refused", error.localizedDescription))
+                    }
+                }
+                return
+
             case .suspend, .resume:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
@@ -674,6 +695,7 @@ final class ControlServer {
             // last seen and it carries no prompt, so say so rather than let a caller
             // read the frozen status as a live one.
             "isSuspended": reading.isSuspended,
+            "isFrozen": reading.isFrozen,
             "visibleText": reading.visibleText
         ]
         if let session = store.sessions.first(where: { $0.id == id }) {
@@ -848,6 +870,7 @@ final class ControlServer {
             "isRestored": session.isRestored,
             "isProcessStarted": session.isProcessStarted,
             "isSuspended": session.isSuspended,
+            "isFrozen": session.isFrozen,
             "projectGroupID": session.projectGroupID,
             "projectGroupTitle": session.projectGroupTitle,
             "displayContextDegraded": session.displayContextDegraded,

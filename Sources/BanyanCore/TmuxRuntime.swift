@@ -22,6 +22,9 @@ public struct TmuxPaneSnapshot: Sendable {
     /// another. `0` means the backend did not report it.
     public let width: Int
     public let height: Int
+    /// Includes external tmux clients. A freeze must not stop a pane somebody
+    /// can interact with outside Banyan's selection model.
+    public let hasAttachedClients: Bool
 
     public init(
         paneID: String,
@@ -32,7 +35,8 @@ public struct TmuxPaneSnapshot: Sendable {
         isInMode: Bool,
         lastActivityAt: Date? = nil,
         width: Int = 0,
-        height: Int = 0
+        height: Int = 0,
+        hasAttachedClients: Bool = false
     ) {
         self.paneID = paneID
         self.rootPID = rootPID
@@ -43,6 +47,7 @@ public struct TmuxPaneSnapshot: Sendable {
         self.lastActivityAt = lastActivityAt
         self.width = width
         self.height = height
+        self.hasAttachedClients = hasAttachedClients
     }
 }
 
@@ -108,7 +113,21 @@ public protocol TmuxAttachmentBackend: Sendable {
 }
 
 /// Complete backend surface required by the terminal frontend.
-public protocol TmuxTerminalBackend: AgentSupervisorBackend, TmuxSessionLifecycleBackend, TmuxDisplayBackend, TmuxAttachmentBackend {}
+public protocol TmuxTerminalBackend: AgentSupervisorBackend, TmuxSessionLifecycleBackend, TmuxDisplayBackend, TmuxAttachmentBackend, TmuxFreezeJournalBackend {}
+
+/// Stored on the private tmux session before STOP so app relaunch can recover
+/// stopped groups without trusting persisted PIDs alone.
+public protocol TmuxFreezeJournalBackend: Sendable {
+    func freezeTicket(named name: String) -> AgentFreezeTicket?
+    func writeFreezeTicket(_ ticket: AgentFreezeTicket?, named name: String) throws
+}
+
+public extension TmuxFreezeJournalBackend {
+    func freezeTicket(named name: String) -> AgentFreezeTicket? { nil }
+    func writeFreezeTicket(_ ticket: AgentFreezeTicket?, named name: String) throws {
+        throw AgentFreezeError.unsafe("Backend does not support recoverable process freezing")
+    }
+}
 
 /// Additional controls used by an embedded terminal client.
 public protocol TmuxClientBackend: TmuxTerminalBackend {

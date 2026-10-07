@@ -72,6 +72,16 @@ struct PreferencesSheet: View {
                 Text("Sessions")
                     .font(.headline)
 
+                Toggle("Automatically freeze inactive agents", isOn: $store.autoFreezeAgents)
+                HStack {
+                    Text("Idle threshold")
+                    Stepper("\(Int(store.agentFreezeIdleMinutes)) min", value: $store.agentFreezeIdleMinutes, in: 1...120, step: 1)
+                        .disabled(!store.autoFreezeAgents)
+                }
+                Text("Off by default. Stops quiet, idle agents in hidden sessions; interact to resume. The threshold shortens on battery, in the background, and with many sessions. RAM is reclaimed only under pressure.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Picker("Keep closed sessions", selection: $store.sessionRetentionDays) {
                     ForEach(retentionChoices, id: \.self) { days in
                         Text(SessionRetentionPolicy.label(retentionDays: days)).tag(days)
@@ -133,7 +143,7 @@ struct PreferencesSheet: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 440, height: 560)
+        .frame(width: 440, height: 700)
         .accessibilityIdentifier(AccessibilityID.preferencesSheet)
     }
 

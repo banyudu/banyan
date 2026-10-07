@@ -1289,6 +1289,16 @@ struct ContentView: View {
             onToggleSuspended: {
                 try? store.toggleSuspended(id: item.session.id)
             },
+            onSetFrozen: { frozen in
+                Task {
+                    do {
+                        if frozen { try await store.freezeAgent(id: item.session.id) }
+                        else { try store.unfreezeAgent(id: item.session.id) }
+                    } catch {
+                        (item.session as? TerminalSession)?.freezeError = error.localizedDescription
+                    }
+                }
+            },
             onFocusTerminal: {
                 store.focusSelectedTerminal()
             },
@@ -1452,6 +1462,15 @@ struct ContentView: View {
                         ClosedSessionHistoryView(session: session)
                     } else if session.isImportedHistory {
                         ImportedSessionHistoryView(session: session)
+                    } else if session.isFrozen {
+                        VStack {
+                            Text("Frozen — interact to resume")
+                            Button("Unfreeze Agent") {
+                                try? store.unfreezeAgent(id: session.id)
+                            }
+                        }
+                        .padding()
+                        .background(.regularMaterial)
                     } else if session.isSuspended {
                         VStack(spacing: 0) {
                             SuspendedSessionBanner(session: session)
@@ -2508,6 +2527,7 @@ private struct SessionRow: View {
     let onHandoff: () -> Void
     let onRemove: () -> Void
     let onToggleSuspended: () -> Void
+    let onSetFrozen: (Bool) -> Void
     let onFocusTerminal: () -> Void
     let onReopenHistory: () -> Void
 
@@ -2585,6 +2605,14 @@ private struct SessionRow: View {
                     .accessibilityLabel(provider.displayName)
             } else if !session.isImportedHistory {
                 ShellSessionIcon()
+            }
+
+            if session.isFrozen {
+                Image(systemName: "snowflake")
+                    .foregroundStyle(.secondary)
+                    .help("Frozen — interact to resume")
+                    .accessibilityLabel("Agent frozen — interact to resume")
+                    .accessibilityIdentifier("session.\(session.id).frozen")
             }
 
             if session.isSuspended && !session.isImportedHistory && session.status != .closed {
@@ -2719,6 +2747,15 @@ private struct SessionRow: View {
                 }
             }
             if !session.isImportedHistory && session.status != .closed {
+                if session is TerminalSession {
+                    Button(session.isFrozen ? "Unfreeze Agent" : "Freeze Agent") {
+                        onSetFrozen(!session.isFrozen)
+                    }
+                    .disabled(!session.isFrozen && (isSelected || session.isSuspended || ![.idle, .needInput].contains(session.status)))
+                    if !session.isFrozen {
+                        Button("Resume Stopped Agent") { onSetFrozen(false) }
+                    }
+                }
                 Button(session.isSuspended ? "Resume" : "Suspend") {
                     onToggleSuspended()
                 }
@@ -2736,6 +2773,14 @@ private struct SessionRow: View {
             resetIssueLinkHover()
         }
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
+        .alert("Agent freeze", isPresented: Binding(
+            get: { (session as? TerminalSession)?.freezeError != nil },
+            set: { if !$0 { (session as? TerminalSession)?.freezeError = nil } }
+        )) {
+            Button("OK") { (session as? TerminalSession)?.freezeError = nil }
+        } message: {
+            Text((session as? TerminalSession)?.freezeError ?? "")
+        }
     }
 
     private func beginRename() {

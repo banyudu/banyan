@@ -58,6 +58,8 @@ class BanyanSession: ObservableObject, Identifiable {
     /// last observed agent state and resuming restores it instead of resetting
     /// it. See `suspend()` / `resume()`.
     @Published var isSuspended: Bool
+    /// Actual agent process-group STOP, independent of frontend parking.
+    @Published var isFrozen = false
     @Published var parentSessionID: String?
     /// Underlying coding-agent session UUID (codex/claude), resolved by matching
     /// live sessions against imported transcript history. Used to build a resume

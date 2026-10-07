@@ -4,6 +4,15 @@ import Foundation
 import FoundationNetworking
 #endif
 
+if CommandLine.arguments.dropFirst().first == AgentProcessHost.subcommand {
+    guard CommandLine.arguments.count == 4 else { exit(64) }
+    do { exit(try AgentProcessHost.run(shell: CommandLine.arguments[2], command: CommandLine.arguments[3])) }
+    catch {
+        FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8))
+        exit(1)
+    }
+}
+
 let client = BanyanCtl(arguments: Array(CommandLine.arguments.dropFirst()))
 client.run()
 
@@ -47,6 +56,8 @@ struct BanyanCtl {
                 try post("/tick", payload: parsePayload(Array(arguments.dropFirst())))
             case "suspend":
                 try post("/suspend", payload: parsePayload(Array(arguments.dropFirst())))
+            case "freeze", "unfreeze":
+                try post("/\(command)", payload: parsePayload(Array(arguments.dropFirst())))
             case "resume":
                 try post("/resume", payload: parsePayload(Array(arguments.dropFirst())))
             case "close":
@@ -156,6 +167,8 @@ struct BanyanCtl {
             try post("/spawn", payload: withDefaultParent(parsePayload(Array(args.dropFirst()))))
         case "suspend":
             try post("/suspend", payload: parsePayload(Array(args.dropFirst())))
+        case "freeze", "unfreeze":
+            try post("/\(subcommand)", payload: parsePayload(Array(args.dropFirst())))
         case "resume":
             try post("/resume", payload: parsePayload(Array(args.dropFirst())))
         default:
@@ -849,6 +862,8 @@ struct BanyanCtl {
           banyanctl tick   [--id ID]
           banyanctl suspend --id ID
           banyanctl resume  --id ID
+          banyanctl session freeze --id ID
+          banyanctl session unfreeze --id ID
           banyanctl close  --id ID
           banyanctl respawn --id ID
           banyanctl restart --id ID
@@ -866,6 +881,10 @@ struct BanyanCtl {
         its tmux session and any agent inside keep running. resume is lossless and
         keeps the status the session had when it was parked. Neither one signals or
         terminates the agent. `banyanctl session suspend|resume --id ID` are aliases.
+        freeze sends SIGSTOP to verified idle agent process groups; unfreeze sends
+        SIGCONT. Select another session and detach external tmux clients first.
+        Interaction resumes frozen agents. Automatic freezing is off by default;
+        enable it and set the idle threshold in Preferences. See docs/agent-freeze.md.
 
         `prune` drops closed sessions that aged out of the retention window set
         in Preferences (default 30 days), which Banyan also applies at launch.
