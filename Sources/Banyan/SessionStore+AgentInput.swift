@@ -95,6 +95,7 @@ extension SessionStore {
         guard terminal?.isDeepSuspended != true else {
             throw ControlError.badRequest("Agent is resuming; retry input when isDeepResuming is false")
         }
+        adoptAgentReservationForInteraction(id: id)
         try terminal?.unfreezeAgent()
         let target = try paneTarget(id: id)
         try Self.refuseIfSuspended(target)
@@ -139,6 +140,7 @@ extension SessionStore {
         guard terminal?.isDeepSuspended != true else {
             throw ControlError.badRequest("Agent is resuming; read a fresh prompt after startup")
         }
+        adoptAgentReservationForInteraction(id: id)
         try terminal?.unfreezeAgent()
         try Self.refuseIfSuspended(paneTarget(id: id))
         let reading = try await readPaneOutput(id: id, lines: nil)

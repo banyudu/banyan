@@ -19,11 +19,14 @@ final class AdmissionTerminalBackend: TmuxClientBackend, @unchecked Sendable {
         if let delegate { return delegate.hasSession(named: named) }
         return lock.withLock { live.contains(named) }
     }
+    /// `nil` mirrors a backend that cannot report window activity; the admission
+    /// tests that exercise quiet-window yielding set it explicitly.
+    var paneLastActivityAt: Date?
     func primaryPaneSnapshot(named: String) -> TmuxPaneSnapshot? {
         guard !omitPane else { return nil }
         if let delegate { return delegate.primaryPaneSnapshot(named: named) }
         guard !omitPane, hasSession(named: named) else { return nil }
-        return .init(paneID: "%1", rootPID: 2_000_000, currentCommand: "synthetic-agent", currentPath: "/tmp", isDead: false, isInMode: false)
+        return .init(paneID: "%1", rootPID: 2_000_000, currentCommand: "synthetic-agent", currentPath: "/tmp", isDead: false, isInMode: false, lastActivityAt: paneLastActivityAt)
     }
     func agentAdmissionPane(named name: String) -> AgentAdmissionPaneInspection {
         if inspectionDenied { return .unknown }
@@ -118,6 +121,101 @@ final class AdmissionTerminalBackend: TmuxClientBackend, @unchecked Sendable {
         #expect(store.agentAdmission.running == [last.id])
         store.retryQueuedAgent(id: cancelled.id)
         #expect(cancelled.agentQueuePosition == 1)
+    }
+
+    /// The reported wedge: a fleet of idle CLI commands above the cap held every
+    /// reservation, so a queued launch could never start and nothing could ever
+    /// release it. Queued work takes the oldest idle reservation instead.
+    @Test func queuedWorkTakesAnIdleReservationAndGivesItBackWhenTheAgentWorks() async throws {
+        let (fixture, backend, store) = try fixture()
+        let idle = store.spawn(id: "idle", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        try await waitForPuckState { idle.isProcessStarted }
+        try makeIdleHolder(idle, backend: backend)
+
+        let queued = store.spawn(id: "queued", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        queued.startBackgroundBackendIfNeeded()
+        #expect(queued.agentQueuePosition == 1)
+        try await waitForPuckState { queued.isProcessStarted }
+        #expect(store.agentAdmission.running == [queued.id])
+        #expect(queued.agentQueuePosition == nil)
+        // Yielding is not termination: the idle command keeps its pane.
+        #expect(backend.hasSession(named: idle.tmuxSessionName))
+        #expect(idle.status != .closed)
+
+        idle.status = .executing
+        store.adoptObservedAgentActivity(id: idle.id)
+        #expect(store.agentAdmission.running.contains(idle.id))
+    }
+
+    @Test func idleReservationsAreKeptWhileNothingIsQueued() async throws {
+        let (fixture, backend, store) = try fixture()
+        let idle = store.spawn(id: "idle", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        try await waitForPuckState { idle.isProcessStarted }
+        try makeIdleHolder(idle, backend: backend)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(store.agentAdmission.running == [idle.id])
+        #expect(store.agentAdmission.queuedIDs.isEmpty)
+    }
+
+    @Test func parkedFrozenAndBusyCommandsNeverYieldToTheQueue() async throws {
+        let (fixture, backend, store) = try fixture()
+        store.maximumConcurrentAgents = 2
+        let parked = store.spawn(id: "parked", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        try await waitForPuckState { parked.isProcessStarted }
+        try makeIdleHolder(parked, backend: backend)
+        try store.suspend(id: parked.id)
+        let busy = store.spawn(id: "busy", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        try await waitForPuckState { busy.isProcessStarted }
+        busy.status = .executing
+        busy.admissionProcessIdentity = AgentProcessIdentity(pid: 2_000_001, startSeconds: 1, startMicroseconds: 2)
+        busy.admissionProcessProbe = { _, _ in .unknown }
+        busy.lastFreezeInteractionAt = Date().addingTimeInterval(-600)
+
+        let queued = store.spawn(id: "queued", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        queued.startBackgroundBackendIfNeeded()
+        #expect(queued.agentQueuePosition == 1)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!queued.isProcessStarted)
+        #expect(store.agentAdmission.running == [parked.id, busy.id])
+    }
+
+    @Test func interactionGivesAYieldedReservationBackWithoutWaitingForObservation() async throws {
+        let (fixture, backend, store) = try fixture()
+        let idle = store.spawn(id: "idle", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        try await waitForPuckState { idle.isProcessStarted }
+        try makeIdleHolder(idle, backend: backend)
+        let queued = store.spawn(id: "queued", cwd: fixture.project.path, command: "synthetic-agent", select: false)
+        queued.startBackgroundBackendIfNeeded()
+        try await waitForPuckState { queued.isProcessStarted }
+        #expect(store.agentAdmission.running == [queued.id])
+
+        store.adoptAgentReservationForInteraction(id: idle.id)
+        #expect(store.agentAdmission.running.contains(idle.id))
+    }
+
+    @Test func restoreCountsBusyCommandsAndLeavesIdleRowsWithoutAReservation() async throws {
+        let (fixture, _, store) = try fixture()
+        let identity = try #require(AgentProcessSample.read(pid: ProcessInfo.processInfo.processIdentifier)?.identity)
+        fixture.persistence.save([
+            SessionSnapshot(id: "idle-restored", tmuxSessionName: "banyan-idle-restored", title: "Idle", reportedTitle: nil,
+                cwd: fixture.project.path, command: "synthetic-agent", status: .needInput, tone: .neutral,
+                agentSlotReserved: true, agentSlotPaneIdentity: identity, createdAt: Date(), updatedAt: Date()),
+            SessionSnapshot(id: "busy-restored", tmuxSessionName: "banyan-busy-restored", title: "Busy", reportedTitle: nil,
+                cwd: fixture.project.path, command: "synthetic-agent", status: .executing, tone: .neutral,
+                agentSlotReserved: true, agentSlotPaneIdentity: identity, createdAt: Date(), updatedAt: Date()),
+        ])
+        store.loadPersistedSessionsIfNeeded()
+        #expect(store.agentAdmission.running == ["busy-restored"])
+    }
+
+    /// A quiet, verified-idle command with a live recorded identity: exactly what
+    /// the admission layer is allowed to take a reservation away from.
+    private func makeIdleHolder(_ session: TerminalSession, backend: AdmissionTerminalBackend) throws {
+        session.admissionProcessIdentity = AgentProcessIdentity(pid: 2_000_000, startSeconds: 1, startMicroseconds: 2)
+        session.admissionProcessProbe = { _, _ in .unknown }
+        session.status = .needInput
+        session.lastFreezeInteractionAt = Date().addingTimeInterval(-600)
+        backend.paneLastActivityAt = Date().addingTimeInterval(-600)
     }
 
     @Test func closingDuringAsyncLaunchCannotReleaseBeforeTheLateProcessIsRemoved() async throws {

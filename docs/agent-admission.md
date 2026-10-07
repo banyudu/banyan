@@ -13,7 +13,7 @@ agents alive. Admission reduces additional demand by delaying new work.
 
 | Runtime | Slot lifetime |
 | --- | --- |
-| Terminal | From reservation before launching a nonempty configured command until confirmed CLI job/provider exit. This deliberately includes custom agent wrappers, idle CLIs, pending approvals, parked rows, and SIGSTOP-frozen agents. |
+| Terminal | From reservation before launching a nonempty configured command until confirmed CLI job/provider exit. This deliberately includes custom agent wrappers, idle CLIs, pending approvals, parked rows, and SIGSTOP-frozen agents. A queued launch or turn can take an *idle* command's reservation; see below. |
 | Native Codex | Each active thread/turn, including pending approvals and user-input requests. Create, resume, recovery, and turn-start RPCs reserve provisionally until an authoritative idle state is established. |
 | Puck | Each active or approval-blocked turn started through Banyan. The reservation includes the turn RPC and subsequent reconciliation. |
 | Plain shell | No slot for opening the shell. |
@@ -30,7 +30,19 @@ App launchers, custom session commands, `banyanctl spawn`, `session new`,
 Codex creation/start/resume/recovery use the same controller. Same-pane deep
 resume reserves before journal update/injection, including focus/input recovery. Existing work
 restored above the cap keeps running; no new work is admitted until the count
-falls below the configured limit.
+falls below the configured limit, which queued work reaches by reclaiming idle
+reservations rather than by terminating anything.
+
+An idle command is not demand, so queued work takes the reservation of the least
+recently used verified-idle terminal command: coding-agent-idle status, no
+in-flight input, not parked, frozen, suspended or deep-suspended, a recorded
+process identity, and at least one quiet minute of pane output. Nothing is
+signalled and no process exits; the command keeps its pane and scrollback, and
+re-adopts a reservation on the first observation of it working again, on
+interaction, or on restart/resume. That keeps the budget measuring work Banyan
+starts, and bounds how many launched commands can be *added* while the fleet is
+busy, without letting a week of idle rows permanently blockade the queue. Busy,
+parked and frozen commands never yield; a queued launch waits for them to finish.
 
 Commands typed manually into a shell, standalone coding agents, independent
 Puck daemon clients, and other external frontends can start work outside
@@ -66,14 +78,23 @@ summaries expose `agentQueuePosition`, `agentLaunchCancelled`, and
 `cancel`, `retry`); `POST /agent-limit` takes `limit`. Existing control-token
 protection applies.
 
+Yielding is what makes the queue recoverable at all. A reservation is otherwise
+released only when a command's process exits, so a fleet that is already above
+the cap cannot come back down by any other means, and a status label that has not
+caught up with a just-started turn is the one way a release could free capacity
+early. Both are why yielding is confined to idle status plus a quiet-window
+check, and why it only runs while something is actually queued.
+
 Synchronous control sends never wait in the admission queue: a busy response
 means no prompt was queued. Short request deadlines prevent delayed daemon
 lookups/creation from starting stale prompts. If delivery was already sent to
 the daemon and its response is lost, inspect the session before retrying.
 
 Terminal launch intent and cancellation persist in SQLite, including FIFO
-request timestamps and whether the queued operation is launch, restart, or deep resume. On restart, the complete live fleet is accounted for before
-any queued launch or recovery can acquire capacity. Native/Puck queued sends
+request timestamps and whether the queued operation is launch, restart, or deep resume. On restart, every live command that is not idle by its last
+persisted status is accounted for before any queued launch or recovery can
+acquire capacity; a restored idle row re-adopts its reservation from the first
+observation of it working. Native/Puck queued sends
 are in-memory operations: cancellation preserves conversation identity,
 settings, approvals, and the composer's draft. They are never automatically
 replayed after an app restart, when delivery could be ambiguous.
@@ -129,7 +150,9 @@ approvals and unknown states retaining capacity.
 Deterministic tests cover FIFO release, explicit priority, concurrent claims,
 deduplication, cancellation after grant, over-cap adoption, persistence,
 foreground selection, parked/frozen CLI accounting, failed/denied inspection,
-CLI launch failure, close/launch races, and native parallel turns/approvals.
+CLI launch failure, close/launch races, native parallel turns/approvals, and
+idle-reservation yielding: drain only under demand, activity re-adoption, and
+restore that does not count idle rows.
 Private runtime tests also cover ordinary exit with a surviving shell, delayed
 TERM, deep-resume queue/cancellation/restoration, uncertain resumed startup,
 actual CLI input while full, and native-to-CLI ownership transfer with late
