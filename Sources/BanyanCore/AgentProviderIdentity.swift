@@ -269,9 +269,10 @@ public enum AgentProviderIdentity {
     export default { id: "banyan.session-identity", async tui(api) {
       const dir = process.env.BANYAN_AGENT_IDENTITY_DIR;
       if (!dir) return;
-      let inFlight = false, last = "";
+      let inFlight = false, pending = false, disposed = false, last = "";
       const answer = async () => {
-        if (inFlight) return;
+        if (disposed) return;
+        if (inFlight) { pending = true; return }
         inFlight = true;
         try {
           const request = JSON.parse(readFileSync(dir + "/request.json", "utf8"));
@@ -283,19 +284,27 @@ public enum AgentProviderIdentity {
           const id = route.params.sessionID, info = api.state.session.get(id);
           if (!info || info.id !== id) return;
           const statuses = await api.client.session.status();
-          if (statuses.error || !statuses.data || api.route.current.name !== "session" || api.route.current.params.sessionID !== id) return;
+          if (disposed || statuses.error || !statuses.data || api.route.current.name !== "session" || api.route.current.params.sessionID !== id) return;
           const ready = api.mode.current() === "base" && !api.ui.dialog.open
             && Object.values(statuses.data).every(s => s.type === "idle")
             && !api.state.session.permission(id).length && !api.state.session.question(id).length;
           writeFileSync(dir + "/" + request.nonce + ".json", JSON.stringify({
             nonce: request.nonce, pid: process.pid, provider: "opencode", id, cwd: info.directory, ready
           }), { mode: 0o600 });
-        } catch {} finally { inFlight = false }
+        } catch {} finally {
+          inFlight = false;
+          // Coalesce events received during the status RPC into one re-read.
+          // Even a refused/stale answer must hand back a newer request.
+          if (pending && !disposed) { pending = false; void answer() }
+        }
       };
       // macOS/Bun may coalesce atomic renames or omit the changed filename.
       // Re-read the nonce on every directory event, including an answer write.
       const watcher = watch(dir, () => { void answer() });
-      api.lifecycle.onDispose(() => watcher.close());
+      // One event-loop handback also covers a request published while the
+      // watcher is arming. Subsequent work is driven only by directory events.
+      const startup = setImmediate(() => { void answer() });
+      api.lifecycle.onDispose(() => { disposed = true; clearImmediate(startup); watcher.close() });
       void answer();
     }};
     """#

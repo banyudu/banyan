@@ -17,23 +17,31 @@ final class TelemetryFakeNetwork: @unchecked Sendable {
     private var captured: [URLRequest] = []
     private var replies: [Reply]
     private var heldResponse: (@Sendable () -> Void)?
+    private let beforeReply: (@Sendable () -> Void)?
     let id = UUID().uuidString
     let session: URLSession
 
-    init(_ replies: [Reply] = []) {
+    init(_ replies: [Reply] = [], delegate: (any URLSessionDelegate)? = nil,
+         beforeReply: (@Sendable () -> Void)? = nil) {
         self.replies = replies
+        self.beforeReply = beforeReply
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TelemetryURLProtocol.self]
         // FoundationNetworking invokes URLProtocol before merging session
         // extra headers. Exporter requests identify this fixture by dataset;
         // ordinary HTTP test requests carry X-Test-Network explicitly.
-        session = URLSession(configuration: configuration)
+        session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         TelemetryURLProtocol.register(self, id: id)
     }
 
     deinit {
-        session.invalidateAndCancel()
         TelemetryURLProtocol.unregister(id)
+        // startLoading can release this fixture's last reference. On Linux,
+        // invalidation synchronously enters the session's own work queue, so
+        // calling it from that callback queue traps in libdispatch. Capture
+        // only the session and invalidate off the callback queue.
+        let invalidatingSession = session
+        DispatchQueue.global(qos: .utility).async { invalidatingSession.invalidateAndCancel() }
     }
 
     var requests: [URLRequest] {
@@ -42,7 +50,8 @@ final class TelemetryFakeNetwork: @unchecked Sendable {
     }
 
     func receive(_ request: URLRequest) -> Reply {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock(); beforeReply?() }
         var capturedRequest = request
         if capturedRequest.httpBody == nil, let stream = capturedRequest.httpBodyStream {
             stream.open()
@@ -132,6 +141,33 @@ private final class TelemetryURLProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
+/// The owner drops its reference from inside startLoading, leaving that
+/// URLProtocol callback to release the fixture's final strong reference.
+private final class NetworkOwner: @unchecked Sendable {
+    private let lock = NSLock()
+    private var network: TelemetryFakeNetwork?
+    func retain(_ network: TelemetryFakeNetwork) {
+        lock.lock(); defer { lock.unlock() }
+        self.network = network
+    }
+    func release() {
+        lock.lock()
+        let released = network
+        network = nil
+        lock.unlock()
+        withExtendedLifetime(released) {}
+    }
+}
+
+private final class NetworkInvalidationDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    let invalidated: AsyncStream<Void>.Continuation
+    init(_ invalidated: AsyncStream<Void>.Continuation) { self.invalidated = invalidated }
+    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+        invalidated.yield(())
+        invalidated.finish()
+    }
+}
+
 private func attributes(_ span: [String: Any]) -> [String: String] {
     let entries = span["attributes"] as? [[String: Any]] ?? []
     return Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
@@ -142,6 +178,24 @@ private func attributes(_ span: [String: Any]) -> [String: String] {
 }
 
 @Suite(.serialized) struct AxiomExporterTests {
+    @Test(.timeLimit(.minutes(1)))
+    func finalNetworkReferenceCanBeReleasedByURLProtocolCallback() async throws {
+        let owner = NetworkOwner()
+        defer { owner.release() }
+        let invalidation = AsyncStream<Void>.makeStream()
+        let delegate = NetworkInvalidationDelegate(invalidation.continuation)
+        let fixture: (URLSession, String, WeakNetwork) = {
+            let network = TelemetryFakeNetwork([.held], delegate: delegate, beforeReply: { owner.release() })
+            owner.retain(network)
+            return (network.session, network.id, WeakNetwork(network))
+        }()
+        var request = URLRequest(url: URL(string: "https://example.test/fixture")!)
+        request.setValue(fixture.1, forHTTPHeaderField: "X-Test-Network")
+        fixture.0.dataTask(with: request) { _, _, _ in }.resume()
+        for await _ in invalidation.stream { break }
+        #expect(fixture.2.value == nil)
+    }
+
     @Test func noTokenAndDisabledStartupDoNotInitializeExporterOrSend() async {
         for config in [TelemetryConfig(), .disabled,
                        TelemetryConfig(axiomAPIToken: "xaat-fixture", enabled: false),

@@ -10,7 +10,8 @@ import Testing
     try AgentProviderIdentity.openCodeSource.write(to: root.appendingPathComponent("opencode.mjs"), atomically: true, encoding: .utf8)
     let script = #"""
     import assert from 'node:assert/strict';
-    import {watch,writeFileSync,readFileSync,existsSync,renameSync} from 'node:fs';
+    import fs, {watch,writeFileSync,readFileSync,existsSync,renameSync} from 'node:fs';
+    import {syncBuiltinESMExports} from 'node:module';
     import {register} from './claude.mjs';
     import openCode from './opencode.mjs';
     const handlers = {}, waiters = [], written = [];
@@ -55,38 +56,93 @@ import Testing
 
     process.env.BANYAN_AGENT_IDENTITY_DIR = process.cwd();
     let route = {name: 'session', params: {sessionID: 'ses_first'}}, statuses = {}, modal = false, questions = [];
-    let duringStatus = () => {}, dispose;
+    let duringStatus = () => {}, dispose, statusCalls = 0;
     const api = { route: {get current() {return route}}, state: {ready: true, session: {
       get: id => ({id, directory: '/tmp/project'}), permission: () => [], question: () => questions}},
-      client: {session: {status: async () => {duringStatus(); return {data: statuses}}}},
+      client: {session: {status: async () => {statusCalls++; await duringStatus(); return {data: statuses}}}},
       mode: {current: () => 'base'}, ui: {dialog: {get open() {return modal}}},
       lifecycle: {onDispose: fn => {dispose = fn}}
     };
     await openCode.tui(api);
-    async function openAsk(n) {
-      const nonce = `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const requestNonce = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    function publish(n) {
+      const nonce = requestNonce(n);
+      writeFileSync('request.tmp', JSON.stringify({nonce, pid: process.pid, provider: 'opencode'}));
+      renameSync('request.tmp', 'request.json');
+      return nonce;
+    }
+    async function openAsk(n, observeReplies = true) {
+      const nonce = requestNonce(n);
       return await new Promise(resolve => {
         const finish = value => {clearTimeout(timer); observer.close(); resolve(value)};
-        const read = () => {if (existsSync(nonce + '.json')) finish(JSON.parse(readFileSync(nonce + '.json')))};
+        const read = () => {
+          if (!existsSync(nonce + '.json')) return false;
+          finish(JSON.parse(readFileSync(nonce + '.json'))); return true;
+        };
         // Observe the real reply write, rather than hoping a number of ticks
         // flushes macOS's coalesced filesystem events. The deadline is the
         // production RPC deadline; unanswered/disabled queries still time out.
-        const observer = watch(process.cwd(), read);
-        const timer = setTimeout(() => finish(undefined), 2000);
-        writeFileSync('request.tmp', JSON.stringify({nonce, pid: process.pid, provider: 'opencode'}));
-        renameSync('request.tmp', 'request.json');
+        const observer = watch(process.cwd(), observeReplies ? read : () => {});
+        // A coalesced/missed observer event must not hide an existing reply.
+        // Keep the production deadline and inspect the file before timing out.
+        const timer = setTimeout(() => {if (!read()) finish(undefined)}, 2000);
+        publish(n);
         read();
       });
     }
     assert.equal((await openAsk(11)).id, 'ses_first');
     route = {name: 'session', params: {sessionID: 'ses_switched'}};
     assert.equal((await openAsk(12)).id, 'ses_switched');
-    statuses = {ses_background: {type: 'busy'}}; assert.equal((await openAsk(13)).ready, false);
+    // Suppress only the test's reply notification: the deadline must still
+    // read the adapter's real reply and preserve the busy refusal.
+    statuses = {ses_background: {type: 'busy'}}; assert.equal((await openAsk(13, false)).ready, false);
     statuses = {}; questions = [{}]; assert.equal((await openAsk(14)).ready, false);
     questions = []; modal = true; assert.equal((await openAsk(15)).ready, false); modal = false;
     duringStatus = () => {route = {name: 'home'}};
     assert.equal(await openAsk(16), undefined); // never a mixed old/new route
     dispose(); assert.equal(await openAsk(17), undefined); // disabled adapter stays silent
+
+    // Control just the adapter's event source in this private Node process.
+    // Deliver the newer request while its old status RPC is blocked, then
+    // refuse the old route without writing a reply that could wake it again.
+    const realWatch = fs.watch;
+    let notifyAdapter, adapterClosed = false;
+    fs.watch = (_, listener) => {
+      notifyAdapter = listener;
+      return {close: () => {adapterClosed = true}};
+    };
+    syncBuiltinESMExports();
+    try { await openCode.tui(api) } finally {fs.watch = realWatch; syncBuiltinESMExports()}
+    // No watcher event: publish between the initial scan and the bounded
+    // startup handback, then await the actual reply as the readiness signal.
+    route = {name: 'session', params: {sessionID: 'ses_startup'}};
+    duringStatus = () => {};
+    assert.equal((await openAsk(20)).id, 'ses_startup');
+    route = {name: 'session', params: {sessionID: 'ses_before_wait'}};
+    let entered, unblock;
+    const statusEntered = new Promise(resolve => {entered = resolve});
+    const statusBlocked = new Promise(resolve => {unblock = resolve});
+    duringStatus = async () => {entered(); await statusBlocked};
+    const stale = publish(18); notifyAdapter(); await statusEntered;
+    route = {name: 'session', params: {sessionID: 'ses_after_wait'}};
+    const replacement = openAsk(19); notifyAdapter(); unblock();
+    assert.equal((await replacement).id, 'ses_after_wait');
+    // Reply 19 proves the stale callback and its coalesced handback completed.
+    assert.equal(existsSync(stale + '.json'), false);
+    // Disposal must suppress both the pending handback and a late status reply.
+    let enteredBeforeDispose, unblockAfterDispose;
+    const disposingEntered = new Promise(resolve => {enteredBeforeDispose = resolve});
+    const disposingBlocked = new Promise(resolve => {unblockAfterDispose = resolve});
+    duringStatus = async () => {enteredBeforeDispose(); await disposingBlocked};
+    const late = publish(21); notifyAdapter(); await disposingEntered;
+    const pending = publish(22); notifyAdapter();
+    const callsBeforeDisposal = statusCalls;
+    dispose(); unblockAfterDispose();
+    // Only mocked Promise continuations remain; one event-loop handback lets
+    // the released status callback finish without a silence/deadline wait.
+    await tick();
+    assert.equal(existsSync(late + '.json'), false); assert.equal(existsSync(pending + '.json'), false);
+    assert.equal(statusCalls, callsBeforeDisposal); assert.equal(adapterClosed, true);
     console.log('Provider contracts: live selection, busy/pending refusal, single helper, disposal PASS');
     """#
     try script.write(to: root.appendingPathComponent("contract.mjs"), atomically: true, encoding: .utf8)

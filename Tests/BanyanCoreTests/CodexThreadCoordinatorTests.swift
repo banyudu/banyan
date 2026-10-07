@@ -802,9 +802,17 @@ private func coordinator(_ server: ThreadServer, id: String = "session", threadI
     try await manager.recoverCreation(sessionID: "uncertain", threadID: "stored")
     #expect(pool.running == ["uncertain"])
     server.emit("thread/status/changed", id: "stored", fields: ["status": .object(["type": .string("idle")])])
-    try await admissionEventually { pool.running.isEmpty }
+    // Slot release precedes the asynchronous idle unsubscribe. A connect while
+    // still subscribed correctly does nothing, so wait for confirmed teardown
+    // before testing a lost resume reply.
+    try await admissionEventually {
+        pool.running.isEmpty && manager.states["uncertain"]?.isSubscribed == false &&
+            manager.states["uncertain"]?.connection == .unsubscribed
+    }
+    let resumes = server.count("thread/resume")
     server.failures["thread/resume"] = .timedOut("thread/resume")
     await #expect(throws: CodexAppServerError.self) { try await manager.connect(sessionID: "uncertain") }
+    #expect(server.count("thread/resume") == resumes + 1)
     #expect(pool.running == ["uncertain"])
 }
 
