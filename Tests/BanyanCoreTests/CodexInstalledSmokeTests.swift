@@ -4,21 +4,29 @@ import Testing
 
 /// Opt-in: never reads login files or connects to a running Codex/Banyan server.
 /// A refused loopback inference persists a rollout without credentials or cost.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["BANYAN_TEST_INSTALLED_CODEX"] == "1"))
-func installedCodexSchemaStartupAndExactThreadResume() async throws {
+@Test(.enabled(if: ProcessInfo.processInfo.environment["BANYAN_TEST_INSTALLED_CODEX"] == "1"),
+    arguments: (ProcessInfo.processInfo.environment["BANYAN_TEST_CODEX_EXECUTABLES"] ?? "codex").split(separator: "\n").map(String.init))
+func installedCodexSchemaStartupAndExactThreadResume(command: String) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("banyan-codex-smoke-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let environment = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin",
         "HOME": root.path, "CODEX_HOME": root.path, "TERM": "xterm-256color"]
-    let version = try await SubprocessRunner.runAsync(arguments: ["codex", "--version"],
+    // Resolve once inside the same subprocess environment as the probe. A
+    // parent shell's command lookup can differ from Foundation's child PATH.
+    let lookup = try await SubprocessRunner.runAsync(arguments: ["/usr/bin/which", command],
+        cwd: root.path, environment: environment, timeout: 10)
+    try #require(lookup.terminationStatus == 0)
+    let executable = String(decoding: lookup.standardOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    try #require(executable.hasPrefix("/"))
+    let version = try await SubprocessRunner.runAsync(arguments: [executable, "--version"],
         cwd: root.path, environment: environment, timeout: 10)
     #expect(version.terminationStatus == 0)
     let versionText = String(decoding: version.standardOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-    #expect(versionText == "codex-cli 0.160.0")
+    #expect(["codex-cli 0.160.0", "codex-cli 0.160.1"].contains(versionText))
 
     let schemaRoot = root.appendingPathComponent("schema")
-    let generated = try await SubprocessRunner.runAsync(arguments: ["codex", "app-server", "generate-json-schema", "--out", schemaRoot.path],
+    let generated = try await SubprocessRunner.runAsync(arguments: [executable, "app-server", "generate-json-schema", "--out", schemaRoot.path],
         cwd: root.path, environment: environment, timeout: 15)
     #expect(generated.terminationStatus == 0)
     for (file, fields) in [
@@ -43,7 +51,7 @@ func installedCodexSchemaStartupAndExactThreadResume() async throws {
     request_max_retries = 0
     stream_max_retries = 0
     """#.write(to: root.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
-    let client = CodexAppServerClient(environment: environment, requestTimeout: 15)
+    let client = CodexAppServerClient(executable: executable, environment: environment, requestTimeout: 15)
     do {
         let events = await client.events()
         try await client.connect()
@@ -85,7 +93,7 @@ func installedCodexSchemaStartupAndExactThreadResume() async throws {
         // Run the generated fallback command through the installed CLI parser
         // without opening a TUI; settings serialization has fixture coverage.
         let command = try CodexCLIFallback.command(binding: .init(threadID: threadID, cwd: root.path,
-            settings: settings, codexHome: root.path))
+            settings: settings, codexHome: root.path), executable: executable)
         let parsed = try await SubprocessRunner.runAsync(arguments: ["/bin/sh", "-c", command + " --help"],
             cwd: root.path, environment: environment, timeout: 10)
         #expect(parsed.terminationStatus == 0)

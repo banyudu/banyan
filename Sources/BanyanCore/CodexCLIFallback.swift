@@ -4,10 +4,14 @@ import Foundation
 /// Never use --last, a picker, or a new start after an uncertain native start.
 public enum CodexCLIFallback {
     public static func command(binding: CodexThreadBinding) throws -> String {
+        try command(binding: binding, executable: "codex")
+    }
+
+    public static func command(binding: CodexThreadBinding, executable: String) throws -> String {
         guard binding.threadID != nil || !binding.creationAttempted else {
             throw CodexAppServerError.protocolViolation("Codex thread creation is uncertain. Recover its stored thread ID before switching to the CLI; starting again could lose the original thread.")
         }
-        var arguments = ["codex"]
+        var arguments = [executable]
         if let threadID = binding.threadID { arguments += ["resume", threadID] }
         arguments += ["-C", binding.cwd]
         var overrides = binding.settings.config

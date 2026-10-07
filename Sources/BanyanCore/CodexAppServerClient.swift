@@ -62,7 +62,7 @@ public enum CodexAppServerError: Error, Sendable, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .launch(let reason): return "Codex App Server could not start: \(reason)"
-        case .incompatibleVersion(let version): return "Codex App Server \(version) is not in Banyan's tested 0.146.x / 0.160.0 protocol versions. Update Banyan or use the Codex CLI fallback."
+        case .incompatibleVersion(let version): return "Codex App Server \(version) is not in Banyan's tested 0.146.x / 0.160.0 / 0.160.1 protocol versions. Update Banyan or use the Codex CLI fallback."
         case .protocolViolation(let reason): return "Codex App Server protocol error: \(reason)"
         case .disconnected(let reason): return "Codex App Server disconnected: \(reason). Retry the operation to reconnect."
         case .timedOut(let method): return "Codex App Server request timed out: \(method)"
@@ -306,7 +306,7 @@ public actor CodexAppServerClient {
                 throw CodexAppServerError.protocolViolation("initialize omitted a recognizable server version")
             }
             guard version.major == 0,
-                  version.minor == 146 || (version.minor == 160 && version.patch == 0) else {
+                  version.minor == 146 || (version.minor == 160 && [0, 1].contains(version.patch)) else {
                 throw CodexAppServerError.incompatibleVersion(version.description)
             }
             try send(.object(["method": .string("initialized"), "params": .object([:])]), generation: current)

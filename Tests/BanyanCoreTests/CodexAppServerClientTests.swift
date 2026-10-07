@@ -36,7 +36,10 @@ for line in sys.stdin:
     method = message.get('method')
     identifier = message.get('id')
     if method == 'initialize':
-        time.sleep(float(os.environ.get('FAKE_CODEX_INITIALIZE_DELAY', '0')))
+        gate = os.environ.get('FAKE_CODEX_INITIALIZE_GATE')
+        if gate:
+            send({'method': 'test/initializeArrived', 'params': {}})
+            with open(gate, 'rb', buffering=0) as release: release.read(1)
         if os.environ.get('FAKE_CODEX_STALL_INITIALIZE'): continue
         version = os.environ.get('FAKE_CODEX_VERSION', '0.146.0')
         result = {'userAgent': 'banyan/' + version + ' (test)', 'platformFamily': 'unix', 'platformOs': 'macos'}
@@ -81,18 +84,18 @@ private struct FakeServerFixture {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
     }
 
-    func client(version: String = "0.146.0", ignoreTermination: Bool = false, initializeDelay: Double = 0) -> CodexAppServerClient {
+    func client(version: String = "0.146.0", ignoreTermination: Bool = false, holdInitialize: Bool = false) -> CodexAppServerClient {
         var environment = ProcessInfo.processInfo.environment
         environment["FAKE_CODEX_LAUNCH_FILE"] = launchFile.path
         environment["FAKE_CODEX_VERSION"] = version
-        environment["FAKE_CODEX_INITIALIZE_DELAY"] = String(initializeDelay)
+        if holdInitialize { environment["FAKE_CODEX_INITIALIZE_GATE"] = directory.appendingPathComponent("initialize-gate").path }
         environment["FAKE_CODEX_PID_LIST"] = directory.appendingPathComponent("pids").path
         environment["FAKE_CODEX_PID_FILE"] = directory.appendingPathComponent("pid").path
         if ignoreTermination { environment["FAKE_CODEX_IGNORE_TERM"] = "1" }
         return CodexAppServerClient(
             executable: executable.path,
             environment: environment,
-            requestTimeout: 10
+            requestTimeout: holdInitialize ? 30 : 10
         )
     }
 
@@ -206,10 +209,11 @@ private struct FakeServerFixture {
     await client.stop()
 }
 
-@Test func appServerAcceptsTestedCurrentVersionAndCanReconnectAfterCLIHandoff() async throws {
+@Test(arguments: ["0.160.0", "0.160.1"])
+func appServerAcceptsTestedCurrentVersionAndCanReconnectAfterCLIHandoff(version: String) async throws {
     let fixture = try FakeServerFixture()
     defer { fixture.cleanup() }
-    let client = fixture.client(version: "0.160.0")
+    let client = fixture.client(version: version)
     try await client.connect()
     try await client.disconnectForHandoff()
     let result = try await client.request("echo", params: .object(["value": .string("native again")]))
@@ -219,7 +223,7 @@ private struct FakeServerFixture {
 }
 
 @Test func appServerRejectsUnknownVersionsAndReapsEvenAnUncooperativeChild() async throws {
-    for version in ["0.160.1", "0.999.0", "invalid"] {
+    for version in ["0.160.2", "0.999.0", "invalid"] {
         let fixture = try FakeServerFixture()
         defer { fixture.cleanup() }
         let client = fixture.client(version: version, ignoreTermination: true)
@@ -277,22 +281,39 @@ private struct FakeServerFixture {
 @Test func appServerHandoffDuringStartupKeepsTheReplacementConnectionCoalescedAndReapsAllChildren() async throws {
     let fixture = try FakeServerFixture()
     defer { fixture.cleanup() }
-    let client = fixture.client(initializeDelay: 0.25)
+    let gate = fixture.directory.appendingPathComponent("initialize-gate")
+    try #require(mkfifo(gate.path, 0o600) == 0)
+    // O_RDWR opens the FIFO without blocking; each child then waits for one
+    // explicit release byte after announcing receipt of initialize.
+    let release = try FileHandle(forUpdating: gate)
+    defer { try? release.close() }
+    let client = fixture.client(holdInitialize: true)
+    let firstEvents = await client.events()
     let first = Task { try await client.connect() }
-    for _ in 0..<200 {
-        if fixture.launchCount > 0 { break }
-        try await Task.sleep(for: .milliseconds(5))
-    }
-    #expect(fixture.launchCount == 1)
-    try await client.disconnectForHandoff()
-    do { try await first.value; Issue.record("Interrupted handshake should fail") } catch {}
-    try await withThrowingTaskGroup(of: Void.self) { group in
-        for _ in 0..<12 {
-            group.addTask {
-                _ = try await client.request("echo", params: .object(["value": .string("replacement")]))
+    do {
+        try await waitForInitialize(firstEvents)
+        #expect(fixture.launchCount == 1)
+        try await client.disconnectForHandoff()
+        do { try await first.value; Issue.record("Interrupted handshake should fail") } catch {}
+        let replacementEvents = await client.events()
+        let replacement = Task {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for _ in 0..<12 {
+                    group.addTask {
+                        _ = try await client.request("echo", params: .object(["value": .string("replacement")]))
+                    }
+                }
+                try await group.waitForAll()
             }
         }
-        try await group.waitForAll()
+        try await waitForInitialize(replacementEvents)
+        #expect(fixture.launchCount == 2)
+        try release.write(contentsOf: Data([1]))
+        try await replacement.value
+    } catch {
+        await client.stop()
+        _ = await first.result
+        throw error
     }
     #expect(fixture.launchCount == 2)
     await client.stop()
@@ -300,4 +321,21 @@ private struct FakeServerFixture {
         .split(separator: "\n").compactMap { Int32($0) }
     #expect(pids.count == 2)
     for pid in pids { #expect(kill(pid, 0) == -1); #expect(errno == ESRCH) }
+}
+
+private func waitForInitialize(_ events: AsyncStream<CodexAppServerEvent>) async throws {
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask {
+            for await event in events {
+                if case .notification(method: "test/initializeArrived", params: _) = event { return }
+            }
+            throw CodexAppServerError.disconnected("initialize marker stream ended")
+        }
+        group.addTask {
+            try await Task.sleep(for: .seconds(15))
+            throw CodexAppServerError.timedOut("test initialize marker")
+        }
+        defer { group.cancelAll() }
+        try await group.next()
+    }
 }

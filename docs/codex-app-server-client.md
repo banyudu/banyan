@@ -26,10 +26,10 @@ for the future session UI to explain.
 
 Each connection sends `initialize`, checks the returned `userAgent`, then sends
 `initialized`. Banyan accepts the tested Codex CLI `0.146.x` family and exact
-`0.160.0` release from the server's user-agent prefix. An unknown format or version fails
+`0.160.0` and `0.160.1` releases from the server's user-agent prefix. An unknown format or version fails
 closed with an actionable error; the CLI/tmux fallback remains available.
 Expand the accepted versions only after testing that version's generated schema
-and the transport tests. `0.160.1` and other untested releases remain gated. This check is deliberately inside the Codex adapter.
+and the transport tests. Later untested releases remain gated. This check is deliberately inside the Codex adapter.
 
 The adapter assigns monotonically increasing request IDs, routes responses by
 ID, broadcasts notifications to event subscribers, and answers server-initiated
@@ -170,7 +170,12 @@ Run the opt-in smoke test without touching live sessions:
 BANYAN_TEST_INSTALLED_CODEX=1 swift test --filter installedCodexSchemaStartupAndExactThreadResume
 ```
 
-It checks the installed `0.160.0` generated lifecycle schema and uses an empty,
+The probe resolves one absolute executable inside its subprocess environment
+and uses it for version detection, schema generation, transport, and CLI parsing.
+To check multiple installations, set `BANYAN_TEST_CODEX_EXECUTABLES` to their
+absolute paths separated by newlines; each runs in its own private store.
+
+It checks the installed `0.160.0` or `0.160.1` generated lifecycle schema and uses an empty,
 temporary `HOME`/`CODEX_HOME` with a refused loopback inference endpoint. It
 checks initialize, start, the expected offline failed turn, read, unsubscribe,
 server reap/restart, exact-ID resume with settings, and CLI fallback argument
@@ -179,7 +184,7 @@ cover unsupported versions, a child ignoring SIGTERM, capability failures,
 uncertain starts, busy-thread refusal, rollout toggling, persistence, and
 unified CLI output.
 
-Live validation should use a tested `0.146.x` or `0.160.0` CLI. Verify a completed thread across an app/server restart,
+Live validation should use a tested `0.146.x`, `0.160.0`, or `0.160.1` CLI. Verify a completed thread across an app/server restart,
 pending approval while changing selection, and coexistence with an external
 writer. The server's 30-minute unload grace and mobile handoff require live
 checks; fast fixture tests prove client subscription decisions, not RSS savings
