@@ -4,8 +4,10 @@ import PackageDescription
 
 #if os(Linux) || os(Windows)
 let platformExcludes = ["Apple", "Mac", "iOS"]
+let platformResources: [Resource] = []
 #else
 let platformExcludes: [String] = []
+let platformResources: [Resource] = [.process("Apple/Metal/Shaders.metal")]
 #endif
 
 let package = Package(
@@ -27,9 +29,7 @@ let package = Package(
             name: "SwiftTerm",
             path: "Sources/SwiftTerm",
             exclude: platformExcludes + ["Mac/README.md"],
-            resources: [
-                .process("Apple/Metal/Shaders.metal")
-            ]
+            resources: platformResources
         ),
     ],
     swiftLanguageVersions: [.v5]
