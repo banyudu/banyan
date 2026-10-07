@@ -15,7 +15,7 @@ var packageTargets: [Target] = [
         ),
         .target(
             name: "BanyanCore",
-            dependencies: ["CSQLite"]
+            dependencies: ["CSQLite", "CTerminalPTY"]
         ),
         .executableTarget(
             name: "BanyanCtl",

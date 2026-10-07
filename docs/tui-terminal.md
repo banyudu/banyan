@@ -51,11 +51,21 @@ small C helper performs the post-fork setup and exec without invoking Swift in
 the child. It sets up a controlling tty, closes inherited descriptors, forwards
 window dimensions with TIOCSWINSZ, and retains PID ownership until reaping.
 
+On Linux, the first `new-session` command also uses an owned C spawn and direct
+child-exit notification. Foundation's inherited exit-monitoring socket can stay
+open in the new tmux daemon after its launcher exits, delaying notification and
+reaping. This path closes inherited descriptors, snapshots and drains every
+buffered stdout and stderr byte at direct-child exit, and returns even if a
+detached grandchild holds or keeps writing to the pipes. Other tmux commands and
+the shared SubprocessRunner retain their existing implementation, including
+cancellation behavior.
+
 ## Verification
 
 ```sh
 swift build --product BanyanTUI
 swift test --filter BanyanTUITests
+swift test --filter 'tmuxDaemonCommand|subprocessRunner'
 python3 scripts/tests/test_embedded_terminal.py
 ```
 
