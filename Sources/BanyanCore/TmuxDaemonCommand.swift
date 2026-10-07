@@ -12,7 +12,28 @@ import Darwin
 /// normal commands and the generic SubprocessRunner keep their existing path.
 enum TmuxDaemonCommand {
     static func run(executable: URL, arguments: [String], cwd: String,
-                    environment: [String: String], timeout: TimeInterval) throws -> SubprocessRunner.Output {
+                    environment: [String: String], timeout: TimeInterval,
+                    tracingExporter: AxiomExporter? = SubprocessRunner.axiomExporter) throws -> SubprocessRunner.Output {
+        let command = executable.lastPathComponent == "env" ? arguments.first ?? "env" : executable.path
+        let span = tracingExporter?.startSpan("subprocess.run", attributes: [
+            "process.executable.name": TelemetryPrivacy.command(command),
+        ])
+        do {
+            // The owned spawn bypasses SubprocessRunner; trace exactly once here
+            // without routing execution back through Foundation Process.
+            let output = try runOwned(executable: executable, arguments: arguments, cwd: cwd,
+                                      environment: environment, timeout: timeout)
+            span?.end(attributes: ["process.exit.code": String(output.terminationStatus)],
+                      errorType: output.terminationStatus == 0 ? nil : "nonzero_exit")
+            return output
+        } catch {
+            span?.end(errorType: TelemetryPrivacy.errorType(error))
+            throw error
+        }
+    }
+
+    private static func runOwned(executable: URL, arguments: [String], cwd: String,
+                                 environment: [String: String], timeout: TimeInterval) throws -> SubprocessRunner.Output {
         let exit = try CommandExit()
         let argv = ([executable.path] + arguments).map { strdup($0) }
         let envp = environment.map { strdup("\($0.key)=\($0.value)") }

@@ -29,7 +29,9 @@ public enum TraceContext {
     ) async rethrows -> T {
         let span = exporter?.startSpan(name)
         do {
-            let value = try await $current.withValue(span?.context ?? current, operation: operation)
+            let value = try await $current.withValue(span?.context ?? current) {
+                try await operation()
+            }
             span?.end()
             return value
         } catch {

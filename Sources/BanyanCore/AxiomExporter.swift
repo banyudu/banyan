@@ -220,7 +220,13 @@ public final class AxiomExporter: @unchecked Sendable {
                     self.result.droppedSpans += spans.count
                     NSLog("Banyan telemetry: OTLP export failed (HTTP %d); dropped %d spans", status ?? 0, spans.count)
                 }
-                self.flushLocked()
+                if self.buffer.count >= self.batchSize || !self.waiters.isEmpty {
+                    self.flushLocked()
+                } else {
+                    // Small batches keep their one-shot deadline. A fast prior
+                    // response must not turn batching into one request per span.
+                    self.finishIfIdleLocked()
+                }
             }
         }
         request = task

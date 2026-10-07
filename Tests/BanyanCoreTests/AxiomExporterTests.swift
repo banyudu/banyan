@@ -16,6 +16,7 @@ final class TelemetryFakeNetwork: @unchecked Sendable {
     private let lock = NSLock()
     private var captured: [URLRequest] = []
     private var replies: [Reply]
+    private var heldResponse: (@Sendable () -> Void)?
     let id = UUID().uuidString
     let session: URLSession
 
@@ -23,7 +24,9 @@ final class TelemetryFakeNetwork: @unchecked Sendable {
         self.replies = replies
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TelemetryURLProtocol.self]
-        configuration.httpAdditionalHeaders = ["X-Test-Network": id]
+        // FoundationNetworking invokes URLProtocol before merging session
+        // extra headers. Exporter requests identify this fixture by dataset;
+        // ordinary HTTP test requests carry X-Test-Network explicitly.
         session = URLSession(configuration: configuration)
         TelemetryURLProtocol.register(self, id: id)
     }
@@ -57,8 +60,21 @@ final class TelemetryFakeNetwork: @unchecked Sendable {
         return replies.isEmpty ? .status(200, "{}") : replies.removeFirst()
     }
 
+    func hold(_ response: @escaping @Sendable () -> Void) {
+        lock.lock(); defer { lock.unlock() }; heldResponse = response
+    }
+
+    func releaseHeld() -> Bool {
+        lock.lock()
+        let response = heldResponse
+        heldResponse = nil
+        lock.unlock()
+        response?()
+        return response != nil
+    }
+
     func exporter(batchSize: Int = 100, bufferLimit: Int = 1000, flushInterval: TimeInterval = 30) -> AxiomExporter {
-        AxiomExporter(config: TelemetryConfig(axiomAPIToken: "xaat-fixture-token", axiomOrgID: "test-org", axiomDataset: "test-dataset"),
+        AxiomExporter(config: TelemetryConfig(axiomAPIToken: "xaat-fixture-token", axiomOrgID: "test-org", axiomDataset: id),
                       appVersion: "1.2.3", session: session, batchSize: batchSize,
                       bufferLimit: bufferLimit, flushInterval: flushInterval)
     }
@@ -92,22 +108,26 @@ private final class TelemetryURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.lock.lock()
-        let network = Self.networks[request.value(forHTTPHeaderField: "X-Test-Network") ?? ""]?.value
+        let network = Self.networks[request.value(forHTTPHeaderField: "X-Test-Network")
+            ?? request.value(forHTTPHeaderField: "X-Axiom-Dataset") ?? ""]?.value
         Self.lock.unlock()
         guard let network else {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
             return
         }
         switch network.receive(request) {
-        case .held: break
+        case .held:
+            network.hold { [weak self] in self?.respond(status: 200, body: "{}") }
         case .failure(let error): client?.urlProtocol(self, didFailWithError: error)
-        case .status(let status, let body):
-            let response = HTTPURLResponse(url: request.url!, statusCode: status,
-                                           httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: Data(body.utf8))
-            client?.urlProtocolDidFinishLoading(self)
+        case .status(let status, let body): respond(status: status, body: body)
         }
+    }
+    private func respond(status: Int, body: String) {
+        let response = HTTPURLResponse(url: request.url!, statusCode: status,
+                                       httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
 }
@@ -154,7 +174,7 @@ private func attributes(_ span: [String: Any]) -> [String: String] {
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer xaat-fixture-token")
-        #expect(request.value(forHTTPHeaderField: "X-Axiom-Dataset") == "test-dataset")
+        #expect(request.value(forHTTPHeaderField: "X-Axiom-Dataset") == network.id)
         #expect(request.value(forHTTPHeaderField: "X-Axiom-Org-ID") == "test-org")
         let spans = try network.spans()
         let root = try #require(spans.first { $0["name"] as? String == "operation" })
@@ -188,6 +208,7 @@ private func attributes(_ span: [String: Any]) -> [String: String] {
         let network = TelemetryFakeNetwork([.status(201, "{}"), .status(503, "{}"), .failure(URLError(.cancelled))])
         let exporter = network.exporter()
         var request = URLRequest(url: URL(string: "https://user:password@example.test/private-token?token=secret#prompt")!)
+        request.setValue(network.id, forHTTPHeaderField: "X-Test-Network")
         request.httpMethod = "POST"
         request.httpBody = Data("private-prompt".utf8)
         request.setValue("Bearer sensitive-auth", forHTTPHeaderField: "Authorization")
@@ -225,7 +246,8 @@ private func attributes(_ span: [String: Any]) -> [String: String] {
 
     @Test func disabledHTTPDoesNotInjectContextAndDownloadFailuresAreTraced() async throws {
         let network = TelemetryFakeNetwork([.status(200, "{}"), .failure(URLError(.timedOut))])
-        let request = URLRequest(url: URL(string: "https://example.test/asset?signature=private")!)
+        var request = URLRequest(url: URL(string: "https://example.test/asset?signature=private")!)
+        request.setValue(network.id, forHTTPHeaderField: "X-Test-Network")
         _ = try await TracedHTTP.data(for: request, session: network.session, exporter: nil, service: "github")
         #expect(network.requests.first?.value(forHTTPHeaderField: "traceparent") == nil)
         let exporter = network.exporter()
@@ -287,6 +309,27 @@ private func attributes(_ span: [String: Any]) -> [String: String] {
         #expect(exporter.startSpan("after.shutdown") == nil)
         #expect(await exporter.flushAndWait() == result)
         #expect(network.requests.count == 3)
+    }
+
+    @Test func completingABatchDoesNotImmediatelyExportAPartialNextBatch() async throws {
+        let network = TelemetryFakeNetwork([.held])
+        let exporter = network.exporter(batchSize: 2)
+        exporter.startSpan("first")?.end()
+        exporter.startSpan("second")?.end()
+        exporter.startSpan("partial")?.end()
+        var released = false
+        for _ in 0..<100 {
+            if network.releaseHeld() { released = true; break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(released)
+        // Allow the fake response to finish. The partial batch's 30-second
+        // deadline must survive, while an explicit flush must still drain it.
+        try await Task.sleep(nanoseconds: 30_000_000)
+        #expect(network.requests.count == 1)
+        #expect((await exporter.flushAndWait()).exportedSpans == 3)
+        #expect(network.requests.count == 2)
+        _ = await exporter.shutdownAndWait()
     }
 
     @Test func shutdownTimeoutCancelsOnlyExporterAndBoundsBuffer() async throws {
@@ -368,6 +411,49 @@ private func attributes(_ span: [String: Any]) -> [String: String] {
         #expect(spans.count == 2)
         #expect(Set(spans.compactMap { attributes($0)["error.type"] }) == ["timeout", "cancelled"])
         #expect(spans.allSatisfy { ($0["status"] as? [String: Int])?["code"] == 2 })
+    }
+
+    @Test func ownedDaemonSpawnEmitsExactlyOneSpanPerCallWithParentAndSafeOutcomes() async throws {
+        let network = TelemetryFakeNetwork()
+        let exporter = network.exporter()
+        let cwd = FileManager.default.temporaryDirectory.path
+        let env = ["PATH": "/usr/bin:/bin"]
+        await TraceContext.withSpan(exporter: exporter, name: "daemon.operation") {
+            do {
+                let output = try TmuxDaemonCommand.run(
+                    executable: URL(fileURLWithPath: "/bin/sh"),
+                    arguments: ["-c", "printf private-output; printf private-stderr >&2; exit 7"],
+                    cwd: cwd, environment: env, timeout: 2, tracingExporter: exporter)
+                #expect(output.terminationStatus == 7)
+            } catch { Issue.record("Owned success fixture failed") }
+            do {
+                _ = try TmuxDaemonCommand.run(executable: URL(fileURLWithPath: "/bin/sh"),
+                                             arguments: ["-c", "exec sleep 5"], cwd: cwd,
+                                             environment: env, timeout: 0.05, tracingExporter: exporter)
+                Issue.record("Expected owned spawn timeout")
+            } catch {}
+            do {
+                _ = try TmuxDaemonCommand.run(executable: URL(fileURLWithPath: "/nonexistent-private-tool"),
+                                             arguments: [], cwd: cwd, environment: env,
+                                             timeout: 2, tracingExporter: exporter)
+                Issue.record("Expected owned launch failure")
+            } catch {}
+        }
+        _ = await exporter.shutdownAndWait()
+        let spans = try network.spans()
+        let parent = try #require(spans.first { $0["name"] as? String == "daemon.operation" })
+        let children = spans.filter { $0["name"] as? String == "subprocess.run" }
+        #expect(children.count == 3) // no generic-runner recursion or duplicates
+        #expect(attributes(children[0])["process.exit.code"] == "7")
+        #expect(attributes(children[1])["error.type"] == "timeout")
+        #expect(attributes(children[2])["error.type"] == "launch_failed")
+        for child in children {
+            #expect(child["traceId"] as? String == parent["traceId"] as? String)
+            #expect(child["parentSpanId"] as? String == parent["spanId"] as? String)
+            #expect((Double(attributes(child)["duration_ms"] ?? "") ?? -1) >= 0)
+        }
+        let body = String(data: try #require(network.requests.first?.httpBody), encoding: .utf8)!
+        #expect(!body.contains("private"))
     }
 
     @Test func performanceBridgePreservesContextLifecycleAndLocalSupervisorPolicy() async throws {

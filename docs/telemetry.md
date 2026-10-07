@@ -39,7 +39,8 @@ it does not install global URLSession interception or a separate log exporter.
 
 Instrumented paths include Linear HTTP, update checks and package downloads,
 GitHub CLI operations, both synchronous and asynchronous SubprocessRunner entry
-points, sampled local performance events, app launch, session selection through
+points, the Linux owned tmux-daemon spawn (without routing it through the generic
+runner), sampled local performance events, app launch, session selection through
 terminal readiness, and sidebar mode changes. CLI operations are internal spans;
 only real HTTP requests carry HTTP method/status attributes. Exporter requests
 bypass instrumentation to prevent recursion.
