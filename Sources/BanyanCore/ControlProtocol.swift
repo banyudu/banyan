@@ -289,6 +289,8 @@ public enum ControlRoute: Equatable {
     case freeze
     case unfreeze
     case codexHandoff
+    case deepSuspend
+    case deepResume
     /// Reads a session's pane: its text, and the prompt it is blocked on.
     case output
     /// Writes raw keys or literal text into a session's pane.
@@ -323,6 +325,8 @@ public enum ControlRoute: Equatable {
         case ("POST", "/freeze"): return .freeze
         case ("POST", "/unfreeze"): return .unfreeze
         case ("POST", "/codex-handoff"): return .codexHandoff
+        case ("POST", "/agent-suspend"): return .deepSuspend
+        case ("POST", "/agent-resume"): return .deepResume
         case ("POST", "/input"): return .input
         case ("POST", "/answer"): return .answer
         case ("POST", "/suggest"): return .suggest
@@ -353,7 +357,7 @@ public enum ControlRoute: Equatable {
 
     public var requiresID: Bool {
         switch self {
-        case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff,
+        case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
              .output, .input, .answer: return true
         case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest,
              .prune: return false

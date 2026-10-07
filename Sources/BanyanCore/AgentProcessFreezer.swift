@@ -21,10 +21,31 @@ public struct AgentProcessSample: Sendable {
     public let cpuNanoseconds: UInt64
     public let residentBytes: UInt64
     public let isStopped: Bool
+    public let foregroundGroupID: Int32?
+
+    public enum Presence: Equatable, Sendable { case alive, exited, unknown }
+
+    /// A failed task/RSS sample is not proof of exit. BSD identity/zombie state
+    /// or ESRCH establishes that the recorded address space is gone; EPERM and
+    /// other transient inspection failures retain recovery and admission.
+    public static func presence(of identity: AgentProcessIdentity) -> Presence {
+        #if canImport(Darwin)
+        var info = proc_bsdinfo()
+        if proc_pidinfo(identity.pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout.size(ofValue: info))) == MemoryLayout.size(ofValue: info) {
+            if info.pbi_start_tvsec != identity.startSeconds || info.pbi_start_tvusec != identity.startMicroseconds || info.pbi_status == SZOMB {
+                return .exited
+            }
+            return .alive
+        }
+        // Signal zero checks existence and delivers no signal.
+        if kill(identity.pid, 0) != 0, errno == ESRCH { return .exited }
+        #endif
+        return .unknown
+    }
 
     public init(identity: AgentProcessIdentity, parentPID: Int32, groupID: Int32,
                 sessionID: Int32, userID: UInt32, cpuNanoseconds: UInt64, residentBytes: UInt64 = 0,
-                isStopped: Bool = false) {
+                isStopped: Bool = false, foregroundGroupID: Int32? = nil) {
         self.identity = identity
         self.parentPID = parentPID
         self.groupID = groupID
@@ -33,6 +54,7 @@ public struct AgentProcessSample: Sendable {
         self.cpuNanoseconds = cpuNanoseconds
         self.residentBytes = residentBytes
         self.isStopped = isStopped
+        self.foregroundGroupID = foregroundGroupID
     }
 
     public static func read(pid: Int32) -> AgentProcessSample? {
@@ -48,7 +70,8 @@ public struct AgentProcessSample: Sendable {
             identity: AgentProcessIdentity(pid: pid, startSeconds: bsd.pbi_start_tvsec, startMicroseconds: bsd.pbi_start_tvusec),
             parentPID: Int32(bsd.pbi_ppid), groupID: Int32(bsd.pbi_pgid), sessionID: session,
             userID: bsd.pbi_uid, cpuNanoseconds: task.pti_total_user + task.pti_total_system,
-            residentBytes: task.pti_resident_size, isStopped: bsd.pbi_status == SSTOP)
+            residentBytes: task.pti_resident_size, isStopped: bsd.pbi_status == SSTOP,
+            foregroundGroupID: Int32(truncatingIfNeeded: bsd.e_tpgid))
         #else
         // The GUI feature is macOS-only. Never fall back to rounded ps timestamps.
         return nil

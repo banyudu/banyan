@@ -108,6 +108,12 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
     /// Keep the existing app-server preference working for the built-in Codex
     /// profile. Configured profiles otherwise run exactly their declared command.
     func resolvedCommand(codexLaunchMode: CodexLaunchMode) -> String {
+        if id == "claude", command == "claude" {
+            return AgentLaunchCommand.command(provider: .claude, ownedForSuspension: true)
+        }
+        if id == "codex", command == "codex", codexLaunchMode == .direct {
+            return AgentLaunchCommand.command(provider: .codex, ownedForSuspension: true)
+        }
         guard id == "codex", command == "codex", codexLaunchMode == .appServer else {
             return command
         }

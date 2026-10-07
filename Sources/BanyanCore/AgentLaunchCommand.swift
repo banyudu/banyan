@@ -5,12 +5,17 @@ public enum AgentLaunchCommand {
         provider: CodingAgentProvider,
         prompt: String? = nil,
         executableName: String? = nil,
-        codexLaunchMode: CodexLaunchMode = .direct
+        codexLaunchMode: CodexLaunchMode = .direct,
+        ownedForSuspension: Bool = false
     ) -> String {
         if provider == .codex, codexLaunchMode == .appServer {
             return CodexAppServerLaunch.command(prompt: prompt)
         }
         var arguments = [executableName.flatMap(clean) ?? provider.defaultExecutableName]
+        if ownedForSuspension {
+            if provider == .codex { arguments += ["--no-daemon"] }
+            if provider == .claude { arguments += ["--session-id", UUID().uuidString.lowercased()] }
+        }
         switch provider {
         case .hunyuan:
             arguments.append("--agent")
@@ -23,6 +28,9 @@ public enum AgentLaunchCommand {
         }
         if let prompt = clean(prompt) {
             arguments.append(prompt)
+        }
+        if ownedForSuspension, provider == .opencode {
+            arguments = ["env", "OPENCODE_DISABLE_AUTOUPDATE=true"] + arguments
         }
         return arguments.map(shellQuote).joined(separator: " ")
     }

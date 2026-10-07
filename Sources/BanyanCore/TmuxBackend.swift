@@ -306,7 +306,11 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         if trimmedCommand.isEmpty {
             arguments.append(contentsOf: [shell, "-l"])
         } else if let host = AgentProcessHost.executableURL(environment: environment) {
-            arguments.append(contentsOf: [host.path, AgentProcessHost.subcommand, shell, trimmedCommand])
+            arguments.append(contentsOf: [host.path, AgentProcessHost.subcommand])
+            if AgentProcessHost.supportsPersistentShell(command: trimmedCommand) {
+                arguments.append(AgentProcessHost.persistentFlag)
+            }
+            arguments.append(contentsOf: [shell, trimmedCommand])
         } else {
             // Legacy/unpackaged launchers still work, but a pane-root agent is
             // deliberately ineligible for freezing because tmux CONTs it.
@@ -362,6 +366,37 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         guard let text = try? run(["show-options", "-qv", "-t", name, "@banyan-freeze"]),
               let data = text.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(AgentFreezeTicket.self, from: data)
+    }
+
+    public func suspendTicket(named name: String) -> AgentSuspendTicket? {
+        if case .valid(let ticket) = readSuspendJournal(named: name) { return ticket }
+        return nil
+    }
+
+    public func readSuspendJournal(named name: String) -> AgentSuspendJournalState {
+        do {
+            // Listing distinguishes a missing option from an existing empty or
+            // malformed value. A server/target/read failure is never absence.
+            let listing = try run(["show-options", "-q", "-t", name, "@banyan-deep-suspend"])
+            if listing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .absent }
+            let text = try run(["show-options", "-qv", "-t", name, "@banyan-deep-suspend"])
+            guard let data = text.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
+                  let ticket = try? JSONDecoder().decode(AgentSuspendTicket.self, from: data) else {
+                return .unavailable("Deep-suspend recovery journal is malformed; input blocked until repaired")
+            }
+            return .valid(ticket)
+        } catch {
+            return .unavailable("Deep-suspend recovery journal could not be read; retry Resume. \(error.localizedDescription)")
+        }
+    }
+
+    public func writeSuspendTicket(_ ticket: AgentSuspendTicket?, named name: String) throws {
+        if let ticket {
+            let data = try JSONEncoder().encode(ticket)
+            try run(["set-option", "-t", name, "@banyan-deep-suspend", String(decoding: data, as: UTF8.self)])
+        } else {
+            try run(["set-option", "-qu", "-t", name, "@banyan-deep-suspend"])
+        }
     }
 
     public func writeFreezeTicket(_ ticket: AgentFreezeTicket?, named name: String) throws {

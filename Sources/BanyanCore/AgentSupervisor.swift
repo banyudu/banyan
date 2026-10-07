@@ -693,6 +693,7 @@ public struct ProcessInfoRow: Sendable {
     public let elapsed: TimeInterval
     public let commandName: String
     public let arguments: String
+    public let argumentVector: [String]?
 
     let supportedAgentProvider: CodingAgentProvider?
     let isExited: Bool
@@ -710,7 +711,8 @@ public struct ProcessInfoRow: Sendable {
         state: String,
         elapsed: TimeInterval,
         commandName: String,
-        arguments: String
+        arguments: String,
+        argumentVector: [String]? = nil
     ) {
         self.pid = pid
         self.parentPID = parentPID
@@ -718,6 +720,7 @@ public struct ProcessInfoRow: Sendable {
         self.elapsed = elapsed
         self.commandName = commandName
         self.arguments = arguments
+        self.argumentVector = argumentVector
 
         let executable = ExecutablePath.lowercasedName(commandName)
         let scan = CommandLineScan(commandName: commandName, arguments: arguments)
@@ -761,7 +764,8 @@ public struct ProcessInfoRow: Sendable {
             // one owned by another user — still gets its accounting name so the
             // subtree walk keeps a stable identity for it.
             commandName: command?.name ?? row.accountingName,
-            arguments: command?.arguments ?? row.accountingName
+            arguments: command?.arguments ?? row.accountingName,
+            argumentVector: command?.argumentVector
         )
     }
 
@@ -772,7 +776,7 @@ public struct ProcessInfoRow: Sendable {
             state: state,
             elapsed: elapsed,
             accountingName: commandName,
-            resolvedCommand: ProcessCommandLine(name: commandName, arguments: arguments)
+            resolvedCommand: ProcessCommandLine(name: commandName, arguments: arguments, argumentVector: argumentVector)
         )
     }
 

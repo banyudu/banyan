@@ -23,7 +23,8 @@ banyanctl session unfreeze --id SESSION_ID
 The top-level `freeze` and `unfreeze` commands are aliases. They use authenticated
 `POST /freeze` and `/unfreeze` control routes with the existing `id` payload.
 Session summaries and pane output include a separate `isFrozen` boolean.
-`suspend`/`resume` retain their existing parking behavior.
+Top-level `suspend`/`resume` retain frontend parking behavior. The `session
+suspend`/`session resume` commands now use [deep suspension](agent-deep-suspend.md).
 
 The sidebar shows a native snowflake badge, “Frozen — interact to resume,” and
 offers **Freeze Agent / Unfreeze Agent** in the context menu. Selecting the row
@@ -149,11 +150,13 @@ claim.
 Private installed-CLI startup checks on 2026-10-07 used fresh homes, workspaces
 and UUID sockets, without sending model prompts. Claude Code 2.1.286's
 startup/login UI survived STOP/CONT with the same kernel identity. Codex CLI
-0.160.0 and OpenCode 1.18.34 reached idle prompts but spawned descendants in
-detached kernel sessions; this shape fails the planner's ownership rule before
-STOP. Those versions' freeze/resume compatibility remains a concrete gap, not
-a successful provider verification. Shared/detached runtime ownership needs a
-provider-specific decision before relaxing that safety boundary.
+0.160.0 and OpenCode 1.18.34 initially spawned descendants in detached kernel
+sessions; this shape still fails the planner's ownership rule before STOP.
+Explicit `codex --no-daemon` and `OPENCODE_DISABLE_AUTOUPDATE=true opencode`
+subsequently passed startup STOP/CONT with two and one owned members
+respectively, preserving identity. OpenCode's default detached bash/curl pair
+was a release-update check. Shared/detached services remain refused. These
+startup checks do not prove authenticated conversation/MCP recovery.
 
 Live provider checks remain separate: in disposable sessions, verify Claude,
 Codex CLI and OpenCode at an idle prompt, after socket expiry, and during a

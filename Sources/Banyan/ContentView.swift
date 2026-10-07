@@ -1299,6 +1299,14 @@ struct ContentView: View {
                     }
                 }
             },
+            onSetDeepSuspended: { suspended in
+                Task {
+                    do {
+                        if suspended { try await store.deepSuspendAgent(id: item.session.id) }
+                        else { try store.deepResumeAgent(id: item.session.id) }
+                    } catch { (item.session as? TerminalSession)?.deepSuspendError = error.localizedDescription }
+                }
+            },
             onFocusTerminal: {
                 store.focusSelectedTerminal()
             },
@@ -1462,6 +1470,20 @@ struct ContentView: View {
                         ClosedSessionHistoryView(session: session)
                     } else if session.isImportedHistory {
                         ImportedSessionHistoryView(session: session)
+                    } else if session.isDeepSuspended || (session as? TerminalSession)?.deepSuspendError != nil {
+                        VStack {
+                            Text((session as? TerminalSession)?.deepRecoveryIsUncertain == true ? "Recovery state unavailable — input blocked" : session.isDeepTerminating ? "Waiting for agent to exit…" : session.isDeepResuming ? "Resuming agent…" : session.isDeepSuspended ? "Agent suspended — memory released" : "Deep suspend unavailable")
+                            if let error = (session as? TerminalSession)?.deepSuspendError {
+                                Text(error).font(.caption)
+                            }
+                            Button("Resume Agent") { try? store.deepResumeAgent(id: session.id) }
+                                .disabled(session.isDeepResuming)
+                            if !session.isDeepSuspended {
+                                Button("Dismiss") { (session as? TerminalSession)?.deepSuspendError = nil }
+                            }
+                        }
+                        .padding()
+                        .background(.regularMaterial)
                     } else if session.isFrozen {
                         VStack {
                             Text("Frozen — interact to resume")
@@ -2539,6 +2561,7 @@ private struct SessionRow: View {
     let onRemove: () -> Void
     let onToggleSuspended: () -> Void
     let onSetFrozen: (Bool) -> Void
+    let onSetDeepSuspended: (Bool) -> Void
     let onFocusTerminal: () -> Void
     let onReopenHistory: () -> Void
 
@@ -2624,6 +2647,13 @@ private struct SessionRow: View {
                     .help("Frozen — interact to resume")
                     .accessibilityLabel("Agent frozen — interact to resume")
                     .accessibilityIdentifier("session.\(session.id).frozen")
+            }
+
+            if session.isDeepSuspended {
+                Image(systemName: session.isDeepResuming ? "arrow.clockwise" : "powersleep")
+                    .help((session as? TerminalSession)?.deepRecoveryIsUncertain == true ? "Recovery journal unavailable — input blocked; retry Resume" : session.isDeepTerminating ? "Waiting for graceful exit — recovery retained" : session.isDeepResuming ? "Resuming agent…" : "Agent suspended — RAM released; focus to resume")
+                    .accessibilityLabel(session.isDeepResuming ? "Agent resuming" : "Agent deeply suspended")
+                    .accessibilityIdentifier("session.\(session.id).deepSuspended")
             }
 
             if session.isSuspended && !session.isImportedHistory && session.status != .closed {
@@ -2759,6 +2789,10 @@ private struct SessionRow: View {
             }
             if !session.isImportedHistory && session.status != .closed {
                 if session is TerminalSession {
+                    Button(session.isDeepSuspended ? "Resume Agent" : "Deep Suspend Agent") {
+                        onSetDeepSuspended(!session.isDeepSuspended)
+                    }
+                    .disabled(session.isDeepResuming || (!session.isDeepSuspended && (isSelected || session.isSuspended || ![.idle, .needInput].contains(session.status))))
                     Button(session.isFrozen ? "Unfreeze Agent" : "Freeze Agent") {
                         onSetFrozen(!session.isFrozen)
                     }
@@ -2767,7 +2801,7 @@ private struct SessionRow: View {
                         Button("Resume Stopped Agent") { onSetFrozen(false) }
                     }
                 }
-                Button(session.isSuspended ? "Resume" : "Suspend") {
+                Button(session.isSuspended ? "Resume Parked Session" : "Park Session") {
                     onToggleSuspended()
                 }
                 if session.canRestart {

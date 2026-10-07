@@ -2,6 +2,14 @@ import Foundation
 
 /// Portable identity and resume-command rules for imported coding-agent history.
 public enum AgentSessionHistory {
+    /// Only literal argv can be safely wrapped or rewritten. Shell programs
+    /// (including expansion inside double quotes) retain their original launch.
+    public static func literalArguments(_ command: String) -> [String]? {
+        guard let parsed = shellTokens(command), parsed.isLossless,
+              !command.contains("$"), !command.contains("`"), !command.contains("\n") else { return nil }
+        return parsed.tokens
+    }
+
     public static func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? {
         let prefix = "history-\(provider.rawValue)-"
         guard id.hasPrefix(prefix) else { return nil }

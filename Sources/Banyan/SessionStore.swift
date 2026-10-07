@@ -150,6 +150,11 @@ final class SessionStore: ObservableObject {
     var nextAutoFreezeProbeAt = Date.distantPast
     var isFrozenReconciliationRunning = false
     var isAgentFreezeShuttingDown = false
+    var nextDeepSuspendProbeAt = Date.distantPast
+    var isDeepSuspendPassRunning = false
+    var deepSuspendPressureSource: DispatchSourceMemoryPressure?
+    var isUnderMemoryPressure = false
+    var deepSuspendHistory: any SessionHistoryBackend { historyBackend }
     let freezePreferences: UserDefaults
     @Published var autoFreezeAgents = false {
         didSet {
@@ -284,6 +289,7 @@ final class SessionStore: ObservableObject {
     private var lastPuckSnapshotAt: Date?
 
     deinit {
+        deepSuspendPressureSource?.cancel()
         puckWatchTask?.cancel()
         puckObservation?.cancel()
     }
@@ -2088,6 +2094,7 @@ final class SessionStore: ObservableObject {
     func startRuntimeIfNeeded() {
         guard !didStartRuntime else { return }
         didStartRuntime = true
+        startDeepSuspendPressureMonitor()
         loadPersistedSessionsIfNeeded()
         spawnDefaultSessionIfEmpty()
         refreshImportedHistoryIfNeeded()
@@ -2145,7 +2152,7 @@ final class SessionStore: ObservableObject {
         let startedSessions = sessions.reduce(into: 0) { count, session in
             guard session.status != .closed else { return }
             if let terminal = session as? TerminalSession {
-                guard !terminal.isFrozen else { return }
+                guard !terminal.isFrozen, !terminal.isDeepSuspended else { return }
                 if SessionLifecyclePolicy.participatesInSupervisorTick(
                     isProcessStarted: terminal.isProcessStarted,
                     isRestored: terminal.isRestored,
@@ -2162,7 +2169,7 @@ final class SessionStore: ObservableObject {
             // counts as active work without counting toward the fleet size.
             let isObserved: Bool
             if let terminal = session as? TerminalSession {
-                guard !terminal.isFrozen else { return }
+                guard !terminal.isFrozen, !terminal.isDeepSuspended else { return }
                 // Restored/unattached panes are still inspected. Excluding them
                 // here gave a hidden executing fleet the 300s idle cadence.
                 isObserved = SessionLifecyclePolicy.participatesInSupervisorTick(
@@ -2207,6 +2214,10 @@ final class SessionStore: ObservableObject {
         if terminalSessions.contains(where: \.isFrozen) {
             terminalInterval = min(terminalInterval, 15)
         }
+        if terminalSessions.contains(where: { $0.status != .closed && !$0.isDeepSuspended
+            && $0.agentProvider.map { deepSuspendPolicy(for: $0).automatic } == true }) {
+            terminalInterval = min(terminalInterval, isUnderMemoryPressure ? 15 : 60)
+        }
         if puckObservation != nil { return min(terminalInterval, puckCatalogInterval) }
         return isPuckDaemonReachable ? min(terminalInterval, baseInterval) : terminalInterval
     }
@@ -2220,7 +2231,7 @@ final class SessionStore: ObservableObject {
     /// batched activity probe for unattached/evicted panes without PTY callbacks.
     private func terminalSupervisorInterval(baseInterval: TimeInterval) -> TimeInterval {
         let participatingSessions = terminalSessions.filter {
-            $0.status != .closed && !$0.isFrozen
+            $0.status != .closed && !$0.isFrozen && !$0.isDeepSuspended
                 && SessionLifecyclePolicy.participatesInSupervisorTick(
                     isProcessStarted: $0.isProcessStarted,
                     isRestored: $0.isRestored,
@@ -2274,11 +2285,16 @@ final class SessionStore: ObservableObject {
         supervisorTimer = timer
     }
 
+    func deepSuspendPolicyDidChange() {
+        if didStartSupervisor { rescheduleSupervisor() }
+    }
+
     private func supervisorTimerFired() {
         supervisorTimer = nil
         runSupervisorTick()
         syncPuckSessions()
         runAutoFreezePassIfNeeded()
+        runDeepSuspendPass(underPressure: isUnderMemoryPressure)
         reconcileFrozenAgents()
         sweepSuspendedSessionLivenessIfNeeded()
         // Focus, thermal, power, or session count may have changed since the timer
@@ -3624,7 +3640,8 @@ final class SessionStore: ObservableObject {
             createdAt: session.createdAt,
             environment: session.environment,
             isSuspended: session.isSuspended,
-            isFrozen: session.isFrozen
+            isFrozen: session.isFrozen,
+            isDeepSuspended: session.isDeepSuspended
         )
     }
 
@@ -4717,14 +4734,19 @@ final class SessionStore: ObservableObject {
             let name = terminal.tmuxSessionName
             let generation = terminal.freezeGeneration
             Task.detached(priority: .utility) { [weak self, weak terminal] in
-                let identity = backend.primaryPaneSnapshot(named: name)
-                    .flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
+                let pane = backend.primaryPaneSnapshot(named: name)
+                let identity = pane.flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
                 let ticket = backend.freezeTicket(named: name)
+                let suspended = backend.readSuspendJournal(named: name)
                 await MainActor.run { [weak self, weak terminal] in
                     guard let self, let terminal, terminal.status != .closed,
                           terminal.freezeGeneration == generation,
                           self.sessions.contains(where: { $0 === terminal }) else { return }
                     if terminal.trackedPaneIdentity == nil { terminal.trackedPaneIdentity = identity }
+                    terminal.applyDeepSuspendJournal(suspended, pane: pane)
+                    if terminal.isDeepSuspended, self.selectedSessionID == terminal.id {
+                        self.resumeFrozenForInteraction(id: terminal.id)
+                    }
                     if let ticket, ticket.root == identity {
                         terminal.frozenTicket = ticket
                         terminal.isFrozen = true
@@ -4878,7 +4900,7 @@ final class SessionStore: ObservableObject {
         scratchSession?.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize, force: true)
     }
 
-    private func saveSessions() {
+    func saveSessions() {
         let snapshots = sessions.filter { !$0.isImportedHistory }.map(\.persistenceSnapshot)
         // Supervisor ticks call this every cycle; skip the SQLite rewrite entirely
         // when nothing changed. This was the dominant main-thread stall behind the
@@ -5097,7 +5119,7 @@ final class SessionStore: ObservableObject {
         let now = Date()
         if force || sessionID != nil {
             for session in terminalSessions where session.status != .closed
-                && !session.isSuspended && !session.isFrozen && (sessionID == nil || session.id == sessionID) {
+                && !session.isSuspended && !session.isFrozen && !session.isDeepSuspended && (sessionID == nil || session.id == sessionID) {
                 supervisorObservationStates[session.id, default: .init()].noteActivity(at: now)
                 pendingSupervisorActivityIDs.insert(session.id)
             }
@@ -5109,7 +5131,7 @@ final class SessionStore: ObservableObject {
         supervisorTimer?.invalidate()
         supervisorTimer = nil
         let candidates = terminalSessions.compactMap { session -> SessionStatusObservationInput? in
-            guard session.status != .closed && !session.isFrozen && (sessionID == nil || session.id == sessionID),
+            guard session.status != .closed && !session.isFrozen && !session.isDeepSuspended && (sessionID == nil || session.id == sessionID),
                   SessionLifecyclePolicy.participatesInSupervisorTick(
                       isProcessStarted: session.isProcessStarted,
                       isRestored: session.isRestored,
@@ -5126,10 +5148,10 @@ final class SessionStore: ObservableObject {
                 environment: session.environment
             )
         }
-        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended && !$0.isFrozen }.map(\.id))
+        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended && !$0.isFrozen && !$0.isDeepSuspended }.map(\.id))
         supervisorProcessExitMonitor.retainSessions(liveIDs)
         pendingSupervisorActivityIDs.formIntersection(Set(terminalSessions.filter {
-            $0.status != .closed && !$0.isFrozen && SessionLifecyclePolicy.participatesInSupervisorTick(
+            $0.status != .closed && !$0.isFrozen && !$0.isDeepSuspended && SessionLifecyclePolicy.participatesInSupervisorTick(
                 isProcessStarted: $0.isProcessStarted, isRestored: $0.isRestored, isSuspended: $0.isSuspended
             )
         }.map(\.id)))
@@ -5177,7 +5199,7 @@ final class SessionStore: ObservableObject {
                 // due state. State signals may also have superseded this result.
                 let currentResults = observations.filter {
                     let id = $0.id
-                    return self.sessions.contains(where: { $0.id == id && $0.status != .closed && !$0.isSuspended && !$0.isFrozen })
+                    return self.sessions.contains(where: { $0.id == id && $0.status != .closed && !$0.isSuspended && !$0.isFrozen && !$0.isDeepSuspended })
                         && (self.supervisorObservationStates[id]?.resultRevision ?? 0) == (states[id]?.resultRevision ?? 0)
                 }
                 self.updateSupervisorObservationStates(
@@ -5201,7 +5223,7 @@ final class SessionStore: ObservableObject {
     }
 
     func resetSupervisorObservationBackoff(for sessionID: String, invalidatesObservation: Bool = true) {
-        guard sessions.contains(where: { $0.id == sessionID && $0.status != .closed && !$0.isSuspended && !$0.isFrozen && $0 is TerminalSession }) else { return }
+        guard sessions.contains(where: { $0.id == sessionID && $0.status != .closed && !$0.isSuspended && !$0.isFrozen && !$0.isDeepSuspended && $0 is TerminalSession }) else { return }
         supervisorObservationStates[sessionID, default: .init()].noteActivity(at: Date(), invalidatesObservation: invalidatesObservation)
         pendingSupervisorActivityIDs.insert(sessionID)
         if didStartSupervisor { rescheduleSupervisor() }
@@ -5218,7 +5240,7 @@ final class SessionStore: ObservableObject {
         let resultsByID = Dictionary(uniqueKeysWithValues: results.map { ($0.id, $0) })
         for input in inputs {
             guard let session = sessions.first(where: { $0.id == input.id }),
-                  session.status != .closed, !session.isSuspended, !session.isFrozen else { continue }
+                  session.status != .closed, !session.isSuspended, !session.isFrozen, !session.isDeepSuspended else { continue }
             let result = resultsByID[input.id]
             supervisorObservationStates[input.id, default: .init()].record(
                 result,
@@ -5232,7 +5254,7 @@ final class SessionStore: ObservableObject {
                 supervisorProcessExitMonitor.update(sessionID: input.id, processIDs: result.liveProcessIDs)
             }
         }
-        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended && !$0.isFrozen }.map(\.id))
+        let liveIDs = Set(terminalSessions.filter { $0.status != .closed && !$0.isSuspended && !$0.isFrozen && !$0.isDeepSuspended }.map(\.id))
         supervisorObservationStates = supervisorObservationStates.filter { liveIDs.contains($0.key) }
         supervisorProcessExitMonitor.retainSessions(liveIDs)
     }
@@ -5504,7 +5526,7 @@ final class SessionStore: ObservableObject {
         var didChangePersistentState = false
         for result in results {
             guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
-                  !session.isFrozen,
+                  !session.isFrozen, !session.isDeepSuspended,
                   let reconciliation = SessionObservationPolicy.reconcile(
                       currentStatus: session.status,
                       currentTone: session.tone,

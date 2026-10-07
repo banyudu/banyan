@@ -14,6 +14,7 @@ extension TerminalSession {
               let pane = tmuxBackend.primaryPaneSnapshot(named: tmuxSessionName),
               let identity = AgentProcessSample.read(pid: Int32(pane.rootPID))?.identity else { return }
         trackedPaneIdentity = identity
+        restoreDeepSuspendTicket()
         if let ticket = tmuxBackend.freezeTicket(named: tmuxSessionName), ticket.root == identity {
             frozenTicket = ticket
             isFrozen = true
