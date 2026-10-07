@@ -291,7 +291,9 @@ def main():
     parser.add_argument("--codex", default="codex")
     parser.add_argument("--unload-timeout", type=int, default=125,
                         help="Seconds allowed for the server's version-dependent idle unload")
-    parser.add_argument("--tui-handoff", action="store_true",
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--slack", action="store_true", help="Verify fake Slack through real native HTTP control and installed Codex")
+    modes.add_argument("--tui-handoff", action="store_true",
                         help="Verify a completed legacy TUI handoff in a private one-shot tmux pane")
     args = parser.parse_args()
     executable = shutil.which(args.codex)
@@ -338,7 +340,7 @@ stream_max_retries = 0
     wrapper.chmod(0o700)
     manifest = {"root": str(root), "codex": executable, "providerPort": server.server_port,
         "command": ["swift", "test", "--filter",
-            "installedCodexTUIHandoffIntegration" if args.tui_handoff else "installedCodexNativeIntegration"],
+            "installedCodexSlackIntegration" if args.slack else "installedCodexTUIHandoffIntegration" if args.tui_handoff else "installedCodexNativeIntegration"],
         "cleanup": "Test reaps its own App Server children. Remove this private directory after evidence review."}
     manifest["codexVersion"] = subprocess.check_output([executable, "--version"],
         env=private_environment(home), text=True).strip()
@@ -348,6 +350,7 @@ stream_max_retries = 0
     # deliberately small environment constructed by the Swift test.
     env = dict(os.environ, BANYAN_CODEX_INTEGRATION_ROOT=str(root),
                BANYAN_CODEX_INTEGRATION_EXECUTABLE=str(wrapper),
+               BANYAN_CODEX_SLACK_INTEGRATION="1" if args.slack else "0",
                BANYAN_CODEX_UNLOAD_TIMEOUT=str(args.unload_timeout), NO_COLOR="1")
     for key in ["CLICOLOR_FORCE", "FORCE_COLOR", "GH_FORCE_TTY"]:
         env.pop(key, None)
@@ -391,7 +394,7 @@ stream_max_retries = 0
         if legacy_driver is not None:
             legacy_driver.join(timeout=10)
         manifest["testExitCode"] = process.returncode
-        if process.returncode == 0 and not args.tui_handoff:
+        if process.returncode == 0 and not args.tui_handoff and not args.slack:
             verify_settings(root)
         cleanup = subprocess.run(["/usr/sbin/lsof", "-t", "+D", str(root)],
             text=True, capture_output=True, check=False)

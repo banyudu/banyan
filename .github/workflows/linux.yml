@@ -16,6 +16,13 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Test isolated Slack transport and recovery
+        run: |
+          python3 -m venv "$RUNNER_TEMP/banyan-slack-venv"
+          "$RUNNER_TEMP/banyan-slack-venv/bin/pip" install --disable-pip-version-check -r scripts/banyan_slack/requirements.txt
+          "$RUNNER_TEMP/banyan-slack-venv/bin/python" scripts/tests/test_slack_connector.py
+          "$RUNNER_TEMP/banyan-slack-venv/bin/python" scripts/tests/test_slack_socket_adapter.py
+
       - name: Test restart recovery with fake OS commands
         run: python3 scripts/tests/test_restart_app.py
 

@@ -10,3 +10,7 @@ Assets/AppIcon.iconset/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+
+# Local Python connector/test caches
+__pycache__/
+*.pyc
