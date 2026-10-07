@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend {
+public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend, CodexTUIHandoffBackend {
     public enum BackendError: LocalizedError {
         case tmuxNotFound
         case commandFailed([String], String)
@@ -68,6 +68,22 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
 
     public func hasSession(named name: String) -> Bool {
         (try? run(["has-session", "-t", name])) != nil
+    }
+
+    public func preserveCodexHandoffPane(_ receipt: CodexTUIHandoffReceipt) throws {
+        try run(["set-option", "-p", "-t", receipt.paneID, "remain-on-exit", "on"])
+        let value = try run(["show-options", "-p", "-v", "-t", receipt.paneID, "remain-on-exit"])
+        guard value.trimmingCharacters(in: .whitespacesAndNewlines) == "on" else {
+            throw CodexTUIHandoffError.refused("tmux could not retain this pane. Do not exit Codex until pane preservation succeeds.")
+        }
+        let data = try JSONEncoder().encode(receipt)
+        try run(["set-option", "-p", "-t", receipt.paneID, "@banyan-codex-handoff", String(decoding: data, as: UTF8.self)])
+    }
+
+    public func codexHandoffReceipt(paneID: String) throws -> CodexTUIHandoffReceipt? {
+        let value = try run(["show-options", "-p", "-qv", "-t", paneID, "@banyan-codex-handoff"])
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return try JSONDecoder().decode(CodexTUIHandoffReceipt.self, from: Data(value.utf8))
     }
 
     public func attachArguments(for name: String) -> [String] {

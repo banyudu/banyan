@@ -335,6 +335,25 @@ final class ControlServer {
                 }
                 return respond(.ok(["session": summary(session)]))
 
+            case .codexHandoff:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                guard body.detail == nil || ["prepare", "check"].contains(body.detail!) else {
+                    throw ControlError.badRequest("codex-handoff detail must be prepare or check")
+                }
+                Task { @MainActor in
+                    do {
+                        let state = try await store.codexTUIHandoff(id: body.id!, checkOnly: body.detail == "check")
+                        respond(.ok(["ownership": state.rawValue, "message": state.message]))
+                    } catch let error as ControlError {
+                        respond(.failure(error.httpStatus, error.code, error.localizedDescription))
+                    } catch {
+                        respond(.failure(409, "codex_handoff_refused", error.localizedDescription))
+                    }
+                }
+                return
+
             case .freeze, .unfreeze:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
@@ -877,6 +896,10 @@ final class ControlServer {
             "createdAt": ISO8601DateFormatter().string(from: session.createdAt),
             "updatedAt": ISO8601DateFormatter().string(from: session.updatedAt)
         ]
+        if let state = store?.codexTUIOwnership[session.id], state.threadID == session.agentSessionID {
+            summary["codexTUIOwnership"] = ["threadID": state.threadID, "state": state.state.rawValue, "message": state.state.message,
+                "observedAt": ISO8601DateFormatter().string(from: state.observedAt)]
+        }
         if let binding = session.codexBinding,
            let data = try? JSONEncoder().encode(binding),
            let provenance = try? JSONSerialization.jsonObject(with: data) {
