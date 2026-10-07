@@ -73,7 +73,26 @@ struct CodexSessionDetail: View {
             Text(["Codex", session.state.binding.settings.model ?? "Default model", status,
                   session.state.binding.settings.approvalPolicy, session.state.binding.settings.sandbox].joined(separator: " · "))
                 .font(.caption).foregroundStyle(.secondary)
-            Text("Leaving an idle thread unsubscribes this view. Codex unloads it later, after its inactivity grace period.")
+            if let remoteStatus = session.remoteStatus {
+                HStack {
+                    Label(remoteStatus, systemImage: "antenna.radiowaves.left.and.right")
+                        .font(.caption)
+                    Button("Detach Slack") {
+                        do { try store.codexRemote.detachLocally(sessionID: session.id) }
+                        catch { historyError = error.localizedDescription }
+                    }
+                    Button("Disable Slack Control") {
+                        do {
+                            var policy = store.codexRemote.policy
+                            policy.enabled = false
+                            try store.codexRemote.configure(policy)
+                        } catch { historyError = error.localizedDescription }
+                    }
+                }
+            }
+            Text(session.remoteStatus == nil
+                ? "Leaving an idle thread unsubscribes this view. Codex unloads it later, after its inactivity grace period."
+                : "Slack retains observation while this attachment is enabled, including when another session is selected.")
                 .font(.caption).foregroundStyle(.secondary)
             if let message = session.state.connection.message {
                 Text(message).font(.callout).textSelection(.enabled)

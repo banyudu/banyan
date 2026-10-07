@@ -395,6 +395,7 @@ final class SessionStore: ObservableObject {
     private static let showFinishedChildrenDefaultsKey = "sidebarShowFinishedChildren"
 
     let codexThreads: CodexThreadCoordinator
+    let codexRemote: CodexRemoteControl
     @Published var codexSessionError: String?
     var pendingCodexTUIHandoffs: Set<String> = []
     @Published var codexTUIOwnership: [String: CodexTUIOwnershipObservation] = [:]
@@ -573,6 +574,9 @@ final class SessionStore: ObservableObject {
         self.agentAdmission = admission
         self.makeControlServer = makeControlServer
         self.codexThreads = CodexThreadCoordinator(service: codexService ?? CodexAppServerClient(environment: host.environment), admission: admission)
+        self.codexRemote = CodexRemoteControl(coordinator: codexThreads,
+            file: BanyanDataDirectory.url(for: "Banyan/remote/slack.json",
+                environment: host.environment, homeDirectory: host.homeDirectory))
         self.puckDaemon = puckDaemon ?? PuckDaemonClient(
             environment: host.environment,
             homeDirectory: host.homeDirectory.path
@@ -604,6 +608,19 @@ final class SessionStore: ObservableObject {
             guard let queue = self?.sessionPersistenceQueue else { return }
             await withCheckedContinuation { continuation in
                 queue.async { continuation.resume() }
+            }
+        }
+        codexRemote.metadata = { [weak self] id in
+            guard let session = self?.sessions.first(where: { $0.id == id }) as? CodexSession else { return nil }
+            return (session.displayTitle, session.cwd)
+        }
+        codexRemote.recentConversation = { [weak self] id in
+            (self?.sessions.first(where: { $0.id == id }) as? CodexSession)?.conversation
+        }
+        codexRemote.onChange = { [weak self] in
+            guard let self else { return }
+            for case let session as CodexSession in self.sessions {
+                session.remoteStatus = self.codexRemote.desktopStatus(sessionID: session.id)
             }
         }
         let defaults = UserDefaults.standard
@@ -2146,6 +2163,7 @@ final class SessionStore: ObservableObject {
         spawnDefaultSessionIfEmpty()
         refreshImportedHistoryIfNeeded()
         startControlServer()
+        Task { [weak self] in await self?.codexRemote.restoreObservation() }
         startSupervisor()
     }
 
@@ -4242,6 +4260,9 @@ final class SessionStore: ObservableObject {
     }
 
     func remove(id: String) throws {
+        guard !codexRemote.attachments.contains(where: { $0.sessionID == id }) else {
+            throw ControlError.badRequest("Detach Slack before removing this native session")
+        }
         guard let index = sessions.firstIndex(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }

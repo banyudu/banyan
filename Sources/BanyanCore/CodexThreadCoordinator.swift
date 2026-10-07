@@ -43,6 +43,56 @@ public final class CodexThreadCoordinator {
     /// Streamed events may arrive during resume, before its hydration callback.
     public var onEvent: ((String, String, CodexJSONValue) -> Void)?
 
+    public struct Observer {
+        public var change: ((String, CodexThreadState) -> Void)?
+        public var hydrate: ((String, CodexJSONValue) -> Void)?
+        public var event: ((String, String, CodexJSONValue) -> Void)?
+        public init(change: ((String, CodexThreadState) -> Void)? = nil,
+                    hydrate: ((String, CodexJSONValue) -> Void)? = nil,
+                    event: ((String, String, CodexJSONValue) -> Void)? = nil) {
+            self.change = change; self.hydrate = hydrate; self.event = event
+        }
+    }
+    private var observers: [UUID: Observer] = [:]
+    private var remoteObservation: [String: Set<String>] = [:]
+
+    @discardableResult public func observe(_ observer: Observer) -> UUID {
+        let id = UUID(); observers[id] = observer; return id
+    }
+    public func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }
+
+    /// Observation owns no idle admission reservation. Connect/start still pass
+    /// through the shared admission controller and CLI ownership checks.
+    public func setRemoteObservation(sessionID: String, ownerID: String, retained: Bool) {
+        if retained { remoteObservation[sessionID, default: []].insert(ownerID) }
+        else {
+            remoteObservation[sessionID]?.remove(ownerID)
+            if remoteObservation[sessionID]?.isEmpty == true { remoteObservation.removeValue(forKey: sessionID) }
+        }
+    }
+
+    public func retainRemoteObservation(sessionID: String, retained: Bool, ownerID: String = "remote",
+                                        authorization: (() throws -> Void)? = nil) async throws {
+        if retained {
+            guard states[sessionID]?.binding.threadID != nil, !cliSessionIDs.contains(sessionID) else {
+                throw CodexAppServerError.protocolViolation("Remote control requires an existing native thread")
+            }
+            try authorization?()
+            setRemoteObservation(sessionID: sessionID, ownerID: ownerID, retained: true)
+            try await connect(sessionID: sessionID, authorization: authorization)
+        } else {
+            setRemoteObservation(sessionID: sessionID, ownerID: ownerID, retained: false)
+            await acquire()
+            defer { release() }
+            try await releaseIdle(sessionID)
+        }
+    }
+
+    private func publishEvent(_ id: String, _ method: String, _ params: CodexJSONValue) {
+        onEvent?(id, method, params)
+        for observer in Array(observers.values) { observer.event?(id, method, params) }
+    }
+
     private let service: any CodexThreadService
     public let admission: AgentAdmissionController?
     private var admissionOperations: [String: Int] = [:]
@@ -215,6 +265,9 @@ public final class CodexThreadCoordinator {
     }
 
     private func checkCLIHandoffIdle() throws {
+        guard remoteObservation.isEmpty else {
+            throw CodexAppServerError.protocolViolation("Detach Slack sessions before switching to the CLI")
+        }
         guard states.values.allSatisfy({
             $0.runtime.type != "active" && $0.activeTurnID == nil && !$0.needsAttention
                 && (!$0.isSubscribed || $0.runtime.type == "idle")
@@ -259,16 +312,18 @@ public final class CodexThreadCoordinator {
 
     /// Used for explicit background creation and reconnect/retry. Never starts
     /// a new thread when a mapped thread cannot be resumed.
-    public func connect(sessionID: String) async throws {
-        try await admitted(sessionID) { try await connectAdmitted(sessionID: sessionID) }
+    public func connect(sessionID: String, authorization: (() throws -> Void)? = nil) async throws {
+        try await admitted(sessionID) { try await connectAdmitted(sessionID: sessionID, authorization: authorization) }
     }
 
-    private func connectAdmitted(sessionID: String) async throws {
+    private func connectAdmitted(sessionID: String, authorization: (() throws -> Void)?) async throws {
         await ensureObservation()
         await acquire()
         defer { release() }
         try Task.checkCancellation()
-        try await attach(sessionID)
+        try authorization?()
+        try await attach(sessionID, authorization: authorization)
+        try authorization?()
         if selectedSessionID != sessionID { try await releaseIdle(sessionID) }
     }
 
@@ -291,6 +346,23 @@ public final class CodexThreadCoordinator {
             return try await service.requestWhileConnected("thread/read", params: params)
         }
         return try await service.request("thread/read", params: params)
+    }
+
+    /// Refresh a remote reconciliation through the same bounded desktop and
+    /// remote presentation callbacks. A read never creates/resumes a thread.
+    public func refreshConversation(sessionID: String, authorization: (() throws -> Void)? = nil) async throws -> CodexJSONValue {
+        try authorization?()
+        let threadID = try mappedID(sessionID)
+        let result = try await read(sessionID: sessionID)
+        try Task.checkCancellation()
+        try authorization?()
+        guard try mappedID(sessionID) == threadID,
+              let thread = result.objectValue?["thread"], thread.objectValue?["id"]?.stringValue == threadID else {
+            throw CodexAppServerError.protocolViolation("Conversation identity changed during refresh")
+        }
+        onHydrate?(sessionID, thread)
+        for observer in Array(observers.values) { observer.hydrate?(sessionID, thread) }
+        return result
     }
 
     /// Resolve an uncertain start using an explicitly chosen stored thread.
@@ -322,19 +394,21 @@ public final class CodexThreadCoordinator {
         if selectedSessionID != sessionID { try await releaseIdle(sessionID) }
     }
 
-    public func startTurn(sessionID: String, input: [CodexJSONValue]) async throws -> CodexJSONValue {
-        try await admitted(sessionID) { try await startTurnAdmitted(sessionID: sessionID, input: input) }
+    public func startTurn(sessionID: String, input: [CodexJSONValue], authorization: (() throws -> Void)? = nil, willSubmit: (() -> Void)? = nil) async throws -> CodexJSONValue {
+        try await admitted(sessionID) { try await startTurnAdmitted(sessionID: sessionID, input: input, authorization: authorization, willSubmit: willSubmit) }
     }
 
-    private func startTurnAdmitted(sessionID: String, input: [CodexJSONValue]) async throws -> CodexJSONValue {
+    private func startTurnAdmitted(sessionID: String, input: [CodexJSONValue], authorization: (() throws -> Void)?, willSubmit: (() -> Void)?) async throws -> CodexJSONValue {
         try checkEnabled()
         await ensureObservation()
         await acquire()
         defer { release() }
         try Task.checkCancellation()
-        try await attach(sessionID)
+        try authorization?()
+        try await attach(sessionID, authorization: authorization)
         try Task.checkCancellation()
         try checkEnabled()
+        try authorization?()
         guard let state = states[sessionID], !state.needsAttention,
               state.runtime.type == "idle", state.activeTurnID == nil else {
             throw CodexAppServerError.protocolViolation("Finish the active turn or answer the pending request first")
@@ -343,6 +417,7 @@ public final class CodexThreadCoordinator {
         let revision = state.revision
         update(sessionID) { $0.runtime = .init(type: "active"); $0.lastTurnStatus = nil }
         do {
+            willSubmit?()
             let result = try await service.request("turn/start", params: .object([
                 "threadId": .string(try mappedID(sessionID)), "input": .array(input)
             ]))
@@ -364,31 +439,51 @@ public final class CodexThreadCoordinator {
         }
     }
 
-    public func interrupt(sessionID: String, expectedTurnID: String? = nil) async throws {
+    public func interrupt(sessionID: String, expectedTurnID: String? = nil,
+                          authorization: (() throws -> Void)? = nil, willSubmit: (() -> Void)? = nil) async throws {
+        await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        try authorization?()
         guard let state = states[sessionID] else { return }
         let requestedTurn = expectedTurnID.flatMap { expected in
             state.pendingRequests.contains { $0.params.objectValue?["turnId"]?.stringValue == expected } ? expected : nil
         }
-        guard let turnID = state.activeTurnID ?? requestedTurn else { return }
+        guard let turnID = state.activeTurnID ?? requestedTurn else {
+            if expectedTurnID != nil { throw CodexAppServerError.protocolViolation("The expected turn has completed") }
+            return
+        }
         guard expectedTurnID == nil || expectedTurnID == turnID else {
             throw CodexAppServerError.protocolViolation("The active turn changed; review it before interrupting")
         }
         let params: CodexJSONValue = .object([
             "threadId": .string(try mappedID(sessionID)), "turnId": .string(turnID)
         ])
+        willSubmit?()
         if isEnabled { _ = try await service.request("turn/interrupt", params: params) }
         else { _ = try await service.requestWhileConnected("turn/interrupt", params: params) }
     }
 
-    public func steer(sessionID: String, expectedTurnID: String, input: [CodexJSONValue]) async throws -> CodexJSONValue {
+    public func steer(sessionID: String, expectedTurnID: String, input: [CodexJSONValue],
+                      authorization: (() throws -> Void)? = nil, willSubmit: (() -> Void)? = nil) async throws -> CodexJSONValue {
+        await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        try authorization?()
         try checkEnabled()
         guard let state = states[sessionID], state.connection == .subscribed,
               state.activeTurnID == expectedTurnID, !state.needsAttention else {
             throw CodexAppServerError.protocolViolation("The active turn changed or needs a response; review it before steering")
         }
+        willSubmit?()
         return try await service.request("turn/steer", params: .object([
             "threadId": .string(try mappedID(sessionID)), "expectedTurnId": .string(expectedTurnID), "input": .array(input)
         ]))
+    }
+
+    public func requestIsAnswerable(sessionID: String, requestID: CodexJSONValue) -> Bool {
+        guard let threadID = states[sessionID]?.binding.threadID else { return false }
+        return replies[replyKey(threadID, requestID)] != nil
     }
 
     public func respond(sessionID: String, requestID: CodexJSONValue, reply: CodexServerReply) throws {
@@ -400,6 +495,7 @@ public final class CodexThreadCoordinator {
         // Keep the pending marker until serverRequest/resolved (or turn end).
         // Sending a reply alone does not prove the server has consumed it.
         continuation.resume(returning: reply)
+        update(sessionID) { _ in } // Publish consumed controls before server acknowledgment.
     }
 
     /// Explicit handoff has the same safety rule as background selection. It
@@ -440,10 +536,11 @@ public final class CodexThreadCoordinator {
         setup = nil
     }
 
-    private func attach(_ id: String, observeBusyWhileDisabled: Bool = false) async throws {
+    private func attach(_ id: String, observeBusyWhileDisabled: Bool = false, authorization: (() throws -> Void)? = nil) async throws {
         let observingExisting = observeBusyWhileDisabled && states[id]?.binding.threadID != nil
             && (states[id]?.runtime.type == "active" || states[id]?.needsAttention == true)
         do {
+            try authorization?()
             if !observingExisting { try checkEnabled() }
             guard !cliSessionIDs.contains(id) else {
                 throw CodexAppServerError.protocolViolation("This session now uses the Codex CLI")
@@ -454,6 +551,7 @@ public final class CodexThreadCoordinator {
         let current = epoch
         let revision = state.revision
         do {
+            try authorization?()
             // Existing-turn observation must not implicitly connect while disabled.
             if isEnabled || !observingExisting {
                 try await service.connect()
@@ -470,6 +568,7 @@ public final class CodexThreadCoordinator {
                 }
             }
         } catch { recordFailure(error, sessionID: id); throw error }
+        try authorization?()
         var params = state.binding.settings.parameters(cwd: state.binding.cwd)
         let method: String
         if let threadID = state.binding.threadID {
@@ -499,6 +598,7 @@ public final class CodexThreadCoordinator {
             if !observingExisting { try checkEnabled() }
             let result: CodexJSONValue
             try Task.checkCancellation()
+            try authorization?()
             requestSent = true
             if !isEnabled && observingExisting {
                 result = try await service.requestWhileConnected(method, params: .object(params))
@@ -531,6 +631,7 @@ public final class CodexThreadCoordinator {
             } else { unresolvedWork.insert(id) }
             reconcileAdmission(id)
             onHydrate?(id, thread)
+            for observer in Array(observers.values) { observer.hydrate?(id, thread) }
             await flushPersistence?()
         } catch {
             // JSON-RPC method-not-found proves thread/start did not create one.
@@ -556,7 +657,7 @@ public final class CodexThreadCoordinator {
     }
 
     private func releaseIdle(_ id: String) async throws {
-        guard (!isEnabled || id != selectedSessionID), let state = states[id], state.canReleaseSubscription,
+        guard (!isEnabled || (id != selectedSessionID && remoteObservation[id] == nil)), let state = states[id], state.canReleaseSubscription,
               let threadID = state.binding.threadID else { return }
         let current = epoch
         do {
@@ -576,7 +677,7 @@ public final class CodexThreadCoordinator {
             }
             // An external turn or selection can arrive while unsubscribe awaits.
             // Reattach immediately rather than hiding its work or approvals.
-            if (isEnabled && selectedSessionID == id) || states[id]?.runtime.type == "active" || states[id]?.needsAttention == true {
+            if (isEnabled && (selectedSessionID == id || remoteObservation[id] != nil)) || states[id]?.runtime.type == "active" || states[id]?.needsAttention == true {
                 try await attach(id, observeBusyWhileDisabled: !isEnabled)
             }
         } catch {
@@ -593,7 +694,7 @@ public final class CodexThreadCoordinator {
             guard let threadID = object?["threadId"]?.stringValue ?? object?["thread"]?.objectValue?["id"]?.stringValue else {
                 // Global warnings/new events are inspectable, but never reduced
                 // as session/turn mutations without a thread identity.
-                for (id, state) in states where state.isSubscribed { onEvent?(id, method, params) }
+                for (id, state) in states where state.isSubscribed { publishEvent(id, method, params) }
                 return
             }
             guard let id = sessionIDByThreadID[threadID] else { return }
@@ -653,7 +754,7 @@ public final class CodexThreadCoordinator {
                 reconcileAdmission(id)
                 clearReplies(threadID: threadID)
             }
-            onEvent?(id, method, params)
+            publishEvent(id, method, params)
             if lifecycleChanged, (!isEnabled || id != selectedSessionID), states[id]?.canReleaseSubscription == true {
                 Task { [weak self] in
                     guard let self else { return }
@@ -730,6 +831,7 @@ public final class CodexThreadCoordinator {
         states[id] = state
         reconcileAdmission(id)
         onChange?(id, state)
+        for observer in Array(observers.values) { observer.change?(id, state) }
     }
 
     private func checkEpoch(_ current: Int) throws {

@@ -183,6 +183,10 @@ final class ControlServer {
                 nextBuffer.append(data)
             }
 
+            guard nextBuffer.count <= 1_048_576 else {
+                self.send(connection, status: 413, data: nil, error: ControlErrorBody(code: "request_too_large", message: "request exceeds 1 MiB"))
+                return
+            }
             if ControlProtocol.isCompleteHTTPMessage(nextBuffer) {
                 Task { @MainActor in
                     // The reply may be produced now, after tmux work, or only once a
@@ -213,7 +217,7 @@ final class ControlServer {
         guard let store else {
             return respond(.failure(500, "store_unavailable", "session store is unavailable"))
         }
-        guard token.isEmpty || request.headers[ControlToken.headerName.lowercased()] == token else {
+        guard !token.isEmpty, request.headers[ControlToken.headerName.lowercased()] == token else {
             return respond(.failure(401, "unauthorized", "invalid Banyan control token"))
         }
 
@@ -223,6 +227,28 @@ final class ControlServer {
             }
 
             switch route {
+            case .codexRemoteResolve:
+                struct Resolution: Decodable { var workspace: String; var operationID: String }
+                let resolution = try request.decode(Resolution.self)
+                try store.codexRemote.resolveLocally(workspace: resolution.workspace, operationID: resolution.operationID)
+                return respond(.ok(["status": "acknowledged"]))
+            case .codexRemoteConfigure:
+                let policy = try request.decode(CodexRemotePolicy.self)
+                try store.codexRemote.configure(policy)
+                return respond(.ok(["enabled": store.codexRemote.policy.enabled]))
+            case .codexRemote:
+                let body = try request.decode(CodexRemoteRequest.self)
+                Task { @MainActor in
+                    do {
+                        let result = try await store.codexRemote.handle(body)
+                        let data = try JSONEncoder().encode(result)
+                        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+                        respond(.ok(object))
+                    } catch CodexRemoteError.denied {
+                        respond(.failure(403, "remote_denied", "Slack control is disabled or principal is not allowed"))
+                    } catch { respond(.failure(409, "remote_unavailable", error.localizedDescription)) }
+                }
+                return
             case .list:
                 return respond(.ok(["sessions": store.sessions.map(summary)]))
 
