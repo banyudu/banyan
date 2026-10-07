@@ -437,17 +437,15 @@ extension TerminalSession {
         }
     }
 
-    fileprivate func terminalEnvironment() -> [String] {
+    func terminalEnvironment() -> [String] {
         var environment = Terminal.getEnvironmentVariables(termName: TmuxBackend.attachTermName, trueColor: true)
         let inherited = self.environment
-        for key in ["PATH", "SHELL", "TMPDIR", "SSH_AUTH_SOCK"] {
+        for key in ["PATH", "SHELL", "TMPDIR", "SSH_AUTH_SOCK", "NO_COLOR"] {
             if let value = inherited[key] {
                 environment.append("\(key)=\(value)")
             }
         }
         environment.append("CLICOLOR=1")
-        environment.append("CLICOLOR_FORCE=1")
-        environment.append("FORCE_COLOR=3")
         return environment
     }
 }

@@ -381,11 +381,9 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
     }
 
     private func configureServerEnvironment() {
-        _ = try? run(["set-environment", "-gu", "NO_COLOR"])
+        // Advertise color support without forcing it into piped/parsed output.
         _ = try? run(["set-environment", "-g", "COLORTERM", "truecolor"])
         _ = try? run(["set-environment", "-g", "CLICOLOR", "1"])
-        _ = try? run(["set-environment", "-g", "CLICOLOR_FORCE", "1"])
-        _ = try? run(["set-environment", "-g", "FORCE_COLOR", "3"])
     }
 
     private var baseArguments: [String] {
@@ -461,12 +459,9 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend 
         environment["PATH"] = merged
         environment.removeValue(forKey: "TMUX")
         environment.removeValue(forKey: "TMUX_PANE")
-        environment.removeValue(forKey: "NO_COLOR")
         environment["TERM"] = Self.attachTermName
         environment["COLORTERM"] = "truecolor"
         environment["CLICOLOR"] = "1"
-        environment["CLICOLOR_FORCE"] = "1"
-        environment["FORCE_COLOR"] = "3"
         return environment
     }
 }

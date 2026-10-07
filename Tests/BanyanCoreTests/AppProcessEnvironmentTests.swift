@@ -53,7 +53,7 @@ struct ShellEnvironmentLoadingTests {
         #expect(second[marker] == "1")
     }
 
-    @Test func timeoutLeavesNoParkedThreadsOrZombies() throws {
+    @Test func timeoutLeavesNoParkedThreadsOrZombies() async throws {
         // A shell that never exits *and ignores SIGTERM* — the case that actually broke
         // the app. The old implementation's `terminate()` had no effect on such a child,
         // so its `waitUntilExit()` thread stayed parked forever; enough of those
@@ -61,7 +61,8 @@ struct ShellEnvironmentLoadingTests {
         // to SIGKILL releases it. A stub that dies on SIGTERM does not reproduce this.
         let stub = FileManager.default.temporaryDirectory
             .appendingPathComponent("banyan-hanging-shell-\(UUID().uuidString)")
-        try "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n"
+        let pidLog = stub.appendingPathExtension("pids")
+        try "#!/bin/sh\ntrap '' TERM\nprintf '%s\\n' \"$$\" >> \(subprocessTestQuote(pidLog.path))\nwhile :; do sleep 1; done\n"
             .write(to: stub, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
 
@@ -70,23 +71,38 @@ struct ShellEnvironmentLoadingTests {
             AppProcessEnvironment.shellEnvironmentTimeoutOverrideForTesting = nil
             AppProcessEnvironment.resetShellEnvironmentCacheForTesting()
             try? FileManager.default.removeItem(at: stub)
+            try? FileManager.default.removeItem(at: pidLog)
         }
         AppProcessEnvironment.resetShellEnvironmentCacheForTesting()
 
         let attempts = 4
-        let before = threadCount()
-        for _ in 0..<attempts {
-            #expect(AppProcessEnvironment.shellEnvironment(environment: ["SHELL": stub.path]).isEmpty)
-            // Force a fresh load each time rather than reusing the cached failure.
-            AppProcessEnvironment.resetShellEnvironmentCacheForTesting()
+        let (before, after, results) = try await runBlockingTestWork {
+            let before = threadCount()
+            var results: [[String: String]] = []
+            for _ in 0..<attempts {
+                results.append(AppProcessEnvironment.shellEnvironment(environment: ["SHELL": stub.path]))
+                // Force a fresh load each time rather than reusing the cached failure.
+                AppProcessEnvironment.resetShellEnvironmentCacheForTesting()
+            }
+            return (before, threadCount(), results)
         }
-        let after = threadCount()
+        for result in results {
+            #expect(result.isEmpty)
+        }
 
         // Previously every timed-out load parked a thread permanently.
         #expect(after - before < attempts)
 
-        // The timed-out shells must be SIGKILLed and reaped, not left as zombies.
-        #expect(!hasZombieChildren())
+        // Require every shell to have installed its trap and recorded its own
+        // PID, then prove those exact children were killed and reaped. This
+        // cannot mistake another test's short-lived subprocess for our leak.
+        let pids = try String(contentsOf: pidLog, encoding: .utf8)
+            .split(whereSeparator: \.isNewline).compactMap { Int32($0) }
+        try #require(pids.count == attempts && Set(pids).count == attempts, "expected \(attempts) distinct shell PIDs, got \(pids)")
+        for pid in pids {
+            try #require(pid > 0)
+            #expect(await waitForTestChildExit(pid), "timed-out shell pid \(pid) was not reaped")
+        }
     }
 }
 
@@ -116,22 +132,4 @@ private func threadCount() -> Int {
 #else
     return 0
 #endif
-}
-
-private func hasZombieChildren() -> Bool {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/ps")
-    process.arguments = ["-eo", "ppid,stat"]
-    let output = Pipe()
-    process.standardOutput = output
-    guard (try? process.run()) != nil else { return false }
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    let ownPID = String(ProcessInfo.processInfo.processIdentifier)
-    return String(decoding: data, as: UTF8.self)
-        .split(separator: "\n")
-        .contains { line in
-            let fields = line.split(separator: " ", omittingEmptySubsequences: true)
-            return fields.count >= 2 && fields[0] == ownPID && fields[1].hasPrefix("Z")
-        }
 }
