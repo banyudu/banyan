@@ -40,6 +40,9 @@ extension SessionStore {
             if session.agentQueuePosition != position { session.agentQueuePosition = position }
         }
         objectWillChange.send()
+        // A queue can only drain if something yields. Idle reservations are the
+        // only thing an over-cap fleet can release without stopping work.
+        requestAgentSlotReclaimIfNeeded()
     }
 
     func cancelQueuedAgent(id: String) {

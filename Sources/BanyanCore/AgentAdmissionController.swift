@@ -19,6 +19,12 @@ public struct AgentLaunchQueueState: Codable, Equatable, Sendable {
 public final class AgentAdmissionController {
     nonisolated public static let defaultLimit = 4
     nonisolated public static let defaultsKey = "maximumConcurrentAgents"
+    /// A queued launch or turn may take a reservation away from a verified-idle
+    /// terminal command once its pane has been silent this long. Idle commands
+    /// otherwise hold their reservation until their process exits, so without a
+    /// quiet window a fleet of idle commands above the cap would block the queue
+    /// forever and the status of a just-started turn could free capacity early.
+    nonisolated public static let idleYieldQuiescenceSeconds: TimeInterval = 45
     public private(set) var limit: Int
     public private(set) var running: Set<String> = []
     public var queuedIDs: [String] { queue.map(\.id) }

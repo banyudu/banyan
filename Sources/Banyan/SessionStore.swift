@@ -168,6 +168,8 @@ final class SessionStore: ObservableObject {
     var isAgentFreezeShuttingDown = false
     var nextDeepSuspendProbeAt = Date.distantPast
     var isDeepSuspendPassRunning = false
+    /// Queued work reclaims a verified-idle reservation, one command at a time.
+    var isReclaimingAgentSlotForQueue = false
     var deepSuspendPressureSource: DispatchSourceMemoryPressure?
     var isUnderMemoryPressure = false
     var deepSuspendHistory: any SessionHistoryBackend { historyBackend }
@@ -1143,7 +1145,11 @@ final class SessionStore: ObservableObject {
             session.admissionProviderIdentity = snapshot.agentSlotProviderIdentity
             session.admissionProcessIdentity = snapshot.agentSlotPaneIdentity
             session.admissionPanePID = snapshot.agentSlotPaneIdentity?.pid
-            if snapshot.agentSlotReserved || (liveTmuxSessionNames.contains(session.tmuxSessionName) && session.status != .closed &&
+            // An idle command does not need a reservation to sit at its prompt,
+            // and queueing one would only delay new work until something else
+            // exited. Its reservation is re-adopted when it is seen working.
+            if !snapshot.status.isCodingAgentIdle,
+               snapshot.agentSlotReserved || (liveTmuxSessionNames.contains(session.tmuxSessionName) && session.status != .closed &&
                !session.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                snapshot.agentSlotProviderIdentity.map({ AgentProcessSample.presence(of: $0) != .exited }) != false) {
                 agentAdmission.adopt(session.id)
@@ -5679,6 +5685,9 @@ final class SessionStore: ObservableObject {
                 session.mark(status: result.status, tone: result.tone)
                 didChangeSession = true
             }
+            // Queued work can take a reservation from an idle command; the first
+            // observation of it working again gives that reservation back.
+            adoptObservedAgentActivity(id: session.id)
             if didStartAgentTurn {
                 scheduleAgentTitleImportIfNeeded(for: session)
             }

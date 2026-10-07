@@ -10,7 +10,7 @@ struct AgentAdmissionBanner: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Queued #\(position) · \(store.agentAdmission.running.count)/\(store.maximumConcurrentAgents) agent slots in use")
                     .font(.headline)
-                Text("Starts when a running command exits or a native turn finishes. Idle, parked, and frozen CLI agents still hold their slots.")
+                Text("Starts when a running command exits, a native turn finishes, or an idle CLI agent yields its slot. The agent keeps running and counts again once it is working; parked and frozen agents keep theirs.")
                     .font(.caption)
                 HStack {
                     Button("Run Next") { store.prioritizeQueuedAgent(id: session.id) }

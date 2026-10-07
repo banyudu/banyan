@@ -506,9 +506,12 @@ separate installer or notarized release channel.
 
 New managed agent work shares a configurable admission budget (four slots by
 default). Queued sessions remain visible, with Run Next and Cancel actions.
-Idle, parked, and frozen CLI agents still occupy slots; native active turns are
-counted individually even when they share one server. Existing running work is
-preserved when restoring or lowering the cap. Plain shells remain available.
+Idle, parked, and frozen CLI agents hold their slots until something waits for
+capacity: queued work then takes the least recently used idle reservation, and
+that agent re-adopts one as soon as it is observed working again. Nothing is
+signalled. Native active turns are counted individually even when they share
+one server. Existing running work is preserved when restoring or lowering the
+cap. Plain shells remain available.
 See [Concurrent agent admission](docs/agent-admission.md) for counting rules,
 CLI queue controls, uncertainty handling, and private runtime verification.
 
