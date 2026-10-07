@@ -7,6 +7,7 @@ import Testing
     let output = EmulatedHostOutput()
     output.write("older shell output\r\nHOST_SCREEN_SENTINEL", terminator: "")
     let before = output.host.terminal.getBufferAsData()
+    let cursorBefore = output.host.terminal.getCursorLocation()
     let input = RestorationInput(output: output)
     let backend = TmuxBackend(executableURL: URL(fileURLWithPath: "/missing-tmux-fixture"),
                               workingDirectory: "/tmp", environment: [:], socketName: "unused-fixture")
@@ -19,6 +20,9 @@ import Testing
     #expect(input.checkedEmbeddedReturn)
     #expect(!output.host.terminal.isCurrentBufferAlternate)
     #expect(output.host.terminal.getBufferAsData() == before)
+    let cursorAfter = output.host.terminal.getCursorLocation()
+    #expect(cursorAfter.x == cursorBefore.x)
+    #expect(cursorAfter.y == cursorBefore.y)
 }
 
 @Test func sidebarEscapeDeadlineLeavesFollowingNavigationAvailable() {

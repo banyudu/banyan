@@ -220,6 +220,7 @@ struct BanyanTUI {
     }
 
     private mutating func fallbackAttach() {
+        guard !model.showingHistory, model.selectedSession != nil else { return }
         terminal.stop()
         input.restore()
         suspendScreen()

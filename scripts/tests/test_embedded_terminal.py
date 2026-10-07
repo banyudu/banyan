@@ -123,7 +123,13 @@ def main():
                 readable, _, _ = select.select([master], [], [], 0.1)
                 if readable:
                     screen.feed(os.read(master, 65536))
-            raise AssertionError(f"Timed out: {label}\n{screen.text()}\n{screen.raw[-1000:]!r}")
+            diagnostics = {"tty": termios.tcgetattr(master)}
+            # Read only our owned fixture child when diagnosing Linux failures.
+            for name in ["wchan", "status"]:
+                path = Path(f"/proc/{client.pid}/{name}")
+                if path.exists():
+                    diagnostics[name] = path.read_text()
+            raise AssertionError(f"Timed out: {label}\n{screen.text()}\n{screen.raw[-1000:]!r}\n{diagnostics}")
 
         def stop():
             nonlocal client, master
