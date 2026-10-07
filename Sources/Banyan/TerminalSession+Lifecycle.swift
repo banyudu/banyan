@@ -38,8 +38,8 @@ extension TerminalSession {
     /// happens back on the main actor. Revisits no-op fast on the main thread
     /// when the client is already running.
     func startAsync() {
-        guard !isImportedHistory, !isSuspended else { return }
-        guard loadedTerminalView?.process.running != true else { return }
+        guard !isImportedHistory, !isSuspended, status != .closed,
+              let terminalView = loadedTerminalView, !terminalView.process.running else { return }
         // Fast path: backing session already exists, attach synchronously like
         // `start()` without paying a hop. `hasSession` is one cheap tmux call;
         // if it says yes there is nothing blocking left to do off-main.
@@ -60,28 +60,34 @@ extension TerminalSession {
         let sessionID = id
         let tmuxName = tmuxSessionName
         let startedAt = DispatchTime.now()
-        Task.detached(priority: .userInitiated) { [weak self] in
+        let generation = terminalClientGeneration
+        Task.detached(priority: .userInitiated) { [weak self, weak terminalView] in
             backend.configureTerminalTheme(style: themeStyle, for: nil)
             do {
                 try runtime.ensureBackingSession(request)
             } catch {
                 let message = error.localizedDescription
-                await MainActor.run { [weak self] in
-                    self?.failToStart(message)
+                await MainActor.run { [weak self, weak terminalView] in
+                    guard let self, let terminalView,
+                          self.terminalClientGeneration == generation,
+                          self.loadedTerminalView === terminalView else { return }
+                    self.failToStart(message)
                 }
                 return
             }
             backend.configureTerminalTheme(style: themeStyle, for: tmuxName)
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                guard !self.isImportedHistory, !self.isSuspended else { return }
-                guard self.loadedTerminalView?.process.running != true else { return }
+            await MainActor.run { [weak self, weak terminalView] in
+                guard let self, let terminalView,
+                      self.terminalClientGeneration == generation,
+                      self.loadedTerminalView === terminalView,
+                      !self.isImportedHistory, !self.isSuspended, self.status != .closed,
+                      !terminalView.process.running else { return }
                 self.isRestored = false
                 self.isProcessStarted = true
                 self.attemptedBlankTerminalRecovery = false
                 self.status = .running
-                self.terminalView.beginInitialScreenSynchronization(restarting: true)
-                self.terminalView.startProcess(
+                terminalView.beginInitialScreenSynchronization(restarting: true)
+                terminalView.startProcess(
                     executable: "/usr/bin/env",
                     args: ["-u", "TMUX", "-u", "TMUX_PANE", backend.executableURL.path] + backend.attachArguments(for: tmuxName),
                     environment: self.terminalEnvironment(),
@@ -103,6 +109,7 @@ extension TerminalSession {
         let tmuxBackend = tmuxBackend
         let tmuxSessionName = tmuxSessionName
         let sessionID = id
+        let generation = terminalClientGeneration
 
         if immediately {
             let startedAt = DispatchTime.now()
@@ -117,6 +124,7 @@ extension TerminalSession {
                 )
                 DispatchQueue.main.async { [weak self] in
                     guard let self, !self.isImportedHistory,
+                          self.terminalClientGeneration == generation,
                           let terminalView = self.loadedTerminalView,
                           terminalView.process.running else { return }
                     terminalView.requestFullRedraw()
@@ -141,6 +149,7 @@ extension TerminalSession {
             )
             guard let self,
                   !Task.isCancelled,
+                  self.terminalClientGeneration == generation,
                   !self.isImportedHistory,
                   let terminalView = self.loadedTerminalView,
                   terminalView.process.running else {
@@ -172,18 +181,21 @@ extension TerminalSession {
         let telemetry = telemetry
         let sessionID = id
         attemptedBlankTerminalRecovery = true
+        let generation = terminalClientGeneration
         Task.detached(priority: .utility) { [weak self] in
             let capturedText = backend.captureCurrentVisibleText(paneID: tmuxName)
             guard capturedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 // Pane is genuinely empty — allow a later switch to retry once
                 // it has content, matching the old synchronous semantics.
                 await MainActor.run { [weak self] in
+                    guard self?.terminalClientGeneration == generation else { return }
                     self?.attemptedBlankTerminalRecovery = false
                 }
                 return
             }
             await MainActor.run { [weak self] in
                 guard let self,
+                      self.terminalClientGeneration == generation,
                       !self.isImportedHistory,
                       self.loadedTerminalView?.process.running == true,
                       self.loadedTerminalView?.hasVisibleText == false else {
@@ -202,9 +214,9 @@ extension TerminalSession {
 
     func reattachTerminalClient(resetBlankRecoveryAttempt: Bool = true) {
         guard !isImportedHistory else { return }
+        invalidateTerminalClientWork()
         isInactiveTerminalClientDetached = false
         let startedAt = DispatchTime.now()
-        terminalRefreshTask?.cancel()
         if terminalView.process.running {
             isDetachingTerminalClient = true
             terminalView.terminate()
@@ -276,7 +288,7 @@ extension TerminalSession {
 
     func restartBackingSession() {
         guard !isImportedHistory else { return }
-        terminalRefreshTask?.cancel()
+        invalidateTerminalClientWork()
         if let terminalView = loadedTerminalView {
             if terminalView.process.running {
                 isDetachingTerminalClient = true
@@ -339,7 +351,7 @@ extension TerminalSession {
     }
 
     func stopTerminalClient() {
-        terminalRefreshTask?.cancel()
+        invalidateTerminalClientWork()
         isInactiveTerminalClientDetached = false
         isDetachingTerminalClient = false
         loadedTerminalView?.terminate()
@@ -349,6 +361,7 @@ extension TerminalSession {
 
     func detachTerminalClient() {
         guard status != .closed else { return }
+        invalidateTerminalClientWork()
         isInactiveTerminalClientDetached = false
         if let terminalView = loadedTerminalView, terminalView.process.running {
             isDetachingTerminalClient = true
@@ -364,11 +377,41 @@ extension TerminalSession {
     func detachInactiveTerminalClient() {
         guard !isImportedHistory, !isSuspended, status != .closed,
               let terminalView = loadedTerminalView, terminalView.process.running else { return }
-        terminalRefreshTask?.cancel()
+        invalidateTerminalClientWork()
         isInactiveTerminalClientDetached = true
         isDetachingTerminalClient = true
         terminalView.terminate()
         telemetry.recordDuration("terminal.inactive_detach", durationMS: 1, sessionID: id)
+    }
+
+    /// Release the display and its buffers on the main actor. The caller removes
+    /// its inactive container first. The tmux pane, agent, and observed status
+    /// remain live; a revisit uses the existing inactive-client reattach path.
+    func unloadTerminalView() {
+        invalidateTerminalClientWork()
+        guard let view = loadedTerminalView else { return }
+        isInactiveTerminalClientDetached = isProcessStarted && !isSuspended && status != .closed
+        view.cancelInitialScreenSynchronization()
+        view.displayUpdatesEnabled = false
+        view.processDelegate = nil
+        view.onOutput = nil
+        view.onCommittedInput = nil
+        view.terminate()
+        view.removeFromSuperview()
+        _terminalView = nil
+        isDetachingTerminalClient = false
+        didRenderRestoredMessage = false
+        appliedTheme = nil
+        appliedFontFamily = nil
+        appliedFontSize = nil
+        attemptedBlankTerminalRecovery = false
+        telemetry.recordDuration("terminal.view_unload", durationMS: 1, sessionID: id)
+    }
+
+    private func invalidateTerminalClientWork() {
+        terminalClientGeneration = UUID()
+        terminalRefreshTask?.cancel()
+        terminalRefreshTask = nil
     }
 
     /// The backing tmux pane was never stopped, so reconnect directly without

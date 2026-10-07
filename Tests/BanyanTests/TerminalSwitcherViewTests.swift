@@ -153,7 +153,8 @@ import Testing
 /// frozen container before it is revealed again, or it stays permanently narrower
 /// than the switcher and paints an empty strip beside the terminal.
 @MainActor
-@Test func terminalSwitcherRestoresFrozenContainerGeometryAfterProjectSwitch() async {
+@Test(.timeLimit(.minutes(1)))
+func terminalSwitcherRestoresFrozenContainerGeometryAfterProjectSwitch() async throws {
     let first = makeSwitcherSession(id: "first", projectGroupID: "project-a")
     let second = makeSwitcherSession(id: "second", projectGroupID: "project-b")
     let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 1200, height: 600))
@@ -161,8 +162,19 @@ import Testing
 
     update(switcher, sessions: [first, second], selectedID: first.id, focusRequestID: focusRequestID)
     switcher.layoutSubtreeIfNeeded()
-    let firstContainer = switcher.subviews.compactMap { $0 as? TerminalContainerView }.first
-    #expect(firstContainer?.frame.width == 1200)
+    let firstContainer = try #require(switcher.subviews.compactMap { $0 as? TerminalContainerView }.first)
+    #expect(firstContainer.frame.width == 1200)
+    // Observe completion rather than racing a wall-clock deadline against the
+    // synchronizer's main-queue timer when the full app suite saturates the actor.
+    let completedLayouts = AsyncStream<Void> { continuation in
+        firstContainer.onLayout = { [weak firstContainer] in
+            guard let firstContainer, firstContainer.isHidden,
+                  firstContainer.frame == switcher.bounds else { return }
+            continuation.yield(())
+            continuation.finish()
+        }
+    }
+    defer { firstContainer.onLayout = nil }
 
     switcher.switchImmediately(to: second.id, selectionChangedAt: nil, clickAt: nil)
     update(switcher, sessions: [first, second], selectedID: second.id, focusRequestID: focusRequestID)
@@ -171,13 +183,10 @@ import Testing
     switcher.setFrameSize(NSSize(width: 820, height: 600))
     switcher.layoutSubtreeIfNeeded()
 
-    let deadline = Date().addingTimeInterval(3)
-    while firstContainer?.isHidden == false, Date() < deadline {
-        try? await Task.sleep(for: .milliseconds(50))
-    }
+    for await _ in completedLayouts { break }
 
-    #expect(firstContainer?.isHidden == true)
-    #expect(firstContainer?.frame == switcher.bounds)
+    #expect(firstContainer.isHidden)
+    #expect(firstContainer.frame == switcher.bounds)
 }
 
 /// Revealing a cached container re-asserts its geometry, so a container that

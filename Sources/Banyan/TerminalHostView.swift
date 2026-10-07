@@ -86,10 +86,13 @@ struct TerminalHostView: NSViewRepresentable {
         // `startAsync` ensures in the background and attaches on main.
         session.startAsync()
         session.refreshTerminalClient(immediately: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+        let generation = session.terminalClientGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak session] in
+            guard let session, session.terminalClientGeneration == generation else { return }
             session.refreshTerminalClient()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) { [weak session] in
+            guard let session, session.terminalClientGeneration == generation else { return }
             session.recoverBlankTerminalClientIfNeeded()
         }
     }
@@ -114,6 +117,7 @@ final class TerminalContainerView: NSView {
     private var lastSelectionDragEvent: NSEvent?
     private var pendingReadyCallback: (() -> Void)?
     private weak var pendingReadyTerminalView: LocalProcessTerminalView?
+    private var isEvicted = false
     private var energyLayoutPasses = 0
     private var energyFrameSyncCalls = 0
     private var energyFrameChanges = 0
@@ -146,6 +150,21 @@ final class TerminalContainerView: NSView {
             NSEvent.removeMonitor(inputEventMonitor)
         }
         selectionAutoScrollTimer?.invalidate()
+    }
+
+    /// Invalidate callbacks before removing the hierarchy. AppKit or an already
+    /// queued focus request may keep the old container alive for another turn.
+    func prepareForEviction() {
+        isEvicted = true
+        pendingReadyCallback = nil
+        pendingReadyTerminalView = nil
+        onLayout = nil
+        onUserSubmittedInput = nil
+        selectionAutoScrollTimer?.invalidate()
+        selectionAutoScrollTimer = nil
+        lastSelectionDragEvent = nil
+        (terminalView as? DetectingLocalProcessTerminalView)?.cancelInitialScreenSynchronization()
+        terminalView.displayUpdatesEnabled = false
     }
 
     @discardableResult
@@ -281,6 +300,7 @@ final class TerminalContainerView: NSView {
     }
 
     func performWhenTerminalReady(for expectedTerminalView: LocalProcessTerminalView, action: @escaping () -> Void) {
+        guard !isEvicted else { return }
         pendingReadyTerminalView = expectedTerminalView
         if isTerminalReady(for: expectedTerminalView) {
             pendingReadyCallback = nil
@@ -318,6 +338,7 @@ final class TerminalContainerView: NSView {
 
     private func isTerminalReady(for expectedTerminalView: LocalProcessTerminalView) -> Bool {
         terminalView === expectedTerminalView
+            && !isEvicted
             && window != nil
             && bounds.width > 40
             && bounds.height > 40
@@ -325,7 +346,7 @@ final class TerminalContainerView: NSView {
 
     private func focusTerminalWhenReady(attempt: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0 : 0.03)) { [weak self] in
-            guard let self else { return }
+            guard let self, !self.isEvicted, !self.isHiddenOrHasHiddenAncestor else { return }
             guard let window = self.window else {
                 if attempt < 5 {
                     self.focusTerminalWhenReady(attempt: attempt + 1)
