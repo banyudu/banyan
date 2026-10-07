@@ -105,19 +105,42 @@ import Testing
 }
 
 @Test func subprocessRunnerAsyncCancellation() async throws {
+    let ready = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-cancellation-ready-\(UUID().uuidString)")
+    let pending = ready.appendingPathExtension("pending")
+    defer {
+        try? FileManager.default.removeItem(at: ready)
+        try? FileManager.default.removeItem(at: pending)
+    }
     let task = Task {
         try await SubprocessRunner.runAsync(
-            arguments: ["sleep", "30"],
+            arguments: [
+                "/bin/sh", "-c",
+                "echo $$ > \(subprocessTestQuote(pending.path)); mv \(subprocessTestQuote(pending.path)) \(subprocessTestQuote(ready.path)); exec sleep 30"
+            ],
             cwd: FileManager.default.currentDirectoryPath,
             environment: ProcessInfo.processInfo.environment,
             timeout: 60
         )
     }
+    defer { task.cancel() }
 
-    try await Task.sleep(for: .milliseconds(300))
+    // Queue admission under concurrent load is not cancellation latency. Wait
+    // for the actual child to start before measuring the unchanged 3s budget.
+    let launchDeadline = ContinuousClock.now + .seconds(10)
+    while !FileManager.default.fileExists(atPath: ready.path), ContinuousClock.now < launchDeadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    guard let contents = try? String(contentsOf: ready, encoding: .utf8),
+          let pid = Int32(contents.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else {
+        task.cancel()
+        _ = try? await task.value
+        Issue.record("Cancellation fixture did not report its child PID before the launch deadline")
+        return
+    }
+    let startedAt = ContinuousClock.now
     task.cancel()
 
-    let startedAt = ContinuousClock.now
     do {
         _ = try await task.value
         Issue.record("Expected cancellation error")
@@ -130,6 +153,7 @@ import Testing
             return
         }
     }
+    #expect(await waitForTestChildExit(pid), "cancelled child pid \(pid) was not reaped")
 }
 
 /// Runs per descriptor-leak check, and the budget those runs may grow the table by.

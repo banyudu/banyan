@@ -3,8 +3,8 @@ import QuartzCore
 import SwiftUI
 import SwiftTerm
 
-/// Creates terminal views only when visited, then keeps their independently
-/// backed layers attached and switches between them with visibility toggles.
+/// Keeps a small working set of visited terminal surfaces. Evicted surfaces are
+/// rebuilt from the live tmux pane when selected again.
 struct TerminalSwitcherView: NSViewRepresentable {
     let sessions: [TerminalSession]
     let selectedSessionID: String?
@@ -51,10 +51,13 @@ struct TerminalSwitcherView: NSViewRepresentable {
                 // first-visit switches. See TerminalSession+Lifecycle.
                 session.startAsync()
                 session.refreshTerminalClient(immediately: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                let generation = session.terminalClientGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak session] in
+                    guard let session, session.terminalClientGeneration == generation else { return }
                     session.refreshTerminalClient()
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) { [weak session] in
+                    guard let session, session.terminalClientGeneration == generation else { return }
                     session.recoverBlankTerminalClientIfNeeded()
                 }
             }
@@ -74,6 +77,15 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     private var containers: [String: TerminalContainerView] = [:]
+    private var recentSessionIDs: [String] = []
+    /// Includes the selected terminal. Two slots are required while a project
+    /// switch keeps its source visible and prepares the target off screen.
+    var terminalViewCacheLimit = 4 {
+        didSet {
+            terminalViewCacheLimit = max(2, terminalViewCacheLimit)
+            trimTerminalViewCache()
+        }
+    }
     private var initializedSessions: Set<String> = []
     private var telemetry: PerformanceTelemetry?
     private var activeSessionID: String?
@@ -119,6 +131,7 @@ final class TerminalSwitcherContainer: NSView {
             }
             cancelDeferredProjectSwitch()
             if deferred.sourceID == newID {
+                noteRecentSelection(deferred.sourceID)
                 return true
             }
         }
@@ -183,6 +196,7 @@ final class TerminalSwitcherContainer: NSView {
             window?.makeFirstResponder(newContainer.terminalView)
             recordSynchronousStage("focus", since: synchronousWorkStartedAt, sessionID: newID)
         }
+        trimTerminalViewCache()
 
         // The state change above is instant, but the frame only paints once the
         // main thread reaches its next display cycle. Measure that separately —
@@ -232,6 +246,7 @@ final class TerminalSwitcherContainer: NSView {
             energyDiagnosticsUpdateCount += 1
         }
         defer { logEnergyDiagnosticsIfNeeded(reason: "update") }
+        defer { trimTerminalViewCache(protecting: selectedSessionID) }
         let liveSessions = sessions.filter { !$0.isImportedHistory && $0.status != .closed }
         projectGroupBySessionID = Dictionary(
             liveSessions.map { ($0.id, $0.projectGroupID) },
@@ -246,11 +261,8 @@ final class TerminalSwitcherContainer: NSView {
         let liveIDs = Set(liveSessions.map(\.id))
 
         // Remove containers for sessions that no longer exist
-        for (id, container) in containers where !liveIDs.contains(id) {
-            cancelInactiveDetach(for: id)
-            container.removeFromSuperviewWithoutNeedingDisplay()
-            containers.removeValue(forKey: id)
-            initializedSessions.remove(id)
+        for id in containers.keys.filter({ !liveIDs.contains($0) }) {
+            evictTerminalView(for: id)
             if activeSessionID == id {
                 activeSessionID = nil
             }
@@ -261,8 +273,8 @@ final class TerminalSwitcherContainer: NSView {
         }
 
         // Create terminal views on first selection, not merely because a session
-        // appears in the sidebar. Visited terminals retain their own backing
-        // layers, so revisits only toggle visibility instead of reparenting.
+        // appears in the sidebar. Recent terminals retain their backing layers;
+        // an evicted terminal gets a fresh surface and the normal ready/attach path.
         if let selectedSession, containers[selectedSession.id] == nil {
             let container = TerminalContainerView(
                 terminalView: selectedSession.terminalView,
@@ -458,6 +470,7 @@ final class TerminalSwitcherContainer: NSView {
 
         attach(targetContainer)
         window?.makeFirstResponder(targetContainer.terminalView)
+        trimTerminalViewCache()
     }
 
     private func cancelDeferredProjectSwitch() {
@@ -528,6 +541,7 @@ final class TerminalSwitcherContainer: NSView {
             energyDiagnosticsAttachCount += 1
         }
         cancelInactiveDetach(for: container.session.id)
+        noteRecentSelection(container.session.id)
         container.terminalView.displayUpdatesEnabled = true
         container.session.resumeInactiveTerminalClientIfNeeded()
         if container.superview !== self {
@@ -555,6 +569,29 @@ final class TerminalSwitcherContainer: NSView {
 
     private func cancelInactiveDetach(for sessionID: String) {
         inactiveDetachWorkItems.removeValue(forKey: sessionID)?.workItem.cancel()
+    }
+
+    private func noteRecentSelection(_ sessionID: String) {
+        recentSessionIDs.removeAll { $0 == sessionID }
+        recentSessionIDs.append(sessionID)
+    }
+
+    private func trimTerminalViewCache(protecting selectedID: String? = nil) {
+        let protectedIDs = Set([selectedID, activeSessionID, deferredProjectSwitch?.sourceID,
+                                deferredProjectSwitch?.targetID].compactMap { $0 })
+        for id in recentSessionIDs where containers.count > terminalViewCacheLimit && !protectedIDs.contains(id) {
+            evictTerminalView(for: id)
+        }
+    }
+
+    private func evictTerminalView(for sessionID: String) {
+        guard let container = containers.removeValue(forKey: sessionID) else { return }
+        cancelInactiveDetach(for: sessionID)
+        initializedSessions.remove(sessionID)
+        recentSessionIDs.removeAll { $0 == sessionID }
+        container.prepareForEviction()
+        container.removeFromSuperviewWithoutNeedingDisplay()
+        container.session.unloadTerminalView()
     }
 
     private func scheduleInactiveDetach(for sessionID: String, container: TerminalContainerView) {
@@ -612,6 +649,7 @@ final class TerminalSwitcherContainer: NSView {
             energyDiagnosticsAttachCount += 1
         }
         cancelInactiveDetach(for: container.session.id)
+        noteRecentSelection(container.session.id)
         container.terminalView.displayUpdatesEnabled = true
         container.session.resumeInactiveTerminalClientIfNeeded()
         if container.superview !== self {
