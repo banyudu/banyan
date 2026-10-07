@@ -64,8 +64,15 @@ import Testing
       lifecycle: {onDispose: fn => {dispose = fn}}
     };
     await openCode.tui(api);
+    const requestNonce = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    function publish(n) {
+      const nonce = requestNonce(n);
+      writeFileSync('request.tmp', JSON.stringify({nonce, pid: process.pid, provider: 'opencode'}));
+      renameSync('request.tmp', 'request.json');
+      return nonce;
+    }
     async function openAsk(n, observeReplies = true) {
-      const nonce = `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+      const nonce = requestNonce(n);
       return await new Promise(resolve => {
         const finish = value => {clearTimeout(timer); observer.close(); resolve(value)};
         const read = () => {
@@ -79,8 +86,7 @@ import Testing
         // A coalesced/missed observer event must not hide an existing reply.
         // Keep the production deadline and inspect the file before timing out.
         const timer = setTimeout(() => {if (!read()) finish(undefined)}, 2000);
-        writeFileSync('request.tmp', JSON.stringify({nonce, pid: process.pid, provider: 'opencode'}));
-        renameSync('request.tmp', 'request.json');
+        publish(n);
         read();
       });
     }
@@ -117,21 +123,25 @@ import Testing
     const statusEntered = new Promise(resolve => {entered = resolve});
     const statusBlocked = new Promise(resolve => {unblock = resolve});
     duringStatus = async () => {entered(); await statusBlocked};
-    const stale = openAsk(18); notifyAdapter(); await statusEntered;
+    const stale = publish(18); notifyAdapter(); await statusEntered;
     route = {name: 'session', params: {sessionID: 'ses_after_wait'}};
     const replacement = openAsk(19); notifyAdapter(); unblock();
-    assert.equal(await stale, undefined);
     assert.equal((await replacement).id, 'ses_after_wait');
+    // Reply 19 proves the stale callback and its coalesced handback completed.
+    assert.equal(existsSync(stale + '.json'), false);
     // Disposal must suppress both the pending handback and a late status reply.
     let enteredBeforeDispose, unblockAfterDispose;
     const disposingEntered = new Promise(resolve => {enteredBeforeDispose = resolve});
     const disposingBlocked = new Promise(resolve => {unblockAfterDispose = resolve});
     duringStatus = async () => {enteredBeforeDispose(); await disposingBlocked};
-    const late = openAsk(21); notifyAdapter(); await disposingEntered;
-    const pending = openAsk(22); notifyAdapter();
+    const late = publish(21); notifyAdapter(); await disposingEntered;
+    const pending = publish(22); notifyAdapter();
     const callsBeforeDisposal = statusCalls;
     dispose(); unblockAfterDispose();
-    assert.equal(await late, undefined); assert.equal(await pending, undefined);
+    // Only mocked Promise continuations remain; one event-loop handback lets
+    // the released status callback finish without a silence/deadline wait.
+    await tick();
+    assert.equal(existsSync(late + '.json'), false); assert.equal(existsSync(pending + '.json'), false);
     assert.equal(statusCalls, callsBeforeDisposal); assert.equal(adapterClosed, true);
     console.log('Provider contracts: live selection, busy/pending refusal, single helper, disposal PASS');
     """#
