@@ -105,12 +105,15 @@ extension SessionStore {
                         candidates: candidates, openTranscripts: open)
                     if provider == .codex { idleTranscriptPath = try AgentDeepSuspend.codexIdleTranscript(disk, open: open) }
                 }
-                let first = try AgentProcessFreezer.snapshot(rootPID: root.pid)
-                let plan = try AgentProcessFreezer.plan(root: root, agentPIDs: [Int32(agent.pid)], samples: first)
+                var first = try AgentProcessFreezer.snapshot(rootPID: root.pid)
+                var plan = try AgentProcessFreezer.plan(root: root, agentPIDs: [Int32(agent.pid)], samples: first)
                 let host = URL(fileURLWithPath: rootRow.commandName)
                 guard rootRow.commandName.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: host.path) else {
                     throw AgentFreezeError.unsafe("Process host is unavailable for recovery")
                 }
+                let helpers = provider == .claude ? AgentProviderIdentity.ownedWaitHelpers(samples: first,
+                    rows: ProcessTable.snapshot().descendants(of: pane.rootPID), process: sample.identity, root: root, executable: host.path) : []
+                guard helpers.count <= 1 else { throw AgentFreezeError.unsafe("Provider identity helper is ambiguous") }
                 let command = try AgentDeepSuspend.resumeCommand(disk: disk, launchCommand: target.command,
                     host: host.path, shell: shellRow.commandName)
                 let started = ProcessInfo.processInfo.systemUptime
@@ -118,7 +121,9 @@ extension SessionStore {
                 let second = try AgentProcessFreezer.snapshot(rootPID: root.pid)
                 let finalRows = ProcessTable.snapshot().descendants(of: pane.rootPID)
                 let result = AgentSupervisor(backend: backend,
-                    processTable: AgentDeepSuspend.foregroundTable(rows: finalRows, agentPID: agent.pid)).inspect(
+                    processTable: AgentDeepSuspend.foregroundTable(rows: finalRows.filter { row in
+                        !helpers.contains { Int($0.pid) == row.pid }
+                    }, agentPID: agent.pid)).inspect(
                     tmuxSessionName: target.tmuxSessionName, launchCommand: target.command, currentStatus: target.status,
                     cwd: target.cwd, sessionStartedAt: target.createdAt, environment: target.environment)
                 guard let result, AgentInactivityPolicy.permitsSuspension(status: result.status, focused: false,
@@ -130,6 +135,37 @@ extension SessionStore {
                     throw AgentFreezeError.unsafe("Agent output, CPU, status or visibility is active")
                 }
                 if let idleTranscriptPath { try AgentDeepSuspend.validateCodexIdleTranscript(idleTranscriptPath, disk: disk) }
+                if provider == .claude || provider == .opencode {
+                    // A quiet HTTP turn or conversation switch can leave CPU,
+                    // output and frontend status unchanged during the wait.
+                    // Refresh authoritative state off the main actor, after all
+                    // quiet checks, before any recovery journal or TERM.
+                    guard try AgentProviderIdentity.query(process: sample.identity, provider: provider, cwd: target.cwd) == disk else {
+                        throw AgentFreezeError.unsafe("Current provider session changed or became unavailable during the quiet check")
+                    }
+                    if provider == .claude {
+                        // The supported process API completes one native wait
+                        // helper per query, then starts its replacement. Rebind
+                        // only that exact owned helper; all other tree members,
+                        // groups and the provider must preserve their identities.
+                        let refreshed = try AgentProcessFreezer.snapshot(rootPID: root.pid)
+                        let replacements = AgentProviderIdentity.ownedWaitHelpers(samples: refreshed,
+                            rows: ProcessTable.snapshot().descendants(of: pane.rootPID), process: sample.identity, root: root, executable: host.path)
+                        let refreshedPlan = try AgentProcessFreezer.plan(root: root, agentPIDs: [sample.identity.pid], samples: refreshed)
+                        guard replacements.count <= 1,
+                              Set(first.map(\.identity)).subtracting(helpers) == Set(refreshed.map(\.identity)).subtracting(replacements),
+                              Set(plan.members).subtracting(helpers) == Set(refreshedPlan.members).subtracting(replacements),
+                              Set(plan.groups).subtracting(helpers) == Set(refreshedPlan.groups).subtracting(replacements),
+                              plan.agents == refreshedPlan.agents else {
+                            throw AgentFreezeError.unsafe("Agent children changed during the final identity query")
+                        }
+                        // Keep the original CPU baseline for every other child.
+                        // The new helper has its own fresh identity and baseline;
+                        // the destructive boundary still checks the full plan.
+                        first = first.filter { !helpers.contains($0.identity) } + refreshed.filter { replacements.contains($0.identity) }
+                        plan = refreshedPlan
+                    }
+                }
                 let ticket = AgentSuspendTicket(root: root, shell: shell, agent: sample.identity, paneID: pane.paneID,
                     disk: disk, resumeCommand: command, residentBytes: sample.residentBytes,
                     survivors: first.filter { $0.identity != root && $0.identity != shell && $0.identity != sample.identity }.map(\.identity),

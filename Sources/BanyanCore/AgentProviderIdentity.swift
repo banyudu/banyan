@@ -87,6 +87,25 @@ public enum AgentProviderIdentity {
         if privateDirectory(dir) { try? FileManager.default.removeItem(at: dir) }
     }
 
+    /// Only the native wait helper launched directly by this Claude process.
+    /// Names alone cannot exempt an arbitrary child from activity/identity checks.
+    public static func ownedWaitHelpers(samples: [AgentProcessSample], rows: [ProcessInfoRow],
+                                        process: AgentProcessIdentity, root: AgentProcessIdentity,
+                                        executable: String) -> Set<AgentProcessIdentity> {
+        guard let owner = samples.first(where: { $0.identity == process }), owner.sessionID == root.pid else { return [] }
+        let directory = directory(root: root).path
+        return Set(samples.compactMap { sample in
+            guard sample.parentPID == process.pid, sample.sessionID == root.pid, sample.userID == owner.userID,
+                  let row = rows.first(where: { $0.pid == Int(sample.identity.pid) }), let argv = row.argumentVector,
+                  argv.count == 5, PathDisplayName.canonicalPath(row.commandName) == PathDisplayName.canonicalPath(executable),
+                  PathDisplayName.canonicalPath(argv[0]) == PathDisplayName.canonicalPath(executable),
+                  argv[1] == helper, argv[2] == "wait", argv[3] == directory,
+                  argv[4].isEmpty || UUID(uuidString: argv[4]) != nil,
+                  AgentProcessSample.read(pid: sample.identity.pid)?.identity == sample.identity else { return nil }
+            return sample.identity
+        })
+    }
+
     /// Helper invoked by Claude's supported process API once, at plugin load.
     /// Walk kernel ancestry rather than trusting a PID from provider JSON.
     public static func owningProviderPID() throws -> Int32 {

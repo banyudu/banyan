@@ -213,8 +213,23 @@ extension TerminalSession {
                                   sample.sessionID == ticket.root.pid, sample.foregroundGroupID == sample.groupID,
                                   !ticket.survivors.contains(sample.identity) else { return false }
                             return AgentDeepSuspend.confirmsRecovery(ticket.disk, process: $0)
-                        }), let result = AgentSupervisor(backend: backend,
-                            processTable: AgentDeepSuspend.foregroundTable(rows: rows, agentPID: provider.pid)).inspect(tmuxSessionName: name,
+                        }) else { return false }
+                        // Exact identity confirmation may renew Claude's owned
+                        // bridge helper. Inspect the current tree, excluding only
+                        // that verified idle wait helper from turn classification.
+                        let currentRows = ProcessTable.snapshot().descendants(of: current.rootPID)
+                        let helpers: Set<AgentProcessIdentity>
+                        if ticket.disk.provider == .claude,
+                           let identity = AgentProcessSample.read(pid: Int32(provider.pid))?.identity,
+                           let host = currentRows.first(where: { $0.pid == current.rootPID }),
+                           let samples = try? AgentProcessFreezer.snapshot(rootPID: ticket.root.pid) {
+                            helpers = AgentProviderIdentity.ownedWaitHelpers(samples: samples, rows: currentRows,
+                                process: identity, root: ticket.root, executable: host.commandName)
+                        } else { helpers = [] }
+                        guard helpers.count <= 1, let result = AgentSupervisor(backend: backend,
+                            processTable: AgentDeepSuspend.foregroundTable(rows: currentRows.filter { row in
+                                !helpers.contains { Int($0.pid) == row.pid }
+                            }, agentPID: provider.pid)).inspect(tmuxSessionName: name,
                             launchCommand: ticket.resumeCommand, currentStatus: .running, cwd: ticket.disk.cwd,
                             environment: environment, paneSnapshot: current) else { return false }
                         let text = backend.captureVisibleText(paneID: current.paneID, lineLimit: 24)

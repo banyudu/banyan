@@ -10,6 +10,56 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AgentDeepSuspendTests {
+    @Test func claudeFreshQueryAllowsOnlyOwnedBridgeHelperTurnover() async throws {
+        let f = try await DeepSuspendFixture(provider: .claude, mode: "helper-turnover")
+        defer { f.cleanup() }
+        try await f.store.deepSuspendAgent(id: f.session.id)
+        #expect(AgentProcessSample.read(pid: f.agentPID) == nil)
+        let helpers = try String(contentsOf: f.fixture.root.appendingPathComponent("bridge-helper-pids"), encoding: .utf8)
+            .split(whereSeparator: \.isNewline).compactMap { Int32($0) }
+        #expect(helpers.count >= 3 && Set(helpers).count == helpers.count)
+        try await waitForPuckState { ProcessTable.snapshot().descendants(of: f.pane.rootPID).count == 2 }
+        try f.store.deepResumeAgent(id: f.session.id)
+        try await waitForPuckState(timeout: .seconds(10)) { !f.session.isDeepSuspended }
+        #expect(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName)?.paneID == f.pane.paneID)
+        #expect(f.backend.suspendTicket(named: f.session.tmuxSessionName) == nil)
+    }
+
+    @Test func claudeFreshQueryStillRefusesUnrelatedChildTurnover() async throws {
+        let f = try await DeepSuspendFixture(provider: .claude, mode: "helper-turnover-extra")
+        defer { f.cleanup() }
+        let identity = try #require(AgentProcessSample.read(pid: f.agentPID)?.identity)
+        let background = try #require(f.backgroundIdentity())
+        await #expect(throws: (any Error).self) { try await f.store.deepSuspendAgent(id: f.session.id) }
+        #expect(try String(contentsOf: f.fixture.root.appendingPathComponent("bridge-query-count"), encoding: .utf8) == "2")
+        #expect(f.backgroundIdentity() != background)
+        #expect(AgentProcessSample.read(pid: f.agentPID)?.identity == identity)
+        #expect(f.backend.readSuspendJournal(named: f.session.tmuxSessionName) == .absent)
+    }
+
+    @Test(arguments: [CodingAgentProvider.claude, .opencode], ["busy", "switch", "unavailable"])
+    func currentProviderBridgeRecheckedAfterQuietWait(provider: CodingAgentProvider, transition: String) async throws {
+        let f = try await DeepSuspendFixture(provider: provider)
+        defer { f.cleanup() }
+        let identity = try #require(AgentProcessSample.read(pid: f.agentPID)?.identity)
+        let firstReply = f.fixture.root.appendingPathComponent("bridge-first-reply.json")
+        let pending = Task { try await f.store.deepSuspendAgent(id: f.session.id) }
+        defer { pending.cancel() }
+        // Synchronize on the actual first idle reply, then change only live
+        // provider state. CPU/output/frontend status deliberately stay idle.
+        try await waitForPuckState { FileManager.default.fileExists(atPath: firstReply.path) }
+        let reply = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: firstReply)) as? [String: Any])
+        #expect(reply["id"] as? String == f.diskID && reply["ready"] as? Bool == true)
+        try Data(transition.utf8).write(to: f.fixture.root.appendingPathComponent("bridge-state"), options: .atomic)
+        await #expect(throws: (any Error).self) { try await pending.value }
+        #expect(try String(contentsOf: f.fixture.root.appendingPathComponent("bridge-query-count"), encoding: .utf8) == "2")
+        #expect(f.session.status == .idle)
+        #expect(AgentProcessSample.read(pid: f.agentPID)?.identity == identity)
+        #expect(AgentProcessSample.read(pid: f.agentPID)?.isStopped == false)
+        #expect(f.backend.readSuspendJournal(named: f.session.tmuxSessionName) == .absent)
+        #expect(f.session.suspendTicket == nil && !f.session.isDeepSuspended)
+    }
+
     @Test(arguments: [CodingAgentProvider.claude, .opencode])
     func currentProviderBridgeResumesWithNoHeldJSONL(provider: CodingAgentProvider) async throws {
         let f = try await DeepSuspendFixture(provider: provider, mode: "bridge-closed")
@@ -523,15 +573,37 @@ private struct DeepSuspendFixture {
     bridge = os.environ.get('BANYAN_AGENT_IDENTITY_DIR')
     if bridge and os.environ['BANYAN_TEST_MODE'] not in ('no-proof', 'changed-thread'):
         def answer_queries():
+            global child
             last = None
+            count = 0
             while True:
                 try:
-                    request = json.loads((pathlib.Path(bridge) / 'request.json').read_text())
+                    if os.environ['BANYAN_TEST_MODE'].startswith('helper-turnover'):
+                        helper = subprocess.Popen([os.environ['BANYAN_AGENT_IDENTITY_HOST'], '__provider-identity', 'wait', bridge, last or ''],
+                                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        with (root / 'bridge-helper-pids').open('a') as output: output.write(str(helper.pid) + '\n')
+                        output, error = helper.communicate(timeout=600)
+                        if helper.returncode != 0: return
+                        request = json.loads(output)
+                    else:
+                        request = json.loads((pathlib.Path(bridge) / 'request.json').read_text())
                     if request['pid'] == os.getpid() and request['nonce'] != last:
                         last = request['nonce']
+                        count += 1
+                        (root / 'bridge-query-count').write_text(str(count))
+                        state = (root / 'bridge-state').read_text() if (root / 'bridge-state').exists() else ''
+                        if state == 'unavailable': continue
+                        if count == 2 and not resumed and os.environ['BANYAN_TEST_MODE'] == 'helper-turnover-extra':
+                            child.terminate()
+                            child.wait(timeout=2)
+                            child = subprocess.Popen([sys.executable, str(root / 'mcp-server.py'), 'background'], preexec_fn=os.setpgrp,
+                                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            (root / 'background').write_text(str(child.pid))
                         current = '00000000-0000-4000-8000-000000000099' if resumed and os.environ['BANYAN_TEST_MODE'] == 'wrong-session' else expected
-                        response = dict(nonce=last, pid=os.getpid(), provider=provider, id=current, cwd=os.getcwd(), ready=True)
+                        if state == 'switch': current = 'ses_switchedAfterIdleReply' if provider == 'opencode' else '00000000-0000-4000-8000-000000000099'
+                        response = dict(nonce=last, pid=os.getpid(), provider=provider, id=current, cwd=os.getcwd(), ready=state != 'busy')
                         (pathlib.Path(bridge) / (last + '.json')).write_text(json.dumps(response))
+                        if count == 1: (root / 'bridge-first-reply.json').write_text(json.dumps(response))
                 except (OSError, ValueError, KeyError): pass
                 time.sleep(.02)
         threading.Thread(target=answer_queries, daemon=True).start()
