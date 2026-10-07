@@ -84,7 +84,7 @@ public final class CodexRemoteControl {
         var attachment: CodexRemoteAttachment
     }
     private var journal: Journal
-    public static let maximumJournalBytes = 32 * 1024 * 1024
+    public nonisolated static let maximumJournalBytes = 32 * 1024 * 1024
     private let maximumJournalBytes: Int
     private let file: URL
     private let coordinator: CodexThreadCoordinator

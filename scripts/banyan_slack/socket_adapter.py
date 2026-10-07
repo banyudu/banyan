@@ -11,6 +11,7 @@ def fenced_socket_client(base, connection_type, state_type):
     class FencedSocketModeClient(base):
         def __init__(self, *, transport_lost, **kwargs):
             self.transport_lost = transport_lost
+            self.fenced_source = None
             super().__init__(**kwargs)
 
         def connect(self):
@@ -41,13 +42,25 @@ def fenced_socket_client(base, connection_type, state_type):
                 self.current_app_monitor_started = True
                 self.current_app_monitor.start()
 
+        def _lose(self, connection):
+            if connection is self.current_session and connection is not self.fenced_source:
+                self.fenced_source = connection
+                self.transport_lost()
+
+        def connect_to_new_endpoint(self, force=False):
+            # The SDK monitor can discover an inactive socket without invoking
+            # close/error listeners. Fence before URL issuance can block too.
+            if self.current_session is not None and (force or not self.current_session.is_active()):
+                self._lose(self.current_session)
+            return super().connect_to_new_endpoint(force=force)
+
         def _source_message(self, connection, message):
             if connection is self.current_session:
                 super()._on_message(message)
 
         def _source_error(self, connection, error):
             if connection is self.current_session:
-                self.transport_lost()
+                self._lose(connection)
                 super()._on_error(error)
 
         def _source_close(self, connection, code, reason):
@@ -55,7 +68,7 @@ def fenced_socket_client(base, connection_type, state_type):
                 return
             # Invalidate BEFORE any SDK URL issuance/connect can block. Closing
             # the source also lets the SDK see that it really needs a fresh URL.
-            self.transport_lost()
+            self._lose(connection)
             connection.disconnect()
             super()._on_close(code, reason)
 

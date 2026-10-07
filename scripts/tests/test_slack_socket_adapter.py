@@ -30,6 +30,8 @@ class Connection:
     disconnect = close
     def is_active(self):
         return self.active
+    def check_state(self):
+        pass
 
 
 class State:
@@ -63,8 +65,8 @@ class PinnedSDKShape:
             self.entered.set()
             self.release.wait(3)
         return f"wss://fixture.invalid/{self.urls}"
-    def connect_to_new_endpoint(self):
-        if not self.current_session.is_active():
+    def connect_to_new_endpoint(self, force=False):
+        if force or not self.current_session.is_active():
             self.wss_uri = self.issue_new_wss_url()
             self.connect()
     def _on_close(self, code, reason):
@@ -166,6 +168,19 @@ class InstalledSDKAdapterTests(unittest.TestCase):
             self.assertEqual(lost, [True])
             self.assertEqual(received, ['{"type":"hello"}'])
             self.assertEqual(len(issued), 2)
+            # Exercise the ACTUAL pinned heartbeat monitor path, which closes
+            # without any on_close/error notification before refreshing URL.
+            entered.clear()
+            release.clear()
+            client.current_session.disconnect()
+            closing = threading.Thread(target=client._monitor_current_session)
+            closing.start()
+            self.assertTrue(entered.wait(1))
+            self.assertEqual(lost, [True, True])
+            release.set()
+            closing.join(2)
+            self.assertFalse(closing.is_alive())
+            self.assertEqual(len(issued), 3)
         finally:
             release.set()
             if closing:
