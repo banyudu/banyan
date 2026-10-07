@@ -8,7 +8,7 @@
 
 import Foundation
 
-struct UnicodeUtil {
+public struct UnicodeUtil {
     /**
      * Returns the number of expected bytes on a well-formed UTF8 string based on the first byte of the sequence
      */
@@ -320,7 +320,7 @@ struct UnicodeUtil {
      *   -1 if the value is not printable, otherwise the number of columsn that the rune occupies.
      * - Parameter rune: a UnicodeScalar
      */
-    static func columnWidth (rune: UnicodeScalar) -> Int
+    public static func columnWidth (rune: UnicodeScalar) -> Int
     {
         let irune = rune.value
 

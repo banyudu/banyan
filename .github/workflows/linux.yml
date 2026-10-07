@@ -63,4 +63,10 @@ jobs:
         run: swift build --product BanyanTUI
 
       - name: Smoke test TUI startup and quit
-        run: printf 'q' | swift run BanyanTUI
+        run: |
+          fixture_home="$(mktemp -d)"
+          trap 'rm -rf "$fixture_home"' EXIT
+          printf 'q' | BANYAN_FIXTURE_DATA_HOME="$fixture_home" swift run BanyanTUI
+
+      - name: Smoke test embedded terminal with private tmux fixtures
+        run: python3 scripts/tests/test_embedded_terminal.py

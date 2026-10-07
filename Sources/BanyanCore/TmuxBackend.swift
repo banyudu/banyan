@@ -447,6 +447,17 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
 
     @discardableResult
     private func run(_ arguments: [String]) throws -> String {
+        #if os(Linux)
+        if arguments.first == "new-session" {
+            let output = try TmuxDaemonCommand.run(executable: executableURL, arguments: baseArguments + arguments,
+                                                   cwd: workingDirectory, environment: processEnvironment(),
+                                                   timeout: Self.commandTimeout)
+            guard output.terminationStatus == 0 else {
+                throw BackendError.commandFailed(arguments, String(decoding: output.standardError, as: UTF8.self))
+            }
+            return String(decoding: output.standardOutput, as: UTF8.self)
+        }
+        #endif
         let output = try SubprocessRunner.run(
             arguments: [executableURL.path] + baseArguments + arguments,
             cwd: workingDirectory,
