@@ -8,6 +8,15 @@ import SwiftTerm
 @MainActor
 final class TerminalSession: BanyanSession {
     let tmuxSessionName: String
+    var nativeCodexProvenance: CodexThreadBinding?
+    override var codexBinding: CodexThreadBinding? {
+        guard var binding = nativeCodexProvenance else { return nil }
+        if binding.threadID == nil, let agentSessionID {
+            binding.threadID = agentSessionID
+            binding.creationAttempted = true
+        }
+        return binding
+    }
 
     var _terminalView: DetectingLocalProcessTerminalView?
 

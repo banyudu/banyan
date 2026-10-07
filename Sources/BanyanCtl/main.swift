@@ -172,11 +172,7 @@ struct BanyanCtl {
         var shellAvailable = false
         var puckAvailable = false
         if let shells = try? loadShellSessions() {
-            sessions.append(contentsOf: shells.map { shell in
-                var row = shell
-                row["backend"] = (shell["backend"] as? String) == SessionBackendKind.puck.rawValue ? "puck" : "tmux"
-                return row
-            })
+            sessions.append(contentsOf: shells.map(UnifiedSessionCatalog.appRow))
             appSessionIDs = Set(shells.compactMap { $0["id"] as? String })
             shellAvailable = true
         }

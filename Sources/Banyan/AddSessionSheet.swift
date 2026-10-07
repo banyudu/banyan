@@ -96,7 +96,9 @@ struct AddSessionSheet: View {
                 Picker("Runtime", selection: $backend) {
                     Text("Terminal").tag(SessionBackendKind.terminal)
                     Text("Puck").tag(SessionBackendKind.puck)
-                    Text("Codex (Native)").tag(SessionBackendKind.codex)
+                    if store.enableNativeCodex {
+                        Text("Codex (Native)").tag(SessionBackendKind.codex)
+                    }
                 }
                 .pickerStyle(.segmented)
                 switch backend {
@@ -160,6 +162,7 @@ struct AddSessionSheet: View {
     }
 
     private var launchError: String? {
+        if backend == .codex && !store.enableNativeCodex { return "Enable native Codex in Preferences first" }
         guard case .puck(let binding) = launch else { return nil }
         return binding.validationError
     }

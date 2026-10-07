@@ -258,6 +258,13 @@ paths can be absolute, start with `~`, or use a `file://` URL, and override
 provider branding. Commands are passed to the session shell unchanged, so
 quote YAML values when needed.
 
+The native Codex App Server client is a separate preview. Enable **Preferences →
+Codex → Enable native Codex client (preview)**, then choose **Codex (Native)** in
+the new-session sheet. Native sessions offer **Use Codex CLI** to continue their
+exact thread in a terminal if startup or capabilities fail. The native toggle
+can be disabled independently of CLI, remote-control TUI, and Puck runtimes.
+See [runtime selection, compatibility, and fallback](docs/codex-app-server-client.md).
+
 The built-in `Codex` profile opens a terminal session; `Codex (Puck)` opens a
 puck daemon session. A configured profile uses puck only when it declares
 `puck_provider` (`codex`, `opencode-go`, `anthropic`, or `gemini`); `puck_model` and

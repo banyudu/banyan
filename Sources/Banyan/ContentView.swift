@@ -1460,7 +1460,12 @@ struct ContentView: View {
                         }
                         .background(.background)
                     } else if let native = session as? CodexSession {
-                        CodexSessionDetail(session: native)
+                        CodexSessionDetail(session: native, nativeModeEnabled: store.enableNativeCodex, onOpenCLIFallback: {
+                            Task {
+                                do { try await store.fallbackCodexSessionToCLI(id: native.id) }
+                                catch { store.codexSessionError = error.localizedDescription }
+                            }
+                        })
                             .id(native.id)
                             .background(.background)
                     } else if let puck = session as? PuckSession {
