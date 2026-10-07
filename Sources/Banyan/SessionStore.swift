@@ -115,6 +115,12 @@ final class SessionStore: ObservableObject {
     @Published private(set) var selectedPullRequestLoadState: GitHubPullRequestLoadState = .idle
     @Published var sidebarMode: SidebarMode = .sessions {
         didSet {
+            if sidebarMode != oldValue {
+                telemetry.axiomExporter?.sendAppLifecycle("sidebar.mode_change", attributes: [
+                    "sidebar.mode": sidebarMode.rawValue,
+                    "sidebar.previous_mode": oldValue.rawValue,
+                ])
+            }
             if sidebarMode == .linear {
                 refreshLinearIssueListOnEnter()
             }
@@ -659,7 +665,8 @@ final class SessionStore: ObservableObject {
     /// Performance events are buffered in memory and written in batches, so quitting
     /// has to drain them or the last few seconds of telemetry are lost.
     nonisolated private func flushPendingTelemetry() {
-        telemetry.flushPendingEventsAndWait()
+        telemetry.flushPendingEventsAndWait(endingActiveSpans: true)
+        telemetry.axiomExporter?.shutdownBlocking()
     }
 
     /// Blocks until the serial session-persistence queue drains. Safe to call from a

@@ -510,6 +510,7 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         let correlationID: String?
         let detail: String?
         let startedAt: DispatchTime
+        let parentContext: SpanContext?
     }
 
     private struct ActiveSessionSwitch {
@@ -519,6 +520,7 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         let startedAt: DispatchTime
         var didRecordTerminalReady: Bool
         var didRecordFirstOutput: Bool
+        let traceSpan: TelemetrySpan?
     }
 
     private let store: PerformanceEventStore
@@ -547,6 +549,7 @@ public final class PerformanceTelemetry: @unchecked Sendable {
     /// Safe to touch the buffer directly: deinit means no references survive, and
     /// every queued block holds only a weak one, so nothing else can be running.
     deinit {
+        for active in activeSwitches.values { active.traceSpan?.end(errorType: "abandoned") }
         flushPendingLocked()
     }
 
@@ -563,7 +566,8 @@ public final class PerformanceTelemetry: @unchecked Sendable {
             sessionID: sessionID,
             correlationID: correlationID,
             detail: detail,
-            startedAt: .now()
+            startedAt: .now(),
+            parentContext: TraceContext.current
         )
         queue.async { [weak self] in
             self?.activeSpans[id] = span
@@ -579,7 +583,8 @@ public final class PerformanceTelemetry: @unchecked Sendable {
                 sessionID: span.sessionID,
                 correlationID: span.correlationID,
                 durationMS: Self.elapsedMS(since: span.startedAt),
-                detail: detail ?? span.detail
+                detail: detail ?? span.detail,
+                parentContext: span.parentContext
             )
         }
     }
@@ -591,13 +596,15 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         correlationID: String? = nil,
         detail: String? = nil
     ) {
+        let parent = TraceContext.current
         queue.async { [weak self] in
             self?.recordLocked(
                 name: name,
                 sessionID: sessionID,
                 correlationID: correlationID,
                 durationMS: durationMS,
-                detail: detail
+                detail: detail,
+                parentContext: parent
             )
         }
     }
@@ -655,6 +662,7 @@ public final class PerformanceTelemetry: @unchecked Sendable {
     ) {
         guard let newSessionID else { return }
         let correlationID = UUID().uuidString
+        let parent = TraceContext.current
         let detail = [
             oldSessionID.map { "from=\($0)" },
             "to=\(newSessionID)",
@@ -663,13 +671,19 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             self.expireOldSwitchesLocked()
+            // Selecting another session ends any unfinished selection operation.
+            for active in self.activeSwitches.values { active.traceSpan?.end(errorType: "superseded") }
             self.activeSwitches[newSessionID] = ActiveSessionSwitch(
                 sessionID: newSessionID,
                 correlationID: correlationID,
                 detail: detail,
                 startedAt: .now(),
                 didRecordTerminalReady: false,
-                didRecordFirstOutput: false
+                didRecordFirstOutput: false,
+                traceSpan: self.axiomExporter?.startSpan("session.switch", parent: parent, attributes: [
+                    "visible_session_count": String(visibleSessionCount),
+                    "category": "lifecycle",
+                ])
             )
         }
     }
@@ -683,6 +697,7 @@ public final class PerformanceTelemetry: @unchecked Sendable {
             guard Self.isWithinSwitchCap(duration) else {
                 // Idle/abandoned switch: the elapsed time is idle time, not switch
                 // cost. Drop it so it can't inflate the switch percentiles.
+                active.traceSpan?.end(errorType: "abandoned")
                 self.activeSwitches.removeValue(forKey: sessionID)
                 return
             }
@@ -691,15 +706,18 @@ public final class PerformanceTelemetry: @unchecked Sendable {
                 sessionID: sessionID,
                 correlationID: active.correlationID,
                 durationMS: duration,
-                detail: active.detail
+                detail: active.detail,
+                parentContext: active.traceSpan?.context
             )
             self.recordLocked(
                 name: "session_switch.total",
                 sessionID: sessionID,
                 correlationID: active.correlationID,
                 durationMS: duration,
-                detail: active.detail
+                detail: active.detail,
+                parentContext: active.traceSpan?.context
             )
+            active.traceSpan?.end()
             active.didRecordTerminalReady = true
             self.activeSwitches[sessionID] = active
         }
@@ -715,6 +733,7 @@ public final class PerformanceTelemetry: @unchecked Sendable {
                 // `to_first_output` measures time until the session's *next* output,
                 // which is unbounded for a quiet session. Past the cap it's idle
                 // time, not switch cost, so discard the whole span.
+                active.traceSpan?.end(errorType: "abandoned")
                 self.activeSwitches.removeValue(forKey: sessionID)
                 return
             }
@@ -723,7 +742,8 @@ public final class PerformanceTelemetry: @unchecked Sendable {
                 sessionID: sessionID,
                 correlationID: active.correlationID,
                 durationMS: duration,
-                detail: active.detail
+                detail: active.detail,
+                parentContext: active.traceSpan?.context
             )
             active.didRecordFirstOutput = true
             self.activeSwitches[sessionID] = active
@@ -743,7 +763,8 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         correlationID: String?,
         durationMS: Double,
         detail: String?,
-        sendToAxiom: Bool = true
+        sendToAxiom: Bool = true,
+        parentContext: SpanContext? = nil
     ) {
         guard case .record(let detailSuffix) = sampler.decide(name: name, durationMS: durationMS) else {
             return
@@ -761,7 +782,7 @@ public final class PerformanceTelemetry: @unchecked Sendable {
         // but don't pay per-tick Axiom log ingestion. Switch to metrics if needed.
         let isSupervisor = name.hasPrefix("supervisor.")
         if sendToAxiom && !isSupervisor {
-            axiomExporter?.sendPerformanceEvent(event)
+            axiomExporter?.sendPerformanceEvent(event, parent: parentContext)
         }
     }
 
@@ -786,8 +807,11 @@ public final class PerformanceTelemetry: @unchecked Sendable {
 
     /// Blocks until the buffer is on disk. For app termination, where a queued
     /// async flush would never run. Must not be called from `queue`.
-    public func flushPendingEventsAndWait() {
+    public func flushPendingEventsAndWait(endingActiveSpans: Bool = false) {
         queue.sync {
+            if endingActiveSpans {
+                for active in activeSwitches.values { active.traceSpan?.end(errorType: "app_shutdown") }
+            }
             flushPendingLocked()
         }
     }
@@ -826,7 +850,9 @@ public final class PerformanceTelemetry: @unchecked Sendable {
     private func expireOldSwitchesLocked() {
         let now = DispatchTime.now()
         activeSwitches = activeSwitches.filter { _, active in
-            Self.elapsedMS(since: active.startedAt, until: now) < 60_000
+            let keep = Self.elapsedMS(since: active.startedAt, until: now) < 60_000
+            if !keep { active.traceSpan?.end(errorType: "abandoned") }
+            return keep
         }
     }
 }

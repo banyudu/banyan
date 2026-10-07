@@ -7,7 +7,12 @@ public struct TelemetryConfig: Sendable, Equatable {
     public let enabled: Bool
 
     public var isActive: Bool {
-        enabled && axiomAPIToken != nil && !axiomAPIToken!.isEmpty
+        guard enabled, let token = axiomAPIToken,
+              !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return !token.contains(where: { $0.isWhitespace || $0.isNewline })
+            && !axiomDataset.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !axiomDataset.contains(where: { $0.isNewline })
+            && !(axiomOrgID?.contains(where: { $0.isNewline }) ?? false)
     }
 
     public init(
@@ -24,51 +29,30 @@ public struct TelemetryConfig: Sendable, Equatable {
 
     public static let disabled = TelemetryConfig(enabled: false)
 
-    public static func load(homeDirectory: URL) -> TelemetryConfig {
+    public static func load(homeDirectory: URL, environment: [String: String] = ProcessInfo.processInfo.environment) -> TelemetryConfig {
         // Dedicated file that workit sync never touches — preferred for telemetry.
         // Falls back to the legacy shared ~/.banyan/config.yml telemetry: block.
         let dedicatedURL = homeDirectory.appendingPathComponent(".banyan/telemetry.yml")
         let legacyURL = homeDirectory.appendingPathComponent(".banyan/config.yml")
-        let envConfig = configFromEnvironment()
-
         for url in [dedicatedURL, legacyURL] {
-            guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            do {
-                let contents = try String(contentsOf: url, encoding: .utf8)
-                let parsed = parse(contents)
-                if parsed.isActive || !parsed.axiomDataset.isEmpty && parsed.axiomAPIToken != nil {
-                    // Return parsed even if disabled explicitly, so enabled:false is honored.
-                    // Fall through to env fallback only when file has no telemetry section.
-                    if parsed.axiomAPIToken != nil || contents.contains("telemetry:") {
-                        return parsed
-                    }
-                }
-                // If file exists but has no telemetry section, treat as no-config and try next.
-                if parsed != .disabled { return parsed }
-                // For dedicated file, also support flat keys without telemetry: wrapper
-                let flat = parseFlat(contents)
-                if flat != .disabled { return flat }
-            } catch {
-                NSLog("Banyan: failed to read telemetry config at \(url.path): \(error.localizedDescription)")
-                continue
+            guard let contents = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let lines = contents.split(whereSeparator: \.isNewline).map { stripComment(String($0)) }
+            if lines.contains(where: { $0.trimmingCharacters(in: .whitespaces) == "telemetry:" && !$0.hasPrefix(" ") && !$0.hasPrefix("\t") }) {
+                // Explicit disabled/empty sections must win over environment
+                // fallback, including when no API token is present in the file.
+                return parse(contents)
+            }
+            if url == dedicatedURL, lines.contains(where: { line in
+                let key = line.split(separator: ":", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces)
+                return ["axiom_api_token", "axiom_org_id", "axiom_dataset", "enabled"].contains(key ?? "")
+            }) {
+                return parseFlat(contents)
             }
         }
-
-        // Env fallback allows AXIOM_API_TOKEN to work without any file, e.g. in CI.
-        if envConfig.isActive { return envConfig }
-        // If dedicated file had flat keys, envConfig may have dataset/org from file + token from env — merge.
-        if let dedicatedContents = try? String(contentsOf: dedicatedURL, encoding: .utf8) {
-            let flat = parseFlat(dedicatedContents)
-            if flat.axiomAPIToken == nil, let token = envConfig.axiomAPIToken {
-                return TelemetryConfig(axiomAPIToken: token, axiomOrgID: flat.axiomOrgID ?? envConfig.axiomOrgID, axiomDataset: flat.axiomDataset, enabled: true)
-            }
-        }
-
-        return .disabled
+        return configFromEnvironment(environment)
     }
 
-    private static func configFromEnvironment() -> TelemetryConfig {
-        let env = ProcessInfo.processInfo.environment
+    private static func configFromEnvironment(_ env: [String: String]) -> TelemetryConfig {
         let token = env["AXIOM_API_TOKEN"] ?? env["AXIOM_TOKEN"] ?? env["BANYAN_AXIOM_TOKEN"]
         guard let token, !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .disabled }
         let orgID = env["AXIOM_ORG_ID"] ?? env["AXIOM_ORG"] ?? env["BANYAN_AXIOM_ORG_ID"]

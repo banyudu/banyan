@@ -313,6 +313,19 @@ enum GitHubPullRequestClient {
         environment: [String: String],
         homeDirectory: String
     ) async throws -> String {
+        try await TraceContext.withSpan(exporter: axiomExporter, name: "github.command") {
+            try await runCommandBody(arguments, cwd: cwd, timeout: timeout,
+                                     environment: environment, homeDirectory: homeDirectory)
+        }
+    }
+
+    private static func runCommandBody(
+        _ arguments: [String],
+        cwd: String,
+        timeout: TimeInterval,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> String {
         let output: SubprocessRunner.Output
         do {
             output = try await SubprocessRunner.runAsync(

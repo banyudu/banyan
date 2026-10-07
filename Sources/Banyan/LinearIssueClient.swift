@@ -500,17 +500,10 @@ enum LinearIssueClient {
         request.setValue(apiKey, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(GraphQLRequest(query: issueQuery, variables: ["id": identifier]))
 
-        let start = DispatchTime.now()
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let httpResponse = response as? HTTPURLResponse
-        let statusCode = httpResponse?.statusCode ?? 0
-        axiomExporter?.sendHTTPRequest(
-            service: "linear",
-            method: "POST",
-            url: "linear.app/graphql#fetchIssue",
-            statusCode: statusCode,
-            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        let (data, response) = try await TracedHTTP.data(
+            for: request, exporter: axiomExporter, service: "linear"
         )
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(statusCode) else {
             throw LinearIssueClientError.requestFailed
         }
@@ -532,17 +525,10 @@ enum LinearIssueClient {
         request.setValue(apiKey, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(GraphQLRequest(query: issueStatusQuery, variables: ["id": identifier]))
 
-        let start = DispatchTime.now()
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let httpResponse = response as? HTTPURLResponse
-        let statusCode = httpResponse?.statusCode ?? 0
-        axiomExporter?.sendHTTPRequest(
-            service: "linear",
-            method: "POST",
-            url: "linear.app/graphql#fetchIssueStatus",
-            statusCode: statusCode,
-            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        let (data, response) = try await TracedHTTP.data(
+            for: request, exporter: axiomExporter, service: "linear"
         )
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(statusCode) else {
             throw LinearIssueClientError.requestFailed
         }
@@ -573,17 +559,10 @@ enum LinearIssueClient {
             )
         )
 
-        let start = DispatchTime.now()
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let httpResponse = response as? HTTPURLResponse
-        let statusCode = httpResponse?.statusCode ?? 0
-        axiomExporter?.sendHTTPRequest(
-            service: "linear",
-            method: "POST",
-            url: "linear.app/graphql#updateIssueState",
-            statusCode: statusCode,
-            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        let (data, response) = try await TracedHTTP.data(
+            for: request, exporter: axiomExporter, service: "linear"
         )
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(statusCode) else {
             throw LinearIssueClientError.requestFailed
         }
@@ -606,17 +585,10 @@ enum LinearIssueClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONEncoder().encode(GraphQLRequest(query: updateDescriptionMutation, variables: ["id": identifier, "description": description]))
-        let start = DispatchTime.now()
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let httpResponse = response as? HTTPURLResponse
-        let statusCode = httpResponse?.statusCode ?? 0
-        axiomExporter?.sendHTTPRequest(
-            service: "linear",
-            method: "POST",
-            url: "linear.app/graphql#updateDescription",
-            statusCode: statusCode,
-            durationMS: PerformanceTelemetry.elapsedMS(since: start)
+        let (data, response) = try await TracedHTTP.data(
+            for: request, exporter: axiomExporter, service: "linear"
         )
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(statusCode) else { throw LinearIssueClientError.requestFailed }
         let payload = try JSONDecoder().decode(GraphQLMutationResponse.self, from: data)
         if payload.errors?.isEmpty == false || payload.data?.issueUpdate?.success != true { throw LinearIssueClientError.requestFailed }
@@ -673,6 +645,19 @@ enum LinearIssueClient {
     }
 
     private static func runCommand(
+        _ arguments: [String],
+        cwd: String,
+        timeout: TimeInterval,
+        environment: [String: String],
+        homeDirectory: String
+    ) async throws -> String {
+        try await TraceContext.withSpan(exporter: axiomExporter, name: "linear.command") {
+            try await runCommandBody(arguments, cwd: cwd, timeout: timeout,
+                                     environment: environment, homeDirectory: homeDirectory)
+        }
+    }
+
+    private static func runCommandBody(
         _ arguments: [String],
         cwd: String,
         timeout: TimeInterval,

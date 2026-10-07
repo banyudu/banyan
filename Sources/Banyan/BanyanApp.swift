@@ -34,15 +34,13 @@ struct BanyanApp: App {
     )
     private static let axiomExporter: AxiomExporter? = {
         let config = telemetryConfig
-        guard config.isActive else { return nil }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
-        let exporter = AxiomExporter(config: config, appVersion: version)
+        guard let exporter = AxiomExporter.configured(config: config, appVersion: version) else { return nil }
         SubprocessRunner.axiomExporter = exporter
         LinearIssueClient.axiomExporter = exporter
         GitHubIssueClient.axiomExporter = exporter
         GitHubPullRequestClient.axiomExporter = exporter
         SessionContextResolver.axiomExporter = exporter
-        exporter.sendAppLifecycle("app.launch")
         return exporter
     }()
     private static let telemetry = PerformanceTelemetry(
@@ -57,34 +55,40 @@ struct BanyanApp: App {
     private static let commandWTerminalCloseMonitor = CommandWTerminalCloseMonitor()
     private static let sessionRenameShortcutMonitor = SessionRenameShortcutMonitor()
     /// The delegate and every window share one runtime, including windowless launches.
-    static let sessionStore = SessionStore(
-        persistence: SessionPersistence(
-            databaseURL: SessionDatabase.defaultDatabaseURL(
-                environment: Self.host.environment,
-                homeDirectory: Self.host.homeDirectory
-            ),
-            legacyJSONURL: SessionDatabase.defaultLegacyJSONURL(
-                environment: Self.host.environment,
-                homeDirectory: Self.host.homeDirectory
+    static let sessionStore: SessionStore = {
+        let launch = Self.axiomExporter?.startSpan("app.launch", attributes: ["category": "lifecycle"])
+        defer { launch?.end() }
+        return TraceContext.$current.withValue(launch?.context) {
+            SessionStore(
+                persistence: SessionPersistence(
+                    databaseURL: SessionDatabase.defaultDatabaseURL(
+                        environment: Self.host.environment,
+                        homeDirectory: Self.host.homeDirectory
+                    ),
+                    legacyJSONURL: SessionDatabase.defaultLegacyJSONURL(
+                        environment: Self.host.environment,
+                        homeDirectory: Self.host.homeDirectory
+                    )
+                ),
+                tmuxBackend: Self.tmuxBackend,
+                sessionBackend: Self.tmuxBackend,
+                processTable: LiveProcessTableProvider(),
+                historyBackend: DefaultSessionHistoryBackend(
+                    homeDirectory: Self.host.homeDirectory
+                ),
+                detector: AgentStateDetector(
+                    rules: DetectorRule.loadConfiguredRules(
+                        environment: Self.host.environment,
+                        homeDirectory: Self.host.homeDirectory
+                    )
+                ),
+                host: Self.host,
+                telemetry: Self.telemetry,
+                attentionNotifier: Self.attentionNotifier,
+                codexService: Self.codexAppServer
             )
-        ),
-        tmuxBackend: Self.tmuxBackend,
-        sessionBackend: Self.tmuxBackend,
-        processTable: LiveProcessTableProvider(),
-        historyBackend: DefaultSessionHistoryBackend(
-            homeDirectory: Self.host.homeDirectory
-        ),
-        detector: AgentStateDetector(
-            rules: DetectorRule.loadConfiguredRules(
-                environment: Self.host.environment,
-                homeDirectory: Self.host.homeDirectory
-            )
-        ),
-        host: Self.host,
-        telemetry: Self.telemetry,
-        attentionNotifier: Self.attentionNotifier,
-        codexService: Self.codexAppServer
-    )
+        }
+    }()
     @StateObject private var store = Self.sessionStore
     @StateObject private var updater = AppUpdater()
 
