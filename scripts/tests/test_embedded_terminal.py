@@ -124,11 +124,30 @@ def main():
                 if readable:
                     screen.feed(os.read(master, 65536))
             diagnostics = {"tty": termios.tcgetattr(master)}
+            diagnostics["foreground_pgrp"] = os.tcgetpgrp(master)
+            diagnostics["tui_pgrp"] = os.getpgid(client.pid)
             # Read only our owned fixture child when diagnosing Linux failures.
             for name in ["wchan", "status"]:
                 path = Path(f"/proc/{client.pid}/{name}")
                 if path.exists():
                     diagnostics[name] = path.read_text()
+            children = Path(f"/proc/{client.pid}/task/{client.pid}/children")
+            if children.exists():
+                for pid in children.read_text().split()[:16]:
+                    owned = Path(f"/proc/{pid}")
+                    for name in ["wchan", "cmdline"]:
+                        try:
+                            diagnostics[f"child_{pid}_{name}"] = (owned / name).read_text().replace("\0", " ")
+                        except FileNotFoundError:
+                            pass
+            for noun, fmt in [("sessions", "#{session_name} attached=#{session_attached}"),
+                              ("clients", "#{client_pid} #{client_name} #{session_name}")]:
+                try:
+                    result = subprocess.run([tmux, "-L", socket, f"list-{noun}", "-F", fmt],
+                                            env=env, capture_output=True, text=True, timeout=2)
+                    diagnostics[f"tmux_{noun}"] = (result.returncode, result.stdout, result.stderr)
+                except subprocess.TimeoutExpired:
+                    diagnostics[f"tmux_{noun}"] = "timeout"
             raise AssertionError(f"Timed out: {label}\n{screen.text()}\n{screen.raw[-1000:]!r}\n{diagnostics}")
 
         def stop():
