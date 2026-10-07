@@ -1508,6 +1508,12 @@ struct ContentView: View {
                     .accessibilityIdentifier(AccessibilityID.emptyDetail)
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let terminal = store.selectedSession as? TerminalSession,
+                   terminal.agentProvider == .codex, !terminal.isImportedHistory {
+                    CodexTUIHandoffView(store: store, session: terminal)
+                }
+            }
             // SwiftTerm owns a Metal-backed surface. During restoration SwiftUI
             // can briefly propose the panel's fixed width before it proposes the
             // remaining detail width; never collapse that surface to a sliver.

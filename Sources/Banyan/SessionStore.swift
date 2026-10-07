@@ -368,6 +368,8 @@ final class SessionStore: ObservableObject {
 
     let codexThreads: CodexThreadCoordinator
     @Published var codexSessionError: String?
+    var pendingCodexTUIHandoffs: Set<String> = []
+    @Published var codexTUIOwnership: [String: CodexTUIOwnershipObservation] = [:]
 
     private var controlServer: ControlServer?
     private let makeControlServer: (SessionStore, HostRuntimeContext) -> ControlServer

@@ -41,7 +41,7 @@ def stop(process):
 def private_environment(home):
     return {"HOME": str(home), "CODEX_HOME": str(home),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "TERM": "xterm-256color",
-        "COLORTERM": "truecolor", "NO_COLOR": "1"}
+        "COLORTERM": "truecolor", "NO_COLOR": "1", "LANG": "en_US.UTF-8"}
 
 
 def terminal_process(arguments, env, cwd):
@@ -291,6 +291,8 @@ def main():
     parser.add_argument("--codex", default="codex")
     parser.add_argument("--unload-timeout", type=int, default=125,
                         help="Seconds allowed for the server's version-dependent idle unload")
+    parser.add_argument("--tui-handoff", action="store_true",
+                        help="Verify a completed legacy TUI handoff in a private one-shot tmux pane")
     args = parser.parse_args()
     executable = shutil.which(args.codex)
     if not executable:
@@ -335,7 +337,8 @@ stream_max_retries = 0
         f"os.execv({executable!r}, [{executable!r}] + os.sys.argv[1:])\n")
     wrapper.chmod(0o700)
     manifest = {"root": str(root), "codex": executable, "providerPort": server.server_port,
-        "command": ["swift", "test", "--filter", "installedCodexNativeIntegration"],
+        "command": ["swift", "test", "--filter",
+            "installedCodexTUIHandoffIntegration" if args.tui_handoff else "installedCodexNativeIntegration"],
         "cleanup": "Test reaps its own App Server children. Remove this private directory after evidence review."}
     manifest["codexVersion"] = subprocess.check_output([executable, "--version"],
         env=private_environment(home), text=True).strip()
@@ -348,9 +351,24 @@ stream_max_retries = 0
                BANYAN_CODEX_UNLOAD_TIMEOUT=str(args.unload_timeout), NO_COLOR="1")
     for key in ["CLICOLOR_FORCE", "FORCE_COLOR", "GH_FORCE_TTY"]:
         env.pop(key, None)
+    finished = threading.Event()
+    legacy_driver = None
     try:
         process = subprocess.Popen(manifest["command"], env=env)
         while process.poll() is None:
+            legacy_request = root / "legacy-tui.json"
+            if args.tui_handoff and legacy_request.exists() and legacy_driver is None:
+                import sys
+                sys.dont_write_bytecode = True
+                import codex_tui_handoff_fixture
+                def drive_legacy():
+                    try:
+                        codex_tui_handoff_fixture.drive(root, json.loads(legacy_request.read_text()),
+                            sys.modules[__name__], finished)
+                    except Exception as error:
+                        write_json(root / "legacy-driver-error.json", {"error": str(error)})
+                legacy_driver = threading.Thread(target=drive_legacy, daemon=True)
+                legacy_driver.start()
             handoff = root / "handoff.json"
             result_path = root / "cli-result.json"
             if handoff.exists() and not result_path.exists():
@@ -369,8 +387,11 @@ stream_max_retries = 0
                         result = {"error": str(error)}
                     write_json(result_path, result)
             time.sleep(0.05)
+        finished.set()
+        if legacy_driver is not None:
+            legacy_driver.join(timeout=10)
         manifest["testExitCode"] = process.returncode
-        if process.returncode == 0:
+        if process.returncode == 0 and not args.tui_handoff:
             verify_settings(root)
         cleanup = subprocess.run(["/usr/sbin/lsof", "-t", "+D", str(root)],
             text=True, capture_output=True, check=False)
@@ -380,6 +401,9 @@ stream_max_retries = 0
         (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
         return process.returncode or (1 if manifest["openArtifactPIDsAfterTest"] else 0)
     finally:
+        finished.set()
+        if legacy_driver is not None:
+            legacy_driver.join(timeout=10)
         server.shutdown()
         server.server_close()
 

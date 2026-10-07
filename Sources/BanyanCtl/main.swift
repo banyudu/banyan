@@ -74,6 +74,8 @@ struct BanyanCtl {
                 try get("/output", query: parseOutputOptions(Array(arguments.dropFirst())))
             case "send":
                 try postJSON("/input", payload: parseSendPayload(Array(arguments.dropFirst())))
+            case "codex-handoff":
+                try post("/codex-handoff", payload: parsePayload(Array(arguments.dropFirst())))
             case "answer":
                 try postJSON("/answer", payload: parseAnswerPayload(Array(arguments.dropFirst())))
             case "events":
@@ -840,6 +842,7 @@ struct BanyanCtl {
           banyanctl puck answer --id ID --call-id CALL --selections JSON
 
         Usage:
+          banyanctl codex-handoff --id ID [--detail prepare|check]
           banyanctl session list
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
