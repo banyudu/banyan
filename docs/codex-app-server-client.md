@@ -124,6 +124,11 @@ unknown items and events remain inspectable and never become approval buttons.
 No action changes the thread's selected sandbox or approval policy. Open Shell
 creates a separate regular Banyan terminal in the same directory. The host can
 provide `CodexSessionDetail.onOpenCLIFallback` for its rollout/handoff action.
+The host passes its rollout preference as `nativeModeEnabled`. Disabled mode
+explains the setting, preserves the draft, and hides new-message, steer, and
+reconnect controls while keeping existing output, interruption, and pending
+replies available. The coordinator's rollout gate must also reject steering
+before any RPC; interruption must use the existing connection while disabled.
 
 ## Conversation display budget
 

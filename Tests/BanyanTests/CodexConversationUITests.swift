@@ -227,13 +227,7 @@ struct CodexConversationUITests {
         #expect(bitmap.colorAt(x: 50, y: 150)?.alphaComponent ?? 0 > 0.99)
         // A windowless test host doesn't build SwiftUI's live AX tree. Verify
         // actual visible content with native OCR, alongside pixel/layout QA.
-        let recognized = try await Task.detached {
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["en-US"]
-            try VNImageRequestHandler(data: png).perform([request])
-            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-        }.value
+        let recognized = try await recognize(png)
         #expect(recognized.contains("Open Shell"))
         #expect(recognized.contains("All tests passed"))
         #expect(recognized.contains("Example.swift"))
@@ -243,7 +237,36 @@ struct CodexConversationUITests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try png.write(to: directory.appendingPathComponent("conversation.png"))
         #expect(hosting.bounds.width == 980)
+        // Rollout disable must explain why input is absent, while keeping
+        // approval replies and interruption visible and preserving the draft.
+        session.draft = "Preserve this draft"
+        let callsBeforeDisable = server.calls.count
+        hosting.rootView = CodexSessionDetail(session: session, nativeModeEnabled: false).environmentObject(store)
+        try await Task.sleep(for: .milliseconds(150))
+        hosting.layoutSubtreeIfNeeded()
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        let disabledPNG = try #require(bitmap.representation(using: .png, properties: [:]))
+        let disabledText = try await recognize(disabledPNG)
+        #expect(disabledText.contains("Native Codex is disabled"))
+        #expect(disabledText.contains("Interrupt"))
+        #expect(disabledText.contains("Decline"))
+        #expect(!disabledText.contains("Message Codex"))
+        #expect(!disabledText.split(separator: "\n").contains("Send"))
+        #expect(!disabledText.split(separator: "\n").contains("Steer"))
+        #expect(session.draft == "Preserve this draft")
+        #expect(server.calls.count == callsBeforeDisable)
+        try disabledPNG.write(to: directory.appendingPathComponent("conversation-disabled.png"))
         session.respond(request, decision: .decline)
         _ = await pending.value
+    }
+
+    private func recognize(_ png: Data) async throws -> String {
+        try await Task.detached {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            try VNImageRequestHandler(data: png).perform([request])
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+        }.value
     }
 }

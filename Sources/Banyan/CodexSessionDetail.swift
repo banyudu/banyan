@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 struct CodexSessionDetail: View {
     @EnvironmentObject private var store: SessionStore
     @ObservedObject var session: CodexSession
+    /// The host supplies its rollout preference; disabling keeps existing work actionable.
+    var nativeModeEnabled = true
     /// Rollout/fallback policy belongs to the host; this view only offers the action.
     var onOpenCLIFallback: (() -> Void)? = nil
     @State private var followOutput = true
@@ -53,7 +55,7 @@ struct CodexSessionDetail: View {
                     .font(.headline).lineLimit(1)
                 Spacer()
                 if session.state.connection == .connecting { ProgressView().controlSize(.small) }
-                if session.state.connection != .subscribed {
+                if nativeModeEnabled, session.state.connection != .subscribed {
                     Button("Reconnect") { session.reconnect() }
                         .accessibilityIdentifier(AccessibilityID.codexReconnect)
                 }
@@ -66,7 +68,7 @@ struct CodexSessionDetail: View {
                         .accessibilityIdentifier("banyan.codex.cli-fallback")
                 }
                 Button("Save Full History…") { Task { await exportHistory() } }
-                    .disabled(loadingHistory || session.state.binding.threadID == nil)
+                    .disabled(!nativeModeEnabled || loadingHistory || session.state.binding.threadID == nil)
             }
             Text(["Codex", session.state.binding.settings.model ?? "Default model", status,
                   session.state.binding.settings.approvalPolicy, session.state.binding.settings.sandbox].joined(separator: " · "))
@@ -94,8 +96,8 @@ struct CodexSessionDetail: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     if session.conversation.turns.isEmpty {
-                        ContentUnavailableView("Start a conversation", systemImage: "bubble.left.and.bubble.right",
-                            description: Text("Send a prompt to Codex, or open a shell for terminal work."))
+                        ContentUnavailableView(nativeModeEnabled ? "Start a conversation" : "Native Codex is disabled", systemImage: "bubble.left.and.bubble.right",
+                            description: Text(nativeModeEnabled ? "Send a prompt to Codex, or open a shell for terminal work." : "Enable Native Codex in Settings, or open a shell for terminal work."))
                     }
                     ForEach(session.conversation.turns) { turn in
                         VStack(alignment: .leading, spacing: 12) {
@@ -145,13 +147,19 @@ struct CodexSessionDetail: View {
             }
             if let historyError { Text(historyError).font(.caption).foregroundStyle(.red) }
             HStack(alignment: .bottom) {
-                TextField(session.state.activeTurnID == nil ? "Message Codex" : "Steer the active turn", text: $session.draft, axis: .vertical)
-                    .textFieldStyle(.roundedBorder).lineLimit(1...6).focused($promptFocused)
-                    .onSubmit(send)
-                    .accessibilityIdentifier(AccessibilityID.codexMessageField)
-                Button(session.state.activeTurnID == nil ? "Send" : "Steer", action: send)
-                    .disabled(!session.canSend)
-                    .accessibilityIdentifier(AccessibilityID.codexSend)
+                if nativeModeEnabled {
+                    TextField(session.state.activeTurnID == nil ? "Message Codex" : "Steer the active turn", text: $session.draft, axis: .vertical)
+                        .textFieldStyle(.roundedBorder).lineLimit(1...6).focused($promptFocused)
+                        .onSubmit(send)
+                        .accessibilityIdentifier(AccessibilityID.codexMessageField)
+                    Button(session.state.activeTurnID == nil ? "Send" : "Steer", action: send)
+                        .disabled(!session.canSend)
+                        .accessibilityIdentifier(AccessibilityID.codexSend)
+                } else {
+                    Text("Native Codex is disabled. Existing turns and requests remain available. Enable Native Codex in Settings to send messages.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
                 Button("Interrupt") { Task { await session.interrupt() } }
                     .disabled(session.state.activeTurnID == nil)
                     .accessibilityIdentifier(AccessibilityID.codexInterrupt)
@@ -162,7 +170,10 @@ struct CodexSessionDetail: View {
         .background(.bar)
     }
 
-    private func send() { Task { await session.sendDraft() } }
+    private func send() {
+        guard nativeModeEnabled else { return }
+        Task { await session.sendDraft() }
+    }
 
     private func exportHistory() async {
         loadingHistory = true
