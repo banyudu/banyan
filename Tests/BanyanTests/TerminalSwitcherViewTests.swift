@@ -1,6 +1,8 @@
 import AppKit
+import BanyanCore
 import Testing
 @testable import Banyan
+@testable import SwiftTerm
 
 @MainActor
 @Test func terminalSwitcherKeepsOnlyTheSelectedTerminalVisible() {
@@ -189,6 +191,140 @@ func terminalSwitcherRestoresFrozenContainerGeometryAfterProjectSwitch() async t
     #expect(firstContainer.frame == switcher.bounds)
 }
 
+/// A queued launch has no tmux redraw to wait for. Selection must stop showing
+/// and routing input to the old project before the new empty surface is ready.
+@MainActor
+@Test(arguments: [false, true])
+func terminalSwitcherRevealsQueuedAndCancelledProjectsWithoutOutput(cancelled: Bool) async throws {
+    _ = NSApplication.shared
+    let source = makeSwitcherSession(id: "source", projectGroupID: "project-a")
+    let target = makeSwitcherSession(id: "target", projectGroupID: "project-b")
+    target.agentLaunchQueue = .init(cancelled: cancelled)
+    target.agentQueuePosition = cancelled ? nil : 1
+    let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    let window = NSWindow(contentRect: switcher.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = switcher
+    defer { window.close() }
+    let focusRequestID = UUID()
+    let sessions = [source, target]
+    update(switcher, sessions: sessions, selectedID: source.id, focusRequestID: focusRequestID)
+    switcher.layoutSubtreeIfNeeded()
+    source.terminalView.feed(text: "Synthetic source project content")
+    #expect(switcherTerminalText(source).contains("Synthetic source project content"))
+    #expect(window.makeFirstResponder(source.terminalView))
+
+    switcher.switchImmediately(to: target.id, selectionChangedAt: .now(), clickAt: nil)
+    #expect(visibleSwitcherSessionIDs(switcher).isEmpty)
+    #expect(window.firstResponder !== source.terminalView)
+    update(switcher, sessions: sessions, selectedID: target.id, focusRequestID: focusRequestID)
+    switcher.layoutSubtreeIfNeeded()
+    let targetView = try #require(target.loadedTerminalView)
+    #expect(visibleSwitcherSessionIDs(switcher) == [target.id])
+    #expect(targetView.alphaValue == 1)
+    #expect(!switcherTerminalText(target).contains("Synthetic source project content"))
+    #expect(!targetView.process.running)
+    await Task.yield() // An already scheduled outgoing focus request cannot win.
+    #expect(window.firstResponder !== source.terminalView)
+
+    // Cancellation must keep the target surface visible, without launching it.
+    target.agentQueuePosition = nil
+    target.agentLaunchQueue = .init(cancelled: true)
+    update(switcher, sessions: sessions, selectedID: target.id, focusRequestID: UUID())
+    #expect(visibleSwitcherSessionIDs(switcher) == [target.id])
+    #expect(target.loadedTerminalView === targetView && !targetView.process.running)
+    switcher.switchImmediately(to: source.id, selectionChangedAt: nil, clickAt: nil)
+    update(switcher, sessions: sessions, selectedID: source.id, focusRequestID: focusRequestID)
+    try await waitForPuckState { visibleSwitcherSessionIDs(switcher) == [source.id] }
+    #expect(window.firstResponder === source.terminalView)
+    switcher.switchImmediately(to: target.id, selectionChangedAt: nil, clickAt: nil)
+    #expect(visibleSwitcherSessionIDs(switcher) == [target.id]) // Cached cancelled surface reveals synchronously.
+    #expect(window.firstResponder !== source.terminalView)
+    update(switcher, sessions: sessions, selectedID: target.id, focusRequestID: focusRequestID)
+
+    // A later grant uses this same surface; switching back and returning resumes
+    // the normal cross-project readiness path instead of retaining queue policy.
+    target.agentLaunchQueue = nil
+    target.isProcessStarted = true
+    targetView.feed(text: "Synthetic admitted target content")
+    update(switcher, sessions: sessions, selectedID: target.id, focusRequestID: focusRequestID)
+    #expect(visibleSwitcherSessionIDs(switcher) == [target.id])
+    #expect(target.loadedTerminalView === targetView)
+    switcher.switchImmediately(to: source.id, selectionChangedAt: nil, clickAt: nil)
+    #expect(visibleSwitcherSessionIDs(switcher) == [target.id])
+    update(switcher, sessions: sessions, selectedID: source.id, focusRequestID: focusRequestID)
+    try await waitForPuckState { visibleSwitcherSessionIDs(switcher) == [source.id] }
+    #expect(window.firstResponder === source.terminalView)
+    switcher.switchImmediately(to: target.id, selectionChangedAt: nil, clickAt: nil)
+    #expect(visibleSwitcherSessionIDs(switcher) == [source.id])
+    update(switcher, sessions: sessions, selectedID: target.id, focusRequestID: focusRequestID)
+    try await waitForPuckState { visibleSwitcherSessionIDs(switcher) == [target.id] }
+    #expect(window.firstResponder === targetView && targetView.alphaValue == 1)
+}
+
+@MainActor
+@Test(arguments: [false, true], [false, true])
+func terminalSwitcherUnwindsDeferredProjectWhenTargetWaitsForAdmission(duringReady: Bool, cancelled: Bool) async throws {
+    _ = NSApplication.shared
+    let source = makeSwitcherSession(id: "source", projectGroupID: "project-a")
+    let target = makeSwitcherSession(id: "target", projectGroupID: "project-b")
+    let switcher = TerminalSwitcherContainer(frame: NSRect(x: 0, y: 0, width: 1200, height: 600))
+    let window = NSWindow(contentRect: switcher.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = switcher
+    defer { window.close() }
+    let focusRequestID = UUID()
+    let sessions = [source, target]
+    update(switcher, sessions: sessions, selectedID: source.id, focusRequestID: focusRequestID)
+    #expect(window.makeFirstResponder(source.terminalView))
+    switcher.switchImmediately(to: target.id, selectionChangedAt: nil, clickAt: nil)
+    update(switcher, sessions: sessions, selectedID: target.id, focusRequestID: focusRequestID, onTerminalReady: { session in
+        if duringReady, session === target {
+            session.agentQueuePosition = cancelled ? nil : 1
+            session.agentLaunchQueue = .init(cancelled: cancelled)
+        }
+    })
+    #expect(visibleSwitcherSessionIDs(switcher) == [duringReady ? target.id : source.id])
+    #expect(target.terminalView.alphaValue == (duringReady ? 1 : 0))
+    switcher.setFrameSize(NSSize(width: 820, height: 600))
+
+    target.agentQueuePosition = cancelled ? nil : 1
+    target.agentLaunchQueue = .init(cancelled: cancelled)
+    update(switcher, sessions: sessions, selectedID: target.id, focusRequestID: focusRequestID)
+    #expect(visibleSwitcherSessionIDs(switcher) == [target.id])
+    #expect(target.terminalView.alphaValue == 1)
+    #expect(window.firstResponder !== source.terminalView)
+    let sourceContainer = try #require(switcher.subviews.compactMap { $0 as? TerminalContainerView }
+        .first { $0.session === source })
+    #expect(sourceContainer.frame == switcher.bounds)
+
+    // A grant in the background must not steal a newer selection, and an old
+    // redraw completion must not reveal the abandoned target again.
+    switcher.switchImmediately(to: source.id, selectionChangedAt: nil, clickAt: nil)
+    update(switcher, sessions: sessions, selectedID: source.id, focusRequestID: focusRequestID)
+    target.agentQueuePosition = nil
+    target.agentLaunchQueue = nil
+    target.isProcessStarted = true
+    update(switcher, sessions: sessions, selectedID: source.id, focusRequestID: focusRequestID)
+    try await waitForPuckState { visibleSwitcherSessionIDs(switcher) == [source.id] }
+    // Let the abandoned synchronization's original timeout pass too.
+    try await Task.sleep(for: .milliseconds(1_300))
+    #expect(visibleSwitcherSessionIDs(switcher) == [source.id])
+    #expect(window.firstResponder === source.terminalView)
+}
+
+@MainActor
+private func visibleSwitcherSessionIDs(_ switcher: TerminalSwitcherContainer) -> [String] {
+    switcher.subviews.compactMap { $0 as? TerminalContainerView }.filter { !$0.isHidden }.map { $0.session.id }
+}
+
+@MainActor
+private func switcherTerminalText(_ session: TerminalSession) -> String {
+    guard let terminal = session.loadedTerminalView?.terminal else { return "" }
+    return (0..<terminal.rows).map { terminal.buffer.lines[terminal.buffer.yDisp + $0]
+        .translateToString(trimRight: true) }.joined(separator: "\n")
+}
+
 /// Revealing a cached container re-asserts its geometry, so a container that
 /// drifted while it was hidden never paints at a stale width.
 @MainActor
@@ -230,7 +366,8 @@ private func update(
     _ switcher: TerminalSwitcherContainer,
     sessions: [TerminalSession],
     selectedID: String,
-    focusRequestID: UUID
+    focusRequestID: UUID,
+    onTerminalReady: @escaping (TerminalSession) -> Void = { _ in }
 ) {
     switcher.update(
         switchRequestedAt: nil,
@@ -243,7 +380,7 @@ private func update(
         fontSize: 13,
         focusRequestID: focusRequestID,
         onUserSubmittedInput: { _, _ in },
-        onTerminalReady: { _ in }
+        onTerminalReady: onTerminalReady
     )
 }
 

@@ -93,6 +93,7 @@ final class TerminalSwitcherContainer: NSView {
     private var pendingAfterPaint: (sessionID: String, action: () -> Void)?
     private var windowLifecycleObservers: [NSObjectProtocol] = []
     private var projectGroupBySessionID: [String: String] = [:]
+    private var sessionsByID: [String: TerminalSession] = [:]
     private var deferredProjectSwitch: DeferredProjectSwitch?
     private var inactiveDetachWorkItems: [String: (token: UUID, workItem: DispatchWorkItem)] = [:]
     var inactiveClientDetachDelay: TimeInterval = 30
@@ -125,8 +126,9 @@ final class TerminalSwitcherContainer: NSView {
         clickAt: DispatchTime?,
         afterPaint: (() -> Void)? = nil
     ) -> Bool {
+        let revealsWithoutOutput = newID.flatMap { sessionsByID[$0] }.map(needsAdmissionSurface) == true
         if let deferred = deferredProjectSwitch {
-            if deferred.targetID == newID {
+            if deferred.targetID == newID, !revealsWithoutOutput {
                 return true
             }
             cancelDeferredProjectSwitch()
@@ -140,7 +142,7 @@ final class TerminalSwitcherContainer: NSView {
         let sourceGroup = oldID.flatMap { projectGroupBySessionID[$0] }
         let targetGroup = newID.flatMap { projectGroupBySessionID[$0] }
         let crossesProjectBoundary = sourceGroup != nil && targetGroup != nil && sourceGroup != targetGroup
-        if crossesProjectBoundary,
+        if crossesProjectBoundary, !revealsWithoutOutput,
            let oldID,
            let newID,
            let sourceContainer = containers[oldID] {
@@ -176,7 +178,17 @@ final class TerminalSwitcherContainer: NSView {
 
         // A first visit has no cached terminal to reveal yet. Leave the current
         // terminal attached until SwiftUI supplies the selected session below.
-        guard newID == nil || isRevisit else { return false }
+        guard newID == nil || isRevisit else {
+            if revealsWithoutOutput {
+                // No redraw can arrive while admission is queued/cancelled.
+                // Relinquish the old project now; update installs the target's
+                // own empty surface and selection context on the next turn.
+                hideActiveContainer()
+                activeSessionID = nil
+                return true
+            }
+            return false
+        }
 
         let synchronousWorkStartedAt = DispatchTime.now()
         hideActiveContainer()
@@ -248,6 +260,7 @@ final class TerminalSwitcherContainer: NSView {
         defer { logEnergyDiagnosticsIfNeeded(reason: "update") }
         defer { trimTerminalViewCache(protecting: selectedSessionID) }
         let liveSessions = sessions.filter { !$0.isImportedHistory && $0.status != .closed }
+        sessionsByID = Dictionary(liveSessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         projectGroupBySessionID = Dictionary(
             liveSessions.map { ($0.id, $0.projectGroupID) },
             uniquingKeysWith: { first, _ in first }
@@ -409,6 +422,20 @@ final class TerminalSwitcherContainer: NSView {
         targetSession: TerminalSession,
         onTerminalReady: @escaping (TerminalSession) -> Void
     ) {
+        // Admission may become known after preparation has begun, including
+        // synchronously inside onTerminalReady/startAsync below. Check before
+        // the prepared guard so a no-output target can always be revealed.
+        if needsAdmissionSurface(targetSession) {
+            (targetContainer.terminalView as? DetectingLocalProcessTerminalView)?.cancelInitialScreenSynchronization()
+            completeDeferredProjectSwitch(token: deferred.token)
+            if !initializedSessions.contains(deferred.targetID) {
+                initializedSessions.insert(deferred.targetID)
+                targetContainer.performWhenTerminalReady(for: targetSession.terminalView) {
+                    onTerminalReady(targetSession)
+                }
+            }
+            return
+        }
         guard !deferred.isPrepared else { return }
         var prepared = deferred
         prepared.isPrepared = true
@@ -429,6 +456,12 @@ final class TerminalSwitcherContainer: NSView {
             targetContainer.performWhenTerminalReady(for: targetSession.terminalView) {
                 onTerminalReady(targetSession)
             }
+        }
+
+        if needsAdmissionSurface(targetSession) {
+            terminal?.cancelInitialScreenSynchronization()
+            completeDeferredProjectSwitch(token: deferred.token)
+            return
         }
 
         // Every Banyan terminal currently uses DetectingLocalProcessTerminalView,
@@ -491,6 +524,7 @@ final class TerminalSwitcherContainer: NSView {
     private func hideFrozenSource(for deferred: DeferredProjectSwitch) {
         guard let sourceContainer = containers[deferred.sourceID] else { return }
         sourceContainer.isHidden = true
+        relinquishFocus(in: sourceContainer)
         scheduleInactiveDetach(for: deferred.sourceID, container: sourceContainer)
         sourceContainer.autoresizingMask = deferred.sourceAutoresizingMask
         // Restoring the mask alone only re-enables *future* autoresizing: every
@@ -564,7 +598,18 @@ final class TerminalSwitcherContainer: NSView {
             energyDiagnosticsHideCount += 1
         }
         activeContainer.isHidden = true
+        relinquishFocus(in: activeContainer)
         scheduleInactiveDetach(for: activeSessionID, container: activeContainer)
+    }
+
+    private func needsAdmissionSurface(_ session: TerminalSession) -> Bool {
+        session.agentQueuePosition != nil || session.agentLaunchQueue?.cancelled == true
+    }
+
+    private func relinquishFocus(in container: TerminalContainerView) {
+        guard let responder = window?.firstResponder as? NSView,
+              responder === container || responder.isDescendant(of: container) else { return }
+        window?.makeFirstResponder(nil)
     }
 
     private func cancelInactiveDetach(for sessionID: String) {
