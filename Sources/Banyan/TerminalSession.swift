@@ -366,7 +366,7 @@ final class TerminalSession: BanyanSession {
         appliedFontSize = pendingFontSize
         view.processDelegate = delegate
         view.permitsInput = { [weak self] in
-            guard let self else { return false }
+            guard let self, self.status != .closed else { return false }
             do {
                 try self.beginDeepResume()
                 guard !self.isDeepSuspended else { return false }

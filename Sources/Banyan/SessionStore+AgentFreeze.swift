@@ -17,7 +17,8 @@ extension SessionStore {
     }
 
     func resumeFrozenForInteraction(id: String?) {
-        guard let terminal = terminalSessions.first(where: { $0.id == id }) else { return }
+        guard let terminal = terminalSessions.first(where: { $0.id == id }),
+              terminal.status != .closed, !terminal.isImportedHistory else { return }
         // Invalidates pending freeze preparations even before a group is stopped.
         terminal.freezeGeneration = UUID()
         terminal.lastFreezeInteractionAt = Date()
