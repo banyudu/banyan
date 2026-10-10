@@ -52,7 +52,7 @@ package_dev_app() {
   <key>CFBundleIdentifier</key><string>dev.banyudu.banyan</string>
   <key>CFBundleName</key><string>Banyan</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.4.1</string>
+  <key>CFBundleShortVersionString</key><string>0.4.2</string>
   <key>CFBundleVersion</key><string>dev</string>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>puck session</string>
