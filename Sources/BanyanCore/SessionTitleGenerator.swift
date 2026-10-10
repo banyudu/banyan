@@ -110,7 +110,7 @@ public enum SessionTitleGenerator {
     /// into captured input (e.g. `› `, `❯ `, `> `, `- `, `"`) must not block
     /// polite-prefix stripping (`› I want to …` should still drop `I want to`)
     /// nor appear in the final title. `<` is deliberately excluded so the
-    /// `<url>` / `<image>` placeholders survive a leading position.
+    /// `<url>` / `<img>` placeholders survive a leading position.
     public static func stripLeadingPromptMarkers(_ value: String) -> String {
         var result = value
         let markers = CharacterSet(charactersIn: "›❯❱▸▶»>$#*+-–—•·:;,.!?\"'“”‘’()[]{}")
@@ -259,10 +259,10 @@ public enum SessionTitleGenerator {
             return prompt
         }
         if isSingleImagePrompt(trimmed) {
-            return "<image>"
+            return "<img>"
         }
         var result = prompt
-        result = replacingImagePlaceholders(in: result, with: "<image>")
+        result = replacingImagePlaceholders(in: result)
         result = replacingURLs(in: result, with: "<url>")
         return result
     }
@@ -332,7 +332,10 @@ public enum SessionTitleGenerator {
         return result
     }
 
-    private static func replacingImagePlaceholders(in text: String, with placeholder: String) -> String {
+    /// Collapse attachments before callers truncate titles, while the complete
+    /// tag (including its closing `>`) is still available to match.
+    static func replacingImagePlaceholders(in text: String) -> String {
+        let placeholder = "<img>"
         var result = text
         let tagPattern = "<image(?=[ \\t>])[^>\\r\\n]*>"
         if let regex = try? NSRegularExpression(pattern: tagPattern, options: .caseInsensitive) {

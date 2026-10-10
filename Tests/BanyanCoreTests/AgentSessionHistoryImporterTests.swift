@@ -24,6 +24,35 @@ import Testing
     #expect(session.cwd == "/tmp/banyan-codex")
 }
 
+@Test(arguments: [false, true], ["", " explain this chart"])
+func historyImporterCollapsesImageBeforeTruncatingTitle(responseItem: Bool, suffix: String) throws {
+    let home = FileManager.default.temporaryDirectory
+        .appendingPathComponent("banyan-image-title-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: home) }
+
+    let directory = home.appendingPathComponent(".codex/sessions/2026/07/01")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let id = "thread-image"
+    let transcript = directory.appendingPathComponent("rollout-2026-07-01T10-00-00-\(id).jsonl")
+    // The attachment alone exceeds the importer's title limit. Cleanup must
+    // happen while the closing tag and the following prompt are still intact.
+    let path = "/tmp/" + String(repeating: "attachment-directory/", count: 8) + "chart.png"
+    let prompt = "<image name=[Image #1] path=\"\(path)\">" + suffix
+    let payload: [String: Any] = responseItem
+        ? ["type": "message", "role": "user", "content": [["type": "input_text", "text": prompt]]]
+        : ["type": "user_message", "message": prompt]
+    let row: [String: Any] = [
+        "type": responseItem ? "response_item" : "event_msg",
+        "payload": payload
+    ]
+    try JSONSerialization.data(withJSONObject: row).write(to: transcript)
+
+    let session = try #require(AgentSessionHistoryImporter.load(homeDirectory: home).first)
+    #expect(session.title == "<img>" + suffix)
+    #expect(session.segmentPromptTitle == "<img>" + suffix)
+    #expect(SessionTitleGenerator.titleFromPrompt(session.title) == "<img>" + suffix)
+}
+
 @Test func historyImportReusesUnchangedTranscriptsAndRefreshesChangedOnes() throws {
     let home = FileManager.default.temporaryDirectory
         .appendingPathComponent("banyan-history-cache-\(UUID().uuidString)")

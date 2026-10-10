@@ -640,7 +640,8 @@ public enum AgentSessionHistoryImporter {
 
     private static func sanitizedTitle(_ value: String?) -> String? {
         guard let body = sanitizedBody(value) else { return nil }
-        let firstLine = body.split(whereSeparator: \.isNewline).first.map(String.init) ?? body
+        let normalized = SessionTitleGenerator.replacingImagePlaceholders(in: body)
+        let firstLine = normalized.split(whereSeparator: \.isNewline).first.map(String.init) ?? normalized
         let collapsed = firstLine.replacingOccurrences(
             of: #"\s+"#,
             with: " ",
