@@ -75,6 +75,38 @@ private final class TerminalCacheFixture {
 @Suite(.serialized)
 @MainActor
 struct TerminalViewCacheTests {
+    @Test func tmuxScrollRedrawsAreSynchronizedForEmbeddedClients() async throws {
+        let fixture = try TerminalCacheFixture(count: 1)
+        defer { fixture.tearDown() }
+        let session = fixture.sessions[0]
+        var output = ""
+        session.onOutput = { output += $0 }
+        fixture.select(session)
+        try #require(await cacheWait { terminalText(session).contains("fixture-0-line-1500") })
+
+        let pane = try #require(fixture.backend.primaryPaneSnapshot(named: session.tmuxSessionName))
+        output = ""
+        let position = await withCheckedContinuation { continuation in
+            session.scrollHistory(paneID: pane.paneID, lines: 100, up: true) {
+                continuation.resume(returning: $0)
+            }
+        }
+        #expect(position > 0)
+        // Inspect the real PTY stream, rather than just the attach arguments:
+        // tmux must bracket its copy-mode repaint so SwiftTerm can keep the
+        // previous complete screen visible while the next one arrives.
+        try #require(await cacheWait {
+            output.contains("\u{1b}[?2026h") && output.contains("\u{1b}[?2026l")
+        }, "tmux sent an unprotected scroll redraw to the embedded terminal")
+
+        output = ""
+        session.detachInactiveTerminalClient()
+        session.resumeInactiveTerminalClientIfNeeded()
+        #expect(await cacheWait {
+            output.contains("\u{1b}[?2026h") && output.contains("\u{1b}[?2026l")
+        }, "reattaching lost synchronized updates")
+    }
+
     @Test func twentyFourLiveSessionsStayBoundedAcrossRepeatedVisits() async throws {
         let fixture = try TerminalCacheFixture()
         defer { fixture.tearDown() }

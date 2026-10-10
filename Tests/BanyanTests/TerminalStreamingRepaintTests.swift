@@ -128,20 +128,57 @@ private func fullFrameRepaints(frames: Int, rows: Int, cols: Int) -> [String] {
 }
 
 @MainActor
-@Test func unchangedRowsSurviveAFullFrameRepaint() async throws {
+@Test func synchronizedScrollRedrawKeepsThePreviousFrameUntilAllChunksArrive() async throws {
+    let harness = StreamingHarness(cols: 100, rows: 20)
+    let terminal = harness.view.terminal!
+    let rows = terminal.rows
+    func rowUpdate(_ row: Int, label: String) -> String {
+        "\u{1b}[\(row + 1);1H\u{1b}[2K\(label)-row-\(row)"
+    }
+    harness.feedChunk((0..<rows).map { rowUpdate($0, label: "old") }.joined())
+    try await harness.settle()
+
+    harness.feedChunk("\u{1b}[?2026h")
+    for range in [0..<(rows / 2), (rows / 2)..<rows] {
+        harness.feedChunk(range.map { rowUpdate($0, label: "new") }.joined())
+        // Give the display queue time to paint between PTY chunks. A partial
+        // screen must stay hidden even when parsing spans several frames.
+        try await harness.settle(milliseconds: 60)
+        for row in 0..<rows {
+            let buffer = terminal.displayBuffer
+            #expect(buffer.lines[buffer.yDisp + row].translateToString(trimRight: true) == "old-row-\(row)")
+        }
+    }
+
+    harness.feedChunk("\u{1b}[?2026l")
+    try await harness.settle()
+    for row in 0..<rows {
+        let buffer = terminal.displayBuffer
+        #expect(buffer.lines[buffer.yDisp + row].translateToString(trimRight: true) == "new-row-\(row)")
+    }
+}
+
+@MainActor
+@Test(arguments: [false, true])
+func unchangedRowsSurviveAFullFrameRepaint(synchronized: Bool) async throws {
     let harness = StreamingHarness()
     let dims = harness.view.terminal.getDims()
+    func frames(_ count: Int) -> [String] {
+        fullFrameRepaints(frames: count, rows: dims.rows, cols: dims.cols).map {
+            synchronized ? "\u{1b}[?2026h" + $0 + "\u{1b}[?2026l" : $0
+        }
+    }
     // Paint one frame first so every row is cached before measuring.
-    try await harness.stream(fullFrameRepaints(frames: 1, rows: dims.rows, cols: dims.cols))
+    try await harness.stream(frames(1))
     try await harness.settle()
     harness.view.resetDrawAccounting()
 
-    let frames = 60
-    try await harness.stream(fullFrameRepaints(frames: frames, rows: dims.rows, cols: dims.cols))
+    let frameCount = 60
+    try await harness.stream(frames(frameCount))
 
     let draws = max(harness.view.drawCount, 1)
     let rowsPerDraw = Double(harness.view.drawnRowsRebuilt) / Double(draws)
-    print("BENCH fullframe frames=\(frames) draws=\(draws)"
+    print("BENCH fullframe frames=\(frameCount) synchronized=\(synchronized) draws=\(draws)"
           + " rowsRebuilt=\(harness.view.drawnRowsRebuilt)"
           + " rowsPerDraw=\(String(format: "%.1f", rowsPerDraw))"
           + " totalDrawMS=\(String(format: "%.1f", harness.view.totalDrawMS))"
@@ -156,10 +193,12 @@ private func fullFrameRepaints(frames: Int, rows: Int, cols: Int) -> [String] {
 /// a wakeup and a repaint. This is the invalidation half of the same idea that
 /// `unchangedRowsSurviveAFullFrameRepaint` covers for the rebuild half.
 @MainActor
-@Test func identicalRepaintsDoNotInvalidateAtAll() async throws {
+@Test(arguments: [false, true])
+func identicalRepaintsDoNotInvalidateAtAll(synchronized: Bool) async throws {
     let harness = StreamingHarness()
     let dims = harness.view.terminal.getDims()
-    let frame = fullFrameRepaints(frames: 1, rows: dims.rows, cols: dims.cols)[0]
+    let body = fullFrameRepaints(frames: 1, rows: dims.rows, cols: dims.cols)[0]
+    let frame = synchronized ? "\u{1b}[?2026h" + body + "\u{1b}[?2026l" : body
 
     try await harness.stream([frame])
     try await harness.settle()

@@ -108,7 +108,7 @@ extension TerminalSession {
                 terminalView.beginInitialScreenSynchronization(restarting: true)
                 terminalView.startProcess(
                     executable: "/usr/bin/env",
-                    args: ["-u", "TMUX", "-u", "TMUX_PANE", backend.executableURL.path] + backend.attachArguments(for: tmuxName),
+                    args: self.terminalAttachArguments(),
                     environment: self.terminalEnvironment(),
                     currentDirectory: self.cwd
                 )
@@ -419,7 +419,7 @@ extension TerminalSession {
         terminalView.beginInitialScreenSynchronization(restarting: true)
         terminalView.startProcess(
             executable: "/usr/bin/env",
-            args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path] + tmuxBackend.attachArguments(for: tmuxSessionName),
+            args: terminalAttachArguments(),
             environment: terminalEnvironment(),
             currentDirectory: cwd
         )
@@ -517,7 +517,7 @@ extension TerminalSession {
         terminalView.beginInitialScreenSynchronization(restarting: true)
         terminalView.startProcess(
             executable: "/usr/bin/env",
-            args: ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path] + tmuxBackend.attachArguments(for: tmuxSessionName),
+            args: terminalAttachArguments(),
             environment: terminalEnvironment(),
             currentDirectory: cwd
         )
@@ -571,6 +571,16 @@ extension TerminalSession {
             }
             return true
         }
+    }
+
+    private func terminalAttachArguments() -> [String] {
+        // SwiftTerm supports DEC synchronized output, but xterm-256color does
+        // not advertise it. Tell this client explicitly so tmux brackets its
+        // redraws and a multi-chunk scroll never paints part of the new screen.
+        // Keep the feature on the embedded client: external TUI attachments
+        // must negotiate their own terminal's capabilities.
+        ["-u", "TMUX", "-u", "TMUX_PANE", tmuxBackend.executableURL.path, "-T", "sync"]
+            + tmuxBackend.attachArguments(for: tmuxSessionName)
     }
 
     func terminalEnvironment() -> [String] {
