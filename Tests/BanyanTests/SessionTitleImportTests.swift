@@ -60,6 +60,30 @@ import Testing
 }
 
 @MainActor
+@Test(arguments: [false, true])
+func launchImportRepairsSavedImageOnlyTitlesUnlessPinned(isTitlePinned: Bool) async throws {
+    let fixture = try TitleImportFixture(
+        reportedTitle: "<img>",
+        agentSessionID: "thread-1",
+        isTitlePinned: isTitlePinned
+    )
+    let store = fixture.makeStore()
+    store.loadPersistedSessionsIfNeeded()
+    let session = try #require(store.sessions.first)
+    #expect(session.displayTitle == "<img>")
+
+    store.refreshImportedHistoryIfNeeded()
+    if isTitlePinned {
+        #expect(fixture.history.loadCount == 0)
+        #expect(session.displayTitle == "<img>")
+    } else {
+        await fixture.waitForTitle(on: session)
+        #expect(fixture.history.loadCount == 1)
+        #expect(session.displayTitle == "fix the sidebar title")
+    }
+}
+
+@MainActor
 private struct TitleImportFixture {
     let root: URL
     let home: URL
@@ -68,7 +92,7 @@ private struct TitleImportFixture {
     let history: StubTitleHistoryBackend
     let createdAt: Date
 
-    init(reportedTitle: String? = nil, agentSessionID: String? = nil) throws {
+    init(reportedTitle: String? = nil, agentSessionID: String? = nil, isTitlePinned: Bool = false) throws {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("banyan-title-import-\(UUID().uuidString)")
         home = root.appendingPathComponent("home")
@@ -85,8 +109,9 @@ private struct TitleImportFixture {
             SessionSnapshot(
                 id: "session-1",
                 tmuxSessionName: "banyan-session-1",
-                title: "~",
+                title: isTitlePinned ? (reportedTitle ?? "~") : "~",
                 reportedTitle: reportedTitle,
+                isTitlePinned: isTitlePinned,
                 cwd: project.path,
                 command: "codex -p my-profile",
                 status: .needInput,
@@ -142,7 +167,7 @@ private struct TitleImportFixture {
     /// like the app's own waits: a broken trigger must fail, not hang.
     func waitForTitle(on session: BanyanSession) async {
         let deadline = Date().addingTimeInterval(5)
-        while session.agentSessionID == nil, Date() < deadline {
+        while session.displayTitle != "fix the sidebar title", Date() < deadline {
             try? await Task.sleep(for: .milliseconds(20))
         }
     }

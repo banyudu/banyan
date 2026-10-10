@@ -24,7 +24,7 @@ import Testing
     #expect(session.cwd == "/tmp/banyan-codex")
 }
 
-@Test(arguments: [false, true], ["", " explain this chart"])
+@Test(arguments: [false, true], ["", " explain this chart", "\nexplain this chart"])
 func historyImporterCollapsesImageBeforeTruncatingTitle(responseItem: Bool, suffix: String) throws {
     let home = FileManager.default.temporaryDirectory
         .appendingPathComponent("banyan-image-title-\(UUID().uuidString)")
@@ -37,9 +37,15 @@ func historyImporterCollapsesImageBeforeTruncatingTitle(responseItem: Bool, suff
     // The attachment alone exceeds the importer's title limit. Cleanup must
     // happen while the closing tag and the following prompt are still intact.
     let path = "/tmp/" + String(repeating: "attachment-directory/", count: 8) + "chart.png"
-    let prompt = "<image name=[Image #1] path=\"\(path)\">" + suffix
+    let imageTag = "<image name=[Image #1] path=\"\(path)\">"
+    let prompt = imageTag + suffix
     let payload: [String: Any] = responseItem
-        ? ["type": "message", "role": "user", "content": [["type": "input_text", "text": prompt]]]
+        ? ["type": "message", "role": "user", "content": [
+            ["type": "input_text", "text": imageTag],
+            ["type": "input_image"],
+            ["type": "input_text", "text": "</image>"],
+            ["type": "input_text", "text": suffix]
+        ]]
         : ["type": "user_message", "message": prompt]
     let row: [String: Any] = [
         "type": responseItem ? "response_item" : "event_msg",
@@ -47,10 +53,12 @@ func historyImporterCollapsesImageBeforeTruncatingTitle(responseItem: Bool, suff
     ]
     try JSONSerialization.data(withJSONObject: row).write(to: transcript)
 
+    let text = suffix.trimmingCharacters(in: .whitespacesAndNewlines)
+    let expectedTitle = "<img>" + (text.isEmpty ? "" : " " + text)
     let session = try #require(AgentSessionHistoryImporter.load(homeDirectory: home).first)
-    #expect(session.title == "<img>" + suffix)
-    #expect(session.segmentPromptTitle == "<img>" + suffix)
-    #expect(SessionTitleGenerator.titleFromPrompt(session.title) == "<img>" + suffix)
+    #expect(session.title == expectedTitle)
+    #expect(session.segmentPromptTitle == expectedTitle)
+    #expect(SessionTitleGenerator.titleFromPrompt(session.title) == expectedTitle)
 }
 
 @Test func historyImportReusesUnchangedTranscriptsAndRefreshesChangedOnes() throws {

@@ -194,18 +194,27 @@ public enum SessionTitleGenerator {
     }
 
     private static func firstSentence(in prompt: String) -> String {
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-
-        if let firstLine = trimmed.split(whereSeparator: \.isNewline).first {
-            let line = String(firstLine).trimmingCharacters(in: .whitespacesAndNewlines)
-            if let sentenceEnd = findSentenceEnd(in: line) {
-                return String(line[...sentenceEnd])
-            }
-            return line
+        let line = firstPromptTitleLine(in: prompt)
+        if let sentenceEnd = findSentenceEnd(in: line) {
+            return String(line[...sentenceEnd])
         }
+        return line
+    }
 
-        return trimmed
+    /// Attachment text and the user's words can arrive as separate transcript
+    /// parts. After normalizing images, include any leading image-only lines
+    /// with the first text line rather than naming the session just `<img>`.
+    static func firstPromptTitleLine(in prompt: String) -> String {
+        var components: [String] = []
+        for line in prompt.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            components.append(trimmed)
+            if !trimmed.split(whereSeparator: \.isWhitespace).allSatisfy({ $0 == "<img>" }) {
+                break
+            }
+        }
+        return components.joined(separator: " ")
     }
 
     private static func findSentenceEnd(in line: String) -> String.Index? {
@@ -337,13 +346,14 @@ public enum SessionTitleGenerator {
     static func replacingImagePlaceholders(in text: String) -> String {
         let placeholder = "<img>"
         var result = text
-        let tagPattern = "<image(?=[ \\t>])[^>\\r\\n]*>"
+        let tagPattern = "</?image(?=[ \\t>])[^>\\r\\n]*>"
         if let regex = try? NSRegularExpression(pattern: tagPattern, options: .caseInsensitive) {
             let ns = result as NSString
             let matches = regex.matches(in: result, options: [], range: NSRange(location: 0, length: ns.length))
             for match in matches.reversed() {
                 guard let range = Range(match.range, in: result) else { continue }
-                result.replaceSubrange(range, with: placeholder)
+                let replacement = result[range].hasPrefix("</") ? "" : placeholder
+                result.replaceSubrange(range, with: replacement)
             }
         }
         let bracketPattern = "\\[Image[^\\]]*\\]"

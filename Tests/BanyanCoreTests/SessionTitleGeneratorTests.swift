@@ -106,6 +106,25 @@ import Testing
     #expect(title == "<img> explain this chart")
 }
 
+@Test(arguments: [
+    "<image name=[Image #1] path=\"/tmp/chart.png\">\n</image>\n\nExplain this chart.\nIgnore this later line.",
+    "<img>\n\nExplain this chart.\nIgnore this later line."
+])
+func titleFromPromptKeepsTextAfterImageOnlyLines(_ prompt: String) {
+    #expect(SessionTitleGenerator.titleFromPrompt(prompt) == "<img> Explain this chart.")
+}
+
+@Test func titleFromPromptKeepsTextAfterMultipleWrappedImages() {
+    let prompt = """
+    <image name=[Image #1] path="/tmp/first.png">
+    </image>
+    <image name=[Image #2] path="/tmp/second.png">
+    </image>
+    Compare these charts.
+    """
+    #expect(SessionTitleGenerator.titleFromPrompt(prompt) == "<img> <img> Compare these charts.")
+}
+
 @Test func titleFromPromptCollapsesUppercaseImageTag() {
     let title = SessionTitleGenerator.titleFromPrompt("<IMAGE name=[Image #1] path=\"/tmp/example.png\"> explain this chart")
     #expect(title == "<img> explain this chart")

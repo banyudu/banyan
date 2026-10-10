@@ -1440,9 +1440,18 @@ final class SessionStore: ObservableObject {
 
     /// The launch import used to rescan every provider transcript on the chance
     /// a sidebar row needed one. Do that only when it does: a restored, already
-    /// matched sidebar needs no history read at all.
+    /// matched sidebar needs no history read unless its title captured only the
+    /// image marker before the remaining transcript parts were considered.
     func refreshImportedHistoryIfNeeded() {
-        guard hasUnmatchedLiveAgentSession else { return }
+        let hasImageOnlyTitle = sessions.contains {
+            $0.matchesAgentTranscripts
+                && !$0.isImportedHistory
+                && $0.status != .closed
+                && $0.agentProvider != nil
+                && !$0.isTitlePinned
+                && ["<img>", "<image>"].contains($0.displayTitle)
+        }
+        guard hasUnmatchedLiveAgentSession || hasImageOnlyTitle else { return }
         runHistoryImport()
     }
 
