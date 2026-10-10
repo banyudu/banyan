@@ -138,8 +138,8 @@ final class AppUpdater: ObservableObject {
     ) {
         self.session = session
         self.currentVersion = AppVersion(
-            bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.2"
-        ) ?? AppVersion("0.4.2")!
+            bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.3"
+        ) ?? AppVersion("0.4.3")!
         self.bundleURL = bundle.bundleURL
     }
 
