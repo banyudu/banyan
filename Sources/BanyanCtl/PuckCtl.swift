@@ -15,7 +15,7 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
     switch command {
     case "list":
         for session in try client.list() {
-            print("\(session.id)\t\(session.position)\t\(session.provider)/\(session.model)\t\(session.cwd)")
+            print("\(session.id)\t\(session.position)\t\(session.engine)\t\(session.provider)/\(session.model)\t\(session.cwd)")
         }
     case "new":
         let id = options["id"] ?? UUID().uuidString.lowercased()
@@ -30,13 +30,13 @@ func runPuckCtl(_ args: [String], host: HostRuntimeContext) throws {
         }
         let session = try client.create(id: id, provider: provider,
                                         account: options["account"], model: options["model"],
-                                        workspace: workspace)
+                                        workspace: workspace, engine: options["engine"])
         print("\(session.id)\t\(session.provider)/\(session.model)\t\(session.cwd)")
         if let prompt = options["prompt"] { try turn(id, prompt: prompt) }
     case "show":
         let id = try options.required("id")
         let session = try client.get(id)
-        print("\(session.id)\t\(session.position)\t\(session.provider)/\(session.model)\t\(session.cwd)")
+        print("\(session.id)\t\(session.position)\t\(session.engine)\t\(session.provider)/\(session.model)\t\(session.cwd)")
         if let pending = session.pendingApproval {
             print("approval \(pending.callID): \(pending.tool) \(pending.arguments)")
         }
@@ -134,7 +134,7 @@ private struct PuckOptions {
                 throw PuckDaemonError.rejected("expected --option VALUE")
             }
             let name = String(option.dropFirst(2))
-            guard ["id", "cwd", "provider", "account", "model", "prompt", "call-id", "decision", "selections", "reason"].contains(name) else {
+            guard ["id", "engine", "cwd", "provider", "account", "model", "prompt", "call-id", "decision", "selections", "reason"].contains(name) else {
                 throw PuckDaemonError.rejected("unknown puck option '\(option)'")
             }
             result[name] = args[index + 1]

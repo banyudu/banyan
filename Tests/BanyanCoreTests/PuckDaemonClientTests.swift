@@ -22,9 +22,12 @@ import Glibc
             let peer = accept(listener, nil, nil)
             guard peer >= 0 else { return }
             defer { _ = close(peer) }
+            let capabilities = readPuckRequest(peer)
+            guard capabilities?["method"] as? String == "daemon.capabilities" else { return }
+            writePuckLines(peer, [#"{"jsonrpc":"2.0","id":1,"result":{"engines":["codex","native"]}}"#])
             captured.record(readPuckRequest(peer))
             writePuckLines(peer, [
-                #"{"jsonrpc":"2.0","id":1,"result":{"id":"created","provider":"codex","account":"seat","workspace":"/tmp","cwd":"/tmp","model":"model","position":"idle"}}"#
+                #"{"jsonrpc":"2.0","id":2,"result":{"id":"created","engine":"codex","provider":"codex","account":"seat","workspace":"/tmp","cwd":"/tmp","model":"model","position":"idle"}}"#
             ])
         }
 
@@ -39,11 +42,13 @@ import Glibc
         }
 
         #expect(summary.id == "created")
+        #expect(summary.engine == "codex")
         #expect(serverDone.wait(timeout: .now() + 2) == .success)
         let request = try #require(captured.request)
         #expect(request["method"] as? String == "session.create")
         let params = try #require(request["params"] as? [String: Any])
         #expect(params["id"] as? String == "created")
+        #expect(params["engine"] as? String == "codex")
         let settings = try #require(params["settings"] as? [String: Any])
         #expect(settings["approval"] == nil)
     }

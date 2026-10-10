@@ -1,6 +1,6 @@
 # Offline puck integration fixture
 
-This fixture checks the shared daemon path with no live subscription, Slack
+This fixture explicitly selects puck's native engine and checks the shared daemon path with no live subscription, Slack
 workspace, or other tool's credentials. It needs a macOS Banyan build, tmux,
 and puck binaries containing the loopback-only `PUCK_SLACK_API_BASE` test hook.
 
@@ -50,3 +50,11 @@ automatic replay with the same cursors, and verifies a new turn arrives live.
 Temporary state and synthetic keys are removed when the script exits. The
 printed JSON records the measured RSS values and pass statuses; the ratio is
 specific to the local machine and this short-history fixture.
+
+The default Codex engine has a separate real app-server fixture in the puck
+checkout: `python3 scripts/verify-codex-engine.py --codex /path/to/codex`.
+It covers the same approval/question API, worker retirement, crash recovery,
+account isolation and hundreds of watched sessions with large histories.
+`banyanctl puck new --engine native` selects the experimental engine explicitly;
+new Codex-provider sessions use the Codex engine by default. Other providers
+continue to use the native engine.

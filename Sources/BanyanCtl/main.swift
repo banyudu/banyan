@@ -903,7 +903,7 @@ struct BanyanCtl {
 
         Puck sessions use the local puckd socket and work while Banyan is closed:
           banyanctl puck list
-          banyanctl puck new [--id ID] [--provider codex|opencode-go|anthropic|gemini] [--account LABEL] [--model MODEL] [--cwd PATH] [--prompt TEXT]
+          banyanctl puck new [--id ID] [--engine codex|native] [--provider codex|opencode-go|anthropic|gemini] [--account LABEL] [--model MODEL] [--cwd PATH] [--prompt TEXT]
           banyanctl puck attach --id ID
           banyanctl puck plan --id ID
           banyanctl puck reject --id ID --call-id CALL_ID --reason REASON

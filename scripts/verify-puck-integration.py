@@ -321,7 +321,7 @@ def run(args):
             empty_rss = rss_kib(daemon.pid)
             ids = [SESSION] + [f"session-{number:02}" for number in range(COUNT - 1)]
             for session_id in ids:
-                rpc(path, "session.create", {"id": session_id, "provider": "codex",
+                rpc(path, "session.create", {"engine": "native", "id": session_id, "provider": "codex",
                     "account": "fixture", "workspace": str(root / "workspace"),
                     "model": "fixture-model", "settings": {"approval": "deny",
                     "exec": False, "fetch": False, "search": False}})
@@ -333,7 +333,7 @@ def run(args):
             daemon_rss = rss_kib(daemon.pid)
             baseline_env = env.copy()
             baseline_env["PUCK_HOME"] = str(baseline_home)
-            baseline, baseline_tty = pty_process([str(args.puck), "chat", "--provider", "codex",
+            baseline, baseline_tty = pty_process([str(args.puck), "chat", "--engine", "native", "--provider", "codex",
                 "--account", "fixture", "--model", "fixture-model", "--workspace", str(root / "workspace"),
                 "--approval", "deny", "--exec", "off", "--fetch", "off", "--search", "off",
                 "--ask", "off", "baseline"], baseline_env)
@@ -411,7 +411,7 @@ def run(args):
             assert not descendants(daemon.pid)
 
             def parked_question(session_id):
-                rpc(path, "session.create", {"id": session_id, "provider": "codex",
+                rpc(path, "session.create", {"engine": "native", "id": session_id, "provider": "codex",
                     "account": "fixture", "workspace": str(root / "workspace"),
                     "model": "fixture-model", "settings": {"approval": "ask",
                     "exec": False, "fetch": False, "search": False}})
@@ -464,7 +464,7 @@ def run(args):
             # A long-lived Banyan watch claims the interactive capability, and
             # sends its real presence reports on that very same connection.
             presence_id = "question-presence"
-            rpc(path, "session.create", {"id": presence_id, "provider": "codex",
+            rpc(path, "session.create", {"engine": "native", "id": presence_id, "provider": "codex",
                 "account": "fixture", "workspace": str(root / "workspace"),
                 "model": "fixture-model", "settings": {"approval": "ask",
                 "exec": False, "fetch": False, "search": False}})

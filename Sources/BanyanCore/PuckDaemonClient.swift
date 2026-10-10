@@ -27,6 +27,7 @@ public enum PuckSessionLink {
 /// JSON-RPC protocol; none needs to start or scrape an agent process.
 public struct PuckSessionSummary: Equatable, Sendable {
     public let id: String
+    public let engine: String
     public let provider: String
     public let account: String
     public let workspace: String
@@ -40,6 +41,7 @@ public struct PuckSessionSummary: Equatable, Sendable {
 
     public init(
         id: String,
+        engine: String = "native",
         provider: String,
         account: String,
         workspace: String,
@@ -51,6 +53,7 @@ public struct PuckSessionSummary: Equatable, Sendable {
         pendingQuestion: PuckPendingQuestion? = nil
     ) {
         self.id = id
+        self.engine = engine
         self.provider = provider
         self.account = account
         self.workspace = workspace
@@ -64,6 +67,7 @@ public struct PuckSessionSummary: Equatable, Sendable {
 
     init(_ object: [String: Any]) throws {
         id = try Self.string("id", in: object)
+        engine = object["engine"] as? String ?? "native"
         provider = try Self.string("provider", in: object)
         account = try Self.string("account", in: object)
         workspace = try Self.string("workspace", in: object)
@@ -561,12 +565,24 @@ public struct PuckDaemonClient: Sendable {
 
     public func create(id: String, provider: String, account: String? = nil,
                        model: String? = nil, workspace: String,
-                       settings: [String: Any] = [:]) throws -> PuckSessionSummary {
+                       settings: [String: Any] = [:], engine: String? = nil) throws -> PuckSessionSummary {
         var params: [String: Any] = ["id": id, "provider": provider, "workspace": workspace,
                                      "cwd": workspace, "settings": settings]
+        let selectedEngine = engine ?? (provider == "codex" ? "codex" : "native")
+        guard ["codex", "native"].contains(selectedEngine) else {
+            throw PuckDaemonError.rejected("engine must be codex or native")
+        }
+        params["engine"] = selectedEngine
         if let account { params["account"] = account }
         if let model { params["model"] = model }
-        let value = try PuckDaemonConnection(socketPath: socketPath).request("session.create", params: params)
+        let connection = try PuckDaemonConnection(socketPath: socketPath)
+        if selectedEngine == "codex" {
+            let capabilities = try connection.request("daemon.capabilities") as? [String: Any]
+            guard (capabilities?["engines"] as? [String])?.contains("codex") == true else {
+                throw PuckDaemonError.rejected("puckd needs an update and restart before it can create Codex-engine sessions")
+            }
+        }
+        let value = try connection.request("session.create", params: params)
         guard let object = value as? [String: Any] else { throw PuckDaemonError.invalidResponse("summary") }
         return try PuckSessionSummary(object)
     }
