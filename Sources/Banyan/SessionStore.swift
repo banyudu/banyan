@@ -450,7 +450,7 @@ final class SessionStore: ObservableObject {
     /// Per-session observation state. Quiet sessions back off independently so
     /// one active agent does not force every stale session through tmux on each
     /// global timer fire.
-    private var supervisorObservationStates: [String: SessionSupervisorObservationState] = [:]
+    private(set) var supervisorObservationStates: [String: SessionSupervisorObservationState] = [:]
     private lazy var supervisorProcessExitMonitor = SupervisorProcessExitMonitor { [weak self] id in
         self?.resetSupervisorObservationBackoff(for: id)
     }
@@ -458,7 +458,7 @@ final class SessionStore: ObservableObject {
     /// cadence. Installed once; retained so they outlive `addObserver`.
     private var supervisorLifecycleObservers: [NSObjectProtocol] = []
     private var supervisorTickSchedule = SessionSupervisorTickSchedule()
-    private var pendingSupervisorActivityIDs: Set<String> = []
+    private(set) var pendingSupervisorActivityIDs: Set<String> = []
     /// Watches Codex's session index so a thread renamed mid-conversation
     /// reaches the sidebar without waiting for the next launch.
     private var codexTitleWatcher: CodexSessionIndexWatcher?
@@ -2343,10 +2343,12 @@ final class SessionStore: ObservableObject {
         // A tick owns the next deadline until it completes. Timer/lifecycle
         // requests during it are coalesced into the per-session due state.
         let now = Date()
-        let intervalRequested = pendingSupervisorActivityIDs.isEmpty ? supervisorInterval : min(2, supervisorBaseInterval)
-        guard let dueAt = supervisorTickSchedule.nextFire(at: now, interval: intervalRequested) else { return }
-        // Never postpone a pending event every time another output chunk lands.
-        if supervisorTimer != nil, supervisorTimerDueAt <= dueAt { return }
+        guard let dueAt = supervisorTickSchedule.replacementFire(
+            at: now,
+            scheduledFire: supervisorTimer == nil ? nil : supervisorTimerDueAt,
+            activityPending: !pendingSupervisorActivityIDs.isEmpty,
+            interval: supervisorInterval
+        ) else { return }
         supervisorTimer?.invalidate()
         supervisorTimerDueAt = dueAt
         let interval = max(0.01, dueAt.timeIntervalSince(now))
@@ -4906,7 +4908,7 @@ final class SessionStore: ObservableObject {
         session.onOutput = { [weak self, weak session] text in
             guard let self, let session else { return }
             telemetry.noteSessionFirstOutput(sessionID: session.id)
-            self.resetSupervisorObservationBackoff(for: session.id, invalidatesObservation: false)
+            self.resetSupervisorObservationBackoff(for: session, invalidatesObservation: false)
             self.detectAttention(in: text, for: session)
             if let terminal = session as? TerminalSession, !terminal.isFrozen {
                 terminal.freezeGeneration = UUID()
@@ -5358,10 +5360,19 @@ final class SessionStore: ObservableObject {
     }
 
     func resetSupervisorObservationBackoff(for sessionID: String, invalidatesObservation: Bool = true) {
-        guard sessions.contains(where: { $0.id == sessionID && $0.status != .closed && !$0.isSuspended && !$0.isFrozen && !$0.isDeepSuspended && $0 is TerminalSession }) else { return }
-        supervisorObservationStates[sessionID, default: .init()].noteActivity(at: Date(), invalidatesObservation: invalidatesObservation)
-        pendingSupervisorActivityIDs.insert(sessionID)
-        if didStartSupervisor { rescheduleSupervisor() }
+        guard let session = sessions.first(where: { $0.id == sessionID }) else { return }
+        resetSupervisorObservationBackoff(for: session, invalidatesObservation: invalidatesObservation)
+    }
+
+    /// Output callbacks already know their session. Keep this path independent
+    /// of fleet size, but record every chunk so activity during an inspection
+    /// still prevents that inspection from restoring an obsolete backoff.
+    func resetSupervisorObservationBackoff(for session: BanyanSession, invalidatesObservation: Bool = true) {
+        guard session is TerminalSession, session.status != .closed,
+              !session.isSuspended, !session.isFrozen, !session.isDeepSuspended else { return }
+        supervisorObservationStates[session.id, default: .init()].noteActivity(at: Date(), invalidatesObservation: invalidatesObservation)
+        let newlyPending = pendingSupervisorActivityIDs.insert(session.id).inserted
+        if didStartSupervisor && newlyPending { rescheduleSupervisor() }
     }
 
     private func updateSupervisorObservationStates(
