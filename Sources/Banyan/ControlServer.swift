@@ -250,7 +250,7 @@ final class ControlServer {
                 }
                 return
             case .list:
-                return respond(.ok(["sessions": store.sessions.map(summary)]))
+                return respond(.ok(["workflowProtocol": 1, "sessions": store.sessions.map(summary)]))
 
             case .puckTurn:
                 let body = try request.decode(ControlPayload.self)
@@ -357,6 +357,43 @@ final class ControlServer {
                     select: shouldSelect
                 )
                 return respond(.ok(["session": summary(session)]))
+
+            case .workflowSet:
+                let body = try request.decode(WorkflowControlPayload.self)
+                try validateVersion(body.apiVersion)
+                let workflow = try body.workflow()
+                try store.setWorkflow(id: body.id!, workflow: workflow)
+                return respond(.ok(["ok": true]))
+
+            case .workflowWake:
+                let body = try request.decode(WorkflowControlPayload.self)
+                try validateVersion(body.apiVersion)
+                guard let id = body.id, let jobID = body.jobID, let revision = body.revision?.value,
+                      let wakeID = body.wakeID, let text = body.text else {
+                    throw ControlError.badRequest("id, jobID, revision, wakeID and text are required")
+                }
+                Task { @MainActor in
+                    do {
+                        try await store.wakeWorkflow(id: id, jobID: jobID, revision: revision, wakeID: wakeID, text: text)
+                        respond(.ok(["ok": true]))
+                    } catch {
+                        respond(.failure(409, "workflow_wake_refused", error.localizedDescription))
+                    }
+                }
+                return
+
+            case .workflowCloseVerified:
+                return respond(.ok(["closed": try store.closeVerifiedWorkflows()]))
+
+            case .workflowResolve:
+                let body = try request.decode(WorkflowControlPayload.self)
+                try validateVersion(body.apiVersion)
+                guard let id = body.id, let jobID = body.jobID, let revision = body.revision?.value,
+                      let wakeID = body.wakeID, let outcome = body.outcome, let detail = body.detail else {
+                    throw ControlError.badRequest("id, jobID, revision, wakeID, outcome and detail are required")
+                }
+                try store.resolveWorkflowWake(id: id, jobID: jobID, revision: revision, wakeID: wakeID, outcome: outcome, detail: detail)
+                return respond(.ok(["ok": true]))
 
             case .mark:
                 let body = try request.decode(ControlPayload.self)
@@ -538,6 +575,8 @@ final class ControlServer {
             return respond(.failure(error.httpStatus, error.code, error.localizedDescription))
         } catch let error as ControlValidationError {
             return respond(.failure(400, "missing_required_field", error.localizedDescription))
+        } catch let error as WorkflowError {
+            return respond(.failure(409, "workflow_refused", error.localizedDescription))
         } catch is DecodingError {
             return respond(.failure(400, "malformed_json", "malformed JSON request body"))
         } catch {
@@ -966,6 +1005,8 @@ final class ControlServer {
             "tone": session.tone.rawValue,
             "parent": session.parentSessionID ?? "",
             "isRestored": session.isRestored,
+            "needsRecovery": session.needsRecovery,
+            "agentSessionID": session.agentSessionID ?? "",
             "isProcessStarted": session.isProcessStarted,
             "isSuspended": session.isSuspended,
             "isFrozen": session.isFrozen,
@@ -982,6 +1023,11 @@ final class ControlServer {
             "createdAt": ISO8601DateFormatter().string(from: session.createdAt),
             "updatedAt": ISO8601DateFormatter().string(from: session.updatedAt)
         ]
+        if let workflow = session.workflow, let data = try? JSONEncoder().encode(workflow),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            summary["workflow"] = object
+        }
+        if let error = session.workflowRecoveryError { summary["workflowRecoveryError"] = error }
         if let state = store?.codexTUIOwnership[session.id], state.threadID == session.agentSessionID {
             summary["codexTUIOwnership"] = ["threadID": state.threadID, "state": state.state.rawValue, "message": state.state.message,
                 "observedAt": ISO8601DateFormatter().string(from: state.observedAt)]

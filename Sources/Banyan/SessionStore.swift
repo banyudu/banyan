@@ -1162,6 +1162,7 @@ final class SessionStore: ObservableObject {
                 loadedTmuxSessionNames.insert(session.tmuxSessionName)
             }
         }
+        restoreWorkflows()
         // Register the whole restored fleet before any recovery can claim a
         // new slot. Over-budget work stays intact, including parked/frozen rows.
         for terminal in terminalSessions where agentAdmission.running.contains(terminal.id) {
@@ -4255,6 +4256,9 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
+        guard session.workflow?.state.permitsClose != false, session.workflowRecoveryError == nil else {
+            throw ControlError.conflict(code: "workflow_unfinished", message: "Issue is unfinished; verify it or explicitly pause/cancel its workflow before closing")
+        }
         try (session as? TerminalSession)?.prepareFrozenAgentForTeardown()
         let replacementID = selectedSessionID == id
             ? preferredSelectionAfterClosing(id: id)
@@ -5670,10 +5674,18 @@ final class SessionStore: ObservableObject {
     func applySupervisorResults(_ results: [SessionStatusObservation]) -> Bool {
         var didUpdateProvider = false
         var didChangePersistentState = false
-        for result in results {
+        for var result in results {
             guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
-                  !session.isFrozen, !session.isDeepSuspended,
-                  let reconciliation = SessionObservationPolicy.reconcile(
+                  !session.isFrozen, !session.isDeepSuspended else { continue }
+            if result.status == .closed, session.workflow?.state.permitsClose == false {
+                // Missing process ≠ closed issue. Keep managed rows visible and
+                // their worktrees owned while the supervisor recovers the thread.
+                result = SessionStatusObservation(id: result.id, status: .completed, tone: .neutral,
+                    provider: result.provider, modelID: result.modelID, modelIDIsExact: result.modelIDIsExact,
+                    currentPath: result.currentPath)
+                session.needsRecovery = true
+            }
+            guard let reconciliation = SessionObservationPolicy.reconcile(
                       currentStatus: session.status,
                       currentTone: session.tone,
                       currentProvider: session.detectedAgentProvider,

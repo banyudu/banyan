@@ -72,6 +72,8 @@ class BanyanSession: ObservableObject, Identifiable {
     /// command when a closed session is reopened, instead of replaying the
     /// original launch command from scratch.
     @Published var agentSessionID: String?
+    @Published var workflow: SessionWorkflow?
+    @Published var workflowRecoveryError: String?
     var lastConversationResetAt: Date?
 
     let telemetry: PerformanceTelemetry

@@ -144,6 +144,7 @@ struct ContentView: View {
             Button(closeConfirmationAction, role: .destructive) {
                 store.confirmPendingClose()
             }
+            .disabled(store.pendingCloseSession?.workflow?.state.permitsClose == false || store.pendingCloseSession?.workflowRecoveryError != nil)
             .keyboardShortcut(.defaultAction)
         } message: {
             Text(closeConfirmationMessage)
@@ -457,6 +458,11 @@ struct ContentView: View {
     /// label itself, so the switcher always fits the current mode's name.
     private var sidebarModeSwitcher: some View {
         Menu {
+            Button("Close verified sessions") {
+                _ = try? store.closeVerifiedWorkflows()
+            }
+            .disabled(store.verifiedWorkflowSessionIDs.isEmpty)
+            Divider()
             Picker("Sidebar", selection: $store.sidebarMode) {
                 ForEach(SidebarMode.allCases) { mode in
                     Text(mode.label).tag(mode)
@@ -1398,6 +1404,9 @@ struct ContentView: View {
     private var closeConfirmationMessage: String {
         guard let session = store.pendingCloseSession else {
             return ""
+        }
+        if session.workflow?.state.permitsClose == false || session.workflowRecoveryError != nil {
+            return "This issue is unfinished. Verify it, or explicitly pause/cancel its workflow before closing. Closing cannot mark an issue verified."
         }
         var details = [session.closeConsequence]
         if store.pendingCloseHasOngoingAgent {
@@ -2708,6 +2717,16 @@ private struct SessionRow: View {
                     .accessibilityIdentifier(AccessibilityID.sessionRowTitle(session.id))
             } else {
                 titleLabel
+            }
+
+            if let workflow = session.workflow {
+                Text(workflow.state.label)
+                    .font(.caption2)
+                    .foregroundStyle(workflow.state == .verified ? .green : .secondary)
+                    .help(workflow.detail)
+                    .accessibilityIdentifier("session.\(session.id).workflow")
+            } else if session.workflowRecoveryError != nil {
+                Text("Workflow unavailable").font(.caption2).foregroundStyle(.red)
             }
 
             if hiddenChildCount > 0 {

@@ -93,6 +93,11 @@ struct BanyanCtl {
                 try runPerfCommand(Array(arguments.dropFirst()))
             case "mark":
                 try post("/mark", payload: parsePayload(Array(arguments.dropFirst())))
+            case "workflow":
+                guard arguments.count >= 2, ["set", "wake", "resolve", "close-verified"].contains(arguments[1]) else {
+                    throw CLIError.message("workflow requires set, wake, resolve or close-verified")
+                }
+                try post("/workflow-\(arguments[1])", payload: workflowPayload(Array(arguments.dropFirst(2))))
             case "select":
                 try post("/select", payload: parsePayload(Array(arguments.dropFirst())))
             case "tick":
@@ -237,6 +242,13 @@ struct BanyanCtl {
         return try parsePayload(args)
     }
 
+    func workflowPayload(_ args: [String]) throws -> [String: String] {
+        var payload = try parsePayload(args)
+        if let jobID = payload.removeValue(forKey: "job-id") { payload["jobID"] = jobID }
+        if let wakeID = payload.removeValue(forKey: "wake-id") { payload["wakeID"] = wakeID }
+        return payload
+    }
+
     /// One catalog for shell and daemon sessions. The daemon half remains
     /// available when the Banyan app is closed. The app lists the daemon
     /// sessions it shows as its own rows, so those appear once, as the app's.
@@ -245,9 +257,11 @@ struct BanyanCtl {
         var appSessionIDs: Set<String> = []
         var shellAvailable = false
         var puckAvailable = false
-        if let shells = try? loadShellSessions() {
-            sessions.append(contentsOf: shells.map(UnifiedSessionCatalog.appRow))
-            appSessionIDs = Set(shells.compactMap { $0["id"] as? String })
+        var workflowProtocol: Int?
+        if let app = try? loadShellSessions() {
+            sessions.append(contentsOf: app.sessions.map(UnifiedSessionCatalog.appRow))
+            appSessionIDs = Set(app.sessions.compactMap { $0["id"] as? String })
+            workflowProtocol = app.workflowProtocol
             shellAvailable = true
         }
         let puckClient = PuckDaemonClient(environment: host.environment,
@@ -262,16 +276,17 @@ struct BanyanCtl {
             puckAvailable = true
         }
         guard shellAvailable || puckAvailable else { throw CLIError.serverUnavailable }
-        let output: [String: Any] = [
+        var output: [String: Any] = [
             "sessions": sessions,
             "shellAvailable": shellAvailable,
             "puckAvailable": puckAvailable
         ]
+        if let workflowProtocol { output["workflowProtocol"] = workflowProtocol }
         let data = try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
         print(String(decoding: data, as: UTF8.self))
     }
 
-    private func loadShellSessions() throws -> [[String: Any]] {
+    private func loadShellSessions() throws -> (sessions: [[String: Any]], workflowProtocol: Int?) {
         var request = URLRequest(url: baseURL.appendingPathComponent("list"))
         request.httpMethod = "GET"
         request.timeoutInterval = 5
@@ -284,7 +299,7 @@ struct BanyanCtl {
               let sessions = body["sessions"] as? [[String: Any]] else {
             throw CLIError.message("Banyan returned an invalid session list")
         }
-        return sessions
+        return (sessions, body["workflowProtocol"] as? Int)
     }
 
     private func runAgentCommand(_ args: [String]) throws {
@@ -913,6 +928,10 @@ struct BanyanCtl {
           banyanctl puck answer --id ID --call-id CALL --selections JSON
 
         Usage:
+          banyanctl workflow set --id ID --owner workit --job-id JOB --revision N --state working|waiting|needs-you|verified|paused|cancelled [--detail TEXT]
+          banyanctl workflow wake --id ID --job-id JOB --revision N --wake-id WAKE --text TEXT
+          banyanctl workflow resolve --id ID --job-id JOB --revision N --wake-id WAKE --outcome delivered|not-delivered --detail TEXT
+          banyanctl workflow close-verified
           banyanctl codex-remote configure --path policy.json
           banyanctl codex-remote resolve --workspace ID --operationID ID
           banyanctl codex-handoff --id ID [--detail prepare|check]
