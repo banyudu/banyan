@@ -251,6 +251,16 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         _ = try run(AgentInputCommand.sendLiteralArguments(paneID: paneID, text: text))
     }
 
+    public func sendPrompt(paneID: String, text: String, isCancelled: @escaping @Sendable () -> Bool) async throws {
+        let arguments = AgentInputCommand.sendLiteralArguments(paneID: paneID, text: text)
+            + [";"] + AgentInputCommand.sendKeysArguments(paneID: paneID, keys: [.enter])
+        let output = try await SubprocessRunner.runAsync(arguments: [executableURL.path] + baseArguments + arguments,
+            cwd: workingDirectory, environment: processEnvironment(), timeout: Self.commandTimeout, isCancelled: isCancelled)
+        guard output.terminationStatus == 0 else {
+            throw BackendError.commandFailed(arguments, String(decoding: output.standardError, as: UTF8.self))
+        }
+    }
+
     /// Scrolls the pane's history using tmux's own copy-mode, so the scrollback the
     /// user sees is tmux's (already held, ~35 MB for a whole server) instead of a
     /// duplicated SwiftTerm buffer (~123 MB per terminal at a 20k limit).

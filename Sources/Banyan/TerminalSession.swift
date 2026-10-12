@@ -9,6 +9,10 @@ import SwiftTerm
 final class TerminalSession: BanyanSession {
     let tmuxSessionName: String
     var nativeCodexProvenance: CodexThreadBinding?
+    var codexRetryWasExecuting = false
+    var codexRetryTurnGeneration = UUID()
+    var codexRetryAutomaticTurn = false
+    var codexRetryLastCandidate: CodexTerminalRetryCandidate?
     override var codexBinding: CodexThreadBinding? {
         guard var binding = nativeCodexProvenance else { return nil }
         if binding.threadID == nil, let agentSessionID {
@@ -367,6 +371,9 @@ final class TerminalSession: BanyanSession {
         view.processDelegate = delegate
         view.permitsInput = { [weak self] in
             guard let self, self.status != .closed else { return false }
+            self.codexAutoRetry.cancel()
+            self.codexRetryAutomaticTurn = false
+            self.codexRetryWasExecuting = false
             do {
                 try self.beginDeepResume()
                 guard !self.isDeepSuspended else { return false }

@@ -108,6 +108,17 @@ public protocol TmuxInputBackend: Sendable {
     func sendKeys(paneID: String, keys: [TmuxKey]) throws
     /// Types text verbatim, never interpreted as key names.
     func sendLiteral(paneID: String, text: String) throws
+    func sendPrompt(paneID: String, text: String, isCancelled: @escaping @Sendable () -> Bool) async throws
+}
+
+public extension TmuxInputBackend {
+    func sendPrompt(paneID: String, text: String, isCancelled: @escaping @Sendable () -> Bool) async throws {
+        try Task.checkCancellation()
+        guard !isCancelled() else { throw CancellationError() }
+        try sendLiteral(paneID: paneID, text: text)
+        guard !isCancelled() else { throw CancellationError() }
+        try sendKeys(paneID: paneID, keys: [.enter])
+    }
 }
 
 public protocol TmuxDisplayBackend: TmuxSessionBackend {

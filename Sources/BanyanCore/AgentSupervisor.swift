@@ -20,6 +20,7 @@ public struct AgentSupervisor: Sendable {
         public let visibleText: String?
         /// Kernel exit events for these processes wake deferred observations.
         public let liveProcessIDs: Set<Int32>
+        public var codexRetryCandidate: CodexTerminalRetryCandidate?
 
         public init(
             status: SessionStatus,
@@ -213,7 +214,7 @@ public struct AgentSupervisor: Sendable {
         return result(.needInput, .yellow, capturedText: reading.text)
 
         func result(_ status: SessionStatus, _ tone: SessionTone, capturedText: String? = nil) -> Result {
-            Result(
+            var result = Result(
                 status: status,
                 tone: tone,
                 provider: provider,
@@ -223,6 +224,17 @@ public struct AgentSupervisor: Sendable {
                 visibleText: capturedText,
                 liveProcessIDs: liveProcessIDs
             )
+            if status == .needInput, provider == .codex, !pane.isInMode,
+               let capturedText, let prompt = CodexTerminalRetryPrompt.parse(capturedText),
+               let rootPID = Int32(exactly: pane.rootPID),
+               let root = AgentProcessSample.read(pid: rootPID)?.identity {
+                let agents = descendants.filter { !$0.isExited && $0.supportedAgentProvider == .codex && !$0.isCodexRuntimeHelper && !$0.isNodeAgentLauncher && !$0.isShellOrWrapper }
+                let agentPID = agents.count == 1 ? Int32(exactly: agents[0].pid) : (agents.isEmpty && rootAgentProvider == .codex ? rootPID : nil)
+                if let agentPID, let agent = AgentProcessSample.read(pid: agentPID)?.identity {
+                    result.codexRetryCandidate = .init(paneID: pane.paneID, root: root, agent: agent, prompt: prompt)
+                }
+            }
+            return result
         }
     }
 

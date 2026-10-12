@@ -11,6 +11,12 @@ struct PreferencesSheet: View {
     private let fontFamilies = ["Menlo", "SF Mono", "Monaco", "Andale Mono", "Courier New"]
 
     var body: some View {
+        ScrollView { preferences }
+            .frame(width: 440, height: 700)
+            .accessibilityIdentifier(AccessibilityID.preferencesSheet)
+    }
+
+    private var preferences: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Text("Preferences")
@@ -138,6 +144,12 @@ struct PreferencesSheet: View {
                 Text("Codex")
                     .font(.headline)
 
+                Toggle("Automatically retry transient Codex failures", isOn: $store.autoRetryCodexFailures)
+                    .accessibilityIdentifier("banyan.preferences.codex-auto-retry")
+                Text("Continues the same conversation after capacity or connection failures, up to four times. Typing or Cancel Retry stops recovery. Quota and sign-in errors require your attention.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Toggle("Enable native Codex client (preview)", isOn: $store.enableNativeCodex)
                 Text("Allows new native sessions and turns. Disabling releases idle threads; active turns and pending replies stay connected until finished. CLI and Puck runtimes are independent.")
                     .font(.caption)
@@ -173,8 +185,6 @@ struct PreferencesSheet: View {
             Spacer(minLength: 0)
         }
         .padding(24)
-        .frame(width: 440, height: 700)
-        .accessibilityIdentifier(AccessibilityID.preferencesSheet)
     }
 
     /// Keeps the menu honest if the stored window is not one Banyan offers, so

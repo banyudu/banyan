@@ -40,6 +40,7 @@ public struct SessionStatusObservation: Sendable, Equatable {
     public let modelIDIsExact: Bool
     public let currentPath: String?
     public let liveProcessIDs: Set<Int32>
+    public let codexRetryCandidate: CodexTerminalRetryCandidate?
 
     public init(
         id: String,
@@ -49,7 +50,8 @@ public struct SessionStatusObservation: Sendable, Equatable {
         modelID: String? = nil,
         modelIDIsExact: Bool = false,
         currentPath: String?,
-        liveProcessIDs: Set<Int32> = []
+        liveProcessIDs: Set<Int32> = [],
+        codexRetryCandidate: CodexTerminalRetryCandidate? = nil
     ) {
         self.id = id
         self.status = status
@@ -59,6 +61,7 @@ public struct SessionStatusObservation: Sendable, Equatable {
         self.modelIDIsExact = modelIDIsExact
         self.currentPath = currentPath
         self.liveProcessIDs = liveProcessIDs
+        self.codexRetryCandidate = codexRetryCandidate
     }
 }
 
@@ -131,7 +134,8 @@ public struct SessionStatusSynchronizer: Sendable {
                 modelID: result.modelID,
                 modelIDIsExact: result.modelIDIsExact,
                 currentPath: result.currentPath,
-                liveProcessIDs: result.liveProcessIDs
+                liveProcessIDs: result.liveProcessIDs,
+                codexRetryCandidate: result.codexRetryCandidate
             ))
         }
         return collector.drain()

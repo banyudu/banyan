@@ -15,6 +15,7 @@ struct WorkspaceSnapshot {
     /// handoff action. Off by default: installing the command is not enough on
     /// its own to put a button in front of every eligible session.
     var enableHandoffAction = false
+    var autoRetryCodexFailures = true
 }
 
 struct LinearIssueListCacheSnapshot: Codable {
@@ -100,7 +101,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             enableCodexAppServerMode: state["enableCodexAppServerMode"].flatMap(Bool.init) ?? defaults.enableCodexAppServerMode,
             sessionRetentionDays: state["sessionRetentionDays"].flatMap(Int.init) ?? defaults.sessionRetentionDays,
             enableNativeCodex: state["enableNativeCodex"].flatMap(Bool.init) ?? defaults.enableNativeCodex,
-            enableHandoffAction: state["enableHandoffAction"].flatMap(Bool.init) ?? defaults.enableHandoffAction
+            enableHandoffAction: state["enableHandoffAction"].flatMap(Bool.init) ?? defaults.enableHandoffAction,
+            autoRetryCodexFailures: state["autoRetryCodexFailures"].flatMap(Bool.init) ?? defaults.autoRetryCodexFailures
         )
     }
 
@@ -114,6 +116,7 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             "enableCodexAppServerMode": String(workspace.enableCodexAppServerMode),
             "enableNativeCodex": String(workspace.enableNativeCodex),
             "enableHandoffAction": String(workspace.enableHandoffAction),
+            "autoRetryCodexFailures": String(workspace.autoRetryCodexFailures),
             "sessionRetentionDays": String(workspace.sessionRetentionDays)
         ]
         sessionDatabase.saveState(values)

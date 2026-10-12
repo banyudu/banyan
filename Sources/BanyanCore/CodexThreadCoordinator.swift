@@ -266,7 +266,7 @@ public final class CodexThreadCoordinator {
 
     private func checkCLIHandoffIdle() throws {
         guard remoteObservation.isEmpty else {
-            throw CodexAppServerError.protocolViolation("Detach Slack sessions before switching to the CLI")
+            throw CodexAppServerError.protocolViolation("Detach Slack sessions and cancel pending retries before switching to the CLI")
         }
         guard states.values.allSatisfy({
             $0.runtime.type != "active" && $0.activeTurnID == nil && !$0.needsAttention

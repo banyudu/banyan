@@ -88,6 +88,7 @@ extension SessionStore {
     /// The bounded, prompt-aware path a delivery target is meant to use is
     /// `answerPrompt`.
     func injectInput(id: String, keys: [TmuxKey], text: String?, submit: Bool) async throws -> SessionInputReceipt {
+        if let session = sessions.first(where: { $0.id == id }) { noteCodexRetryInteraction(session) }
         let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession
         terminal?.freezeInputInFlight += 1
         defer { terminal?.freezeInputInFlight -= 1 }
@@ -133,6 +134,7 @@ extension SessionStore {
     /// saw some time ago, and the only way to know it is still on screen is to
     /// look now. Every rejection path returns before a single keystroke is sent.
     func answerPrompt(id: String, request: AgentAnswerRequest) async throws -> SessionAnswerReceipt {
+        if let session = sessions.first(where: { $0.id == id }) { noteCodexRetryInteraction(session) }
         let terminal = sessions.first(where: { $0.id == id }) as? TerminalSession
         terminal?.freezeInputInFlight += 1
         defer { terminal?.freezeInputInFlight -= 1 }

@@ -46,7 +46,9 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var isTitlePinned: Bool
     @Published var cwd: String
     @Published var command: String
-    @Published var status: SessionStatus
+    @Published var status: SessionStatus {
+        didSet { if status == .closed { codexAutoRetry.cancel() } }
+    }
     @Published var tone: SessionTone
     @Published var updatedAt: Date
     @Published var isRestored: Bool
@@ -57,13 +59,19 @@ class BanyanSession: ObservableObject, Identifiable {
     /// the backing session and its agent are untouched, so the row keeps the
     /// last observed agent state and resuming restores it instead of resetting
     /// it. See `suspend()` / `resume()`.
-    @Published var isSuspended: Bool
+    @Published var isSuspended: Bool {
+        didSet { if isSuspended { codexAutoRetry.cancel() } }
+    }
     /// Actual agent process-group STOP, independent of frontend parking.
     @Published var agentQueuePosition: Int?
     @Published var agentLaunchQueue: AgentLaunchQueueState?
     var agentAdmission: AgentAdmissionController?
-    @Published var isFrozen = false
-    @Published var isDeepSuspended = false
+    @Published var isFrozen = false {
+        didSet { if isFrozen { codexAutoRetry.cancel() } }
+    }
+    @Published var isDeepSuspended = false {
+        didSet { if isDeepSuspended { codexAutoRetry.cancel() } }
+    }
     @Published var isDeepResuming = false
     @Published var isDeepTerminating = false
     @Published var parentSessionID: String?
@@ -74,6 +82,20 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var agentSessionID: String?
     @Published var workflow: SessionWorkflow?
     @Published var workflowRecoveryError: String?
+    @Published var codexRetryStatus: CodexRetryStatus?
+    var autoRetryCodexFailures = true {
+        didSet { if !autoRetryCodexFailures { codexAutoRetry.cancel() } }
+    }
+    lazy var codexAutoRetry: CodexAutoRetryController = {
+        let controller = CodexAutoRetryController()
+        controller.onChange = { [weak self] status in
+            self?.codexRetryStatus = status
+            if let native = self as? CodexSession {
+                native.coordinator.setRemoteObservation(sessionID: native.id, ownerID: "auto-retry", retained: status.map { !$0.isExhausted } ?? false)
+            }
+        }
+        return controller
+    }()
     var lastConversationResetAt: Date?
 
     let telemetry: PerformanceTelemetry
@@ -308,6 +330,7 @@ class BanyanSession: ObservableObject, Identifiable {
 
     /// Ends the session in Banyan and releases what backs it.
     func closeBackingSession() {
+        codexAutoRetry.cancel()
         agentAdmission?.cancel(id)
         status = .closed
         isSuspended = false
@@ -316,6 +339,7 @@ class BanyanSession: ObservableObject, Identifiable {
 
     /// Stops observing the session without touching the backing work.
     func terminate(markClosed: Bool = true) {
+        codexAutoRetry.cancel()
         if markClosed {
             status = .closed
             // A closed session is over, not parked. Leaving the flag set would
@@ -333,6 +357,7 @@ class BanyanSession: ObservableObject, Identifiable {
     /// exactly the state a resume is supposed to bring back.
     func suspend() {
         guard !isImportedHistory, status != .closed, !isSuspended else { return }
+        codexAutoRetry.cancel()
         agentAdmission?.cancel(id)
         isSuspended = true
         touch()

@@ -9,6 +9,18 @@ import Vision
 @Suite(.serialized)
 @MainActor
 struct SessionDetailOverlayTests {
+    @Test func codexRetryBannerCancelsWithoutStoreChange() async throws {
+        let fixture = try OverlayFixture()
+        defer { fixture.window.close() }
+        fixture.session.codexAutoRetry.schedule(failureID: "capacity", reason: "Selected model is at capacity.") {}
+        let visible = try await fixture.visibleText()
+        #expect(visible.contains("Retrying in"))
+        #expect(visible.contains("Cancel Retry"))
+        #expect(visible.contains("at capacity"))
+        fixture.session.codexAutoRetry.cancel()
+        #expect(try await fixture.visibleText().isEmpty)
+    }
+
     @Test func clearingDeepSuspendErrorRemovesWarningWithoutStoreChange() async throws {
         let fixture = try OverlayFixture(error: "Closed session cannot resume an agent")
         defer { fixture.window.close() }

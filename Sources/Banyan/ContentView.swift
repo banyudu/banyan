@@ -2513,6 +2513,11 @@ struct SessionDetailOverlay: View {
             PuckSessionDetail(session: puck)
                 .id(puck.id)
                 .background(.background)
+        } else if session.codexRetryStatus != nil {
+            VStack(spacing: 0) {
+                CodexRetryBanner(session: session)
+                Spacer().allowsHitTesting(false)
+            }
         } else if session.needsManualAttach {
             VStack(spacing: 0) {
                 TerminalReconnectBanner(session: session)

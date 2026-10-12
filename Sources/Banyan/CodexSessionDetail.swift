@@ -20,6 +20,7 @@ struct CodexSessionDetail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            CodexRetryBanner(session: session)
             Divider()
             timeline
             if !session.state.pendingRequests.isEmpty {

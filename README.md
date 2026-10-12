@@ -184,6 +184,20 @@ use separately billed API-key accounts and require an explicit model and account
 label. Profiles without `puck_provider` and plain shells retain their terminal
 backends.
 
+## Codex automatic retries
+
+Banyan automatically continues native and terminal Codex sessions after recognized
+capacity, overload, temporary rate-limit, and connection failures. It keeps the
+same conversation and model, and waits approximately 15, 30, 60, and 120 seconds
+before giving up. The session banner shows the next retry and offers **Cancel
+Retry**. Typing, interruption, closure, and disabling **Preferences → Codex →
+Automatically retry transient Codex failures** cancel pending recovery.
+
+Terminal recovery requires a verified live Codex process and a recognized error
+immediately above an empty composer. Ambiguous layouts are left for manual
+recovery. Quota, sign-in, context, approval, and policy errors are not retried.
+See [the recovery policy](docs/codex-auto-retry.md) for details and limitations.
+
 ## Run the macOS app
 
 ```sh

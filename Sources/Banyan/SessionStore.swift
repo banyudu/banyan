@@ -267,6 +267,12 @@ final class SessionStore: ObservableObject {
             saveWorkspace()
         }
     }
+    @Published var autoRetryCodexFailures = true {
+        didSet {
+            sessions.forEach { $0.autoRetryCodexFailures = autoRetryCodexFailures }
+            saveWorkspace()
+        }
+    }
     /// Independent rollout gate for the Banyan-owned native client.
     @Published var enableNativeCodex = false {
         didSet {
@@ -672,6 +678,7 @@ final class SessionStore: ObservableObject {
         terminalFontFamily = workspace.terminalFontFamily
         terminalFontSize = workspace.terminalFontSize
         enableCodexAppServerMode = workspace.enableCodexAppServerMode
+        autoRetryCodexFailures = workspace.autoRetryCodexFailures
         enableNativeCodex = workspace.enableNativeCodex
         enableHandoffAction = workspace.enableHandoffAction
         codexThreads.isEnabled = enableNativeCodex
@@ -2798,6 +2805,7 @@ final class SessionStore: ObservableObject {
         guard let native = sessions.first(where: { $0.id == id }) as? CodexSession else {
             throw ControlError.notFound(id)
         }
+        native.codexAutoRetry.cancel()
         let reason = native.state.connection.message ?? "User selected Codex CLI"
         var binding = try await codexThreads.prepareForCLIFallback(sessionID: id)
         guard let index = sessions.firstIndex(where: { $0 === native }) else {
@@ -4893,6 +4901,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func attach(_ session: BanyanSession) {
+        session.autoRetryCodexFailures = autoRetryCodexFailures
         configureAgentAdmission(session)
         if let terminal = session as? TerminalSession, terminal.isRestored, terminal.status != .closed {
             let backend = terminal.tmuxBackend
@@ -4944,6 +4953,11 @@ final class SessionStore: ObservableObject {
         }
         session.onUserSubmittedInput = { [weak self, weak session] submittedInput in
             guard let self, let session else { return }
+            session.codexAutoRetry.reset()
+            if let terminal = session as? TerminalSession {
+                terminal.codexRetryAutomaticTurn = false
+                terminal.codexRetryWasExecuting = false
+            }
             // A plain shell can become a coding-agent session without a picker
             // launch command. Its status/provider do not change until the next
             // supervisor observation, so user input must invalidate any quiet
@@ -5127,7 +5141,8 @@ final class SessionStore: ObservableObject {
             enableCodexAppServerMode: enableCodexAppServerMode,
             sessionRetentionDays: sessionRetentionDays,
             enableNativeCodex: enableNativeCodex,
-            enableHandoffAction: enableHandoffAction
+            enableHandoffAction: enableHandoffAction,
+            autoRetryCodexFailures: autoRetryCodexFailures
         )
     }
 
@@ -5702,6 +5717,7 @@ final class SessionStore: ObservableObject {
         for var result in results {
             guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
                   !session.isFrozen, !session.isDeepSuspended else { continue }
+            observeCodexRetry(session, observation: result)
             if result.status == .closed, session.workflow?.state.permitsClose == false {
                 // Missing process ≠ closed issue. Keep managed rows visible and
                 // their worktrees owned while the supervisor recovers the thread.

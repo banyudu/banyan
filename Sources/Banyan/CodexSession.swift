@@ -10,7 +10,12 @@ final class CodexSession: BanyanSession {
     @Published private(set) var actionError: String?
     @Published private(set) var isSending = false
     @Published private(set) var submittedRequestIDs: Set<String> = []
-    @Published var draft = ""
+    @Published var draft = "" {
+        didSet { if draft != oldValue, !draft.isEmpty { codexAutoRetry.cancel() } }
+    }
+    var codexRetryLatestTurnID: String?
+    var codexRetryAutomaticTurnID: String?
+    var codexOwnsRetryTurnID: String?
     @Published var remoteStatus: String?
     let coordinator: CodexThreadCoordinator
 
@@ -50,6 +55,12 @@ final class CodexSession: BanyanSession {
     }
 
     func apply(_ next: CodexThreadState) {
+        if let turnID = next.activeTurnID, turnID != state.activeTurnID {
+            codexRetryLatestTurnID = turnID
+            if codexAutoRetry.isSubmitting { codexRetryAutomaticTurnID = turnID }
+            codexAutoRetry.beganTurn(automatic: turnID == codexRetryAutomaticTurnID)
+        }
+        if next.needsAttention || next.connection.message != nil { codexAutoRetry.cancel() }
         if next.connection == .connecting, state.connection != .connecting { conversation.beginHydration() }
         if next.connection == .unsubscribed, state.connection != .unsubscribed { conversation.releaseHistory() }
         submittedRequestIDs.formIntersection(next.pendingRequests.map { $0.id.inspectableText })
@@ -78,6 +89,7 @@ final class CodexSession: BanyanSession {
         if state.connection == .unsubscribed, state.activeTurnID == nil, !state.needsAttention { return }
         guard let threadID = state.binding.threadID else { return }
         conversation.receive(method: method, params: params, threadID: threadID)
+        receiveCodexRetryEvent(method: method, params: params)
     }
 
     func hydrate(thread: CodexJSONValue) {
@@ -93,6 +105,7 @@ final class CodexSession: BanyanSession {
 
     func sendDraft() async {
         guard canSend else { return }
+        codexAutoRetry.reset()
         let text = draft
         let turnID = state.activeTurnID
         isSending = true
@@ -111,6 +124,7 @@ final class CodexSession: BanyanSession {
     }
 
     func interrupt() async {
+        codexAutoRetry.cancel()
         actionError = nil
         do { try await coordinator.interrupt(sessionID: id) }
         catch { actionError = error.localizedDescription }

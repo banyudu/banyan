@@ -486,6 +486,7 @@ final class DetectingLocalProcessTerminalView: LocalProcessTerminalView {
     }
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        guard permitsInput?() != false else { return }
         isTextComposing = true
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
     }
