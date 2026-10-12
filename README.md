@@ -694,6 +694,59 @@ The selected theme applies to both the SwiftUI chrome, such as the sidebar, and 
 
 Banyan watches terminal output for common agent states and can mark sessions as `need-input`, `review`, `failed`, or `completed`. It sends macOS notifications for attention states.
 
+### Managed issue workflows
+
+An external supervisor such as [workit](https://github.com/banyudu/workit/issues/6)
+can attach an independent workflow badge: Working, Auto-waiting, Needs you,
+Verified, Paused or Cancelled. Process completion does not establish issue
+verification. Banyan owns session control/presentation; the supervisor owns
+scheduling, acceptance evidence and tracker closeout. There is no workflow
+scheduler inside Banyan.
+
+```bash
+banyanctl workflow set --id TASK-123 --owner workit --job-id job-a --revision 1 --state waiting --detail "Waiting for deployment"
+banyanctl workflow wake --id TASK-123 --job-id job-a --revision 1 --wake-id wake-a --text "Continue acceptance on the observed deployment."
+banyanctl workflow close-verified
+```
+
+`banyanctl session list` advertises `workflowProtocol: 1` and returns each managed
+session's workflow metadata separately from its process status. Owner/job
+identity is immutable; revisions must increase for changed state/detail.
+Same-revision identical updates are idempotent.
+
+Wakes use the authenticated control API. They inspect the current pane and agent
+process, reject busy/parked/frozen/approval states and drafts, and send literal
+text only to a recognized empty conversation input. Used turns may be labeled
+`need-input`; that label alone is insufficient. Unknown input shapes remain
+held. Native Codex sessions use their existing turn API. Missing/dead terminal
+backends require the exact original conversation in the provider's disk store
+at the same cwd; they never replay the original task or choose the newest thread.
+
+The private `Banyan/workflows/` journal records intent before delivery. A
+delivered wake ID is acknowledged without another turn; pending/uncertain
+receipts require inspection. A receipt acknowledges delivery or queued native
+resume, not successful execution or acceptance. After inspecting the original
+conversation and external effects, a supervisor can explicitly reconcile:
+
+```bash
+banyanctl workflow resolve --id TASK-123 --job-id job-a --revision 1 --wake-id wake-a --outcome delivered --detail "Observed the original continuation"
+```
+
+`not-delivered` clears the receipt only when inspection establishes no delivery.
+The workit CLI also preserves a recovery record and requires explicit resume.
+Journal failures block continuation. Old/unmanaged saved sessions need no
+migration.
+
+A refusal proven to occur before any prompt bytes were sent records a
+`not-delivered` receipt, allowing the same wake ID to retry automatically.
+
+Unfinished managed sessions are protected from ordinary close, which otherwise
+can terminate their agent. Verify them or explicitly pause/cancel their workflow
+first. The sidebar menu and CLI offer **Close verified sessions**, selecting
+only verified sessions without active work/human input. Explicit removal remains
+destructive and requires supervisor recovery. Pausing a workflow stops future
+wakeups; interrupt its active turn separately when needed.
+
 Coding-agent sessions launched through `claude`, `codex`, `deepseek`, `gemini`, `glm`/`zai`, `mimo`, `minimax`, or `opencode` get a compact provider badge in the sidebar. If a session has a manual title, Banyan keeps it. Otherwise it derives a title from the agent-reported or agent-generated thread name, the prompt passed to the agent command, the first prompt submitted interactively (read back from the agent's own transcript when the agent never names the thread), or a compact provider/session fallback.
 
 For local model or cheap hosted title generation, set `BANYAN_TITLE_COMMAND` before launching Banyan. The command receives a JSON object on stdin and should print one short title on the first stdout line:
