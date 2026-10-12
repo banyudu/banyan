@@ -56,9 +56,9 @@ extension SessionStore {
             session.lastFreezeInteractionAt = Date()
             let target = try self.paneTarget(id: session.id)
             let backend = self.tmuxBackend
-            let processes = self.processTable.snapshot()
+            let processTable = self.processTable
             let fresh = await Task.detached(priority: .utility) {
-                let supervisor = AgentSupervisor(backend: backend, processTable: processes)
+                let supervisor = AgentSupervisor(backend: backend, processTable: processTable.snapshot())
                 return supervisor.inspect(tmuxSessionName: target.tmuxSessionName, launchCommand: target.command,
                     currentStatus: target.status, cwd: target.cwd, sessionStartedAt: target.createdAt,
                     environment: target.environment)?.codexRetryCandidate
