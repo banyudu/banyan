@@ -777,9 +777,11 @@ Example:
 
 Handoff is an optional workflow for passing an idle agent session's worktree to
 an external dispatch process (for example, a script that ships the branch and
-cleans up). It is disabled unless a handoff executable is installed: Banyan
-looks for `~/bin/handoff`, or the path in `BANYAN_HANDOFF_COMMAND` if set. When
-no executable is found, the handoff button and shortcut stay hidden.
+cleans up). It stays hidden unless both halves are in place: **Show the worktree
+handoff action** is enabled in Preferences (off by default, so the workflow is
+opt-in) and a handoff executable is installed. Banyan looks for `~/bin/handoff`,
+or the path in `BANYAN_HANDOFF_COMMAND` if set. When either is missing, the
+handoff button and the ⇧⌥⌘H shortcut stay hidden.
 
 When configured, eligible sessions (idle coding agents in a git worktree on a
 non-default branch) show a handoff button in the sidebar. Dispatch closes the

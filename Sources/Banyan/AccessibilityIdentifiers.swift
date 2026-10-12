@@ -65,6 +65,7 @@ enum AccessibilityID {
     static let preferencesSheet = "banyan.sheet.preferences"
     static let preferencesSessionRetention = "banyan.sheet.preferences.session-retention"
     static let preferencesSessionCleanUp = "banyan.sheet.preferences.session-clean-up"
+    static let preferencesHandoffAction = "banyan.sheet.preferences.handoff-action"
 
     static func projectAddSession(_ groupID: String) -> String {
         "banyan.sidebar.project.\(groupID).add-session"

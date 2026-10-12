@@ -11,6 +11,10 @@ struct WorkspaceSnapshot {
     /// How long a closed session stays in `state.sqlite`. `0` keeps everything.
     let sessionRetentionDays: Int
     var enableNativeCodex = false
+    /// Whether the sidebar row and the handoff shortcut expose the worktree
+    /// handoff action. Off by default: installing the command is not enough on
+    /// its own to put a button in front of every eligible session.
+    var enableHandoffAction = false
 }
 
 struct LinearIssueListCacheSnapshot: Codable {
@@ -95,7 +99,8 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             terminalFontSize: state["terminalFontSize"].flatMap(Double.init) ?? defaults.terminalFontSize,
             enableCodexAppServerMode: state["enableCodexAppServerMode"].flatMap(Bool.init) ?? defaults.enableCodexAppServerMode,
             sessionRetentionDays: state["sessionRetentionDays"].flatMap(Int.init) ?? defaults.sessionRetentionDays,
-            enableNativeCodex: state["enableNativeCodex"].flatMap(Bool.init) ?? defaults.enableNativeCodex
+            enableNativeCodex: state["enableNativeCodex"].flatMap(Bool.init) ?? defaults.enableNativeCodex,
+            enableHandoffAction: state["enableHandoffAction"].flatMap(Bool.init) ?? defaults.enableHandoffAction
         )
     }
 
@@ -108,6 +113,7 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             "terminalFontSize": String(workspace.terminalFontSize),
             "enableCodexAppServerMode": String(workspace.enableCodexAppServerMode),
             "enableNativeCodex": String(workspace.enableNativeCodex),
+            "enableHandoffAction": String(workspace.enableHandoffAction),
             "sessionRetentionDays": String(workspace.sessionRetentionDays)
         ]
         sessionDatabase.saveState(values)

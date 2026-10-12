@@ -279,6 +279,16 @@ final class SessionStore: ObservableObject {
             saveWorkspace()
         }
     }
+    /// Opt-in gate for the worktree handoff affordance. Installing the handoff
+    /// command used to be the whole switch, so the button appeared in any
+    /// eligible row whether or not the workflow was still in use.
+    @Published var enableHandoffAction = false {
+        didSet {
+            guard enableHandoffAction != oldValue else { return }
+            refreshHandoffAvailability()
+            saveWorkspace()
+        }
+    }
     /// How long a closed session stays in `state.sqlite`, in days. `0` keeps
     /// everything. Applied at launch before snapshots are built, and on demand
     /// from Preferences or `banyanctl prune` — never from the save path, which
@@ -652,7 +662,8 @@ final class SessionStore: ObservableObject {
                 terminalFontFamily: defaultFontFamily,
                 terminalFontSize: defaultFontSize,
                 enableCodexAppServerMode: false,
-                sessionRetentionDays: SessionRetentionPolicy.defaultRetentionDays
+                sessionRetentionDays: SessionRetentionPolicy.defaultRetentionDays,
+                enableHandoffAction: false
             )
         )
         selectedSessionID = workspace.selectedSessionID
@@ -662,6 +673,7 @@ final class SessionStore: ObservableObject {
         terminalFontSize = workspace.terminalFontSize
         enableCodexAppServerMode = workspace.enableCodexAppServerMode
         enableNativeCodex = workspace.enableNativeCodex
+        enableHandoffAction = workspace.enableHandoffAction
         codexThreads.isEnabled = enableNativeCodex
         sessionRetentionDays = SessionRetentionPolicy.normalizedRetentionDays(workspace.sessionRetentionDays)
         terminalRenderer = TerminalRendererPreference.resolvedDefault
@@ -688,10 +700,7 @@ final class SessionStore: ObservableObject {
         )
         paletteCommands = paletteConfiguration.commands
         paletteConfigurationDiagnostic = paletteConfiguration.diagnostic
-        isHandoffAvailable = Self.resolveHandoffCommand(
-            environment: host.environment,
-            homeDirectory: host.homeDirectory.path
-        ) != nil
+        refreshHandoffAvailability()
 
         selection.bind(to: self)
 
@@ -4659,10 +4668,7 @@ final class SessionStore: ObservableObject {
     func dispatchHandoff(id: String, bypassEligibility: Bool = false) -> Bool {
         // Re-resolve at dispatch time so a handoff command installed or removed
         // after launch takes effect without restarting the app.
-        let command = Self.resolveHandoffCommand(
-            environment: environment,
-            homeDirectory: homeDirectory
-        )
+        let command = resolvedHandoffCommand
         isHandoffAvailable = command != nil
         guard let command,
               let session = sessions.first(where: { $0.id == id }),
@@ -4709,6 +4715,10 @@ final class SessionStore: ObservableObject {
     }
 
     func handleHandoffShortcut() {
+        // The preference hides the button and the shortcut together, so a
+        // stray chord should do nothing rather than accuse the user of not
+        // having installed a command they deliberately turned off.
+        guard enableHandoffAction else { return }
         guard isHandoffAvailable else {
             handoffNotice = "Handoff is not configured. Install an executable at ~/bin/handoff or set \(SessionHandoffPolicy.commandEnvironmentKey)."
             return
@@ -4732,6 +4742,20 @@ final class SessionStore: ObservableObject {
 
     func isHandoffPending(for sessionID: String) -> Bool {
         pendingHandoffJobs.contains { $0.sessionID == sessionID }
+    }
+
+    /// The executable to dispatch, or nil when the action is off or nothing is
+    /// installed. Resolved on demand so installing or removing the command
+    /// takes effect without restarting the app.
+    private var resolvedHandoffCommand: String? {
+        guard enableHandoffAction else { return nil }
+        return Self.resolveHandoffCommand(environment: environment, homeDirectory: homeDirectory)
+    }
+
+    /// Single source of truth for the handoff affordances: the button, the
+    /// shortcut, and the "not configured" notice all read `isHandoffAvailable`.
+    private func refreshHandoffAvailability() {
+        isHandoffAvailable = resolvedHandoffCommand != nil
     }
 
     private static func resolveHandoffCommand(
@@ -5102,7 +5126,8 @@ final class SessionStore: ObservableObject {
             terminalFontSize: terminalFontSize,
             enableCodexAppServerMode: enableCodexAppServerMode,
             sessionRetentionDays: sessionRetentionDays,
-            enableNativeCodex: enableNativeCodex
+            enableNativeCodex: enableNativeCodex,
+            enableHandoffAction: enableHandoffAction
         )
     }
 

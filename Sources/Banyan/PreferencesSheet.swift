@@ -123,6 +123,12 @@ struct PreferencesSheet: View {
                     .disabled(store.expiredSessionCount == 0)
                     .accessibilityIdentifier(AccessibilityID.preferencesSessionCleanUp)
                 }
+
+                Toggle("Show the worktree handoff action", isOn: $store.enableHandoffAction)
+                    .accessibilityIdentifier(AccessibilityID.preferencesHandoffAction)
+                Text("Off by default. When enabled and a handoff executable is installed, eligible worktree sessions show a handoff button in the sidebar and ⇧⌥⌘H dispatches it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .onChange(of: store.sessionRetentionDays) {
                 lastCleanUpCount = nil
