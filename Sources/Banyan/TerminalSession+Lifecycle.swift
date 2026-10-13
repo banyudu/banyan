@@ -72,7 +72,7 @@ extension TerminalSession {
         Task.detached(priority: .userInitiated) { [weak self, weak terminalView] in
             if requiresExistingAgentPane {
                 guard case .present(let pane) = backend.agentAdmissionPane(named: tmuxName), !pane.isDead else {
-                    await MainActor.run { self?.retainMissingAgentBackendForRecovery(generation: launchGeneration) }
+                    await MainActor.run { [weak self] in self?.retainMissingAgentBackendForRecovery(generation: launchGeneration) }
                     return
                 }
             }
@@ -316,7 +316,7 @@ extension TerminalSession {
         Task.detached(priority: .userInitiated) { [weak self] in
             if requiresExistingAgentPane {
                 guard case .present(let pane) = backend.agentAdmissionPane(named: request.sessionName), !pane.isDead else {
-                    await MainActor.run { self?.retainMissingAgentBackendForRecovery(generation: launchGeneration) }
+                    await MainActor.run { [weak self] in self?.retainMissingAgentBackendForRecovery(generation: launchGeneration) }
                     return
                 }
             }
