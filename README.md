@@ -710,6 +710,11 @@ Banyan watches terminal output for common agent states and can mark sessions as 
 
 ### Managed issue workflows
 
+The native close confirmation can **Pause and Close** unfinished Workit-owned
+sessions after Workit acknowledges the exact job/session and Banyan confirms
+its matching paused projection. The issue stays unfinished. See
+[configuration, CLI requirements and recovery](docs/pause-and-close.md).
+
 An external supervisor such as [workit](https://github.com/banyudu/workit/issues/6)
 can attach an independent workflow badge: Working, Auto-waiting, Needs you,
 Verified, Paused or Cancelled. Process completion does not establish issue

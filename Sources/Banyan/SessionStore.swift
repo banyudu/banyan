@@ -306,6 +306,13 @@ final class SessionStore: ObservableObject {
         }
     }
     @Published private var pendingCloseSessionID: String?
+    @Published var pauseCloseInFlightIDs: Set<String> = []
+    @Published var pauseCloseError: String?
+    var pauseCloseRetrySessionID: String?
+    var pauseCloseAttempts: [String: PauseCloseAttempt] = [:]
+    var pauseCloseUITaskIDs: Set<String> = []
+    let workitPauseClient: any WorkitPauseClient
+    let pauseCloseProjectionTimeout: Duration
     /// Per-project last-used "new session" kind, keyed by project group ID. Drives
     /// the project header's split "+" button so it reopens whatever was launched
     /// last for that project. Persisted in `UserDefaults`.
@@ -581,11 +588,15 @@ final class SessionStore: ObservableObject {
         attentionNotifier: AttentionNotifier,
         puckDaemon: (any PuckDaemonService)? = nil,
         codexService: (any CodexThreadService)? = nil,
+        workitPauseClient: (any WorkitPauseClient)? = nil,
+        pauseCloseProjectionTimeout: Duration = .seconds(5),
         freezePreferences: UserDefaults = .standard,
         makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
             ControlServer(store: $0, host: $1)
         }
     ) {
+        self.workitPauseClient = workitPauseClient ?? WorkitCommandPauseClient(host: host)
+        self.pauseCloseProjectionTimeout = pauseCloseProjectionTimeout
         self.freezePreferences = freezePreferences
         let storedLimit = freezePreferences.integer(forKey: AgentAdmissionController.defaultsKey)
         let admission = AgentAdmissionController(limit: storedLimit > 0 ? min(AgentAdmissionController.maximumLimit, storedLimit) : AgentAdmissionController.defaultLimit)
@@ -4276,6 +4287,18 @@ final class SessionStore: ObservableObject {
         guard session.workflow?.state.permitsClose != false, session.workflowRecoveryError == nil else {
             throw ControlError.conflict(code: "workflow_unfinished", message: "Issue is unfinished; verify it or explicitly pause/cancel its workflow before closing")
         }
+        guard !pauseCloseInFlightIDs.contains(id) else {
+            throw WorkflowError.refused("Pause and Close is in progress; wait for the owner acknowledgement and matching projection.")
+        }
+        // Re-read at the destructive boundary: a previously readable journal
+        // must not authorize teardown after corruption or a projection change.
+        do {
+            guard try workflowJournal.load(id: id) == session.workflow else {
+                throw WorkflowError.refused("workflow journal differs from the current projection")
+            }
+        } catch {
+            throw WorkflowError.refused("The workflow journal cannot confirm close. Repair it or have its owner project the current workflow, then retry. The terminal remains open.")
+        }
         try (session as? TerminalSession)?.prepareFrozenAgentForTeardown()
         let replacementID = selectedSessionID == id
             ? preferredSelectionAfterClosing(id: id)
@@ -4860,9 +4883,13 @@ final class SessionStore: ObservableObject {
     }
 
     func confirmPendingClose() {
-        guard let id = pendingCloseSessionID else { return }
+        guard let id = pendingCloseSessionID, !pauseCloseInFlightIDs.contains(id) else { return }
         pendingCloseSessionID = nil
-        try? close(id: id)
+        do { try close(id: id) }
+        catch {
+            pauseCloseRetrySessionID = nil
+            pauseCloseError = error.localizedDescription
+        }
     }
 
     func cancelPendingClose() {

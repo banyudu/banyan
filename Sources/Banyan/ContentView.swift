@@ -141,13 +141,32 @@ struct ContentView: View {
         }
         .alert(Text(closeConfirmationTitle), isPresented: closeConfirmationBinding) {
             Button("Cancel", role: .cancel) {}
-            Button(closeConfirmationAction, role: .destructive) {
-                store.confirmPendingClose()
+            if store.pendingCloseCanPause {
+                Button("Pause and Close", role: .destructive) {
+                    store.confirmPendingPauseAndClose()
+                }
+                .disabled(store.pendingCloseIsPausing)
+                .keyboardShortcut(.defaultAction)
+            } else {
+                Button(closeConfirmationAction, role: .destructive) {
+                    store.confirmPendingClose()
+                }
+                .disabled(store.pendingCloseIsPausing || store.pendingCloseSession?.workflow?.state.permitsClose == false || store.pendingCloseSession?.workflowRecoveryError != nil)
+                .keyboardShortcut(.defaultAction)
             }
-            .disabled(store.pendingCloseSession?.workflow?.state.permitsClose == false || store.pendingCloseSession?.workflowRecoveryError != nil)
-            .keyboardShortcut(.defaultAction)
         } message: {
-            Text(closeConfirmationMessage)
+            Text(store.pendingCloseMessage)
+        }
+        .alert("Session remains open", isPresented: Binding(
+            get: { store.pauseCloseError != nil },
+            set: { if !$0 { store.pauseCloseError = nil } }
+        )) {
+            Button("OK", role: .cancel) { store.pauseCloseError = nil }
+            if store.pauseCloseRetrySessionID != nil {
+                Button("Retry Pause and Close", role: .destructive) { store.retryPauseAndClose() }
+            }
+        } message: {
+            Text(store.pauseCloseError ?? "")
         }
         .alert("Handoff", isPresented: handoffNoticeBinding) {
             Button("OK") {
@@ -1399,23 +1418,6 @@ struct ContentView: View {
                 store.cancelPendingClose()
             }
         }
-    }
-
-    private var closeConfirmationMessage: String {
-        guard let session = store.pendingCloseSession else {
-            return ""
-        }
-        if session.workflow?.state.permitsClose == false || session.workflowRecoveryError != nil {
-            return "This issue is unfinished. Verify it, or explicitly pause/cancel its workflow before closing. Closing cannot mark an issue verified."
-        }
-        var details = [session.closeConsequence]
-        if store.pendingCloseHasOngoingAgent {
-            details.append("Any running coding-agent process in that session will be terminated.")
-        }
-        if store.pendingCloseHasActiveChildren {
-            details.append("Child sessions will be detached to the same level as this parent session.")
-        }
-        return details.joined(separator: " ")
     }
 
     private var handoffNoticeBinding: Binding<Bool> {

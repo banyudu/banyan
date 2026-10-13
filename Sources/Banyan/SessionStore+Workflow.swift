@@ -22,6 +22,7 @@ extension SessionStore {
         let next = try session.workflow?.replacing(workflow) ?? workflow
         try workflowJournal.save(next, id: id)
         session.workflow = next
+        pauseCloseProjectionDidChange(id: id)
     }
 
     var verifiedWorkflowSessionIDs: [String] {
