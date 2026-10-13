@@ -26,7 +26,7 @@ import Testing
         let captured = try JSONDecoder().decode(CapturedInvocation.self, from: Data(contentsOf: output))
         #expect(captured.argv == literal.arguments)
         #expect(captured.state == fixture.state.path)
-        #expect(URL(fileURLWithPath: captured.cwd).resolvingSymlinksInPath() == fixture.root.resolvingSymlinksInPath())
+        #expect(URL(fileURLWithPath: captured.cwd).resolvingSymlinksInPath().path == fixture.root.resolvingSymlinksInPath().path)
     }
 
     @Test(arguments: ["missing-config", "corrupt-config", "missing-cli", "relative-cli", "relative-state", "older-cli", "nonzero", "invalid-json", "wrong-job", "wrong-session", "stale", "verified"])
