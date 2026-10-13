@@ -69,6 +69,40 @@ import Testing
         #expect(!SessionWorkflowPolicy.hasEmptyInput("┃\n┃ some draft\n┃ Model · Provider"))
     }
 
+    // Captured Codex pane; only the private worktree path is anonymized.
+    private let codexEmptyComposer = """
+        › Ask Codex to do anything
+
+          GPT-6.1-Sol xhigh · ~/dev/my-project/.worktrees/task-123 · Context 79% used · weekly 81% left
+          ? for shortcuts                    ⚠ 3 warnings · f2 to view
+        """
+
+    @Test func capturedCodexEmptyComposerPermitsWake() {
+        let hasEmptyInput = SessionWorkflowPolicy.hasEmptyInput(codexEmptyComposer)
+        #expect(hasEmptyInput)
+        #expect(SessionWorkflowPolicy.canWake(status: .needInput, isSuspended: false, isFrozen: false,
+            isDeepSuspended: false, hasObservation: true, isAgent: true, hasEmptyInput: hasEmptyInput))
+        #expect(SessionWorkflowPolicy.hasEmptyInput(codexEmptyComposer.replacingOccurrences(
+            of: "› Ask Codex to do anything", with: "›")))
+    }
+
+    @Test func codexDraftsAndOverlaysStillRefuseWake() {
+        for draft in ["continue the task", "Ask Codex to do anything please", "Ask Codex to do anything\ncontinued draft"] {
+            #expect(!SessionWorkflowPolicy.hasEmptyInput(codexEmptyComposer.replacingOccurrences(
+                of: "Ask Codex to do anything", with: draft)))
+        }
+        for overlay in [
+            "Select model\n› 1. GPT-6.1-Sol\n  2. Other model\nPress enter to confirm",
+            "Settings · Permissions\nApproval mode: on-request\nPress esc to close",
+            "Would you like to run this command?\n› 1. Yes, proceed\n  2. No, and tell Codex what to do differently",
+            "Permission required · Context unavailable"
+        ] {
+            #expect(!SessionWorkflowPolicy.hasEmptyInput(codexEmptyComposer + "\n" + overlay))
+        }
+        #expect(!SessionWorkflowPolicy.hasEmptyInput(codexEmptyComposer.replacingOccurrences(
+            of: "›", with: "❯")))
+    }
+
     @Test func recoveryRequiresTheSameMissingOrDeadPane() {
         let dead = TmuxPaneSnapshot(paneID: "%1", rootPID: 42, currentCommand: "codex",
             currentPath: "/tmp/project", isDead: true, isInMode: false)
