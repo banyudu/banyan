@@ -466,6 +466,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
     private func configureServerTerminalColors() {
         // Existing servers skip configureServerOptions(), so migrate this
         // behavior whenever we touch their terminal capabilities as well.
+        configureServerEnvironment()
         configureServerFocusEvents()
         _ = try? run(["set-option", "-g", "terminal-overrides", "tmux-256color:RGB,xterm-256color:RGB"])
         configureServerHyperlinks()
@@ -489,6 +490,11 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
 
     private func configureServerEnvironment() {
         // Advertise color support without forcing it into piped/parsed output.
+        // A server can outlive a frontend launched by an automation tool whose
+        // output-capture flags would otherwise disable Codex highlighting.
+        _ = try? run(["set-environment", "-gu", "NO_COLOR", ";",
+                      "set-environment", "-gu", "FORCE_COLOR", ";",
+                      "set-environment", "-gu", "CLICOLOR_FORCE"])
         _ = try? run(["set-environment", "-g", "COLORTERM", "truecolor"])
         _ = try? run(["set-environment", "-g", "CLICOLOR", "1"])
     }
@@ -579,6 +585,9 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         environment["PATH"] = merged
         environment.removeValue(forKey: "TMUX")
         environment.removeValue(forKey: "TMUX_PANE")
+        for key in ["NO_COLOR", "FORCE_COLOR", "CLICOLOR_FORCE"] {
+            environment.removeValue(forKey: key)
+        }
         environment["TERM"] = Self.attachTermName
         environment["COLORTERM"] = "truecolor"
         environment["CLICOLOR"] = "1"

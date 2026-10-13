@@ -1199,6 +1199,9 @@ final class SessionStore: ObservableObject {
             ($0.agentLaunchQueue?.requestedAt ?? .distantFuture) < ($1.agentLaunchQueue?.requestedAt ?? .distantFuture)
         }) where terminal.agentLaunchQueue?.cancelled == false {
             terminal.needsRecovery = false
+            // This persisted queue is an explicit pending launch, rather than
+            // an attachment to a previously running conversation.
+            terminal.isRestored = false
             retryQueuedAgent(id: terminal.id)
         }
         for tmuxSessionName in SessionHistoryPresentation.staleTmuxSessionNames(
@@ -2985,7 +2988,7 @@ final class SessionStore: ObservableObject {
         }
 
         let recoveryCommand: String? = try session.codexBinding.map(CodexCLIFallback.command) ?? session.agentProvider.flatMap { provider in
-            guard let agentSessionID = session.agentSessionID,
+            guard let agentSessionID = session.agentSessionID, !agentSessionID.isEmpty,
                   ([.codex, .claude].contains(provider) || provider.isOpencodeBacked) else {
                 return nil
             }
@@ -3010,6 +3013,12 @@ final class SessionStore: ObservableObject {
             }
         }
 
+        guard session.agentProvider == nil || recoveryCommand?.isEmpty == false else {
+            let message = SessionRecoveryPolicy.missingResumeMessage(provider: session.agentProvider)
+            historyResumeErrors[id] = message
+            throw ControlError.badRequest(message)
+        }
+        historyResumeErrors.removeValue(forKey: id)
         session.recoverFromMissingBackingSessionInBackground(command: recoveryCommand)
         if select {
             selectedSessionID = id
@@ -3287,6 +3296,10 @@ final class SessionStore: ObservableObject {
             if session.command != command {
                 session.command = command
             }
+        } else if session.status == .closed, session.agentProvider != nil {
+            let message = SessionRecoveryPolicy.missingResumeMessage(provider: session.agentProvider)
+            historyResumeErrors[id] = message
+            throw ControlError.badRequest(message)
         }
         session.reattachTerminalClient()
         selectedSessionID = id

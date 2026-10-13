@@ -5,9 +5,11 @@ import Testing
 
 @MainActor
 @Test(arguments: [nil, "", "1"] as [String?])
-func terminalAttachEnvironmentPreservesColorPreferenceWithoutForcing(noColor: String?) {
+func terminalAttachEnvironmentIgnoresLauncherColorFlags(noColor: String?) {
     var inherited = ["PATH": "/usr/bin:/bin", "SHELL": "/bin/sh", "TMPDIR": "/tmp", "SSH_AUTH_SOCK": "/tmp/test-agent.sock"]
     inherited["NO_COLOR"] = noColor
+    inherited["FORCE_COLOR"] = "3"
+    inherited["CLICOLOR_FORCE"] = "1"
     let session = TerminalSession(
         id: "color-environment",
         title: "Color environment",
@@ -29,11 +31,9 @@ func terminalAttachEnvironmentPreservesColorPreferenceWithoutForcing(noColor: St
     #expect(environment.contains("TERM=\(TmuxBackend.attachTermName)"))
     #expect(environment.contains("COLORTERM=truecolor"))
     #expect(environment.contains("CLICOLOR=1"))
-    for (key, value) in inherited {
+    for (key, value) in inherited where !["NO_COLOR", "FORCE_COLOR", "CLICOLOR_FORCE"].contains(key) {
         #expect(environment.contains("\(key)=\(value)"))
     }
-    if noColor == nil {
-        #expect(!environment.contains { $0.hasPrefix("NO_COLOR=") })
-    }
+    #expect(!environment.contains { $0.hasPrefix("NO_COLOR=") })
     #expect(session.loadedTerminalView == nil)
 }

@@ -36,6 +36,8 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) async throws
         "CLICOLOR": "0"
     ]
     environment["NO_COLOR"] = noColor
+    environment["FORCE_COLOR"] = "3"
+    environment["CLICOLOR_FORCE"] = "1"
     let backend = TmuxBackend(
         executableURL: wrapper,
         workingDirectory: root.path,
@@ -74,7 +76,11 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) async throws
     }
     // wait-for remembers an early signal, avoiding a sleep/poll race with the pane.
     _ = try await runTmux(["wait-for", "color-probe"])
-    // Also exercise the existing-server path used when the frontend attaches.
+    // An older frontend may have left capture flags in the surviving server.
+    _ = try await runTmux(["set-environment", "-g", "NO_COLOR", "1"])
+    _ = try await runTmux(["set-environment", "-g", "FORCE_COLOR", "3"])
+    _ = try await runTmux(["set-environment", "-g", "CLICOLOR_FORCE", "1"])
+    // Exercise the existing-server path used when the frontend attaches.
     try await runBlockingTestWork {
         try backend.ensureSession(named: "color-probe", cwd: root.path, command: command)
     }
@@ -87,7 +93,7 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) async throws
         #expect(values["FORCE_COLOR"] == nil)
         #expect(values["CLICOLOR"] == "1")
         #expect(values["COLORTERM"] == "truecolor")
-        #expect(values["NO_COLOR"] == noColor)
+        #expect(values["NO_COLOR"] == nil)
     }
     #expect(process["TERM"] == TmuxBackend.attachTermName)
     #expect(global["TERM"] == TmuxBackend.attachTermName)
@@ -95,9 +101,9 @@ func tmuxFreshPaneAdvertisesColorWithoutForcingIt(noColor: String?) async throws
     #expect(commands.contains("set-option -g default-terminal tmux-256color"))
     #expect(commands.contains("set-environment -g COLORTERM truecolor"))
     #expect(commands.contains("set-environment -g CLICOLOR 1"))
-    #expect(!commands.contains("CLICOLOR_FORCE"))
-    #expect(!commands.contains("FORCE_COLOR"))
-    #expect(!commands.contains("NO_COLOR"))
+    #expect(commands.contains("set-environment -gu NO_COLOR"))
+    #expect(commands.contains("set-environment -gu FORCE_COLOR"))
+    #expect(commands.contains("set-environment -gu CLICOLOR_FORCE"))
     // Older tmux versions have a different cold-start default; compare the
     // pane with the server's effective TERM as well as checking the setting above.
     let defaultTerminal = try await runTmux(["show-options", "-gv", "default-terminal"])

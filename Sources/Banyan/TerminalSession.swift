@@ -250,14 +250,13 @@ final class TerminalSession: BanyanSession {
     /// stealing selection/focus. When the session is later selected, `start()` attaches
     /// the visible client to this already-running tmux session (`ensureSession` is idempotent).
     override func startBackgroundBackendIfNeeded() {
-        guard !isImportedHistory, status != .closed, !isSuspended else { return }
+        guard !isImportedHistory, status != .closed, !isSuspended, !needsManualAttach else { return }
         // Deliberately does not attach a visible client, so it must not create a
         // terminal either — an absent one is by definition not running.
         guard !isProcessStarted, loadedTerminalView?.process.running != true else { return }
         // Optimistically mark running so the sidebar updates immediately; the actual
         // tmux work (subprocess spawns) runs off the main thread to avoid freezing the
         // UI while a session is created via banyanctl.
-        isRestored = false
         status = .running
         touch()
         startBackingSessionInBackground()

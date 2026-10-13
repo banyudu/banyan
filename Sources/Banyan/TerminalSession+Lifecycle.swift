@@ -16,7 +16,7 @@ extension TerminalSession {
     }
 
     func start() {
-        guard !isImportedHistory, !isSuspended else { return }
+        guard !isImportedHistory, !isSuspended, !needsManualAttach else { return }
         guard !terminalView.process.running else { return }
         isDetachingTerminalClient = false
         let startedAt = DispatchTime.now()
@@ -38,7 +38,7 @@ extension TerminalSession {
     /// happens back on the main actor. Revisits no-op fast on the main thread
     /// when the client is already running.
     func startAsync() {
-        guard !isImportedHistory, !isSuspended, status != .closed,
+        guard !isImportedHistory, !isSuspended, status != .closed, !needsManualAttach,
               let terminalView = loadedTerminalView, !terminalView.process.running else { return }
         // Fast path: backing session already exists, attach synchronously like
         // `start()` without paying a hop. `hasSession` is one cheap tmux call;
@@ -61,16 +61,26 @@ extension TerminalSession {
         let runtime = sessionRuntime
         let request = launchRequest
         let backend = tmuxBackend
+        let launchGeneration = admissionGeneration
         let themeStyle = pendingTheme.tmuxDefaultStyle
         let telemetry = telemetry
         let sessionID = id
         let tmuxName = tmuxSessionName
+        let requiresExistingAgentPane = isRestored && agentProvider != nil
         let startedAt = DispatchTime.now()
         let generation = terminalClientGeneration
         Task.detached(priority: .userInitiated) { [weak self, weak terminalView] in
+            if requiresExistingAgentPane {
+                guard case .present(let pane) = backend.agentAdmissionPane(named: tmuxName), !pane.isDead else {
+                    await MainActor.run { self?.retainMissingAgentBackendForRecovery(generation: launchGeneration) }
+                    return
+                }
+            }
             backend.configureTerminalTheme(style: themeStyle, for: nil)
             do {
-                try runtime.ensureBackingSession(request)
+                // A restored agent only attaches. If its pane disappears after
+                // inspection, the client fails rather than recreating the task.
+                if !requiresExistingAgentPane { try runtime.ensureBackingSession(request) }
             } catch {
                 let message = error.localizedDescription
                 await MainActor.run { [weak self, weak terminalView] in
@@ -261,6 +271,7 @@ extension TerminalSession {
     /// The caller may supply a provider-specific resume command.
     func recoverFromMissingBackingSession(command recoveryCommand: String? = nil) {
         guard !isImportedHistory else { return }
+        guard agentProvider == nil || recoveryCommand?.isEmpty == false else { return }
         if let recoveryCommand, !recoveryCommand.isEmpty {
             command = recoveryCommand
         }
@@ -275,6 +286,7 @@ extension TerminalSession {
     /// rendered by the UI.
     func recoverFromMissingBackingSessionInBackground(command recoveryCommand: String? = nil) {
         guard !isImportedHistory, !isProcessStarted else { return }
+        guard agentProvider == nil || recoveryCommand?.isEmpty == false else { return }
         if let recoveryCommand, !recoveryCommand.isEmpty {
             command = recoveryCommand
         }
@@ -297,11 +309,19 @@ extension TerminalSession {
         let runtime = sessionRuntime
         let request = launchRequest
         let backend = tmuxBackend
+        let requiresExistingAgentPane = isRestored && agentProvider != nil
         backingLaunchInFlight = true
         admissionGeneration = UUID()
+        let launchGeneration = admissionGeneration
         Task.detached(priority: .userInitiated) { [weak self] in
+            if requiresExistingAgentPane {
+                guard case .present(let pane) = backend.agentAdmissionPane(named: request.sessionName), !pane.isDead else {
+                    await MainActor.run { self?.retainMissingAgentBackendForRecovery(generation: launchGeneration) }
+                    return
+                }
+            }
             do {
-                try runtime.ensureBackingSession(request)
+                if !requiresExistingAgentPane { try runtime.ensureBackingSession(request) }
                 let admissionPane = backend.primaryPaneSnapshot(named: request.sessionName)
                 let identity = admissionPane.flatMap { AgentProcessSample.read(pid: Int32($0.rootPID))?.identity }
                 await MainActor.run { [weak self] in
@@ -316,6 +336,7 @@ extension TerminalSession {
                         return
                     }
                     self.trackedPaneIdentity = identity
+                    self.isRestored = false
                     self.isProcessStarted = true
                     self.onAgentRuntimeChanged?()
                     self.touch()
@@ -387,6 +408,10 @@ extension TerminalSession {
         if backingSessionAlreadyEnsured { existingPane = true }
         else if case .present(let pane) = tmuxBackend.agentAdmissionPane(named: tmuxSessionName) { existingPane = !pane.isDead }
         else { existingPane = false }
+        if !existingPane && isRestored && agentProvider != nil {
+            retainMissingAgentBackendForRecovery()
+            return
+        }
         if !existingPane {
             guard requestAgentAdmission(retry: { [weak self] in self?.startBackgroundBackendIfNeeded() }) else { return }
             admissionGeneration = UUID()
@@ -394,7 +419,7 @@ extension TerminalSession {
         // Set the server default before creating a new pane. Codex probes OSC
         // 10/11 during startup, before SwiftTerm has necessarily attached.
         tmuxBackend.configureTerminalTheme(style: pendingTheme.tmuxDefaultStyle, for: nil)
-        if !backingSessionAlreadyEnsured {
+        if !backingSessionAlreadyEnsured && !(isRestored && agentProvider != nil) {
             do {
                 try sessionRuntime.ensureBackingSession(launchRequest)
             } catch {
@@ -439,6 +464,16 @@ extension TerminalSession {
         sessionRuntime.removeBackingSession(named: tmuxSessionName)
         onAgentRuntimeChanged?()
         touch()
+    }
+
+    private func retainMissingAgentBackendForRecovery(generation: UUID? = nil) {
+        guard generation == nil || generation == admissionGeneration else { return }
+        backingLaunchInFlight = false
+        guard status != .closed else { return }
+        isProcessStarted = false
+        isRestored = true
+        needsRecovery = true
+        onAgentRuntimeChanged?()
     }
 
     func stopTerminalClient() {
@@ -586,7 +621,9 @@ extension TerminalSession {
     func terminalEnvironment() -> [String] {
         var environment = Terminal.getEnvironmentVariables(termName: TmuxBackend.attachTermName, trueColor: true)
         let inherited = self.environment
-        for key in ["PATH", "SHELL", "TMPDIR", "SSH_AUTH_SOCK", "NO_COLOR"] {
+        // Agent/tool launchers often set NO_COLOR for their captured output.
+        // An interactive terminal must negotiate its own colors instead.
+        for key in ["PATH", "SHELL", "TMPDIR", "SSH_AUTH_SOCK"] {
             if let value = inherited[key] {
                 environment.append("\(key)=\(value)")
             }

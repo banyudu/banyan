@@ -43,10 +43,15 @@ public enum SessionRestorationPolicy {
         liveTmuxSessionNames: Set<String>
     ) -> SessionRestorationPlan {
         let tmuxSessionName = snapshot.launchRequest.sessionName
+        // Completed agents still have an original launch prompt. Selecting a
+        // restored row must not recreate a missing pane with that prompt.
+        let missingAgentBackend = snapshot.status != .closed
+            && CodingAgentProvider.detect(in: snapshot.command) != nil
+            && !liveTmuxSessionNames.contains(tmuxSessionName)
         return SessionRestorationPlan(
             tmuxSessionName: tmuxSessionName,
             status: SessionLifecyclePolicy.restoredStatus(snapshotStatus: snapshot.status),
-            needsRecovery: SessionLifecyclePolicy.shouldMarkForRecovery(
+            needsRecovery: missingAgentBackend || SessionLifecyclePolicy.shouldMarkForRecovery(
                 status: snapshot.status,
                 tmuxSessionName: tmuxSessionName,
                 liveTmuxSessionNames: liveTmuxSessionNames

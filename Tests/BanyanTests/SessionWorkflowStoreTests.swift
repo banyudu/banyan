@@ -7,6 +7,84 @@ import Testing
 
 @MainActor
 @Suite struct SessionWorkflowStoreTests {
+    @Test func restoredCompletedAgentCannotReplayItsInitialPromptWithoutAResumeTarget() throws {
+        for sourceID in [nil, "", "unresumable"] as [String?] {
+            let fixture = try WorkflowStoreFixture()
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let store = fixture.makeStore(history: WorkflowTestHistory(supportsResume: false))
+            defer { store.flushPendingSessionSaves() }
+            store.loadPersistedSessionsIfNeeded()
+            let terminal = try #require(store.sessions.first { $0.id == "managed" } as? TerminalSession)
+            terminal.agentSessionID = sourceID
+            try store.setWorkflow(id: terminal.id, workflow: .init(owner: "workit", jobID: "job-a", revision: 0, state: .needsYou))
+            #expect(terminal.needsRecovery)
+            #expect(terminal.needsManualAttach)
+            terminal.startBackgroundBackendIfNeeded()
+            terminal.start()
+            terminal.recoverFromMissingBackingSession()
+            terminal.recoverFromMissingBackingSessionInBackground()
+            #expect(throws: (any Error).self) { try store.recover(id: terminal.id) }
+            #expect(terminal.status == .completed)
+            #expect(terminal.needsRecovery)
+            #expect(terminal.command.contains("Original implementation prompt"))
+            #expect(!terminal.isProcessStarted)
+            #expect(fixture.backend.launched.isEmpty)
+            #expect(store.historyResumeError(id: terminal.id)?.contains("original command was not restarted") == true)
+        }
+    }
+
+    @Test func completedAgentRecoveryResumesTheRecordedConversationWithoutTheInitialPrompt() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let terminal = try #require(store.sessions.first { $0.id == "managed" } as? TerminalSession)
+        terminal.agentSessionID = "11111111-2222-3333-4444-555555555555"
+        try store.recover(id: terminal.id, select: false)
+        try await waitForPuckState { terminal.isProcessStarted }
+        #expect(terminal.command.contains("resume"))
+        #expect(terminal.command.contains(terminal.agentSessionID!))
+        #expect(!terminal.command.contains("Original implementation prompt"))
+        #expect(!terminal.needsRecovery)
+        #expect(fixture.backend.launched.allSatisfy { $0.contains("resume") && !$0.contains("Original implementation prompt") })
+    }
+
+    @Test func restoredAgentWhoseBackendDisappearedAfterStartupDoesNotReplayItsPrompt() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let terminal = try #require(store.sessions.first { $0.id == "managed" } as? TerminalSession)
+        // Startup saw a live pane, which vanished before the first selection.
+        terminal.needsRecovery = false
+        terminal.status = .needInput
+        terminal.startBackgroundBackendIfNeeded()
+        try await waitForPuckState { terminal.needsRecovery }
+        #expect(terminal.needsManualAttach)
+        #expect(!terminal.isProcessStarted)
+        #expect(fixture.backend.launched.isEmpty)
+        #expect(terminal.command.contains("Original implementation prompt"))
+    }
+
+    @Test func restoredAgentAttachmentNeverUsesTheBackingCreationPath() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let terminal = try #require(store.sessions.first { $0.id == "managed" } as? TerminalSession)
+        terminal.needsRecovery = false
+        terminal.status = .needInput
+        fixture.backend.observedPane = TmuxPaneSnapshot(paneID: "%existing", rootPID: 42,
+            currentCommand: "codex", currentPath: fixture.root.path, isDead: false, isInMode: false)
+        terminal.startBackgroundBackendIfNeeded()
+        try await waitForPuckState { terminal.isProcessStarted }
+        #expect(!terminal.needsRecovery)
+        #expect(fixture.backend.launched.isEmpty)
+    }
+
     @Test func restoreSeparatesProcessCompletionFromIssueCompletionAndProtectsClose() throws {
         let fixture = try WorkflowStoreFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -159,6 +237,7 @@ private final class WorkflowTestBackend: TmuxSessionStoreBackend, TmuxClientBack
     var launched: [String] = []
     var killed: [String] = []
     var replacementAfterFirstInspection: TmuxPaneSnapshot?
+    var observedPane: TmuxPaneSnapshot?
     private var inspections = 0
     var executableURL: URL { URL(fileURLWithPath: "/usr/bin/false") }
     func attachArguments(for name: String) -> [String] { [] }
@@ -166,6 +245,7 @@ private final class WorkflowTestBackend: TmuxSessionStoreBackend, TmuxClientBack
     func agentAdmissionPane(named name: String) -> AgentAdmissionPaneInspection {
         inspections += 1
         if inspections > 1, let replacementAfterFirstInspection { return .present(replacementAfterFirstInspection) }
+        if let observedPane { return .present(observedPane) }
         return .absent
     }
     func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
@@ -540,11 +620,12 @@ private struct WorkflowTestProcesses: ProcessTableProvider {
 }
 private struct WorkflowTestHistory: SessionHistoryBackend {
     var candidates: [AgentResumeCandidate] = []
+    var supportsResume = true
     func load(maxPerProvider limit: Int) -> [ImportedAgentSession] { [] }
     func resumeCandidates(cwd: String, provider: CodingAgentProvider?, maxFilesScanned: Int) -> [AgentResumeCandidate] { candidates }
     func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? { nil }
     func resumeCommand(provider: CodingAgentProvider, sourceID: String, cwd: String, prompt: String?) -> String? {
-        AgentSessionHistory.resumeCommand(provider: provider, sourceID: sourceID, cwd: cwd, prompt: prompt)
+        supportsResume ? AgentSessionHistory.resumeCommand(provider: provider, sourceID: sourceID, cwd: cwd, prompt: prompt) : nil
     }
     func prepareTrimmedTranscript(provider: CodingAgentProvider, sourceID: String, cwd: String, transcriptURL: URL?) -> String? { nil }
     func transcriptPreview(from url: URL, provider: CodingAgentProvider, maxMessages: Int) -> String { "" }

@@ -125,3 +125,23 @@ import Testing
         ).needsRecovery)
     }
 }
+
+@Test func restorationPolicyRequiresRecoveryForMissingCompletedAgentBackends() {
+    for status in [SessionStatus.completed, .failed, .needInput] {
+        let snapshot = SessionSnapshot(
+            id: "finished-agent", tmuxSessionName: "banyan-finished-agent",
+            title: "Finished agent", reportedTitle: nil, cwd: "/tmp/project",
+            command: "codex 'Original implementation prompt'", status: status, tone: .neutral,
+            createdAt: .init(timeIntervalSince1970: 100), updatedAt: .init(timeIntervalSince1970: 100)
+        )
+        let missing = SessionRestorationPolicy.plan(for: snapshot, liveTmuxSessionNames: [])
+        #expect(missing.status == status)
+        #expect(missing.needsRecovery)
+        #expect(SessionRestorationPolicy.needsManualAttach(
+            isRestored: true, isProcessStarted: false, status: status, needsRecovery: missing.needsRecovery
+        ))
+        #expect(!SessionRestorationPolicy.plan(
+            for: snapshot, liveTmuxSessionNames: ["banyan-finished-agent"]
+        ).needsRecovery)
+    }
+}
