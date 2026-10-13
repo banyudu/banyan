@@ -511,6 +511,28 @@ private final class FakeWorkitPauseClient: WorkitPauseClient {
         #expect(session.status != .closed)
         #expect(fixture.backend.killed.isEmpty)
     }
+
+    @Test func ordinaryCloseAfterDelayedPauseDiscardsTheRetainedReceipt() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let client = FakeWorkitPauseClient()
+        let store = fixture.makeStore(pauseClient: client)
+        defer { store.flushPendingSessionSaves() }
+        let session = try managed(store)
+        store.requestClose(id: session.id)
+        store.confirmPendingPauseAndClose()
+        try await waitForPuckState { store.pauseCloseError != nil }
+        #expect(store.pauseCloseAttempts[session.id]?.acknowledgement != nil)
+        try project(store)
+        store.requestClose(id: session.id)
+        #expect(!store.pendingCloseCanPause)
+        store.confirmPendingClose()
+        #expect(session.status == .closed)
+        #expect(store.pauseCloseAttempts[session.id] == nil)
+        #expect(store.pauseCloseRetrySessionID == nil)
+        #expect(client.requests.count == 1)
+        #expect(fixture.backend.killed.count == 1)
+    }
 }
 
 private struct WorkflowTestProcesses: ProcessTableProvider {

@@ -4314,6 +4314,8 @@ final class SessionStore: ObservableObject {
         // session produced output in the preceding two seconds.
         session.updatedAt = Date()
         promoteChildrenToParentSlot(closingID: id, promotedChildIDs: promotedChildIDs, removingParent: false)
+        pauseCloseAttempts[id] = nil
+        if pauseCloseRetrySessionID == id { pauseCloseRetrySessionID = nil }
         if selectedSessionID == id {
             selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
