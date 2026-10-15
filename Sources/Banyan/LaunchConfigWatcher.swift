@@ -1,6 +1,6 @@
 import Foundation
 
-/// Watches the files that feed the agent picker (`~/.banyan/config.yml` and
+/// Watches the files that feed session shortcuts and the agent picker (`~/.banyan/config.yml` and
 /// `~/.agents/agents.yml`, plus `~/.banyan/palette.yml` which shares the same
 /// reload path) and reports when any of them may have changed.
 ///
@@ -145,7 +145,7 @@ final class LaunchConfigWatcher {
     }
 
     /// Editors emit bursts (write, delete, rename) for a single save.
-    /// Coalesce them so one save costs one reload — three small YAML reads.
+    /// Coalesce them so one save costs one configuration reload.
     private func scheduleNotification() {
         pendingNotification?.cancel()
         pendingNotification = Task { [weak self, debounce] in

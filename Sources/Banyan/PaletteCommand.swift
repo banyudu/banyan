@@ -223,12 +223,16 @@ enum PaletteCommandLoader {
             guard !line.isEmpty else { continue }
             // Top-level keys other than palette_commands: end our section and
             // are otherwise ignored so session_launches: can coexist.
-            if !line.hasPrefix("-"), !line.hasPrefix(" "), line.hasSuffix(":") {
+            if rawLine.first?.isWhitespace == false, !line.hasPrefix("-"), line.contains(":") {
                 if line == "palette_commands:" {
                     guard !foundSection, current == nil else { throw ParseError(lineNumber, "duplicate palette_commands section") }
                     foundSection = true
                     inSection = true
                     continue
+                }
+                if let entry = current {
+                    fields.append(entry)
+                    current = nil
                 }
                 inSection = false
                 continue

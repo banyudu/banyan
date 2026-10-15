@@ -172,6 +172,16 @@ struct PreferencesSheet: View {
                 }
             }
 
+            if let diagnostic = store.sessionShortcutConfigurationDiagnostic {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Session shortcuts")
+                        .font(.headline)
+                    Text(diagnostic)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
             if let diagnostic = store.paletteConfigurationDiagnostic {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Palette commands")

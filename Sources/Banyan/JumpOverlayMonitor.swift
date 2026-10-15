@@ -12,10 +12,21 @@ final class JumpOverlayMonitor {
     var onPrevious: (() -> Void)?
     var onSelectNeedingAttention: ((SessionSelectionDirection) -> Void)?
     var onHandoff: (() -> Bool)?
+    var onCommandModifierChange: ((Bool) -> Void)?
 
     private var keyMonitor: Any?
+    private var deactivateObserver: NSObjectProtocol?
+    private var activateObserver: NSObjectProtocol?
+    private let notificationCenter: NotificationCenter
+    private let currentModifierFlags: () -> NSEvent.ModifierFlags
 
-    init() {}
+    init(
+        notificationCenter: NotificationCenter = .default,
+        currentModifierFlags: @escaping () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
+    ) {
+        self.notificationCenter = notificationCenter
+        self.currentModifierFlags = currentModifierFlags
+    }
 
     deinit {
         stop()
@@ -24,15 +35,29 @@ final class JumpOverlayMonitor {
     func start() {
         guard keyMonitor == nil else { return }
 
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
-
-            if self.handleHandoff(event) { return nil }
-            if self.handleAttentionShortcut(event) { return nil }
-            if self.handleCmdJK(event) { return nil }
-            if self.handleJumpKey(event) { return nil }
-            return event
+            return self.handleEvent(event)
         }
+        // Cmd-Tab can deliver the release to a different application.
+        deactivateObserver = notificationCenter.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.onCommandModifierChange?(false)
+        }
+        // Returning with Cmd-Tab may not deliver a flagsChanged event before
+        // scrolling. Restore the freeze from the current physical modifiers.
+        activateObserver = notificationCenter.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.onCommandModifierChange?(self.currentModifierFlags().contains(.command))
+        }
+        onCommandModifierChange?(currentModifierFlags().contains(.command))
     }
 
     func stop() {
@@ -40,9 +65,28 @@ final class JumpOverlayMonitor {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
         }
+        if let deactivateObserver {
+            notificationCenter.removeObserver(deactivateObserver)
+            self.deactivateObserver = nil
+        }
+        if let activateObserver {
+            notificationCenter.removeObserver(activateObserver)
+            self.activateObserver = nil
+        }
+        onCommandModifierChange?(false)
     }
 
     // MARK: - Event handling
+
+    func handleEvent(_ event: NSEvent) -> NSEvent? {
+        onCommandModifierChange?(event.modifierFlags.contains(.command))
+        guard event.type == .keyDown else { return event }
+        if handleHandoff(event) { return nil }
+        if handleAttentionShortcut(event) { return nil }
+        if handleCmdJK(event) { return nil }
+        if handleJumpKey(event) { return nil }
+        return event
+    }
 
     private static let interestingModifiers = SessionShortcut.comparedModifiers
 
@@ -189,7 +233,7 @@ final class JumpOverlayMonitor {
     /// e.g. 1 → "⌘0", 11 → "⌘⇧A", 34 → "⌘F1".
     static func shortcutDisplay(for oneBasedIndex: Int) -> String? {
         guard let label = jumpLabel(for: oneBasedIndex) else { return nil }
-        if oneBasedIndex <= 10 || label.hasPrefix("F") {
+        if oneBasedIndex <= 10 || oneBasedIndex >= 34 {
             return "⌘\(label)"
         }
         return "⌘⇧\(label)"

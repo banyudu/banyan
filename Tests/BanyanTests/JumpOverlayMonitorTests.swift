@@ -65,6 +65,7 @@ import Testing
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 1) == "⌘0")
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 10) == "⌘9")
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 11) == "⌘⇧A")
+    #expect(JumpOverlayMonitor.shortcutDisplay(for: 16) == "⌘⇧F")
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 33) == "⌘⇧Z")
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 34) == "⌘F1")
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 45) == "⌘F12")

@@ -91,6 +91,16 @@ struct BanyanApp: App {
     }()
     @StateObject private var store = Self.sessionStore
     @StateObject private var updater = AppUpdater()
+    @FocusedObject private var sessionJumpShortcuts: SessionJumpShortcuts?
+
+    private var jumpMenuSessions: [(offset: Int, element: BanyanSession)] {
+        let ids = sessionJumpShortcuts?.sessionIDs ?? store.sidebarSessions.map(\.id)
+        let sessionsByID = Dictionary(uniqueKeysWithValues: store.sessions.map { ($0.id, $0) })
+        return ids.prefix(10).enumerated().compactMap { index, id in
+            guard let session = sessionsByID[id] else { return nil }
+            return (offset: index, element: session)
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -115,6 +125,9 @@ struct BanyanApp: App {
 
                     Self.jumpOverlayMonitor.onJump = { [weak store] index in
                         store?.selectSession(shortcutIndex: index) ?? false
+                    }
+                    Self.jumpOverlayMonitor.onCommandModifierChange = { held in
+                        SessionJumpShortcuts.setCommandHeldInAllWindows(held)
                     }
                     Self.jumpOverlayMonitor.onNext = { [weak store] in
                         guard let store else { return }
@@ -322,10 +335,10 @@ struct BanyanApp: App {
 
                 Divider()
 
-                ForEach(Array(store.sidebarSessions.prefix(10).enumerated()), id: \.element.id) { index, item in
+                ForEach(jumpMenuSessions, id: \.offset) { index, session in
                     let shortcutIndex = index + 1
                     let shortcutCharacter = String(index)
-                    Button("Switch to Terminal \(shortcutIndex): \(item.session.displayTitle)") {
+                    Button("Switch to Terminal \(shortcutIndex): \(session.displayTitle)") {
                         store.selectSession(shortcutIndex: shortcutIndex)
                     }
                     .keyboardShortcut(KeyEquivalent(Character(shortcutCharacter)), modifiers: .command)

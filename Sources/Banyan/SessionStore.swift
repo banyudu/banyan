@@ -318,6 +318,8 @@ final class SessionStore: ObservableObject {
     /// last for that project. Persisted in `UserDefaults`.
     @Published private var projectLaunchByGroup: [String: String] = [:]
     @Published private(set) var sessionLaunchProfiles = NewSessionLaunch.builtInDefaults
+    @Published private(set) var sessionShortcutConfiguration = SessionShortcutConfiguration()
+    @Published private(set) var sessionShortcutConfigurationDiagnostic: String?
     /// Why the last puck session Banyan tried to create or open is not on screen.
     @Published var puckSessionError: String?
     /// The local daemon behind every `PuckSession`.
@@ -712,6 +714,9 @@ final class SessionStore: ObservableObject {
         )
         sessionLaunchProfiles = launchConfiguration.profiles
         sessionLaunchConfigurationDiagnostic = launchConfiguration.diagnostic
+        let shortcutConfiguration = SessionShortcutConfiguration.load(homeDirectory: host.homeDirectory)
+        sessionShortcutConfiguration = shortcutConfiguration.configuration
+        sessionShortcutConfigurationDiagnostic = shortcutConfiguration.diagnostic
         coercePaletteAgentProfile()
         let paletteConfiguration = PaletteCommandLoader.load(
             homeDirectory: host.homeDirectory
@@ -1534,11 +1539,18 @@ final class SessionStore: ObservableObject {
         launchConfigWatcher = watcher
     }
 
-    /// Re-reads the launch and palette configs after a file-system event.
+    /// Re-reads shortcuts, launches and palette commands after a file-system event.
     /// Equality-checked so a no-op save does not churn SwiftUI; a dropped
     /// palette pick (removed agent) falls back to Auto via the existing coerce.
     func reloadLaunchConfiguration() {
         let home = host.homeDirectory
+        let shortcutConfiguration = SessionShortcutConfiguration.load(homeDirectory: home)
+        if shortcutConfiguration.configuration != sessionShortcutConfiguration {
+            sessionShortcutConfiguration = shortcutConfiguration.configuration
+        }
+        if shortcutConfiguration.diagnostic != sessionShortcutConfigurationDiagnostic {
+            sessionShortcutConfigurationDiagnostic = shortcutConfiguration.diagnostic
+        }
         let launchConfiguration = SessionLaunchProfileLoader.load(homeDirectory: home)
         if launchConfiguration.profiles != sessionLaunchProfiles {
             sessionLaunchProfiles = launchConfiguration.profiles
@@ -4695,10 +4707,21 @@ final class SessionStore: ObservableObject {
 
     @discardableResult
     func selectSession(shortcutIndex: Int) -> Bool {
-        guard let id = SessionSelectionNavigator.directID(
-            in: sidebarSessions.map(\.id),
-            oneBasedIndex: shortcutIndex
-        ) else {
+        selectSession(shortcutIndex: shortcutIndex, in: NSApp.keyWindow)
+    }
+
+    @discardableResult
+    func selectSession(shortcutIndex: Int, in window: NSWindow?) -> Bool {
+        let id: String?
+        if let shortcuts = SessionJumpShortcuts.forWindow(window) {
+            id = shortcuts.sessionID(for: shortcutIndex)
+        } else {
+            id = SessionSelectionNavigator.directID(
+                in: sidebarSessions.map(\.id),
+                oneBasedIndex: shortcutIndex
+            )
+        }
+        guard let id, sessions.contains(where: { $0.id == id }) else {
             return false
         }
         userSelect(id: id)

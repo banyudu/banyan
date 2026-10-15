@@ -31,6 +31,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @EnvironmentObject private var updater: AppUpdater
     private let selection: SessionSelection
+    @StateObject private var sessionJumpShortcuts = SessionJumpShortcuts()
     @State private var showingPreferences = false
     @State private var showingCommandPalette = false
     @State private var codexHandoffSession: TerminalSession?
@@ -188,7 +189,11 @@ struct ContentView: View {
         } message: {
             Text(store.codexSessionError ?? "")
         }
-        .background(WindowRestorationConfigurator())
+        .background(WindowRestorationConfigurator(shortcuts: sessionJumpShortcuts))
+        .focusedSceneObject(sessionJumpShortcuts)
+        .onChange(of: store.sessionShortcutConfiguration.visibleRowShortcuts, initial: true) { _, enabled in
+            sessionJumpShortcuts.setRollingEnabled(enabled)
+        }
         .preferredColorScheme(store.terminalTheme.colorScheme)
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("AppleInterfaceThemeChangedNotification"))) { _ in
             store.refreshTerminalAppearance()
@@ -395,8 +400,8 @@ struct ContentView: View {
             ))
         }
 
-        for (index, item) in store.sidebarSessions.enumerated() {
-            let shortcut = JumpOverlayMonitor.shortcutDisplay(for: index + 1)
+        for item in store.sidebarSessions {
+            let shortcut = sessionJumpShortcuts.shortcutDisplay(for: item.id)
             items.append(CommandPaletteItem(
                 id: "session.switch.\(item.id)",
                 category: "Session",
@@ -499,12 +504,13 @@ struct ContentView: View {
 
     private var sessionsSidebar: some View {
         let groups = store.unifiedSidebarGroups
-        let jumpKeyLabels = makeJumpKeyLabels(groups: groups)
+        let sessionIDs = groups.flatMap(\.items).map(\.id)
         return VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 List {
-                    sidebarSections(groups, jumpKeyLabels: jumpKeyLabels)
+                    sidebarSections(groups)
                 }
+                .sessionJumpShortcutViewport(shortcuts: sessionJumpShortcuts, sessionIDs: sessionIDs)
                 .listStyle(.sidebar)
                 .scrollIndicators(.hidden)
                 .hidesVerticalScroller()
@@ -1168,8 +1174,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func sidebarSections(
-        _ groups: [SidebarSessionGroup],
-        jumpKeyLabels: [String: String]
+        _ groups: [SidebarSessionGroup]
     ) -> some View {
         let firstGroupID = groups.first?.id
         ForEach(groups) { group in
@@ -1196,7 +1201,7 @@ struct ContentView: View {
                             allowsDragSort: false,
                             isHistory: item.isHistory,
                             showsDisclosureGutter: showsDisclosureGutter,
-                            jumpKeyLabel: jumpKeyLabels[item.id] ?? ""
+                            jumpKeyLabel: sessionJumpShortcuts.label(for: item.id)
                         )
                     }
                 } else {
@@ -1207,7 +1212,7 @@ struct ContentView: View {
                             allowsDragSort: true,
                             isHistory: false,
                             showsDisclosureGutter: showsDisclosureGutter,
-                            jumpKeyLabel: jumpKeyLabels[item.id] ?? ""
+                            jumpKeyLabel: sessionJumpShortcuts.label(for: item.id)
                         )
                     }
                     .onMove { source, destination in
@@ -1264,25 +1269,6 @@ struct ContentView: View {
         // The session rows' horizontal insets, so the chip lines up with their
         // highlights.
         .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
-    }
-
-    private func makeJumpKeyLabels(
-        groups: [SidebarSessionGroup]
-    ) -> [String: String] {
-        // Use the projections already produced for this render. Looking labels up
-        // through SessionStore for every row rebuilt and resorted the full history
-        // backlog once per displayed session.
-        var labels: [String: String] = [:]
-        var position = 1
-        for group in groups {
-            for item in group.items {
-                if let label = JumpOverlayMonitor.jumpLabel(for: position) {
-                    labels[item.id] = label
-                }
-                position += 1
-            }
-        }
-        return labels
     }
 
     private func sidebarRow(
@@ -1371,6 +1357,7 @@ struct ContentView: View {
         )
         .id(item.session.id)
         .tag(item.session.id)
+        .sessionJumpShortcutRow(id: item.id)
         .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
         .modifier(SidebarDragSortModifier(
             sessionID: item.session.id,
@@ -1958,18 +1945,27 @@ private struct TitleBarLogo: NSViewRepresentable {
 
 /// Applies the window restoration policy once the content is in a window.
 private struct WindowRestorationConfigurator: NSViewRepresentable {
+    let shortcuts: SessionJumpShortcuts
+
     func makeNSView(context: Context) -> NSView {
-        WindowRestorationConfigurationView(frame: .zero)
+        let view = WindowRestorationConfigurationView(frame: .zero)
+        view.shortcuts = shortcuts
+        return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let window = nsView.window { shortcuts.register(window: window) }
+    }
 }
 
 private final class WindowRestorationConfigurationView: NSView {
+    weak var shortcuts: SessionJumpShortcuts?
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window else { return }
         WindowRestorationPolicy.configure(window)
+        shortcuts?.register(window: window)
     }
 }
 
@@ -3696,6 +3692,7 @@ private struct JumpKeyBadge: View {
                             .strokeBorder(tint.opacity(0.32), lineWidth: 0.5)
                     )
             )
+            .opacity(label.isEmpty ? 0 : 1)
     }
 
     private static func badgeWidth(for label: String) -> CGFloat {

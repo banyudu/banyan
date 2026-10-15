@@ -23,6 +23,26 @@ The first screen is the working surface:
 - shell and legacy sessions use persistent `tmux`; puck sessions use durable daemon state
 - programmatic control is available through `banyanctl`
 
+### Session jump shortcuts
+
+The macOS sidebar assigns shortcuts to the sessions currently visible, starting
+at the top: `Cmd+0` through `Cmd+9`, then `Cmd+Shift+A` through `Cmd+Shift+Z`
+(except L, N and S, which are reserved), then `Cmd+F1` through `Cmd+F12`.
+Scrolling reuses these keys for the rows brought into view. Assignments stay
+fixed while Command is held, and the Terminal menu and command palette show
+the same shortcuts as the sidebar.
+
+Visible-row rolling is enabled by default. To restore shortcuts based on the
+full sidebar order (the first 45 sessions), add this top-level setting to
+`~/.banyan/config.yml`:
+
+```yaml
+visible_row_shortcuts: false
+```
+
+Config edits apply without restarting Banyan. Remove the setting or set it to
+`true` to enable rolling again. Use `Cmd+P` to search for an offscreen session.
+
 ### Linear keyboard navigation
 
 When the Linear sidebar is active, use `Cmd+J` / `Cmd+K` to move through issues,

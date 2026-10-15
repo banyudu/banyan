@@ -340,17 +340,27 @@ enum SessionLaunchProfileLoader {
         var fields: [[String: String]] = []
         var current: [String: String]?
         var foundSection = false
+        var inSection = false
 
         for (offset, rawLine) in yaml.split(whereSeparator: \.isNewline).enumerated() {
             let lineNumber = offset + 1
             let line = stripComment(String(rawLine)).trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
-            if line == "session_launches:" {
-                guard !foundSection, current == nil else { throw ParseError(lineNumber, "duplicate session_launches section") }
-                foundSection = true
+            if rawLine.first?.isWhitespace == false, !line.hasPrefix("-"), line.contains(":") {
+                if line == "session_launches:" {
+                    guard !foundSection else { throw ParseError(lineNumber, "duplicate session_launches section") }
+                    foundSection = true
+                    inSection = true
+                    continue
+                }
+                if let entry = current {
+                    fields.append(entry)
+                    current = nil
+                }
+                inSection = false
                 continue
             }
-            guard foundSection else { throw ParseError(lineNumber, "expected session_launches:") }
+            guard inSection else { continue }
             if line.hasPrefix("-") {
                 if let current { fields.append(current) }
                 let remainder = line.dropFirst().trimmingCharacters(in: .whitespaces)
