@@ -559,13 +559,15 @@ public struct AgentSupervisor: Sendable {
             .lowercased()
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
-        let tail = lines.suffix(8)
+            .filter { !$0.isEmpty }
+        let activityLines = liveActivityLines(lines)
+        let tail = activityLines.suffix(8)
 
         // Claude no longer prints an interrupt hint at all, so the live elapsed
         // counter is the only in-band signal that a turn is still running. It sits
         // above the prompt box and the (user-configurable, multi-line) status
         // footer, so it needs more headroom than the hint scans below.
-        if lines.suffix(14).contains(where: looksLikeLiveProgressCounter) {
+        if activityLines.suffix(14).contains(where: looksLikeLiveProgressCounter) {
             return true
         }
 
@@ -600,6 +602,22 @@ public struct AgentSupervisor: Sendable {
             guard line.hasSuffix("…") || line.hasSuffix("...") else { return false }
             return progressVerbs.contains(where: line.contains)
         }
+    }
+
+    /// Codex renders queued questions/messages between its live progress row and
+    /// composer. That block can grow independently of the turn, so it must not
+    /// push the progress row out of the activity window. The queue's own interrupt
+    /// instructions and the footer also say nothing about current work.
+    private static func liveActivityLines(_ lines: [String]) -> ArraySlice<String> {
+        guard let composer = lines.lastIndex(where: { $0.hasPrefix("›") }) else {
+            return lines[...]
+        }
+        let aboveComposer = lines[..<composer]
+        let end = aboveComposer.lastIndex { line in
+            line == "• queued follow-up inputs"
+                || line.hasPrefix("• messages to be submitted after next tool call (")
+        } ?? composer
+        return lines[..<end]
     }
 
     /// True for a spinner line whose trailing parenthetical is a *live* counter,
