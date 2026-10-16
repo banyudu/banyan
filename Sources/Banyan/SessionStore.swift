@@ -624,6 +624,13 @@ final class SessionStore: ObservableObject {
         self.attentionNotifier = attentionNotifier
         maximumConcurrentAgents = admission.limit
         admission.onChange = { [weak self] in self?.publishAgentAdmission() }
+        codexThreads.sessionTitleServer = { id in
+            guard AgentSessionTitleLaunch.isEnabled(environment: host.environment),
+                  let executable = AgentProcessHost.executableURL(environment: host.environment),
+                  let data = try? JSONSerialization.data(withJSONObject: AgentSessionTitleLaunch.codexServerConfiguration(
+                    sessionID: id, executable: executable.path, environment: host.environment)) else { return nil }
+            return try? JSONDecoder().decode(CodexJSONValue.self, from: data)
+        }
         codexThreads.onChange = { [weak self] id, state in
             guard let self, let session = self.sessions.first(where: { $0.id == id }) as? CodexSession else { return }
             session.apply(state)
@@ -801,6 +808,7 @@ final class SessionStore: ObservableObject {
             hasher.combine(session.isTitlePinned)
             hasher.combine(session.reportedTitle)
             hasher.combine(session.generatedTitle)
+            hasher.combine(session.contextualTitle)
             hasher.combine(session.cwd)
             hasher.combine(session.detectedAgentProvider)
             hasher.combine(session.command)
@@ -972,6 +980,7 @@ final class SessionStore: ObservableObject {
             hasher.combine(session.isTitlePinned)
             hasher.combine(session.reportedTitle)
             hasher.combine(session.generatedTitle)
+            hasher.combine(session.contextualTitle)
             hasher.combine(session.projectGroupTitle)
         }
         let hash = hasher.finalize()
@@ -1136,6 +1145,7 @@ final class SessionStore: ObservableObject {
                     host: host,
                     githubReferenceCache: githubReferenceCache
                 )
+                session.contextualTitle = snapshot.contextualTitle
                 attach(session)
                 sessions.append(session)
                 continue
@@ -1172,6 +1182,7 @@ final class SessionStore: ObservableObject {
                 githubReferenceCache: githubReferenceCache
             )
             session.reportedTitle = snapshot.reportedTitle
+            session.contextualTitle = snapshot.contextualTitle
             session.nativeCodexProvenance = snapshot.codex
             session.agentLaunchQueue = snapshot.agentLaunchQueue
             session.admissionProviderIdentity = snapshot.agentSlotProviderIdentity
@@ -2852,6 +2863,7 @@ final class SessionStore: ObservableObject {
             githubReferenceCache: githubReferenceCache)
         terminal.nativeCodexProvenance = binding
         terminal.reportedTitle = snapshot.reportedTitle
+        terminal.contextualTitle = snapshot.contextualTitle
         attach(terminal)
         sessions[index] = terminal
         saveSessions()
@@ -3469,6 +3481,19 @@ final class SessionStore: ObservableObject {
         }
         session.mark(status: status, tone: tone, title: title, titleURL: SessionInputPolicy.normalizedTitleURL(titleURL))
         saveSessions()
+    }
+
+    @discardableResult
+    func updateContextualTitle(id: String, title: String) throws -> Bool {
+        guard let session = sessions.first(where: { $0.id == id }) else {
+            throw ControlError.notFound(id)
+        }
+        guard SessionTitleMCP.normalizedTitle(title) != nil else {
+            throw ControlError.badRequest("A specific session title is required")
+        }
+        let applied = session.updateContextualTitle(title)
+        if applied { saveChangedSession(session) }
+        return applied
     }
 
     // MARK: - Puck sessions

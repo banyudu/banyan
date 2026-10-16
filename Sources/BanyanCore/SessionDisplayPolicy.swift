@@ -33,11 +33,13 @@ public enum SessionDisplayPolicy {
         isTitlePinned: Bool,
         reportedTitle: String?,
         generatedTitle: String?,
+        contextualTitle: String? = nil,
         cwd: String,
         homeDirectory: String,
         detectedProvider: CodingAgentProvider?,
         command: String
     ) -> String {
+        if isTitlePinned, contextualTitle != nil { return title }
         if hasUsefulPinnedTitle(
             title: title,
             isTitlePinned: isTitlePinned,
@@ -45,6 +47,10 @@ public enum SessionDisplayPolicy {
             homeDirectory: homeDirectory
         ) {
             return title
+        }
+
+        if let contextualTitle = contextualTitle.flatMap(SessionTitleMCP.normalizedTitle) {
+            return contextualTitle
         }
 
         if agentProvider(command: command, detectedProvider: detectedProvider) != nil,

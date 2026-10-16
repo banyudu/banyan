@@ -51,6 +51,7 @@ extension BanyanSession {
             if !hasUsefulPinnedTitle {
                 reportedTitle = nil
                 generatedTitle = nil
+                if !isTitlePinned { contextualTitle = nil }
                 externalTitleSignature = nil
             }
             touch()
@@ -75,11 +76,24 @@ extension BanyanSession {
     /// the keystroke monitor never saw. Idempotent and pin-safe.
     func noteConversationResetFromTranscript() {
         guard !hasUsefulPinnedTitle else { return }
-        guard reportedTitle != nil || generatedTitle != nil || externalTitleSignature != nil else { return }
+        guard reportedTitle != nil || generatedTitle != nil || contextualTitle != nil || externalTitleSignature != nil else { return }
         reportedTitle = nil
         generatedTitle = nil
+        if !isTitlePinned { contextualTitle = nil }
         externalTitleSignature = nil
         touch()
+    }
+
+    /// Context from the running agent outranks prompt-derived names, but never
+    /// a manual rename. Kept separate so terminal and history updates cannot
+    /// resurrect the generic opening prompt over the agent's findings.
+    @discardableResult
+    func updateContextualTitle(_ value: String) -> Bool {
+        guard !isTitlePinned, let title = SessionTitleMCP.normalizedTitle(value) else { return false }
+        guard contextualTitle != title else { return true }
+        contextualTitle = title
+        touch()
+        return true
     }
 
     func markFirstPromptTitle(_ title: String) {

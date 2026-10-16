@@ -788,6 +788,26 @@ wakeups; interrupt its active turn separately when needed.
 
 Coding-agent sessions launched through `claude`, `codex`, `deepseek`, `gemini`, `glm`/`zai`, `mimo`, `minimax`, or `opencode` get a compact provider badge in the sidebar. If a session has a manual title, Banyan keeps it. Otherwise it derives a title from the agent-reported or agent-generated thread name, the prompt passed to the agent command, the first prompt submitted interactively (read back from the agent's own transcript when the agent never names the thread), or a compact provider/session fallback.
 
+New Codex, Claude Code, and OpenCode terminal sessions launched by Banyan also
+receive a session-scoped `rename_session` tool. Native Codex sessions receive it
+on connect. The agent is instructed to choose a concrete task title and update
+it when significant findings or the outcome become clear — for example,
+`what happened on this <url>` can become `Checkout timeout: exhausted DB pool`.
+These titles persist across app restarts and outrank the opening prompt and
+terminal title. Manual renames always win. Clearing a conversation clears its
+automatic title. No separate title-generation model, API key, or polling is
+needed; the active agent chooses the wording and timing.
+
+The integration adds MCP configuration only to that agent invocation; it does
+not edit global agent settings. Already-running terminal agents get the tool
+when next launched or resumed through Banyan. Agents started manually inside a
+shell, custom wrapper commands, remote Codex TUIs, and Puck sessions keep their
+existing naming behavior. Set `BANYAN_AUTO_RENAME=0` in the agent launch
+environment to disable injection. An agent or script can also update its own
+automatic title with `banyanctl session title --title "Specific finding"`
+(or supply `--id ID` explicitly); this never pins the title or overrides a
+manual rename. `banyanctl mark --title` remains a manual, pinned rename.
+
 For local model or cheap hosted title generation, set `BANYAN_TITLE_COMMAND` before launching Banyan. The command receives a JSON object on stdin and should print one short title on the first stdout line:
 
 ```sh

@@ -281,6 +281,7 @@ public enum ControlRoute: Equatable {
     case select
     case spawn
     case mark
+    case sessionTitle
     case close
     case respawn
     case restart
@@ -328,6 +329,7 @@ public enum ControlRoute: Equatable {
         case ("POST", "/select"): return .select
         case ("POST", "/spawn"): return .spawn
         case ("POST", "/mark"): return .mark
+        case ("POST", "/session-title"): return .sessionTitle
         case ("POST", "/close"): return .close
         case ("POST", "/respawn"): return .respawn
         case ("POST", "/restart"): return .restart
@@ -381,7 +383,7 @@ public enum ControlRoute: Equatable {
 
     public var requiresID: Bool {
         switch self {
-        case .select, .mark, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
+        case .select, .mark, .sessionTitle, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
              .output, .input, .answer, .workflowSet, .workflowWake, .workflowResolve: return true
         case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest,
              .prune, .agentQueue, .agentLimit, .puckTurn, .codexRemote, .codexRemoteConfigure, .codexRemoteResolve, .workflowCloseVerified: return false
@@ -391,6 +393,9 @@ public enum ControlRoute: Equatable {
     public func validate(_ payload: ControlPayload) throws {
         if requiresID, payload.id?.isEmpty != false {
             throw ControlValidationError.missingID
+        }
+        if self == .sessionTitle, payload.title.flatMap(SessionTitleMCP.normalizedTitle) == nil {
+            throw ControlValidationError.missingTitle
         }
         if self == .screenshot, payload.path?.isEmpty != false {
             throw ControlValidationError.missingPath

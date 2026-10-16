@@ -37,6 +37,7 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var titleURL: String?
     @Published var reportedTitle: String?
     @Published var generatedTitle: String?
+    @Published var contextualTitle: String?
     @Published var detectedAgentProvider: CodingAgentProvider?
     /// Runtime model identity. A terminal OpenCode session learns it from the
     /// supervisor and clears it when the process exits; a puck session reads it
@@ -123,6 +124,7 @@ class BanyanSession: ObservableObject, Identifiable {
         let isTitlePinned: Bool
         let reportedTitle: String?
         let generatedTitle: String?
+        let contextualTitle: String?
         let cwd: String
         let detectedProvider: CodingAgentProvider?
         let command: String

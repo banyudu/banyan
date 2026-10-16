@@ -289,6 +289,22 @@ private func coordinator(_ server: ThreadServer, id: String = "session", threadI
     #expect(server.calls.last(where: { $0.method == "thread/resume" })?.params == expected)
 }
 
+@Test @MainActor func codexThreadsBindTheRenameToolToEachSessionOnStartAndResume() async throws {
+    let server = ThreadServer()
+    let manager = CodexThreadCoordinator(service: server)
+    let settings = CodexThreadSettings(config: ["model_reasoning_effort": .string("high")])
+    manager.sessionTitleServer = { id in .object(["args": .array([.string("--id"), .string(id)])]) }
+    try manager.register(sessionID: "first", binding: .init(cwd: "/tmp/first", settings: settings))
+    try manager.register(sessionID: "second", binding: .init(cwd: "/tmp/second", settings: settings))
+    for id in ["first", "second", "first"] {
+        try await manager.select(sessionID: id)
+        let call = try #require(server.calls.last(where: { ["thread/start", "thread/resume"].contains($0.method) }))
+        let config = try #require(call.params["config"]?.objectValue)
+        #expect(config["model_reasoning_effort"] == .string("high"))
+        #expect(config["mcp_servers.banyan_session"]?.objectValue?["args"] == .array([.string("--id"), .string(id)]))
+    }
+}
+
 @Test @MainActor func codexThreadsKeepActiveBackgroundTurnsUntilTheyFinish() async throws {
     let server = ThreadServer()
     let manager = try coordinator(server)

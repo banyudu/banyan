@@ -42,6 +42,11 @@ if CommandLine.arguments.dropFirst().first == AgentProcessHost.subcommand {
             do { command = try AgentProviderIdentity.prepare(command: original, executable: CommandLine.arguments[0]) }
             catch { FileHandle.standardError.write(Data("[Banyan] Current-session adapter unavailable; deep suspension requires verified identity.\n".utf8)) }
         }
+        let titleLaunch = AgentSessionTitleLaunch.prepare(command: command,
+            executable: URL(fileURLWithPath: CommandLine.arguments[0]).path,
+            environment: ProcessInfo.processInfo.environment)
+        command = titleLaunch.command
+        for (key, value) in titleLaunch.environment { setenv(key, value, 1) }
         exit(try AgentProcessHost.run(shell: CommandLine.arguments[offset], command: command, loginShell: !inherited))
     }
     catch {
@@ -81,6 +86,10 @@ struct BanyanCtl {
 
         do {
             switch command {
+            case SessionTitleMCP.subcommand:
+                let payload = try parsePayload(Array(arguments.dropFirst()))
+                guard let id = payload["id"], !id.isEmpty else { throw CLIError.message("session title MCP requires --id") }
+                runSessionTitleMCP(id: id)
             case "spawn":
                 try post("/spawn", payload: withDefaultParent(parsePayload(Array(arguments.dropFirst()))))
             case "session":
@@ -226,6 +235,16 @@ struct BanyanCtl {
             try listUnifiedSessions()
         case "new", "spawn":
             try post("/spawn", payload: withDefaultParent(parsePayload(Array(args.dropFirst()))))
+        case "title":
+            var payload = try parsePayload(Array(args.dropFirst()))
+            if payload["id"] == nil {
+                payload["id"] = host.environment[BanyanSessionEnvironment.sessionIDKey]
+                    ?? enclosingTmuxSessionID(environment: host.environment)
+            }
+            guard let id = payload["id"], let title = payload["title"] else {
+                throw CLIError.message("session title requires --title TEXT and an enclosing session or --id ID")
+            }
+            print(try updateSessionTitle(id: id, title: title) ? "Session title updated" : "Manual session title preserved")
         case "suspend":
             try post("/agent-suspend", payload: sessionLifecyclePayload(Array(args.dropFirst())))
         case "freeze", "unfreeze":
@@ -861,6 +880,34 @@ struct BanyanCtl {
         try postJSON(path, payload: payload)
     }
 
+    private func runSessionTitleMCP(id: String) {
+        // Read blocks until a provider sends a message or closes stdin. No
+        // timer, transcript scan, or model call runs while this helper is idle.
+        while let line = readLine() {
+            if let response = SessionTitleMCP.response(to: Data(line.utf8), updateTitle: { title in
+                try updateSessionTitle(id: id, title: title)
+            }) {
+                FileHandle.standardOutput.write(response + Data([0x0a]))
+            }
+        }
+    }
+
+    private func updateSessionTitle(id: String, title: String) throws -> Bool {
+        var request = URLRequest(url: baseURL.appendingPathComponent("session-title"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 5
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try authorize(&request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["apiVersion": ControlProtocol.version, "id": id, "title": title])
+        let response = try exchange(request)
+        guard response.statusCode < 400 else { throw CLIError.http(response.statusCode) }
+        guard let data = response.data,
+              let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = body["data"] as? [String: Any],
+              let applied = payload["applied"] as? Bool else { throw CLIError.message("Invalid session title response") }
+        return applied
+    }
+
     private func postJSON(_ path: String, payload: [String: Any]) throws {
         var request = URLRequest(url: baseURL.appendingPathComponent(String(path.dropFirst())))
         request.httpMethod = "POST"
@@ -938,6 +985,7 @@ struct BanyanCtl {
           banyanctl session list
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
+          banyanctl session title --title TEXT [--id ID]  (automatic title; preserves manual renames)
           banyanctl agent queue [status | cancel ID | prioritize ID | retry ID | limit N]
           banyanctl agent run (--agent codex|claude|deepseek|gemini|glm|hunyuan|mimo|minimax|muse|opencode | --profile ID) [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--parent ID] [--no-parent] [--prompt TEXT] [--prompt-file PATH] [--focus|--background] [prompt...]
 

@@ -8,6 +8,7 @@ extension BanyanSession {
             isTitlePinned: isTitlePinned,
             reportedTitle: reportedTitle,
             generatedTitle: generatedTitle,
+            contextualTitle: contextualTitle,
             cwd: cwd,
             detectedProvider: detectedAgentProvider,
             command: command
@@ -20,6 +21,7 @@ extension BanyanSession {
             isTitlePinned: isTitlePinned,
             reportedTitle: reportedTitle,
             generatedTitle: generatedTitle,
+            contextualTitle: contextualTitle,
             cwd: cwd,
             homeDirectory: homeDirectory,
             detectedProvider: detectedAgentProvider,
@@ -38,6 +40,7 @@ extension BanyanSession {
             titleURLWasAutoDetected: titleURLWasAutoDetected,
             reportedTitle: reportedTitle,
             generatedTitle: generatedTitle,
+            contextualTitle: contextualTitle,
             isTitlePinned: isTitlePinned,
             cwd: cwd,
             command: command,

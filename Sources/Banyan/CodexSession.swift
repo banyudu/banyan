@@ -40,6 +40,7 @@ final class CodexSession: BanyanSession {
             telemetry: telemetry, host: host, githubReferenceCache: githubReferenceCache
         )
         reportedTitle = snapshot.reportedTitle
+        contextualTitle = snapshot.contextualTitle
     }
 
     override var backendKind: SessionBackendKind { .codex }

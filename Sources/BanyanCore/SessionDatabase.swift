@@ -25,7 +25,7 @@ public struct SessionDatabase: Sendable {
             try migrate(database)
 
             let sql = """
-            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding, agent_launch_queue, agent_slot_reserved, agent_slot_pane_identity, agent_slot_provider_identity
+            SELECT id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding, agent_launch_queue, agent_slot_reserved, agent_slot_pane_identity, agent_slot_provider_identity, contextual_title
             FROM sessions
             ORDER BY sort_order ASC, created_at ASC
             """
@@ -60,6 +60,7 @@ public struct SessionDatabase: Sendable {
                     titleURLWasAutoDetected: sqlite3_column_int(statement, 15) != 0,
                     reportedTitle: columnText(statement, 4),
                     generatedTitle: columnText(statement, 5),
+                    contextualTitle: columnText(statement, 26),
                     isTitlePinned: sqlite3_column_int(statement, 6) != 0,
                     cwd: cwd,
                     command: command,
@@ -276,6 +277,7 @@ public struct SessionDatabase: Sendable {
         """)
         try? execute(database, "ALTER TABLE sessions ADD COLUMN title_url TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN generated_title TEXT")
+        try? execute(database, "ALTER TABLE sessions ADD COLUMN contextual_title TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN is_title_pinned INTEGER NOT NULL DEFAULT 0")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
         try? execute(database, "ALTER TABLE sessions ADD COLUMN agent_session_id TEXT")
@@ -315,8 +317,8 @@ public struct SessionDatabase: Sendable {
     private func upsert(_ snapshot: SessionSnapshot, sortOrder: Int, database: OpaquePointer) throws {
         let sql = """
         INSERT INTO sessions (
-            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding, agent_launch_queue, agent_slot_reserved, agent_slot_pane_identity, agent_slot_provider_identity
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, tmux_session_name, title, title_url, reported_title, generated_title, is_title_pinned, cwd, command, status, tone, parent_session_id, created_at, updated_at, sort_order, agent_session_id, title_url_auto, is_suspended, backend, puck_provider, puck_account, puck_model, codex_binding, agent_launch_queue, agent_slot_reserved, agent_slot_pane_identity, agent_slot_provider_identity, contextual_title
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             tmux_session_name = excluded.tmux_session_name,
             title = excluded.title,
@@ -343,7 +345,8 @@ public struct SessionDatabase: Sendable {
             agent_launch_queue = excluded.agent_launch_queue,
             agent_slot_reserved = excluded.agent_slot_reserved,
             agent_slot_pane_identity = excluded.agent_slot_pane_identity,
-            agent_slot_provider_identity = excluded.agent_slot_provider_identity
+            agent_slot_provider_identity = excluded.agent_slot_provider_identity,
+            contextual_title = excluded.contextual_title
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -383,6 +386,7 @@ public struct SessionDatabase: Sendable {
         bindText(statement, 26, identityData.flatMap { String(data: $0, encoding: .utf8) })
         let providerData = try snapshot.agentSlotProviderIdentity.map { try JSONEncoder().encode($0) }
         bindText(statement, 27, providerData.flatMap { String(data: $0, encoding: .utf8) })
+        bindText(statement, 28, snapshot.contextualTitle)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError(database) }
     }
 

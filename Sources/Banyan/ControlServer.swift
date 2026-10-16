@@ -395,6 +395,13 @@ final class ControlServer {
                 try store.resolveWorkflowWake(id: id, jobID: jobID, revision: revision, wakeID: wakeID, outcome: outcome, detail: detail)
                 return respond(.ok(["ok": true]))
 
+            case .sessionTitle:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let applied = try store.updateContextualTitle(id: body.id!, title: body.title!)
+                return respond(.ok(["applied": applied]))
+
             case .mark:
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
@@ -997,6 +1004,7 @@ final class ControlServer {
             "displayTitle": session.displayTitle,
             "reportedTitle": session.reportedTitle ?? "",
             "generatedTitle": session.generatedTitle ?? "",
+            "contextualTitle": session.contextualTitle ?? "",
             "agentProvider": session.agentProvider?.rawValue ?? "",
             "cwd": session.cwd,
             "command": session.command,

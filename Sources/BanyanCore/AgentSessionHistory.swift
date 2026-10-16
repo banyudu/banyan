@@ -5,8 +5,14 @@ public enum AgentSessionHistory {
     /// Only literal argv can be safely wrapped or rewritten. Shell programs
     /// (including expansion inside double quotes) retain their original launch.
     public static func literalArguments(_ command: String) -> [String]? {
-        guard let parsed = shellTokens(command), parsed.isLossless,
-              !command.contains("$"), !command.contains("`"), !command.contains("\n") else { return nil }
+        literalArguments(command, allowQuotedText: false)
+    }
+
+    public static func literalArguments(_ command: String, allowQuotedText: Bool) -> [String]? {
+        guard let parsed = shellTokens(command, forLiteralLaunch: allowQuotedText), parsed.isLossless else { return nil }
+        // Recovery keeps its existing conservative contract. Invocation-only
+        // metadata may also handle safely quoted, multiline user prompts.
+        guard allowQuotedText || (!command.contains("$") && !command.contains("`") && !command.contains("\n")) else { return nil }
         return parsed.tokens
     }
 
@@ -149,7 +155,7 @@ public enum AgentSessionHistory {
     /// Banyan itself writes, plus the single-quoted equivalent a human types.
     /// Returns `nil` only for input it cannot even read — an unterminated quote
     /// or a trailing backslash.
-    private static func shellTokens(_ command: String) -> TokenizedCommand? {
+    private static func shellTokens(_ command: String, forLiteralLaunch: Bool = false) -> TokenizedCommand? {
         var tokens: [String] = []
         var current = ""
         var hasCurrent = false
@@ -198,10 +204,12 @@ public enum AgentSessionHistory {
                     if quote == "\"", command[index] == "\\" {
                         let escaped = command.index(after: index)
                         guard escaped < command.endIndex else { return nil }
-                        current.append(command[escaped])
+                        if forLiteralLaunch, !"$`\"\\\n".contains(command[escaped]) { current.append("\\") }
+                        if !forLiteralLaunch || command[escaped] != "\n" { current.append(command[escaped]) }
                         index = command.index(after: escaped)
                         continue
                     }
+                    if forLiteralLaunch, quote == "\"", "$`".contains(command[index]) { isLossless = false }
                     current.append(command[index])
                     index = command.index(after: index)
                 }
@@ -210,10 +218,13 @@ public enum AgentSessionHistory {
             case "\\":
                 let escaped = command.index(after: index)
                 guard escaped < command.endIndex else { return nil }
-                current.append(command[escaped])
-                hasCurrent = true
+                if !forLiteralLaunch || command[escaped] != "\n" {
+                    current.append(command[escaped])
+                    hasCurrent = true
+                }
                 index = command.index(after: escaped)
             case " ", "\t", "\n":
+                if forLiteralLaunch, character == "\n" { isLossless = false }
                 finishCurrent()
                 index = command.index(after: index)
             case "$":
@@ -233,6 +244,7 @@ public enum AgentSessionHistory {
                 isLossless = false
                 index = command.index(after: index)
             default:
+                if forLiteralLaunch, "*?[]~#".contains(character) { isLossless = false }
                 current.append(character)
                 hasCurrent = true
                 index = command.index(after: index)

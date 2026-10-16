@@ -9,6 +9,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public let titleURLWasAutoDetected: Bool
     public let reportedTitle: String?
     public let generatedTitle: String?
+    /// A title the active agent updates from its findings; survives prompt/history refreshes.
+    public let contextualTitle: String?
     public let isTitlePinned: Bool
     public let cwd: String
     public let command: String
@@ -44,6 +46,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         titleURLWasAutoDetected: Bool = true,
         reportedTitle: String?,
         generatedTitle: String? = nil,
+        contextualTitle: String? = nil,
         isTitlePinned: Bool = false,
         cwd: String,
         command: String,
@@ -69,6 +72,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.titleURLWasAutoDetected = titleURLWasAutoDetected
         self.reportedTitle = reportedTitle
         self.generatedTitle = generatedTitle
+        self.contextualTitle = contextualTitle
         self.isTitlePinned = isTitlePinned
         self.cwd = cwd
         self.command = command
@@ -99,7 +103,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, tmuxSessionName, title, titleURL, titleURLWasAutoDetected
-        case reportedTitle, generatedTitle, isTitlePinned, cwd, command
+        case reportedTitle, generatedTitle, contextualTitle, isTitlePinned, cwd, command
         case status, tone, parentSessionID, agentSessionID, isSuspended, createdAt, updatedAt
         case backend, puck, codex, agentLaunchQueue, agentSlotReserved, agentSlotPaneIdentity, agentSlotProviderIdentity
     }
@@ -114,6 +118,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             titleURLWasAutoDetected: try container.decodeIfPresent(Bool.self, forKey: .titleURLWasAutoDetected) ?? true,
             reportedTitle: try container.decodeIfPresent(String.self, forKey: .reportedTitle),
             generatedTitle: try container.decodeIfPresent(String.self, forKey: .generatedTitle),
+            contextualTitle: try container.decodeIfPresent(String.self, forKey: .contextualTitle),
             isTitlePinned: try container.decodeIfPresent(Bool.self, forKey: .isTitlePinned) ?? false,
             cwd: try container.decode(String.self, forKey: .cwd),
             command: try container.decode(String.self, forKey: .command),
@@ -149,6 +154,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
             titleURLWasAutoDetected: titleURLWasAutoDetected,
             reportedTitle: reportedTitle,
             generatedTitle: generatedTitle,
+            contextualTitle: contextualTitle,
             isTitlePinned: isTitlePinned,
             cwd: cwd,
             command: command,

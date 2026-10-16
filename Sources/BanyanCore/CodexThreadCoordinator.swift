@@ -110,6 +110,9 @@ public final class CodexThreadCoordinator {
         self.admission = admission
     }
 
+    /// Bound by the app to one Banyan row, including after reconnect/resume.
+    public var sessionTitleServer: ((String) -> CodexJSONValue?)?
+
     public func adoptRestoredWork(sessionID: String) {
         guard !cliSessionIDs.contains(sessionID) else { return }
         unresolvedWork.insert(sessionID)
@@ -570,6 +573,11 @@ public final class CodexThreadCoordinator {
         } catch { recordFailure(error, sessionID: id); throw error }
         try authorization?()
         var params = state.binding.settings.parameters(cwd: state.binding.cwd)
+        if let server = sessionTitleServer?(id) {
+            var config = params["config"]?.objectValue ?? [:]
+            config["mcp_servers.\(SessionTitleMCP.serverName)"] = server
+            params["config"] = .object(config)
+        }
         let method: String
         if let threadID = state.binding.threadID {
             method = "thread/resume"
