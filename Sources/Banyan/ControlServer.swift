@@ -814,7 +814,7 @@ final class ControlServer {
                     "status": event.status.rawValue,
                     "statusEmoji": event.status.emoji,
                     "previousStatus": event.previousStatus?.rawValue ?? "",
-                    "at": ISO8601DateFormatter().string(from: event.at)
+                    "at": event.at.ISO8601Format()
                 ]
             }
         ]
@@ -895,8 +895,8 @@ final class ControlServer {
             "command": suggestion.command,
             "cwd": suggestion.cwd ?? "",
             "run": suggestion.run.rawValue,
-            "receivedAt": ISO8601DateFormatter().string(from: suggestion.receivedAt),
-            "expiresAt": ISO8601DateFormatter().string(from: suggestion.expiresAt)
+            "receivedAt": suggestion.receivedAt.ISO8601Format(),
+            "expiresAt": suggestion.expiresAt.ISO8601Format()
         ]
     }
 
@@ -1028,8 +1028,10 @@ final class ControlServer {
             "projectGroupID": session.projectGroupID,
             "projectGroupTitle": session.projectGroupTitle,
             "displayContextDegraded": session.displayContextDegraded,
-            "createdAt": ISO8601DateFormatter().string(from: session.createdAt),
-            "updatedAt": ISO8601DateFormatter().string(from: session.updatedAt)
+            // The list route includes closed history. Constructing two ICU-backed
+            // formatters per row dominated CPU samples in large workspaces.
+            "createdAt": session.createdAt.ISO8601Format(),
+            "updatedAt": session.updatedAt.ISO8601Format()
         ]
         if let workflow = session.workflow, let data = try? JSONEncoder().encode(workflow),
            let object = try? JSONSerialization.jsonObject(with: data) {
@@ -1038,7 +1040,7 @@ final class ControlServer {
         if let error = session.workflowRecoveryError { summary["workflowRecoveryError"] = error }
         if let state = store?.codexTUIOwnership[session.id], state.threadID == session.agentSessionID {
             summary["codexTUIOwnership"] = ["threadID": state.threadID, "state": state.state.rawValue, "message": state.state.message,
-                "observedAt": ISO8601DateFormatter().string(from: state.observedAt)]
+                "observedAt": state.observedAt.ISO8601Format()]
         }
         if let binding = session.codexBinding,
            let data = try? JSONEncoder().encode(binding),

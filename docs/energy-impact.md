@@ -52,6 +52,15 @@ With thousands of closed sessions, a live process sample showed both operations
 consuming substantial CPU. Full-table saves remain for structural changes such
 as adding, removing, or reordering sessions.
 
+The control server also serves closed history in session listings. CPU spike
+captures identified per-row `ISO8601DateFormatter` construction as a dominant
+cost: each request rebuilt two formatters for every saved session. Response
+timestamps now use `Date.ISO8601Format()`, preserving UTC and second precision
+without rebuilding ICU formatters. The active sidebar excludes closed history
+before resolving display titles, constructing its lookup, or hashing presentation
+fields, so those operations scale with active rows. History retains its separate
+projection and cache.
+
 Restoration also avoids Git subprocesses for closed history rows. A large local
 history can contain thousands of old working directories; resolving each one
 before starting the control server delayed launch and caused a CPU spike.

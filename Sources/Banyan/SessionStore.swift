@@ -761,7 +761,10 @@ final class SessionStore: ObservableObject {
     }
 
     var visibleSessions: [BanyanSession] {
-        let items = sessions.map {
+        // Exclude closed history before resolving titles and constructing the
+        // lookup, rather than making the visibility policy discard it afterwards.
+        let active = sessions.filter { $0.status != .closed }
+        let items = active.map {
             SessionVisibilityItem(
                 id: $0.id,
                 status: $0.status,
@@ -770,7 +773,7 @@ final class SessionStore: ObservableObject {
                 isSuspended: $0.isSuspended
             )
         }
-        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let sessionsByID = Dictionary(active.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return SessionVisibilityPolicy.visibleIDs(from: items, sortMode: sortMode).compactMap { sessionsByID[$0] }
     }
 
@@ -796,7 +799,9 @@ final class SessionStore: ObservableObject {
         hasher.combine(selectedSessionID)
         hasher.combine(collapsedParentIDs.sorted())
         hasher.combine(expandedParentIDs.sorted())
-        for session in sessions {
+        // Only these rows contribute to this projection. Hashing every field of
+        // closed history made even a cache hit expensive on each UI update.
+        for session in sessions where session.status != .closed && !session.isImportedHistory {
             hasher.combine(session.id)
             hasher.combine(session.status)
             // Parked rows sort below live ones, so the grouped projection is stale
