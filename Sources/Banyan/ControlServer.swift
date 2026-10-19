@@ -250,7 +250,18 @@ final class ControlServer {
                 }
                 return
             case .list:
-                return respond(.ok(["workflowProtocol": 1, "sessions": store.sessions.map(summary)]))
+                let options = try SessionListOptions(queryItems: ControlRoute.queryItems(in: request.path))
+                let matches = store.sessions.filter { session in
+                    options.matches(id: session.id, status: session.status.rawValue) {
+                        [session.title, session.displayTitle, session.reportedTitle ?? "",
+                         session.generatedTitle ?? "", session.contextualTitle ?? "",
+                         session.cwd, session.titleURL ?? ""]
+                    }
+                }
+                // A hidden app row must not reappear as a daemon-only Puck row
+                // when the CLI merges this filtered result with the daemon.
+                let puckIDs = store.sessions.filter { $0.backendKind == .puck }.map(\.id)
+                return respond(.ok(["workflowProtocol": 1, "sessions": matches.map(summary), "appPuckSessionIDs": puckIDs]))
 
             case .puckTurn:
                 let body = try request.decode(ControlPayload.self)
@@ -1028,7 +1039,7 @@ final class ControlServer {
             "projectGroupID": session.projectGroupID,
             "projectGroupTitle": session.projectGroupTitle,
             "displayContextDegraded": session.displayContextDegraded,
-            // The list route includes closed history. Constructing two ICU-backed
+            // Explicit history queries can include many rows. Two ICU-backed
             // formatters per row dominated CPU samples in large workspaces.
             "createdAt": session.createdAt.ISO8601Format(),
             "updatedAt": session.updatedAt.ISO8601Format()

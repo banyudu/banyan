@@ -4658,8 +4658,26 @@ final class SessionStore: ObservableObject {
         userSelect(id: id)
     }
 
+    var hasMultipleSidebarSessions: Bool {
+        // Menus re-evaluate on each keystroke. Two visible active rows already
+        // decide this, without hashing thousands of closed history rows.
+        let activeCount = sessionSidebarGroups.reduce(0) { $0 + $1.items.count }
+        if activeCount >= 2 { return true }
+        return activeCount + (historySidebarGroup?.items.count ?? 0) >= 2
+    }
+
     var hasWorkableSession: Bool {
-        sidebarSessions.contains { isWorkableSession($0.id) }
+        // History is closed and cannot be workable. Keep the grouping so hidden
+        // children stay excluded, and use the row directly rather than searching
+        // the full session array again for each candidate.
+        sessionSidebarGroups.contains { group in
+            group.items.contains { item in
+                SessionLifecyclePolicy.isWorkable(
+                    status: item.session.status,
+                    isImportedHistory: item.session.isImportedHistory
+                )
+            }
+        }
     }
 
     func selectNextSessionNeedingAttention() {

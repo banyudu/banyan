@@ -66,3 +66,45 @@ import Testing
     third.status = .needInput
     #expect(sidebarIDs() == ["third", "second"])
 }
+
+@Test @MainActor func navigationMenusIncludeHistoryAndRespectHiddenChildren() throws {
+    let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+    let now = Date()
+    fixture.persistence.save(["parent", "child", "history"].map { id in
+        SessionSnapshot(
+            id: id, tmuxSessionName: "banyan-\(id)", title: id, reportedTitle: nil,
+            cwd: fixture.project.path, command: "codex", status: .closed, tone: .blue,
+            createdAt: now, updatedAt: now
+        )
+    })
+    let store = fixture.makeStore()
+    store.loadPersistedSessionsIfNeeded()
+    defer { store.flushPendingSessionSaves() }
+    let parent = try #require(store.sessions.first { $0.id == "parent" })
+    let child = try #require(store.sessions.first { $0.id == "child" })
+    let history = try #require(store.sessions.first { $0.id == "history" })
+
+    #expect(!store.hasMultipleSidebarSessions)
+    #expect(!store.hasWorkableSession)
+    parent.status = .executing
+    child.status = .idle
+    child.parentSessionID = parent.id
+    store.expandedParentIDs = []
+    store.collapsedParentIDs = [parent.id]
+    #expect(!store.hasMultipleSidebarSessions)
+    #expect(!store.hasWorkableSession)
+    store.expandedParentIDs = [parent.id]
+    #expect(store.hasMultipleSidebarSessions)
+    #expect(store.hasWorkableSession)
+    child.status = .closed
+    #expect(!store.hasMultipleSidebarSessions)
+    #expect(!store.hasWorkableSession)
+    history.titleURL = "https://tracker.example/issue/TASK-123"
+    #expect(store.hasMultipleSidebarSessions)
+    #expect(!store.hasWorkableSession)
+    parent.status = .closed
+    #expect(!store.hasMultipleSidebarSessions)
+    child.titleURL = "https://tracker.example/issue/TASK-456"
+    #expect(store.hasMultipleSidebarSessions)
+    #expect(!store.hasWorkableSession)
+}

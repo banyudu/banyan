@@ -7,7 +7,7 @@ import Foundation
 /// session environment (`tmux new-session -e`), so anything spawned from
 /// inside the session can discover its enclosing Banyan session without
 /// asking the control server. Spawners use that identity to default
-/// `--parent` to the calling session, which keeps `spawn ENG-123`-style flows
+/// `--parent` to the calling session, which keeps `spawn TASK-123`-style flows
 /// nested under the session they were launched from.
 ///
 /// The banyan-side default resolution order is:
@@ -22,6 +22,16 @@ public enum BanyanSessionEnvironment {
     /// Optional override: when set, spawners prefer this over `sessionIDKey`.
     /// Mirrors what `workit` already honors.
     public static let parentSessionIDKey = "BANYAN_PARENT_SESSION_ID"
+
+    /// The app is a host, not a child of the pane that launched it. Tmux keys
+    /// must also go so helpers cannot rediscover that pane as their parent.
+    public static let inheritedContextKeys: Set<String> = [
+        sessionIDKey, parentSessionIDKey, "TMUX", "TMUX_PANE"
+    ]
+
+    public static func appEnvironment(from environment: [String: String]) -> [String: String] {
+        environment.filter { !inheritedContextKeys.contains($0.key) }
+    }
 
     /// Pure env-dict lookup shared by `banyanctl` (and any future spawner).
     /// Returns the trimmed value, or nil when unset/blank.

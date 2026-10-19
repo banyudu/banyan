@@ -1,15 +1,22 @@
 import AppKit
 import BanyanCore
+import Darwin
 import SwiftUI
 
 @main
 struct BanyanApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    private static let host = HostRuntimeContext(
-        environment: ProcessInfo.processInfo.environment,
-        homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
-        currentDirectory: FileManager.default.currentDirectoryPath
-    )
+    private static let host: HostRuntimeContext = {
+        let environment = BanyanSessionEnvironment.appEnvironment(from: ProcessInfo.processInfo.environment)
+        for key in BanyanSessionEnvironment.inheritedContextKeys {
+            unsetenv(key)
+        }
+        return HostRuntimeContext(
+            environment: environment,
+            homeDirectory: URL(fileURLWithPath: NSHomeDirectory()),
+            currentDirectory: FileManager.default.currentDirectoryPath
+        )
+    }()
     /// Host-owned native Codex transport. It starts on the first native client
     /// operation and is stopped before Banyan exits. Native Codex rows share
     /// this client; terminal sessions keep their configured launch path.
@@ -302,13 +309,13 @@ struct BanyanApp: App {
                     store.selectNextSession()
                 }
                 .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-                .disabled(store.sidebarSessions.count < 2)
+                .disabled(!store.hasMultipleSidebarSessions)
 
                 Button("Previous Terminal") {
                     store.selectPreviousSession()
                 }
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-                .disabled(store.sidebarSessions.count < 2)
+                .disabled(!store.hasMultipleSidebarSessions)
 
                 Button("Next Workable Terminal") {
                     store.selectNextWorkableSession()

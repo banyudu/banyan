@@ -427,6 +427,7 @@ public enum ControlValidationError: LocalizedError, Equatable {
     case missingFootprint
     case missingTitle
     case missingCommand
+    case invalidSessionListOption(String)
 
     public var errorDescription: String? {
         switch self {
@@ -436,6 +437,7 @@ public enum ControlValidationError: LocalizedError, Equatable {
         case .missingFootprint: return "request requires the footprint from a preceding /output"
         case .missingTitle: return "request requires title"
         case .missingCommand: return "request requires command"
+        case .invalidSessionListOption(let message): return message
         }
     }
 }

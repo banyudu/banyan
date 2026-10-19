@@ -153,7 +153,7 @@ struct BanyanCtl {
             case "prune":
                 try post("/prune", payload: parsePrunePayload(Array(arguments.dropFirst())))
             case "list":
-                try get("/list")
+                try get("/list", query: SessionListOptions(arguments: Array(arguments.dropFirst())).queryItems)
             case "window-state":
                 try get("/window-state")
             case "help", "--help", "-h":
@@ -164,6 +164,9 @@ struct BanyanCtl {
         } catch let error as CLIError {
             fputs("banyanctl: \(error.localizedDescription)\n", stderr)
             exit(error.exitCode)
+        } catch let error as ControlValidationError {
+            fputs("banyanctl: \(error.localizedDescription)\n", stderr)
+            exit(ExitCode.badInput)
         } catch {
             fputs("banyanctl: \(error.localizedDescription)\n", stderr)
             exit(ExitCode.serverUnavailable)
@@ -232,7 +235,7 @@ struct BanyanCtl {
         }
         switch subcommand {
         case "list":
-            try listUnifiedSessions()
+            try listUnifiedSessions(options: SessionListOptions(arguments: Array(args.dropFirst())))
         case "new", "spawn":
             try post("/spawn", payload: withDefaultParent(parsePayload(Array(args.dropFirst()))))
         case "title":
@@ -271,15 +274,15 @@ struct BanyanCtl {
     /// One catalog for shell and daemon sessions. The daemon half remains
     /// available when the Banyan app is closed. The app lists the daemon
     /// sessions it shows as its own rows, so those appear once, as the app's.
-    private func listUnifiedSessions() throws {
+    private func listUnifiedSessions(options: SessionListOptions) throws {
         var sessions: [[String: Any]] = []
         var appSessionIDs: Set<String> = []
         var shellAvailable = false
         var puckAvailable = false
         var workflowProtocol: Int?
-        if let app = try? loadShellSessions() {
+        if let app = try? loadShellSessions(options: options) {
             sessions.append(contentsOf: app.sessions.map(UnifiedSessionCatalog.appRow))
-            appSessionIDs = Set(app.sessions.compactMap { $0["id"] as? String })
+            appSessionIDs = Set(app.sessions.compactMap { $0["id"] as? String }).union(app.puckIDs)
             workflowProtocol = app.workflowProtocol
             shellAvailable = true
         }
@@ -295,6 +298,14 @@ struct BanyanCtl {
             puckAvailable = true
         }
         guard shellAvailable || puckAvailable else { throw CLIError.serverUnavailable }
+        // Also filter daemon rows and responses from older app versions that
+        // do not yet apply the HTTP query parameters themselves.
+        sessions = sessions.filter { row in
+            options.matches(id: row["id"] as? String ?? "", status: row["status"] as? String ?? "") {
+                ["title", "displayTitle", "reportedTitle", "generatedTitle", "contextualTitle", "cwd", "titleURL"]
+                    .compactMap { row[$0] as? String }
+            }
+        }
         var output: [String: Any] = [
             "sessions": sessions,
             "shellAvailable": shellAvailable,
@@ -305,8 +316,10 @@ struct BanyanCtl {
         print(String(decoding: data, as: UTF8.self))
     }
 
-    private func loadShellSessions() throws -> (sessions: [[String: Any]], workflowProtocol: Int?) {
-        var request = URLRequest(url: baseURL.appendingPathComponent("list"))
+    private func loadShellSessions(options: SessionListOptions) throws -> (sessions: [[String: Any]], workflowProtocol: Int?, puckIDs: [String]) {
+        var components = URLComponents(url: baseURL.appendingPathComponent("list"), resolvingAgainstBaseURL: false)!
+        components.queryItems = options.queryItems.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
+        var request = URLRequest(url: components.url!)
         request.httpMethod = "GET"
         request.timeoutInterval = 5
         try authorize(&request)
@@ -318,7 +331,7 @@ struct BanyanCtl {
               let sessions = body["sessions"] as? [[String: Any]] else {
             throw CLIError.message("Banyan returned an invalid session list")
         }
-        return (sessions, body["workflowProtocol"] as? Int)
+        return (sessions, body["workflowProtocol"] as? Int, body["appPuckSessionIDs"] as? [String] ?? [])
     }
 
     private func runAgentCommand(_ args: [String]) throws {
@@ -982,7 +995,7 @@ struct BanyanCtl {
           banyanctl codex-remote configure --path policy.json
           banyanctl codex-remote resolve --workspace ID --operationID ID
           banyanctl codex-handoff --id ID [--detail prepare|check]
-          banyanctl session list
+          banyanctl session list [--all] [--id ID] [--query TEXT]
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl session title --title TEXT [--id ID]  (automatic title; preserves manual renames)
@@ -1017,7 +1030,14 @@ struct BanyanCtl {
           banyanctl perf prompt [--since 7d]
           banyanctl perf fix [--since 7d] [--agent codex|claude] [--cwd PATH]
           banyanctl window-state
-          banyanctl list
+          banyanctl list [--all] [--id ID] [--query TEXT]
+
+        Lists return active sessions with details by default, including parked,
+        completed and failed rows that remain open. --all includes closed history.
+        --id reads one exact session, including closed history. --query searches
+        IDs, titles, issue URLs and working directories without regard to case;
+        combine it with --all to search history. HTTP clients use GET /list with
+        all=true, id=ID and query=TEXT parameters.
 
         suspend parks a session: Banyan stops supervising and rendering it, while
         its tmux session and any agent inside keep running. resume is lossless and

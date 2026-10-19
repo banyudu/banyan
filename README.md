@@ -588,11 +588,23 @@ swift run banyanctl close --id TASK-123
 swift run banyanctl respawn --id TASK-123
 swift run banyanctl remove --id TASK-123
 swift run banyanctl list
+swift run banyanctl session list --id TASK-123
+swift run banyanctl session list --all --query "widget"
 swift run banyanctl prune --dry-run
 swift run banyanctl suggest --title "TASK-123 is stale" --target TASK-123 --command "workit TASK-123"
 ```
 
 `session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. A spawn issued from inside a Banyan session nests under it by default: `banyanctl` takes `--parent` from `$BANYAN_PARENT_SESSION_ID` / `$BANYAN_SESSION_ID` (every tmux session Banyan creates carries `BANYAN_SESSION_ID`), or from the enclosing `banyan-<id>` tmux session otherwise — so `workit ENG-123` run from a session pane lands as its child with no extra flags. Pass `--parent ID` for a different parent, or `--no-parent` for a top-level session. `suspend` parks a session: Banyan drops it from the supervisor tick, branch/context refresh, and terminal rendering, while its tmux session and any agent inside keep running untouched — so the app's idle cost tracks the sessions you are actually watching rather than every session you have open. `resume` puts it back, keeping the status it had when it was parked. Neither one signals or terminates the agent. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session. `prune` drops closed sessions that aged out of the retention window — see [Session Retention](#session-retention).
+
+Session lists return detailed **active sessions** by default: every row except
+closed history, including completed, failed, parked and suspended sessions that
+remain open. `--all` includes closed history. `--id ID` returns one exact session
+even if it is closed. `--query TEXT` searches IDs, titles, issue URLs and working
+directories without regard to case; combine it with `--all` to search history.
+These filters apply to both `list` and the unified `session list`. HTTP clients
+use `GET /list?all=true&query=widget` or `GET /list?id=TASK-123`; filtering happens
+before detail serialization. Consumers that used closed rows from the previous
+unfiltered list must now request `--all` explicitly.
 
 ### Suggesting Work Instead Of Starting It
 
