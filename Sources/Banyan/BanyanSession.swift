@@ -17,41 +17,78 @@ class BanyanSession: ObservableObject, Identifiable {
     let createdAt: Date
     let historyTranscriptURL: URL?
 
-    var displayProject: String
-    var displayBranch: String?
-    var displayIsGitWorktree: Bool
-    var displayIsDefaultBranch: Bool
+    var displayProject: String {
+        didSet { onHistoryRelevantChange?() }
+    }
+    var displayBranch: String? {
+        didSet { onHistoryRelevantChange?() }
+    }
+    var displayIsGitWorktree: Bool {
+        didSet { onHistoryRelevantChange?() }
+    }
+    var displayIsDefaultBranch: Bool {
+        didSet { onHistoryRelevantChange?() }
+    }
     /// `true` when the last git lookup for the fields above failed to run (timed
     /// out / couldn't launch) rather than answering. Those readings are then
     /// unreliable false-negatives, so we retry on later ticks until we get a
     /// trustworthy one. See `updateDisplayContext` / `retryDisplayContextIfDegraded`.
-    var displayContextDegraded: Bool
-    @Published var projectGroupID: String
-    @Published var projectGroupTitle: String
+    var displayContextDegraded: Bool {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var projectGroupID: String {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var projectGroupTitle: String {
+        didSet { onHistoryRelevantChange?() }
+    }
 
     var projectName: String {
         displayProject
     }
 
-    @Published var title: String
-    @Published var titleURL: String?
-    @Published var reportedTitle: String?
-    @Published var generatedTitle: String?
-    @Published var contextualTitle: String?
-    @Published var detectedAgentProvider: CodingAgentProvider?
+    @Published var title: String {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var titleURL: String? {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var reportedTitle: String? {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var generatedTitle: String? {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var contextualTitle: String? {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var detectedAgentProvider: CodingAgentProvider? {
+        didSet { onHistoryRelevantChange?() }
+    }
     /// Runtime model identity. A terminal OpenCode session learns it from the
     /// supervisor and clears it when the process exits; a puck session reads it
     /// from its daemon. Deliberately not persisted.
     @Published var detectedAgentModelID: String?
     @Published var detectedAgentModelIDIsExact = false
-    @Published var isTitlePinned: Bool
-    @Published var cwd: String
-    @Published var command: String
+    @Published var isTitlePinned: Bool {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var cwd: String {
+        didSet { onHistoryRelevantChange?() }
+    }
+    @Published var command: String {
+        didSet { onHistoryRelevantChange?() }
+    }
     @Published var status: SessionStatus {
-        didSet { if status == .closed { codexAutoRetry.cancel() } }
+        didSet {
+            if status == .closed { codexAutoRetry.cancel() }
+            onHistoryRelevantChange?()
+        }
     }
     @Published var tone: SessionTone
-    @Published var updatedAt: Date
+    @Published var updatedAt: Date {
+        didSet { onHistoryRelevantChange?() }
+    }
     @Published var isRestored: Bool
     @Published var isProcessStarted: Bool
     /// Persisted metadata can outlive the dedicated tmux session after reboot.
@@ -163,6 +200,10 @@ class BanyanSession: ObservableObject, Identifiable {
     var displayAgentProviderCache: (key: DisplayAgentProviderKey, value: CodingAgentProvider?)?
 
     var onDidChange: (() -> Void)?
+    /// Fired after a field that contributes to a history row changes. Separate
+    /// from `onDidChange` so the sidebar projection can invalidate itself
+    /// without doing persistence or selected-context work.
+    var onHistoryRelevantChange: (() -> Void)?
     var onOutput: ((String) -> Void)?
     /// Called after the user submits input. SessionStore uses this to wake
     /// supervision for commands launched from an initially plain shell.
@@ -381,6 +422,7 @@ class BanyanSession: ObservableObject, Identifiable {
     func feedOrQueue(_ text: String) {}
 
     func touch() {
+        EnergyTrace.count("session.touch", sessionID: id)
         // `updatedAt` feeds sidebar ordering and the sidebar/history cache
         // hashes, which scan every row (~3000 with closed history). Bumping it
         // on every observation and output chunk kept those caches permanently
@@ -389,6 +431,7 @@ class BanyanSession: ObservableObject, Identifiable {
         // human-readable ordering and resume heuristics.
         let now = Date()
         if now.timeIntervalSince(updatedAt) >= 2 {
+            EnergyTrace.count("session.updatedAt", sessionID: id)
             updatedAt = now
         }
         onDidChange?()

@@ -46,9 +46,9 @@ final class ControlServer {
         let respond: (Response) -> Void
     }
 
-    init(store: SessionStore, host: HostRuntimeContext, port: NWEndpoint.Port = 7842) {
+    init(store: SessionStore, host: HostRuntimeContext, port: NWEndpoint.Port? = nil) {
         self.store = store
-        self.port = port
+        self.port = port ?? LabEnvironment.controlPort(from: host.environment).flatMap(NWEndpoint.Port.init(rawValue:)) ?? 7842
         self.token = (try? ControlToken.loadOrCreate(
             environment: host.environment,
             homeDirectory: host.homeDirectory

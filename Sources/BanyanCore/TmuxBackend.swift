@@ -26,6 +26,13 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
     /// their own so a `swift test` run cannot see, let alone kill, a live session.
     public let socketName: String
 
+    /// Fixture and lab launches may pin a private socket through the
+    /// environment. Invalid names fall back to the production socket rather
+    /// than letting a typo reach an unrelated tmux server.
+    public static func resolvedSocketName(environment: [String: String]) -> String {
+        LabEnvironment.tmuxSocketName(from: environment) ?? socketName
+    }
+
     /// TERM the SwiftTerm-hosted `tmux attach` client runs with. tmux gates several
     /// capabilities (hyperlinks, RGB) on this name, so both sides must agree.
     public static let attachTermName = "xterm-256color"

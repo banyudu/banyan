@@ -34,7 +34,8 @@ struct BanyanApp: App {
     }()
     private static let tmuxBackend = TmuxBackend(
         environment: Self.host.environment,
-        workingDirectory: Self.host.homeDirectory.path
+        workingDirectory: Self.host.homeDirectory.path,
+        socketName: TmuxBackend.resolvedSocketName(environment: Self.host.environment)
     )
     private static let telemetryConfig = TelemetryConfig.load(
         homeDirectory: Self.host.homeDirectory
@@ -101,7 +102,7 @@ struct BanyanApp: App {
     @FocusedObject private var sessionJumpShortcuts: SessionJumpShortcuts?
 
     private var jumpMenuSessions: [(offset: Int, element: BanyanSession)] {
-        let ids = sessionJumpShortcuts?.sessionIDs ?? store.sidebarSessions.map(\.id)
+        let ids = sessionJumpShortcuts?.sessionIDs ?? store.sidebarSessionIDs(limit: 10)
         let sessionsByID = Dictionary(uniqueKeysWithValues: store.sessions.map { ($0.id, $0) })
         return ids.prefix(10).enumerated().compactMap { index, id in
             guard let session = sessionsByID[id] else { return nil }
@@ -117,6 +118,7 @@ struct BanyanApp: App {
                 .buttonStyle(.banyanDefault)
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
+                    EnergyTrace.start()
                     if Self.host.environment["BANYAN_CPU_CAPTURE"] != "0" {
                         Self.resourceDiagnostics.start { [weak store] in
                             (store?.selection.selectedSessionID,
@@ -124,42 +126,45 @@ struct BanyanApp: App {
                         }
                     }
                     updater.axiomExporter = Self.axiomExporter
-                    updater.checkForUpdates()
+                    let isLab = Self.host.environment["BANYAN_LAB"] == "1"
+                    if !isLab { updater.checkForUpdates() }
                     Self.commandWTerminalCloseMonitor.action = { window in
                         store.handleCloseCommand(in: window)
                     }
                     Self.commandWTerminalCloseMonitor.start()
 
-                    Self.jumpOverlayMonitor.onJump = { [weak store] index in
-                        store?.selectSession(shortcutIndex: index) ?? false
-                    }
-                    Self.jumpOverlayMonitor.onCommandModifierChange = { held in
-                        SessionJumpShortcuts.setCommandHeldInAllWindows(held)
-                    }
-                    Self.jumpOverlayMonitor.onNext = { [weak store] in
-                        guard let store else { return }
-                        if store.sidebarMode == .linear {
-                            store.selectNextLinearIssue()
-                        } else {
-                            store.selectNextSession()
+                    if !isLab {
+                        Self.jumpOverlayMonitor.onJump = { [weak store] index in
+                            store?.selectSession(shortcutIndex: index) ?? false
                         }
-                    }
-                    Self.jumpOverlayMonitor.onPrevious = { [weak store] in
-                        guard let store else { return }
-                        if store.sidebarMode == .linear {
-                            store.selectPreviousLinearIssue()
-                        } else {
-                            store.selectPreviousSession()
+                        Self.jumpOverlayMonitor.onCommandModifierChange = { held in
+                            SessionJumpShortcuts.setCommandHeldInAllWindows(held)
                         }
+                        Self.jumpOverlayMonitor.onNext = { [weak store] in
+                            guard let store else { return }
+                            if store.sidebarMode == .linear {
+                                store.selectNextLinearIssue()
+                            } else {
+                                store.selectNextSession()
+                            }
+                        }
+                        Self.jumpOverlayMonitor.onPrevious = { [weak store] in
+                            guard let store else { return }
+                            if store.sidebarMode == .linear {
+                                store.selectPreviousLinearIssue()
+                            } else {
+                                store.selectPreviousSession()
+                            }
+                        }
+                        Self.jumpOverlayMonitor.onSelectNeedingAttention = { [weak store] direction in
+                            store?.selectSessionNeedingAttention(direction: direction)
+                        }
+                        Self.jumpOverlayMonitor.onHandoff = { [weak store] in
+                            store?.handleHandoffShortcut()
+                            return true
+                        }
+                        Self.jumpOverlayMonitor.start()
                     }
-                    Self.jumpOverlayMonitor.onSelectNeedingAttention = { [weak store] direction in
-                        store?.selectSessionNeedingAttention(direction: direction)
-                    }
-                    Self.jumpOverlayMonitor.onHandoff = { [weak store] in
-                        store?.handleHandoffShortcut()
-                        return true
-                    }
-                    Self.jumpOverlayMonitor.start()
                     store.selection.startClickMonitor()
 
                     Self.sessionRenameShortcutMonitor.action = { [weak store] in

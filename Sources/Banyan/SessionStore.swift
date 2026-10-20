@@ -95,7 +95,12 @@ private enum HandoffDispatchError: Error {
 final class SessionStore: ObservableObject {
     private static let scratchWindowIdentifier = NSUserInterfaceItemIdentifier("banyan.scratch-terminal")
 
-    @Published private(set) var sessions: [BanyanSession] = []
+    @Published private(set) var sessions: [BanyanSession] = [] {
+        didSet {
+            sidebarHistoryRevision &+= 1
+            EnergyTrace.count("store.sessions.mutate")
+        }
+    }
     @Published private(set) var terminalFocusRequestID = UUID()
     @Published private(set) var commandPaletteRequestID = UUID()
     @Published private(set) var scratchTerminalFocusRequestID = UUID()
@@ -484,6 +489,9 @@ final class SessionStore: ObservableObject {
     private var supervisorLifecycleObservers: [NSObjectProtocol] = []
     private var supervisorTickSchedule = SessionSupervisorTickSchedule()
     private(set) var pendingSupervisorActivityIDs: Set<String> = []
+    /// Input, explicit status, and process-exit signals retain the fast response
+    /// deadline. Raw PTY traffic alone uses the visibility-aware cadence.
+    private(set) var pendingSupervisorSignalIDs: Set<String> = []
     /// Watches Codex's session index so a thread renamed mid-conversation
     /// reaches the sidebar without waiting for the next launch.
     private var codexTitleWatcher: CodexSessionIndexWatcher?
@@ -571,7 +579,16 @@ final class SessionStore: ObservableObject {
     private var cachedSessionSidebarGroups: [SidebarSessionGroup]?
     private var sessionSidebarGroupsCacheHash: Int = 0
     private var cachedSidebarHistoryItems: [SidebarSessionItem]?
-    private var sidebarHistoryItemsCacheHash: Int = 0
+    /// Bumped whenever a row that is (or was) shown in History changes. The
+    /// projection used to hash every persisted session on every SwiftUI pass to
+    /// detect that, which made a cache hit O(all history) and dominated the main
+    /// thread while switching sessions.
+    private(set) var sidebarHistoryRevision = 0
+    private var cachedSidebarHistoryRevision = -1
+    private var cachedSidebarHistoryFilterText: String?
+    /// History rows from the last rebuild. A session that is no longer closed
+    /// still needs to invalidate the cached projection (it just left History).
+    private var sidebarHistorySessionIDs: Set<String> = []
     let host: HostRuntimeContext
     let telemetry: PerformanceTelemetry
     private var homeDirectory: String { host.homeDirectory.path }
@@ -924,6 +941,17 @@ final class SessionStore: ObservableObject {
         return [SidebarSessionGroup(id: "search", title: "Search", items: matches)]
     }
 
+    /// Equivalent to `unifiedSidebarGroups.flatMap(\.items).contains`, but
+    /// stops at the matching group instead of copying every history row.
+    func unifiedSidebarContains(sessionID: String) -> Bool {
+        for group in unifiedSidebarGroups {
+            if group.items.contains(where: { $0.id == sessionID }) {
+                return true
+            }
+        }
+        return false
+    }
+
     private func searchSidebarItems(query: String) -> [SidebarSessionItem] {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
@@ -957,6 +985,21 @@ final class SessionStore: ObservableObject {
         sidebarGroups.flatMap(\.items)
     }
 
+    /// The first `limit` visible sidebar IDs in display order. Menu shortcuts
+    /// only need a handful of rows, so avoid flattening the full history group
+    /// (which can hold thousands of rows) on every app body pass.
+    func sidebarSessionIDs(limit: Int) -> [String] {
+        var ids: [String] = []
+        ids.reserveCapacity(limit)
+        for group in sidebarGroups {
+            for item in group.items {
+                ids.append(item.id)
+                if ids.count >= limit { return ids }
+            }
+        }
+        return ids
+    }
+
     var hasLocalHistorySessions: Bool {
         sessions.contains { session in
             SessionHistoryPolicy.isLocalHistorySession(
@@ -968,28 +1011,23 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Invalidates the history projection only for rows that can affect it.
+    /// Live-session churn (status, output, model identity) is intentionally
+    /// ignored: those rows are not in History, and their eventual close bumps
+    /// the revision when the row becomes history.
+    private func noteSidebarHistoryChange(for session: BanyanSession) {
+        EnergyTrace.count("sidebar.historyCheck", sessionID: session.id)
+        guard !session.isImportedHistory else { return }
+        guard session.status == .closed || sidebarHistorySessionIDs.contains(session.id) else { return }
+        EnergyTrace.count("sidebar.historyInvalidate", sessionID: session.id)
+        sidebarHistoryRevision &+= 1
+    }
+
     private var sidebarHistoryItems: [SidebarSessionItem] {
-        var hasher = Hasher()
-        hasher.combine(historyFilterText)
-        for session in sessions {
-            hasher.combine(session.id)
-            hasher.combine(session.status)
-            hasher.combine(session.isImportedHistory)
-            hasher.combine(session.updatedAt)
-            hasher.combine(session.command)
-            hasher.combine(session.detectedAgentProvider)
-            hasher.combine(session.titleURL)
-            hasher.combine(session.title)
-            hasher.combine(session.displayBranch)
-            hasher.combine(session.cwd)
-            hasher.combine(session.isTitlePinned)
-            hasher.combine(session.reportedTitle)
-            hasher.combine(session.generatedTitle)
-            hasher.combine(session.contextualTitle)
-            hasher.combine(session.projectGroupTitle)
-        }
-        let hash = hasher.finalize()
-        if hash == sidebarHistoryItemsCacheHash, let cached = cachedSidebarHistoryItems {
+        let filterText = historyFilterText
+        if sidebarHistoryRevision == cachedSidebarHistoryRevision,
+           filterText == cachedSidebarHistoryFilterText,
+           let cached = cachedSidebarHistoryItems {
             return cached
         }
 
@@ -1004,7 +1042,7 @@ final class SessionStore: ObservableObject {
 
         // Browse path pre-limits by `updatedAt` before rendering titles;
         // search path must be exhaustive because it matches against composed titles.
-        let normalizedQuery = historyFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedQuery = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
         let rendered: [BanyanSession]
         if normalizedQuery.isEmpty {
             rendered = historySessions
@@ -1028,12 +1066,14 @@ final class SessionStore: ObservableObject {
         let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let result: [SidebarSessionItem] = SessionHistoryPresentation.sidebarEntries(
             from: candidates,
-            query: historyFilterText
+            query: filterText
         ).compactMap { entry in
             guard let session = sessionsByID[entry.id] else { return nil }
             return SidebarSessionItem(session: session, depth: 0, titleOverride: entry.title, isHistory: true)
         }
-        sidebarHistoryItemsCacheHash = hash
+        sidebarHistorySessionIDs = Set(historySessions.map(\.id))
+        cachedSidebarHistoryRevision = sidebarHistoryRevision
+        cachedSidebarHistoryFilterText = filterText
         cachedSidebarHistoryItems = result
         return result
     }
@@ -2324,23 +2364,33 @@ final class SessionStore: ObservableObject {
                 count += 1
             }
         }
-        let thermalState: SupervisorThermalState
-        switch ProcessInfo.processInfo.thermalState {
-        case .fair:
-            thermalState = .fair
-        case .serious:
-            thermalState = .serious
-        case .critical:
-            thermalState = .critical
-        default:
-            thermalState = .nominal
-        }
         return SessionSupervisorCadencePolicy.interval(
             activityLevel: supervisorActivityLevel,
             startedSessionCount: startedSessions,
             activeSessionCount: activeSessions,
             isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
-            thermalState: thermalState
+            thermalState: supervisorThermalState
+        )
+    }
+
+    private var supervisorThermalState: SupervisorThermalState {
+        switch ProcessInfo.processInfo.thermalState {
+        case .fair:
+            return .fair
+        case .serious:
+            return .serious
+        case .critical:
+            return .critical
+        default:
+            return .nominal
+        }
+    }
+
+    private var supervisorActivityInterval: TimeInterval {
+        SessionSupervisorCadencePolicy.activityInterval(
+            activityLevel: supervisorActivityLevel,
+            isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            thermalState: supervisorThermalState
         )
     }
 
@@ -2406,6 +2456,7 @@ final class SessionStore: ObservableObject {
             at: now,
             scheduledFire: supervisorTimer == nil ? nil : supervisorTimerDueAt,
             activityPending: !pendingSupervisorActivityIDs.isEmpty,
+            activityInterval: pendingSupervisorSignalIDs.isEmpty ? supervisorActivityInterval : 2,
             interval: supervisorInterval
         ) else { return }
         supervisorTimer?.invalidate()
@@ -5044,7 +5095,16 @@ final class SessionStore: ObservableObject {
                 }
             }
         }
+        session.onHistoryRelevantChange = { [weak self, weak session] in
+            guard let self, let session else { return }
+            EnergyTrace.count("sidebar.historySignal", sessionID: session.id)
+            self.noteSidebarHistoryChange(for: session)
+        }
         session.onDidChange = { [weak self, weak session] in
+            if let session { EnergyTrace.count("session.didChange", sessionID: session.id) }
+            if let self, let session {
+                self.noteSidebarHistoryChange(for: session)
+            }
             Task { @MainActor in
                 // A native row may have been replaced by a terminal with the
                 // same ID while this callback was queued. Persist the owner.
@@ -5057,6 +5117,7 @@ final class SessionStore: ObservableObject {
         }
         session.onOutput = { [weak self, weak session] text in
             guard let self, let session else { return }
+            EnergyTrace.count("pty.output", sessionID: session.id)
             telemetry.noteSessionFirstOutput(sessionID: session.id)
             self.resetSupervisorObservationBackoff(for: session, invalidatesObservation: false)
             self.detectAttention(in: text, for: session)
@@ -5085,6 +5146,7 @@ final class SessionStore: ObservableObject {
         }
         session.onStatusSignal = { [weak self, weak session] status in
             guard let self, let session else { return }
+            EnergyTrace.count("session.statusSignal", sessionID: session.id)
             self.resetSupervisorObservationBackoff(for: session.id)
             self.recordStatusEvent(id: session.id, status: status)
             // Puck asks are notified from routed watch events, not a status
@@ -5101,6 +5163,7 @@ final class SessionStore: ObservableObject {
         }
         session.onProcessExit = { [weak self, weak session] _ in
             guard let self, let session = session as? TerminalSession, session.status != .closed else { return }
+            EnergyTrace.count("session.processExit", sessionID: session.id)
             self.resetSupervisorObservationBackoff(for: session.id)
             if self.tmuxBackend.hasSession(named: session.tmuxSessionName) {
                 session.detachTerminalClient()
@@ -5211,6 +5274,8 @@ final class SessionStore: ObservableObject {
     }
 
     private func saveChangedSession(_ session: BanyanSession) {
+        let trace = EnergyTrace.span("store.saveSession", sessionID: session.id)
+        defer { trace?.end() }
         guard !session.isImportedHistory else { return }
         guard let index = lastSavedSnapshotIndexByID[session.id],
               lastSavedSessionSnapshots?.indices.contains(index) == true,
@@ -5416,6 +5481,7 @@ final class SessionStore: ObservableObject {
                 && !session.isSuspended && !session.isFrozen && !session.isDeepSuspended && (sessionID == nil || session.id == sessionID) {
                 supervisorObservationStates[session.id, default: .init()].noteActivity(at: now)
                 pendingSupervisorActivityIDs.insert(session.id)
+                pendingSupervisorSignalIDs.insert(session.id)
             }
         }
         guard supervisorTickSchedule.begin() else { return }
@@ -5450,6 +5516,7 @@ final class SessionStore: ObservableObject {
             )
         }.map(\.id)))
         pendingSupervisorActivityIDs.subtract(candidates.map(\.id))
+        pendingSupervisorSignalIDs.formIntersection(pendingSupervisorActivityIDs)
         guard !candidates.isEmpty else {
             supervisorTickSchedule.finish(at: now, minimumRest: 1)
             rescheduleSupervisor()
@@ -5529,7 +5596,8 @@ final class SessionStore: ObservableObject {
               !session.isSuspended, !session.isFrozen, !session.isDeepSuspended else { return }
         supervisorObservationStates[session.id, default: .init()].noteActivity(at: Date(), invalidatesObservation: invalidatesObservation)
         let newlyPending = pendingSupervisorActivityIDs.insert(session.id).inserted
-        if didStartSupervisor && newlyPending { rescheduleSupervisor() }
+        let newlySignalled = invalidatesObservation && pendingSupervisorSignalIDs.insert(session.id).inserted
+        if didStartSupervisor && (newlyPending || newlySignalled) { rescheduleSupervisor() }
     }
 
     private func updateSupervisorObservationStates(
@@ -5584,6 +5652,8 @@ final class SessionStore: ObservableObject {
     }
 
     private func refreshSelectedContextInfo(force: Bool = false) {
+        let trace = EnergyTrace.span("selectedContext.refresh", sessionID: selectedSessionID)
+        defer { trace?.end() }
         guard let input = selectedContextLookupInput() else {
             selectedContextTask?.cancel()
             selectedContextTask = nil

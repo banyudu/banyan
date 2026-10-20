@@ -67,6 +67,55 @@ import Testing
     #expect(sidebarIDs() == ["third", "second"])
 }
 
+@Test @MainActor func historyProjectionInvalidatesOnlyForHistoryRows() throws {
+    let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+    let now = Date()
+    fixture.persistence.save([
+        SessionSnapshot(
+            id: "active", tmuxSessionName: "banyan-active", title: "TASK-1 Active",
+            reportedTitle: nil, cwd: fixture.project.path, command: "codex",
+            status: .idle, tone: .blue, createdAt: now, updatedAt: now
+        ),
+        SessionSnapshot(
+            id: "history", tmuxSessionName: "banyan-history", title: "TASK-2 Old",
+            reportedTitle: nil, cwd: fixture.project.path, command: "codex",
+            status: .closed, tone: .blue, createdAt: now, updatedAt: now
+        )
+    ])
+    let store = fixture.makeStore()
+    store.loadPersistedSessionsIfNeeded()
+    defer { store.flushPendingSessionSaves() }
+    let active = try #require(store.sessions.first { $0.id == "active" })
+    let history = try #require(store.sessions.first { $0.id == "history" })
+    func historyTitles() -> [String] {
+        store.sidebarGroups.first { $0.id == "history" }?.items.compactMap(\.titleOverride) ?? []
+    }
+
+    // A restored agent row is titled from its session id until the title is pinned.
+    #expect(historyTitles() == ["TASK-2 · history"])
+
+    let revisionBeforeLiveChange = store.sidebarHistoryRevision
+    active.title = "TASK-1 Renamed"
+    active.touch()
+    #expect(store.sidebarHistoryRevision == revisionBeforeLiveChange)
+
+    let revisionBeforeHistoryChange = store.sidebarHistoryRevision
+    history.isTitlePinned = true
+    history.title = "TASK-2 Renamed"
+    history.touch()
+    #expect(store.sidebarHistoryRevision > revisionBeforeHistoryChange)
+    #expect(historyTitles() == ["TASK-2 Renamed"])
+
+    history.status = .idle
+    history.touch()
+    #expect(historyTitles().isEmpty)
+
+    active.isTitlePinned = true
+    active.status = .closed
+    active.touch()
+    #expect(historyTitles() == ["TASK-1 Renamed"])
+}
+
 @Test @MainActor func navigationMenusIncludeHistoryAndRespectHiddenChildren() throws {
     let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
     let now = Date()

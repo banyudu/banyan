@@ -183,7 +183,8 @@ struct BanyanCtl {
                     throw TmuxBackend.BackendError.tmuxNotFound
                 }
                 return try TmuxBackend(executableURL: executable, workingDirectory: host.currentDirectory,
-                    environment: host.environment).energySessionRoots()
+                    environment: host.environment,
+                    socketName: TmuxBackend.resolvedSocketName(environment: host.environment)).energySessionRoots()
             }
             if options.json {
                 let encoder = JSONEncoder()

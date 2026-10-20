@@ -76,3 +76,70 @@ import Testing
     ) == now.addingTimeInterval(30))
     #expect(cadenceReads == 1)
 }
+
+@Test(arguments: [
+    (SupervisorActivityLevel.active, false, SupervisorThermalState.nominal, 2.0),
+    (.backgroundVisible, false, .nominal, 6.0),
+    (.hidden, false, .nominal, 30.0),
+    (.hidden, true, .nominal, 60.0),
+    (.hidden, false, .serious, 90.0),
+])
+func continuousOutputRespectsVisibilityAndPower(
+    activityLevel: SupervisorActivityLevel,
+    lowPower: Bool,
+    thermal: SupervisorThermalState,
+    expectedInterval: TimeInterval
+) {
+    var schedule = SessionSupervisorTickSchedule()
+    let start = Date(timeIntervalSince1970: 1000)
+    var scheduledFire: Date?
+    var ticks = 0
+    var cadenceReads = 0
+    func fleetCadence() -> TimeInterval {
+        cadenceReads += 1
+        return 300
+    }
+    let activityInterval = SessionSupervisorCadencePolicy.activityInterval(
+        activityLevel: activityLevel, isLowPowerModeEnabled: lowPower, thermalState: thermal
+    )
+
+    // Five minutes of continuous PTY traffic, including output during a tick.
+    // Hidden traffic used to force 150 inspections instead of at most ten.
+    for chunk in 0...30_000 {
+        let now = start.addingTimeInterval(Double(chunk) / 100)
+        if let deadline = scheduledFire, deadline <= now {
+            let began = schedule.begin()
+            #expect(began)
+            #expect(schedule.replacementFire(
+                at: now, scheduledFire: nil, activityPending: true,
+                activityInterval: activityInterval, interval: fleetCadence()
+            ) == nil)
+            ticks += 1
+            schedule.finish(at: now, minimumRest: 2)
+            scheduledFire = nil
+        }
+        if let next = schedule.replacementFire(
+            at: now, scheduledFire: scheduledFire, activityPending: true,
+            activityInterval: activityInterval, interval: fleetCadence()
+        ) {
+            scheduledFire = next
+        }
+    }
+    #expect(ticks == Int(300 / expectedInterval))
+    #expect(cadenceReads == 0)
+}
+
+@Test func foregroundActivityAdvancesHiddenDeadline() {
+    let schedule = SessionSupervisorTickSchedule()
+    let now = Date(timeIntervalSince1970: 1000)
+    let hiddenDeadline = schedule.replacementFire(
+        at: now, scheduledFire: nil, activityPending: true,
+        activityInterval: 30, interval: 300
+    )
+    #expect(hiddenDeadline == now.addingTimeInterval(30))
+    let foreground = now.addingTimeInterval(1)
+    #expect(schedule.replacementFire(
+        at: foreground, scheduledFire: hiddenDeadline, activityPending: true,
+        activityInterval: 2, interval: 6
+    ) == foreground.addingTimeInterval(2))
+}

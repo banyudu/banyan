@@ -61,7 +61,10 @@ timestamps now use `Date.ISO8601Format()`, preserving UTC and second precision
 without rebuilding ICU formatters. The active sidebar excludes closed history
 before resolving display titles, constructing its lookup, or hashing presentation
 fields, so those operations scale with active rows. History retains its separate
-projection and cache.
+projection and cache. That cache is keyed by a revision bumped only when a row
+enters, leaves, or changes inside History. It used to hash every session on
+every SwiftUI pass to detect such changes, so even a cache hit scaled with the
+full local history and dominated the main thread while switching sessions.
 
 Navigation menu availability checks also avoid the history projection whenever
 visible active rows determine the answer. Two active rows enable next/previous
@@ -113,11 +116,19 @@ multipliers:
 | `backgroundVisible` | 6 s | 15 s |
 | `hidden` | 30 s | 300 s |
 
+Output-triggered wakeups also respect the active-work cadence for the current
+visibility, Low Power Mode, and thermal state. Previously their fast path always
+scheduled a check in two seconds, bypassing hidden throttling while PTY output
+continued. Chunks still coalesce into one deadline without scanning the fleet.
+Input, explicit status, and process-exit signals retain their two-second
+inspection deadline; returning to the app still forces a refresh. Hidden
+attention inferred only from pane text follows the hidden output cadence.
+
 A tick is the only thing that turns an *unattached* session's new state into a
 notification, so hidden cadence is also the worst-case attention latency for a
-session the user has never opened. Attached sessions are unaffected: their
-status signals arrive on the PTY as the agent writes them, so the session the
-user is actually watching still notifies instantly at any visibility. An idle
+session the user has never opened. Explicit status signals still arrive directly;
+attention inferred from raw terminal text uses the visibility-aware inspection
+cadence, including for attached hidden sessions. An idle
 agent cannot change without the user, which is why that case stretches to the
 ceiling while an executing one keeps a half-minute check. The session-count
 multiplier applies only to on-screen cadences — it exists to flatten spikes in a
@@ -165,6 +176,74 @@ supervisor timer sleeps until the next session is due. A user status signal or
 selecting a session resets that session's backoff.
 
 ## Reproduction and attribution
+
+### Verify a recurring regression
+
+Compare the same build configuration, power/thermal state, session count,
+history size, and workload before and after each fix. A quiet ten-second sample
+cannot clear an intermittent regression, and the rolling 12-hour score cannot
+measure the immediate effect of a patch.
+
+Use these separate phases, keeping CPU/wakeup samples and spike captures:
+
+| Phase | What it isolates |
+| --- | --- |
+| Visible, quiet sessions | Baseline UI and supervisor overhead |
+| Hidden, quiet sessions | Work that should stop or back off |
+| Hidden, continuous terminal output | Output bypassing background throttling |
+| Repeated session switches with a large history | Sidebar projection, menu creation, and layout |
+| Completion/attention while hidden, then reveal | Notification latency and correct resynchronization |
+
+Replay the affected fleet size rather than only testing a fresh one-session
+workspace. For UI spikes, correlate the capture's selection and visibility
+with the switch events. `BANYAN_TERMINAL_DIAGNOSTICS=1` enables aggregated
+terminal update/layout/frame-change/output/draw counters; see
+`TerminalEnergyDiagnostics`. A layout stack identifies where time was spent,
+not which state change invalidated the view. Use a SwiftUI Instruments trace
+to follow that dependency before changing row observation or animations.
+Do not sum asynchronous telemetry durations as if they were CPU time.
+
+The continuous-output scheduler regression simulates five minutes: normal-power
+hidden output permits ten scheduled checks instead of the former 150. This is
+a scheduling assertion, not a claim of a proportional reduction in battery use.
+The isolated runtime fixture in [supervisor cadence](supervisor-cadence.md)
+checks real timers and hidden notification paths on disposable tmux sessions.
+
+Only mark the recurring incident resolved after the patched app passes the
+matching workload phases and remains quiet through an ordinary work period.
+Keep capturing recurrences with build IDs so a later regression can be
+distinguished from an old binary or a separate expensive path.
+
+### Run an isolated lab instance
+
+`scripts/lab-app.sh --package --here` copies the packaged app under
+`/tmp/banyan-lab`, then launches it with a private data directory, control port
+(`7843` by default), and tmux socket. The copied bundle path also keeps
+`scripts/restart-app.sh` from treating the lab instance as the production
+channel. It sets `BANYAN_LAB=1`, which skips the update check and global jump
+shortcut monitor; `BANYAN_CPU_CAPTURE=0` avoids the spike sampler perturbing the
+measurement. The script writes an `env.sh` so `banyanctl` targets the lab:
+
+```sh
+scripts/lab-app.sh --package --here
+source /tmp/banyan-lab/env.sh
+banyanctl session list
+```
+
+`BANYAN_ENERGY_TRACE=1` adds causal counters at the PTY-output, session-change,
+sidebar-invalidation, view-body, and layout boundaries. They aggregate in
+memory and emit one `energy-trace` line every five seconds, so a trace shows
+which event spikes immediately before a layout burst without turning terminal
+output into per-chunk logging. Stream it with:
+
+```sh
+log stream --predicate 'subsystem == "dev.banyudu.banyan" AND category == "energy-trace"' --info
+```
+
+The same switch enables `os_signpost` intervals, so a short Instruments run can
+correlate those counters with the main-thread stacks. The trace is off in
+ordinary launches; the lab overrides are inert unless their environment keys
+are set.
 
 ### Attribute the workload before changing the app
 

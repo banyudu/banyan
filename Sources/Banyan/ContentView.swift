@@ -52,6 +52,7 @@ struct ContentView: View {
     @FocusState private var isSidebarSearchFocused: Bool
 
     var body: some View {
+        let _ = EnergyTrace.count("content.body")
         NavigationSplitView {
             sidebar
                 .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
@@ -518,7 +519,7 @@ struct ContentView: View {
                 .onAppear {
                     guard let id = selection.selectedSessionID,
                           id != lastAutoScrolledSidebarSessionID,
-                          store.unifiedSidebarGroups.flatMap(\.items).contains(where: { $0.id == id })
+                          store.unifiedSidebarContains(sessionID: id)
                     else { return }
                     lastAutoScrolledSidebarSessionID = id
                     // Defer one runloop so the List has laid out its rows before jumping.
@@ -529,7 +530,7 @@ struct ContentView: View {
                 .onReceive(selection.$selectedSessionID) { id in
                     guard let id,
                           id != lastAutoScrolledSidebarSessionID,
-                          store.unifiedSidebarGroups.flatMap(\.items).contains(where: { $0.id == id })
+                          store.unifiedSidebarContains(sessionID: id)
                     else { return }
                     lastAutoScrolledSidebarSessionID = id
                     withAnimation(.easeOut(duration: 0.2)) {
@@ -2624,6 +2625,7 @@ private struct SessionRow: View {
     }
 
     var body: some View {
+        let _ = EnergyTrace.count("session.row.body", sessionID: session.id)
         HStack(spacing: 6) {
             // All rows in a group with any nesting share a fixed leading
             // slot, so same-depth badges align whether or not a given row

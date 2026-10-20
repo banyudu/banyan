@@ -128,13 +128,15 @@ func supervisorSevenHiddenSessionRuntimeFixture() async throws {
     try await runtimeFixtureWait(seconds: 10) { selected.loadedTerminalView?.process.running == true }
     let attachedStart = ContinuousClock.now
     try send("attention", index: 2)
-    try await runtimeFixtureWait(seconds: 6) { selected.status == .asking }
+    // Raw output in a hidden window follows the hidden activity cadence.
+    // Explicit input/status/exit signals still use the fast deadline above.
+    try await runtimeFixtureWait(seconds: 42) { selected.status == .asking }
     try record("selected_attached_attention_s", elapsed(attachedStart))
 
     // Recreate the cache-eviction condition, rather than relying only on a
     // session that was never attached. The pane survives; the PTY disappears.
     try send("executing", index: 2)
-    try await runtimeFixtureWait(seconds: 6) { selected.status == .executing }
+    try await runtimeFixtureWait(seconds: 42) { selected.status == .executing }
     selected.unloadTerminalView()
     try #require(selected.loadedTerminalView == nil)
     let evictedStart = ContinuousClock.now

@@ -162,6 +162,7 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
     }
 
     /// A leaf `Image` for a native menu item, which renders only plain images.
+    @MainActor
     var menuIconImage: Image {
         if let customIconImage {
             return Image(nsImage: customIconImage)
@@ -177,7 +178,17 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
         return Image(systemName: systemImage)
     }
 
+    /// Menu bodies can rebuild many times per interaction; decoding the brand
+    /// SVG and constructing its `NSImage` every pass made this one of the
+    /// hottest frames while switching sessions. The artwork is immutable, so
+    /// one image per provider is enough for the process lifetime.
+    @MainActor private static var providerMenuIconCache: [CodingAgentProvider: NSImage] = [:]
+
+    @MainActor
     private func providerMenuIconImage(provider: CodingAgentProvider) -> Image {
+        if let cached = Self.providerMenuIconCache[provider] {
+            return Image(nsImage: cached)
+        }
         guard let name = providerBrandResourceName(provider),
               let url = Bundle.module.url(forResource: name, withExtension: "svg"),
               let nsImage = NSImage(contentsOf: url)
@@ -185,6 +196,7 @@ struct NewSessionLaunch: Identifiable, Hashable, Codable {
             return Image(systemName: systemImage)
         }
         nsImage.size = NSSize(width: 16, height: 16)
+        Self.providerMenuIconCache[provider] = nsImage
         return Image(nsImage: nsImage)
     }
 

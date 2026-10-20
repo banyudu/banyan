@@ -43,9 +43,26 @@ public enum SessionSupervisorCadencePolicy {
     /// Ceiling once nothing is on screen. The tick is the only thing that turns
     /// an unattached session's new state into a notification, so this doubles as
     /// the worst-case attention latency for a session the user has never opened.
-    /// Attached sessions are unaffected: their status signals arrive on the PTY
-    /// as the agent writes them, whatever the app is doing.
+    /// Explicit status signals arrive directly. Attention inferred only from
+    /// pane text uses the hidden activity cadence, even for attached sessions.
     public static let hiddenMaxInterval: TimeInterval = 300.0
+
+    /// Output wakes a quiet session without using the idle backoff. It must
+    /// still respect visibility and power limits, even when chunks arrive
+    /// continuously. This constant-time path needs no fleet inventory.
+    public static func activityInterval(
+        activityLevel: SupervisorActivityLevel,
+        isLowPowerModeEnabled: Bool,
+        thermalState: SupervisorThermalState
+    ) -> TimeInterval {
+        interval(
+            activityLevel: activityLevel,
+            startedSessionCount: 1,
+            activeSessionCount: 1,
+            isLowPowerModeEnabled: isLowPowerModeEnabled,
+            thermalState: thermalState
+        )
+    }
 
     public static func interval(
         activityLevel: SupervisorActivityLevel,

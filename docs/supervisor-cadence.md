@@ -8,8 +8,12 @@ executing, long-running-shell and subagent sessions back off exponentially to
 Selected sessions with a running terminal client retain the base cadence.
 Idle-session backoff retains its existing one-hour ceiling.
 
-PTY output, submitted input, status signals and kernel process-exit events wake
-deferred work, coalesced behind a two-second deadline and any running tick.
+PTY output wakes deferred work with a visibility/power-aware deadline: normally
+two seconds active, six seconds background-visible, and 30 seconds hidden.
+Submitted input, explicit status signals and kernel process-exit events retain
+the two-second deadline. Requests coalesce behind any running tick; a signal
+upgrades an already-pending output request without being downgraded by later
+output.
 Output preserves a usable in-flight status result; newer status/input/exit
 signals invalidate it. The process watcher uses PIDs from the same inspection
 snapshot, creates no tmux client, and stops watching removed or suspended rows.
@@ -137,7 +141,8 @@ transition through tmux activity, a silent external child's completion through
 the kernel exit event, a selected attached session, and the same selected
 session after actual terminal-view eviction. Bounds are 42 seconds for the
 hidden activity path (30-second probe plus timer tolerance/inspection allowance)
-and six seconds for selected-output and exit-event paths. It writes measured
+and six seconds for the exit-event path. Selected output in a hidden window now
+uses the same 42-second bound as other hidden text-based detection. It writes measured
 latencies and process snapshot count to `latency.json`. The ordinary tests use
 a virtual clock to assert the stricter scheduling intervals without wall-clock
 flakiness. The fixture's performance report retains the production slow-event

@@ -234,6 +234,9 @@ final class TerminalContainerView: NSView {
     }
 
     override func layout() {
+        let trace = EnergyTrace.span("terminal.layout", sessionID: session.id)
+        defer { trace?.end() }
+        EnergyTrace.count("terminal.layout", sessionID: session.id)
         if TerminalEnergyDiagnostics.enabled {
             energyLayoutPasses += 1
         }

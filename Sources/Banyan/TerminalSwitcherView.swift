@@ -254,6 +254,9 @@ final class TerminalSwitcherContainer: NSView {
         onUserSubmittedInput: @escaping (TerminalSession, String?) -> Void,
         onTerminalReady: @escaping (TerminalSession) -> Void
     ) {
+        let trace = EnergyTrace.span("switcher.update")
+        defer { trace?.end() }
+        EnergyTrace.count("switcher.update")
         if TerminalEnergyDiagnostics.enabled {
             energyDiagnosticsUpdateCount += 1
         }
@@ -536,6 +539,9 @@ final class TerminalSwitcherContainer: NSView {
     }
 
     override func layout() {
+        let trace = EnergyTrace.span("switcher.layout")
+        defer { trace?.end() }
+        EnergyTrace.count("switcher.layout")
         if TerminalEnergyDiagnostics.enabled {
             energyDiagnosticsLayoutCount += 1
         }

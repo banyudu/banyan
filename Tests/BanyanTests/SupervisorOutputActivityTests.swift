@@ -27,10 +27,15 @@ import Testing
     #expect(after.nextDueAt <= start)
     #expect(after.fastUntil > start)
     #expect(store.pendingSupervisorActivityIDs.contains(session.id))
+    #expect(store.pendingSupervisorSignalIDs.isEmpty)
     #expect(store.terminalSessions.allSatisfy { $0.loadedTerminalView == nil })
 
     session.onUserSubmittedInput?(nil)
     #expect(store.supervisorObservationStates[session.id]?.resultRevision == before.resultRevision + 1)
+    #expect(store.pendingSupervisorSignalIDs == [session.id])
+    // More output must not downgrade the input/exit signal's fast deadline.
+    output("still working ")
+    #expect(store.pendingSupervisorSignalIDs == [session.id])
 }
 
 @MainActor
@@ -50,4 +55,5 @@ func supervisorOutputDoesNotWakeInactiveSessions(lifecycle: String) throws {
     store.resetSupervisorObservationBackoff(for: session, invalidatesObservation: false)
     #expect(store.supervisorObservationStates.isEmpty)
     #expect(store.pendingSupervisorActivityIDs.isEmpty)
+    #expect(store.pendingSupervisorSignalIDs.isEmpty)
 }
