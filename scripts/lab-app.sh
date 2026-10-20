@@ -6,7 +6,7 @@
 # production SQLite database, and scripts/restart-app.sh does not target it.
 #
 # Usage:
-#   scripts/lab-app.sh [--package] [--here]
+#   scripts/lab-app.sh [--package] [--reset] [--here]
 #
 # The app bundle defaults to <root>/dist/Banyan.app. --package builds it first
 # without promoting it to /Applications.
@@ -18,12 +18,14 @@ source "$SCRIPT_ROOT/scripts/lib/repo-root.sh"
 
 PACKAGE=0
 HERE=0
+RESET=0
 for arg in "$@"; do
   case "$arg" in
     --package) PACKAGE=1 ;;
+    --reset) RESET=1 ;;
     --here) HERE=1 ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "lab-app: unknown option '$arg' (--package | --here)" >&2; exit 1 ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "lab-app: unknown option '$arg' (--package | --reset | --here)" >&2; exit 1 ;;
   esac
 done
 
@@ -36,6 +38,7 @@ PORT="${BANYAN_LAB_PORT:-7843}"
 SOCKET="${BANYAN_LAB_TMUX_SOCKET:-banyan-lab-$PORT}"
 LAB_APP="$LAB_HOME/Banyan.app"
 DATA_HOME="$LAB_HOME/data"
+LAB_PATTERN="banyan-lab/Banyan.app/Contents/MacOS/Banyan"
 
 if [[ "$PACKAGE" == 1 ]]; then
   BANYAN_SKIP_INSTALL=1 "$ROOT_DIR/scripts/package-app.sh" --here
@@ -49,19 +52,27 @@ if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   echo "lab-app: invalid BANYAN_LAB_PORT '$PORT'" >&2
   exit 1
 fi
+mkdir -p "$DATA_HOME" "$LAB_HOME"
+if pgrep -f "$LAB_PATTERN" >/dev/null 2>&1; then
+  echo "lab-app: stopping previous lab instance" >&2
+  pkill -TERM -f "$LAB_PATTERN" 2>/dev/null || true
+  for _ in {1..50}; do pgrep -f "$LAB_PATTERN" >/dev/null 2>&1 || break; sleep 0.1; done
+  for _ in {1..50}; do
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+fi
+
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "lab-app: port $PORT is already in use" >&2
   exit 1
 fi
 
-mkdir -p "$DATA_HOME" "$LAB_HOME"
-if [[ -f "$LAB_HOME/app.pid" ]]; then
-  OLD_PID="$(cat "$LAB_HOME/app.pid")"
-  if kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "lab-app: stopping previous lab instance $OLD_PID" >&2
-    kill "$OLD_PID" 2>/dev/null || true
-    for _ in {1..50}; do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.1; done
-  fi
+if [[ "$RESET" == 1 ]]; then
+  echo "lab-app: resetting $LAB_HOME" >&2
+  tmux -L "$SOCKET" kill-server >/dev/null 2>&1 || true
+  rm -rf "$LAB_HOME"
+  mkdir -p "$DATA_HOME" "$LAB_HOME"
 fi
 
 rm -rf "$LAB_APP"
@@ -84,6 +95,9 @@ open -n -g \
   --env BANYAN_ENERGY_TRACE=1 \
   --env BANYAN_TERMINAL_DIAGNOSTICS=1 \
   "$LAB_APP" --args -ApplePersistenceIgnoreState YES
+
+sleep 0.5
+pgrep -f "$LAB_PATTERN" | head -1 > "$LAB_HOME/app.pid" || true
 
 for _ in {1..100}; do
   if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
