@@ -166,6 +166,43 @@ selecting a session resets that session's backoff.
 
 ## Reproduction and attribution
 
+### Attribute the workload before changing the app
+
+```sh
+banyanctl perf energy --seconds 10
+banyanctl perf energy --seconds 10 --json
+```
+
+This macOS-only, read-only report takes two kernel process inventories and two
+batched tmux pane inventories. It groups CPU, interrupt wakeups, physical memory,
+and available CPU energy counters by Banyan session, and lists the busiest
+processes with their PIDs and ages. The app PID and Banyan's tmux server are
+separate groups. No app restart, control-server request, privilege escalation,
+background timer, process signals, arguments, environment, or transcript reads
+are involved. Sampling defaults to 10 seconds and is bounded to 1–60 seconds.
+
+This matters when an agent leaves a command running after useful work finishes.
+For example, a stuck startup helper can consume a core and thousands of wakeups
+per second for days. Optimizing the terminal view does not stop that command;
+an app-only CPU spike capture does not detect it. Confirm the owning session and
+command before cancelling it. Do not automatically kill jobs based on their age
+or CPU usage: a long build or server can be intentional.
+
+The report is a current process-tree measurement, not a reconstruction of
+Activity Monitor's accounting. **12 hr Power is a historical average**, while
+Energy Impact describes current activity. CPU energy counters are not total
+battery power. Process ancestry associates jobs with panes even when tmux has
+been reparented to launchd, but independently reparented jobs appear as `other`.
+Unreadable processes are counted, and new, exited, replaced, or reassigned PIDs
+are excluded from deltas. Work that starts and exits between the two inventories
+is not measured. A failed tmux inventory produces an explicit coverage warning.
+JSON retains all measured rows; the text report shows the top 20 processes.
+
+For recurring incidents, save the JSON during the symptom and compare the
+same workload after the targeted fix. Keep raw evidence outside the repository.
+App-only slow-event percentiles and spike captures complement this report;
+they do not establish that Banyan's own process caused the battery drain.
+
 ### Automatic CPU spike captures
 
 The macOS app monitors its own process counters on a utility queue independent

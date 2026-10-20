@@ -176,6 +176,23 @@ struct BanyanCtl {
     private func runPerfCommand(_ args: [String]) throws {
         let subcommand = args.first ?? "report"
         switch subcommand {
+        case "energy":
+            let options = try EnergyArguments(Array(args.dropFirst()))
+            let report = try EnergyReportSampler.sample(seconds: options.seconds) {
+                guard let executable = TmuxBackend.resolveExecutableURL(environment: host.environment) else {
+                    throw TmuxBackend.BackendError.tmuxNotFound
+                }
+                return try TmuxBackend(executableURL: executable, workingDirectory: host.currentDirectory,
+                    environment: host.environment).energySessionRoots()
+            }
+            if options.json {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                print(String(decoding: try encoder.encode(report), as: UTF8.self))
+            } else {
+                print(report.formatted())
+            }
         case "captures":
             let options = try parsePerfReportOptions(Array(args.dropFirst()))
             let store = ResourceSpikeCaptureStore(directoryURL: ResourceSpikeCaptureStore.defaultDirectoryURL(host: host))
@@ -569,6 +586,8 @@ struct BanyanCtl {
         We need to fix Banyan performance regressions using collected local telemetry.
 
         Use the report below as evidence. Prioritize the highest p95 or slow-count metric, inspect the related code path, implement a targeted fix, and run the relevant tests. Keep the patch scoped to Banyan performance; do not refactor unrelated behavior.
+
+        For battery or Energy Impact complaints, first run `banyanctl perf energy --seconds 10` and inspect the owning session and child processes. CPU spike captures cover only the app PID. Activity Monitor's 12 hr Power is historical; do not infer a current app loop from it or treat a subprocess workload as a rendering regression. Do not stop user jobs without authorization.
 
         Performance report:
         \(report)
@@ -1027,6 +1046,7 @@ struct BanyanCtl {
           banyanctl prune  [--older-than DAYS] [--dry-run]
           banyanctl perf report [--since 7d] [--json]
           banyanctl perf captures [--since 7d] [--json]
+          banyanctl perf energy [--seconds 10] [--json]
           banyanctl perf prompt [--since 7d]
           banyanctl perf fix [--since 7d] [--agent codex|claude] [--cwd PATH]
           banyanctl window-state

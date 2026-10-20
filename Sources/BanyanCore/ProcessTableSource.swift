@@ -38,6 +38,18 @@ struct ProcessTableRow: Sendable {
 /// output the kernel truncates to 16 characters — reports the full executable
 /// path. `ps` remains the reader on other platforms.
 enum ProcessTableSource {
+    /// Resource reports need names and ancestry only. Do not fall back to a
+    /// command-line inventory, which can contain prompts or credentials.
+    static func rowsForResourceSampling() throws -> [ProcessTableRow] {
+        #if canImport(Darwin)
+        let rows = kernelRows()
+        guard !rows.isEmpty else { throw EnergyReportError.processInventoryUnavailable }
+        return rows
+        #else
+        throw EnergyReportError.unsupportedPlatform
+        #endif
+    }
+
     /// Signaling runs after the UI's final focus/input guard. Never fall back
     /// to a subprocess wait there, even when kernel enumeration fails.
     static func rowsForSignaling(kernelReader: (() -> [ProcessTableRow])? = nil) throws -> [ProcessTableRow] {

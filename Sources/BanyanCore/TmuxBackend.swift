@@ -110,6 +110,22 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
             .filter { $0.hasPrefix("banyan-") }
     }
 
+    /// Read all panes, including sessions whose app row is no longer loaded.
+    /// Throw on failure so an energy report cannot silently claim full coverage.
+    public func energySessionRoots() throws -> [EnergySessionRoot] {
+        let output = try run(["list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}"])
+        return Self.parseEnergySessionRoots(output)
+    }
+
+    static func parseEnergySessionRoots(_ output: String) -> [EnergySessionRoot] {
+        output.split(separator: "\n").compactMap { line in
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard fields.count == 2, fields[0].hasPrefix("banyan-"),
+                  fields[0].count > "banyan-".count, let pid = Int(fields[1]), pid > 0 else { return nil }
+            return EnergySessionRoot(sessionID: String(fields[0].dropFirst("banyan-".count)), pid: pid)
+        }
+    }
+
     public func agentAdmissionPane(named name: String) -> AgentAdmissionPaneInspection {
         if let pane = primaryPaneSnapshot(named: name) { return .present(pane) }
         do {
@@ -543,7 +559,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         return stdout
     }
 
-    private static func resolveExecutableURL(environment: [String: String]) -> URL? {
+    public static func resolveExecutableURL(environment: [String: String]) -> URL? {
         let candidates = HostExecutablePaths.systemPaths()
             .map { "\($0)/tmux" }
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {

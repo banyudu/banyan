@@ -28,7 +28,8 @@ public struct ResourceCaptureContext: Codable, Equatable, Sendable {
     }
 }
 
-/// Counters for the app process only, excluding tmux, agents and the sampler.
+/// Counters for one process only, excluding its descendants. The automatic
+/// spike monitor reads the app; the on-demand energy report reads other PIDs.
 public struct ProcessResourceSample: Sendable {
     public let timestamp: Date
     public let uptimeSeconds: Double
