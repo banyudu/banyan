@@ -97,6 +97,7 @@ final class SessionStore: ObservableObject {
 
     @Published private(set) var sessions: [BanyanSession] = [] {
         didSet {
+            sidebarGroupsRevision &+= 1
             sidebarHistoryRevision &+= 1
             EnergyTrace.count("store.sessions.mutate")
         }
@@ -199,6 +200,7 @@ final class SessionStore: ObservableObject {
             resumeFrozenForInteraction(id: selectedSessionID)
             selection.syncFromStore(selectedSessionID)
             if oldValue != selectedSessionID {
+                sidebarGroupsRevision &+= 1
                 sessionSwitchRequestedAt = .now()
                 telemetry.beginSessionSwitch(
                     from: oldValue,
@@ -224,6 +226,7 @@ final class SessionStore: ObservableObject {
     }
     @Published var sortMode: SortMode = .manual {
         didSet {
+            sidebarGroupsRevision &+= 1
             saveWorkspace()
         }
     }
@@ -396,6 +399,7 @@ final class SessionStore: ObservableObject {
     /// `SessionChildVisibilityPolicy`).
     @Published var collapsedParentIDs: Set<String> = [] {
         didSet {
+            sidebarGroupsRevision &+= 1
             UserDefaults.standard.set(
                 Array(collapsedParentIDs),
                 forKey: Self.collapsedParentsDefaultsKey
@@ -405,6 +409,7 @@ final class SessionStore: ObservableObject {
     /// Parents the user explicitly expanded, exempting them from auto-collapse.
     @Published var expandedParentIDs: Set<String> = [] {
         didSet {
+            sidebarGroupsRevision &+= 1
             UserDefaults.standard.set(
                 Array(expandedParentIDs),
                 forKey: Self.expandedParentsDefaultsKey
@@ -416,6 +421,7 @@ final class SessionStore: ObservableObject {
     /// always stay visible: they need a human decision.
     @Published var showFinishedChildren = false {
         didSet {
+            sidebarGroupsRevision &+= 1
             UserDefaults.standard.set(
                 showFinishedChildren,
                 forKey: Self.showFinishedChildrenDefaultsKey
@@ -577,7 +583,11 @@ final class SessionStore: ObservableObject {
     private var scratchWindowDelegate: ScratchTerminalWindowDelegate?
     private var isClosingScratchTerminal = false
     private var cachedSessionSidebarGroups: [SidebarSessionGroup]?
-    private var sessionSidebarGroupsCacheHash: Int = 0
+    private var cachedSessionSidebarGroupsRevision = -1
+    /// Bumped whenever an input to the active sidebar projection changes. The
+    /// projection used to hash every active row on every SwiftUI pass; even a
+    /// cache hit walked the active set and read every presentation field.
+    private(set) var sidebarGroupsRevision = 0
     private var cachedSidebarHistoryItems: [SidebarSessionItem]?
     /// Bumped whenever a row that is (or was) shown in History changes. The
     /// projection used to hash every persisted session on every SwiftUI pass to
@@ -810,36 +820,8 @@ final class SessionStore: ObservableObject {
     }
 
     var sessionSidebarGroups: [SidebarSessionGroup] {
-        var hasher = Hasher()
-        hasher.combine(sortMode)
-        hasher.combine(showFinishedChildren)
-        hasher.combine(selectedSessionID)
-        hasher.combine(collapsedParentIDs.sorted())
-        hasher.combine(expandedParentIDs.sorted())
-        // Only these rows contribute to this projection. Hashing every field of
-        // closed history made even a cache hit expensive on each UI update.
-        for session in sessions where session.status != .closed && !session.isImportedHistory {
-            hasher.combine(session.id)
-            hasher.combine(session.status)
-            // Parked rows sort below live ones, so the grouped projection is stale
-            // until this changes too.
-            hasher.combine(session.isSuspended)
-            hasher.combine(session.isImportedHistory)
-            hasher.combine(session.updatedAt)
-            hasher.combine(session.title)
-            hasher.combine(session.isTitlePinned)
-            hasher.combine(session.reportedTitle)
-            hasher.combine(session.generatedTitle)
-            hasher.combine(session.contextualTitle)
-            hasher.combine(session.cwd)
-            hasher.combine(session.detectedAgentProvider)
-            hasher.combine(session.command)
-            hasher.combine(session.projectGroupID)
-            hasher.combine(session.projectGroupTitle)
-            hasher.combine(session.parentSessionID)
-        }
-        let hash = hasher.finalize()
-        if hash == sessionSidebarGroupsCacheHash, let cached = cachedSessionSidebarGroups {
+        if sidebarGroupsRevision == cachedSessionSidebarGroupsRevision,
+           let cached = cachedSessionSidebarGroups {
             return cached
         }
         let active = visibleSessions.filter { !$0.isImportedHistory }
@@ -898,7 +880,7 @@ final class SessionStore: ObservableObject {
                 }
             )
         }
-        sessionSidebarGroupsCacheHash = hash
+        cachedSessionSidebarGroupsRevision = sidebarGroupsRevision
         cachedSessionSidebarGroups = result
         return result
     }
@@ -5098,6 +5080,7 @@ final class SessionStore: ObservableObject {
         session.onHistoryRelevantChange = { [weak self, weak session] in
             guard let self, let session else { return }
             EnergyTrace.count("sidebar.historySignal", sessionID: session.id)
+            self.sidebarGroupsRevision &+= 1
             self.noteSidebarHistoryChange(for: session)
         }
         session.onDidChange = { [weak self, weak session] in

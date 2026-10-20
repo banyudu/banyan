@@ -58,13 +58,28 @@ before constructing detailed rows. `--all` includes history; exact `--id` and
 captures identified per-row `ISO8601DateFormatter` construction as a dominant
 cost: each request rebuilt two formatters for every saved session. Response
 timestamps now use `Date.ISO8601Format()`, preserving UTC and second precision
-without rebuilding ICU formatters. The active sidebar excludes closed history
-before resolving display titles, constructing its lookup, or hashing presentation
-fields, so those operations scale with active rows. History retains its separate
-projection and cache. That cache is keyed by a revision bumped only when a row
-enters, leaves, or changes inside History. It used to hash every session on
-every SwiftUI pass to detect such changes, so even a cache hit scaled with the
-full local history and dominated the main thread while switching sessions.
+without rebuilding ICU formatters.
+
+`--all` is still a large response: on a 2,580-session local history it produced
+about 4.5 MB and took roughly half a second per request. Prefer the active
+default, exact `--id`/`--query` lookups, or the event stream unless closed
+history is genuinely required. A maintenance client that polls `--all` can make
+the Banyan process look busy even while its UI is idle. The control server still
+pretty-prints and sorts the complete response; compact output or a lighter
+history projection is a candidate optimization, but should be justified with a
+matching workload capture rather than assumed.
+
+The active sidebar excludes closed history before resolving display titles or
+constructing its lookup. It also has a revision-keyed cache, so a cache hit is a
+single integer comparison rather than a walk over every active row. The revision
+bumps when the session array, selection, sort mode, child-visibility controls,
+or any presentation field on a session changes. `isImportedHistory` is derived
+from an immutable transcript URL, so it cannot change without replacing the row.
+History retains its separate projection and cache. That cache is keyed by a
+revision bumped only when a row enters, leaves, or changes inside History. Both
+projections previously hashed their rows on every SwiftUI pass; even a cache hit
+then scaled with the fleet or full local history and dominated the main thread
+while streaming output or switching sessions.
 
 Navigation menu availability checks also avoid the history projection whenever
 visible active rows determine the answer. Two active rows enable next/previous
@@ -266,6 +281,19 @@ per second for days. Optimizing the terminal view does not stop that command;
 an app-only CPU spike capture does not detect it. Confirm the owning session and
 command before cancelling it. Do not automatically kill jobs based on their age
 or CPU usage: a long build or server can be intentional.
+
+The same rule applies to unrelated maintenance work. In one recurrence, the
+10-second report charged about 6.2% CPU to Banyan, 7.9% to the active agent,
+and 1.6% to the tmux server, while processes outside the Banyan groups accounted
+for roughly 220% across the machine. A separate worktree-maintenance job peaked
+at about 36% CPU, had accumulated more than eight CPU-minutes, and spent its
+sample in recursive filesystem deletion. Its run record lasted over 30 minutes,
+deferred more than a hundred decisions after its budget, and contained a single
+checkout removal taking over 100 seconds. That explains a real battery symptom,
+but it is not a Banyan rendering or supervision loop. When such a client also
+polls `banyanctl list --all`, it can additionally raise Banyan's own CPU without
+the app being idle-busy; attribute both the maintenance process and each control
+request before changing the sidebar or terminal renderer.
 
 The report is a current process-tree measurement, not a reconstruction of
 Activity Monitor's accounting. **12 hr Power is a historical average**, while

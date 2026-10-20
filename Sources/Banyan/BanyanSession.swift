@@ -98,7 +98,10 @@ class BanyanSession: ObservableObject, Identifiable {
     /// last observed agent state and resuming restores it instead of resetting
     /// it. See `suspend()` / `resume()`.
     @Published var isSuspended: Bool {
-        didSet { if isSuspended { codexAutoRetry.cancel() } }
+        didSet {
+            if isSuspended { codexAutoRetry.cancel() }
+            onHistoryRelevantChange?()
+        }
     }
     /// Actual agent process-group STOP, independent of frontend parking.
     @Published var agentQueuePosition: Int?
@@ -112,7 +115,9 @@ class BanyanSession: ObservableObject, Identifiable {
     }
     @Published var isDeepResuming = false
     @Published var isDeepTerminating = false
-    @Published var parentSessionID: String?
+    @Published var parentSessionID: String? {
+        didSet { onHistoryRelevantChange?() }
+    }
     /// Underlying coding-agent session UUID (codex/claude), resolved by matching
     /// live sessions against imported transcript history. Used to build a resume
     /// command when a closed session is reopened, instead of replaying the
@@ -200,9 +205,9 @@ class BanyanSession: ObservableObject, Identifiable {
     var displayAgentProviderCache: (key: DisplayAgentProviderKey, value: CodingAgentProvider?)?
 
     var onDidChange: (() -> Void)?
-    /// Fired after a field that contributes to a history row changes. Separate
-    /// from `onDidChange` so the sidebar projection can invalidate itself
-    /// without doing persistence or selected-context work.
+    /// Fired after a field that contributes to a sidebar row changes. Both the
+    /// active and history projections use this signal, while staying separate
+    /// from `onDidChange` so they avoid persistence and selected-context work.
     var onHistoryRelevantChange: (() -> Void)?
     var onOutput: ((String) -> Void)?
     /// Called after the user submits input. SessionStore uses this to wake
