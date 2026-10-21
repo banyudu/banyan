@@ -19,15 +19,17 @@ import Testing
         let nodes = [node("parent"), node("worker", parent: "parent", job: "job", state: .needsYou, background: true),
             node("review", parent: "worker", job: "review", state: .waiting),
             node("done", parent: "parent", job: "done", state: .verified), node("idle", parent: "parent"),
+            node("shell", parent: "parent", status: .running),
             node("closed", parent: "parent", status: .closed)]
         let result = SessionWorkTree.summaries(nodes: nodes, overview: try overview())
         let parent = try #require(result["parent"])
-        #expect(parent.descendants.count == 4)
-        #expect(parent.groupLabel == "1 waiting · 1 blocked · 1 verified · 1 idle")
+        #expect(parent.descendants.count == 5)
+        #expect(parent.groupLabel == "1 waiting · 1 blocked · 1 verified · 2 idle")
         #expect(result["worker"]?.own.label == "Tool error")
         #expect(result["worker"]?.own.detail == "Tool timed out")
         #expect(result["worker"]?.own.background == true)
         #expect(result["idle"]?.own.kind == .idle)
+        #expect(result["shell"]?.own.kind == .idle)
         #expect(result["parent"]?.own.managed == false)
     }
 

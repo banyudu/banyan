@@ -50,7 +50,7 @@ public struct SessionWorkEntry: Identifiable, Sendable {
         } else {
             detail = "Conversation status; no managed issue completion is recorded."
             switch node.status {
-            case .running, .executing, .subagents, .longRunningShell: kind = .working; label = "Working"
+            case .executing, .subagents, .longRunningShell: kind = .working; label = "Working"
             case .asking: kind = .decision; label = "Input requested"
             case .failed: kind = .blocked; label = "Session failed"
             default: kind = .idle; label = "Idle"
