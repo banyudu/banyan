@@ -109,6 +109,8 @@ struct BanyanCtl {
                 try post("/workflow-\(arguments[1])", payload: workflowPayload(Array(arguments.dropFirst(2))))
             case "select":
                 try post("/select", payload: parsePayload(Array(arguments.dropFirst())))
+            case "reparent":
+                try post("/reparent", payload: reparentPayload(Array(arguments.dropFirst())))
             case "tick":
                 try post("/tick", payload: parsePayload(Array(arguments.dropFirst())))
             case "suspend":
@@ -386,6 +388,33 @@ struct BanyanCtl {
         default:
             return nil
         }
+    }
+
+    func reparentPayload(_ args: [String]) throws -> [String: String] {
+        var result: [String: String] = [:]
+        var index = 0
+        while index < args.count {
+            let flag = args[index]
+            switch flag {
+            case "--no-parent":
+                guard result["parent"] == nil else { throw CLIError.message("choose exactly one of --parent or --no-parent") }
+                result["parent"] = ""
+                index += 1
+            case "--id", "--parent":
+                let key = String(flag.dropFirst(2))
+                guard result[key] == nil else { throw CLIError.message("duplicate \(flag)") }
+                guard index + 1 < args.count, !args[index + 1].hasPrefix("--"),
+                      !args[index + 1].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw CLIError.message("missing value for \(flag)")
+                }
+                result[key] = args[index + 1]
+                index += 2
+            default: throw CLIError.message("unexpected reparent argument '\(flag)'")
+            }
+        }
+        guard result["id"] != nil else { throw CLIError.message("reparent requires --id") }
+        guard result["parent"] != nil else { throw CLIError.message("reparent requires --parent ID or --no-parent") }
+        return result
     }
 
     private func parsePayload(_ args: [String]) throws -> [String: String] {
@@ -1032,6 +1061,7 @@ struct BanyanCtl {
         parent, or --no-parent for a top-level session.
           banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE] [--title-url URL]
           banyanctl select --id ID
+          banyanctl reparent --id ID (--parent PARENT_ID | --no-parent)
           banyanctl tick   [--id ID]
           banyanctl suspend --id ID
           banyanctl resume  --id ID
@@ -1059,6 +1089,12 @@ struct BanyanCtl {
         IDs, titles, issue URLs and working directories without regard to case;
         combine it with --all to search history. HTTP clients use GET /list with
         all=true, id=ID and query=TEXT parameters.
+
+        reparent moves an existing session and its children within one project
+        sidebar group. --no-parent moves it to the root. It preserves the session,
+        process, metadata and manual order. HTTP: POST /reparent with id and parent;
+        an empty or absent parent moves to root. The CLI requires an explicit target
+        and never inherits a parent from the environment.
 
         suspend parks a session: Banyan stops supervising and rendering it, while
         its tmux session and any agent inside keep running. resume is lossless and

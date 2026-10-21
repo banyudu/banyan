@@ -39,7 +39,8 @@ import Testing
                     workSummary: summaries[session.id], workOverviewError: nil, workOverviewUpdatedAt: feed.generatedAt,
                     refreshWork: {}, openWorkSession: { _ in }, onSelect: {}, onToggleCollapse: {}, onRevealHidden: {},
                     onClose: {}, onRestart: {}, onRespawn: {}, onRecover: {}, isHandoffAvailable: false,
-                    isHandoffPending: false, onHandoff: {}, onCodexRemoteHandoff: {}, onRemove: {}, onToggleSuspended: {},
+                    isHandoffPending: false, onHandoff: {}, onCodexRemoteHandoff: {}, onRemove: {},
+                    reparentTargets: { [] }, onReparent: { _ in }, onToggleSuspended: {},
                     onSetFrozen: { _ in }, onSetDeepSuspended: { _ in }, onFocusTerminal: {}, onReopenHistory: {})
             }
         }.padding(12)

@@ -5055,6 +5055,42 @@ final class SessionStore: ObservableObject {
         activeChildCount(of: id) > 0
     }
 
+    private var reparentingItems: [SessionRelationshipItem] {
+        sessions.map {
+            SessionRelationshipItem(id: $0.id, parentSessionID: $0.parentSessionID,
+                status: $0.status, isImportedHistory: $0.isImportedHistory,
+                projectGroupID: $0.projectGroupID)
+        }
+    }
+
+    @discardableResult
+    func reparent(id: String, parentSessionID: String?) throws -> BanyanSession {
+        let parentID = try SessionRelationshipPolicy.validatedParentID(
+            for: id, proposedParentID: parentSessionID, in: reparentingItems)
+        guard let session = sessions.first(where: { $0.id == id }) else { throw ControlError.notFound(id) }
+        guard session.parentSessionID != parentID else { return session }
+        session.parentSessionID = parentID
+        // Do not touch timestamps, selection, collapse state, or the backing process.
+        objectWillChange.send()
+        saveSessions()
+        return session
+    }
+
+    /// Include collapsed/hidden active targets, in the same hierarchy used by the sidebar.
+    func reparentTargets(for sourceID: String) -> [SidebarSessionItem] {
+        guard let source = sessions.first(where: { $0.id == sourceID }),
+              source.status != .closed, !source.isImportedHistory else { return [] }
+        let active = visibleSessions.filter { !$0.isImportedHistory && $0.projectGroupID == source.projectGroupID }
+        let byID = Dictionary(active.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let validParentIDs = SessionRelationshipPolicy.validParentIDs(for: sourceID, in: reparentingItems)
+        return SessionSidebarHierarchyPolicy.rows(for: active.map {
+            SessionSelectionItem(id: $0.id, parentSessionID: $0.parentSessionID)
+        }).compactMap { row in
+            guard let session = byID[row.id], validParentIDs.contains(row.id) else { return nil }
+            return SidebarSessionItem(session: session, depth: row.depth)
+        }
+    }
+
     func resolvedParentSessionIDForSpawn(_ parentSessionID: String?) throws -> String? {
         guard let normalizedParentID = SessionInputPolicy.normalizedOptionalText(parentSessionID) else {
             return nil

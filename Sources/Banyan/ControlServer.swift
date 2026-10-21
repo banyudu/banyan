@@ -313,6 +313,13 @@ final class ControlServer {
                 store.select(id: id)
                 return respond(.ok(["session": summary(session)]))
 
+            case .reparent:
+                let body = try request.decode(ControlPayload.self)
+                try validateVersion(body.apiVersion)
+                try route.validate(body)
+                let session = try store.reparent(id: body.id!, parentSessionID: body.parent)
+                return respond(.ok(["session": summary(session)]))
+
             case .windowState:
                 return respond(.ok(windowState()))
 

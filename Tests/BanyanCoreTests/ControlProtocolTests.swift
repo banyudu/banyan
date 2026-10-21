@@ -95,6 +95,17 @@ import Testing
     try ControlRoute.select.validate(ControlPayload(apiVersion: "v1", id: "agent"))
 }
 
+@Test func reparentRouteRequiresSourceAndAllowsRootDestination() throws {
+    #expect(ControlRoute.resolve(method: "POST", path: "/reparent") == .reparent)
+    #expect(ControlRoute.resolve(method: "GET", path: "/reparent") == nil)
+    #expect(throws: ControlValidationError.missingID) {
+        try ControlRoute.reparent.validate(ControlPayload())
+    }
+    let payload = try JSONDecoder().decode(ControlPayload.self, from: Data(#"{"id":"child"}"#.utf8))
+    try ControlRoute.reparent.validate(payload)
+    #expect(payload.parent == nil)
+}
+
 @Test func suspendAndResumeRoutesRequireSessionID() throws {
     #expect(ControlRoute.resolve(method: "POST", path: "/suspend") == .suspend)
     #expect(ControlRoute.resolve(method: "POST", path: "/resume") == .resume)
