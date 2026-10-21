@@ -707,3 +707,130 @@ extension SessionWorkflowStoreTests {
         #expect(fixture.backend.killed.isEmpty && fixture.backend.launched.isEmpty)
     }
 }
+
+
+@MainActor
+@Suite struct CoordinationStoreTests {
+    private func payload(_ action: String, id: String = "legacy", group: String = "group-a",
+                         extra: [String: Any] = [:]) throws -> CoordinationControlPayload {
+        var values: [String: Any] = ["action": action, "id": id, "groupID": group]
+        values.merge(extra) { _, new in new }
+        return try JSONDecoder().decode(CoordinationControlPayload.self, from: JSONSerialization.data(withJSONObject: values))
+    }
+    private func setup(_ fixture: WorkflowStoreFixture) async throws -> SessionStore {
+        let store = fixture.makeStore()
+        store.loadPersistedSessionsIfNeeded()
+        store.selection.selectedSessionID = "legacy"
+        store.sessions.first { $0.id == "managed" }?.parentSessionID = "legacy"
+        store.sessions.first { $0.id == "busy" }?.parentSessionID = "legacy"
+        _ = try await store.controlCoordination(payload("bind"))
+        return store
+    }
+    @Test func bindingDoesNotOverwriteIssueWorkflowAndCannotStealAnotherGroup() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        try store.setWorkflow(id: "legacy", workflow: .init(owner: "workit", jobID: "parent-job", revision: 8, state: .paused))
+        _ = try await store.controlCoordination(payload("bind"))
+        #expect(store.sessions.first { $0.id == "legacy" }?.workflow?.jobID == "parent-job")
+        await #expect(throws: (any Error).self) { try await store.controlCoordination(payload("bind", group: "other")) }
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("deliver", extra: ["revision": 1, "wakeID": "a", "text": "Continue"]))
+        }
+        #expect(fixture.backend.launched.isEmpty)
+    }
+    @Test func deliveredMessageCannotChangeIdentityOrContentAtSameRevision() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        try store.coordinationJournal.bindings.save(.init(owner: "workit-coordinator", jobID: "group-a", revision: 1,
+            state: .working, detail: "Update", wake: .init(id: "a", status: .delivered)), id: "legacy")
+        _ = try await store.controlCoordination(payload("deliver", extra: ["revision": 1, "wakeID": "a", "text": "Update"]))
+        for extra: [String: Any] in [["revision": 1, "wakeID": "b", "text": "Update"], ["revision": 1, "wakeID": "a", "text": "Changed"], ["revision": 0, "wakeID": "old", "text": "Update"]] {
+            await #expect(throws: (any Error).self) { try await store.controlCoordination(payload("deliver", extra: extra)) }
+        }
+        _ = try await store.controlCoordination(payload("deliver", extra: ["revision": 1, "wakeID": "a", "text": "Update"]))
+        #expect(fixture.backend.launched.isEmpty)
+        #expect(fixture.backend.sent.isEmpty)
+    }
+    @Test func pendingCoordinatorReceiptSurvivesRestartAndNeverReplays() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        try store.coordinationJournal.bindings.save(.init(owner: "workit-coordinator", jobID: "group-a", revision: 1,
+            state: .working, detail: "Update", wake: .init(id: "a", status: .pending)), id: "legacy")
+        let restored = fixture.makeStore(); restored.loadPersistedSessionsIfNeeded()
+        defer { restored.flushPendingSessionSaves() }
+        await #expect(throws: (any Error).self) {
+            try await restored.controlCoordination(payload("deliver", extra: ["revision": 1, "wakeID": "a", "text": "Update"]))
+        }
+        #expect(fixture.backend.launched.isEmpty)
+        #expect(try restored.coordinationJournal.bindings.load(id: "legacy")?.wake?.status == .pending)
+    }
+    @Test func retirementIsScopedQuietRevisionGuardedAndRetainsHistory() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        try store.setWorkflow(id: "managed", workflow: .init(owner: "workit", jobID: "child-job", revision: 4, state: .verified))
+        try store.setWorkflow(id: "busy", workflow: .init(owner: "workit", jobID: "busy-job", revision: 4, state: .verified))
+        let base: [String: Any] = ["parent": "legacy", "jobID": "child-job", "revision": 4]
+        for extra: [String: Any] in [["parent": "other", "jobID": "child-job", "revision": 4], ["parent": "legacy", "jobID": "wrong", "revision": 4], ["parent": "legacy", "jobID": "child-job", "revision": 3]] {
+            await #expect(throws: (any Error).self) { try await store.controlCoordination(payload("retire", id: "managed", extra: extra)) }
+        }
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("retire", id: "busy", extra: ["parent": "legacy", "jobID": "busy-job", "revision": 4]))
+        }
+        store.selection.selectedSessionID = "managed"
+        await #expect(throws: (any Error).self) { try await store.controlCoordination(payload("retire", id: "managed", extra: base)) }
+        store.selection.selectedSessionID = "legacy"
+        _ = try await store.controlCoordination(payload("retire", id: "managed", extra: base))
+        #expect(store.sessions.first { $0.id == "managed" }?.status == .closed)
+        #expect(store.sessions.first { $0.id == "busy" }?.status == .executing)
+        #expect(store.sessions.first { $0.id == "legacy" }?.status != .closed)
+        _ = try await store.controlCoordination(payload("retire", id: "managed", extra: base))
+    }
+    @Test func directInputPersistsAndInvalidatesEarlierRetirement() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "child-job", revision: 2, state: .verified))
+        child.onUserSubmittedInput?("Keep the existing UI")
+        let values = try store.coordinationJournal.interventions(id: child.id)
+        #expect(values.count == 1)
+        #expect(values.first?.text == "Keep the existing UI")
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("retire", id: child.id, extra: ["parent": "legacy", "jobID": "child-job", "revision": 2]))
+        }
+        let restored = fixture.makeStore()
+        #expect(try restored.coordinationJournal.interventions(id: child.id) == values)
+    }
+    @Test func replacedPaneDuringRetirementIsNeverKilled() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        try store.setWorkflow(id: "managed", workflow: .init(owner: "workit", jobID: "child-job", revision: 2, state: .verified))
+        fixture.backend.replacementAfterFirstInspection = TmuxPaneSnapshot(paneID: "%replacement", rootPID: 333,
+            currentCommand: "codex", currentPath: fixture.root.path, isDead: false, isInMode: false)
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("retire", id: "managed", extra: ["parent": "legacy", "jobID": "child-job", "revision": 2]))
+        }
+        #expect(fixture.backend.killed.isEmpty)
+    }
+}
+
+extension CoordinationStoreTests {
+    @Test func helperRetirementRequiresOriginalWorkerRunAndVerifiedRevision() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        try store.setWorkflow(id: "managed", workflow: .init(owner: "workit", jobID: "child-job", revision: 4, state: .verified))
+        let helper = try #require(store.sessions.first { $0.id == "busy" }); helper.status = .completed
+        let binding: [String: Any] = ["parent": "legacy", "worker": "managed", "runID": "review", "jobID": "child-job", "revision": 4]
+        await #expect(throws: (any Error).self) { try await store.controlCoordination(payload("retire-helper", id: helper.id, extra: binding)) }
+        _ = try await store.controlCoordination(payload("helper", id: helper.id, extra: binding))
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("retire-helper", id: helper.id, extra: binding.merging(["runID": "other"]) { _, new in new }))
+        }
+        helper.onUserSubmittedInput?("Inspect this verifier before closing")
+        await #expect(throws: (any Error).self) { try await store.controlCoordination(payload("retire-helper", id: helper.id, extra: binding)) }
+        let intervention = try #require(store.coordinationJournal.interventions(id: helper.id).last)
+        _ = try await store.controlCoordination(payload("retire-helper", id: helper.id, extra: binding.merging(["interventionID": intervention.id]) { _, new in new }))
+        #expect(helper.status == .closed)
+        #expect(store.sessions.first { $0.id == "managed" }?.status != .closed)
+        _ = try await store.controlCoordination(payload("retire-helper", id: helper.id, extra: binding))
+    }
+}

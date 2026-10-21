@@ -45,6 +45,15 @@ public enum BanyanSessionEnvironment {
         return nil
     }
 
+    /// The caller's identity is separate from its requested spawn parent.
+    public static func currentSessionID(from environment: [String: String], enclosingTmuxSessionID: String?) -> String? {
+        if environment["TMUX"] != nil || environment["TMUX_PANE"] != nil {
+            return enclosingTmuxSessionID
+        }
+        let value = environment[sessionIDKey]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value?.isEmpty == false ? value : nil
+    }
+
     /// Recovers a Banyan session id from a tmux session name.
     /// Tmux names are `banyan-<id>` by construction
     /// (`SessionIdentityPolicy.sessionName(for:)`); anything else yields nil.
