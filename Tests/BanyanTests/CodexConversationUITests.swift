@@ -277,3 +277,23 @@ struct CodexConversationUITests {
         }.value
     }
 }
+
+extension CodexConversationUITests {
+    @Test func hiddenManagedNativeConversationRetainsObservationAndAcceptsContinuation() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = ConversationServer()
+        let store = fixture.makeStore(codexService: server)
+        store.enableNativeCodex = true
+        let session = try await store.createCodexSession(cwd: fixture.project.path, id: "managed-background")
+        try store.setWorkflow(id: session.id, workflow: .init(owner: "workit", jobID: "job-a", revision: 0, state: .working))
+        try store.hideAndKeepWorking(id: session.id)
+        try await store.codexThreads.select(sessionID: nil)
+        #expect(session.state.connection == .subscribed)
+        #expect(store.backgroundedSessionIDs.contains(session.id))
+        try await store.wakeWorkflow(id: session.id, jobID: "job-a", revision: 0, wakeID: "continue-a", text: "Continue the saved task")
+        #expect(server.calls.filter { $0.0 == "turn/start" }.count == 1)
+        #expect(session.workflow?.wake?.status == .delivered)
+        #expect(store.backgroundedSessionIDs.contains(session.id))
+        #expect(!session.isSuspended && session.status != .closed)
+    }
+}

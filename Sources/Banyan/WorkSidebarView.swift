@@ -27,11 +27,12 @@ final class WorkSidebarModel: ObservableObject {
 struct WorkSidebarView: View {
     @StateObject private var model: WorkSidebarModel
     let sessionIDs: Set<String>
+    var backgroundSessionIDs: Set<String> = []
     let openSession: (String) -> Void
 
-    init(client: any WorkitOverviewClient, sessionIDs: Set<String>, openSession: @escaping (String) -> Void) {
+    init(client: any WorkitOverviewClient, sessionIDs: Set<String>, backgroundSessionIDs: Set<String> = [], openSession: @escaping (String) -> Void) {
         _model = StateObject(wrappedValue: WorkSidebarModel(client: client))
-        self.sessionIDs = sessionIDs; self.openSession = openSession
+        self.sessionIDs = sessionIDs; self.backgroundSessionIDs = backgroundSessionIDs; self.openSession = openSession
     }
 
     var body: some View {
@@ -51,7 +52,7 @@ struct WorkSidebarView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
             if let snapshot = model.snapshot {
-                WorkJobList(snapshot: snapshot, sessionIDs: sessionIDs, openSession: openSession)
+                WorkJobList(snapshot: snapshot, sessionIDs: sessionIDs, backgroundSessionIDs: backgroundSessionIDs, openSession: openSession)
                 if snapshot.truncated {
                     Text("Showing \(snapshot.jobs.count) of \(snapshot.total) jobs. Use workit job list for the full history.")
                         .font(.caption).foregroundStyle(.secondary).padding(8)
@@ -72,6 +73,7 @@ struct WorkSidebarView: View {
 struct WorkJobList: View {
     let snapshot: WorkitOverview
     let sessionIDs: Set<String>
+    var backgroundSessionIDs: Set<String> = []
     let openSession: (String) -> Void
 
     var body: some View {
@@ -84,7 +86,7 @@ struct WorkJobList: View {
                     if !jobs.isEmpty {
                         Section("\(group.label) · \(jobs.count)") {
                             ForEach(jobs) { job in
-                                WorkJobRow(job: job, canOpen: job.sessionID.map(sessionIDs.contains) ?? false) {
+                                WorkJobRow(job: job, canOpen: job.sessionID.map(sessionIDs.contains) ?? false, isBackgrounded: job.sessionID.map(backgroundSessionIDs.contains) ?? false) {
                                     if let id = job.sessionID { openSession(id) }
                                 }
                             }
@@ -99,6 +101,7 @@ struct WorkJobList: View {
 struct WorkJobRow: View {
     let job: WorkitJobSummary
     let canOpen: Bool
+    var isBackgrounded = false
     let open: () -> Void
 
     var body: some View {
@@ -121,7 +124,7 @@ struct WorkJobRow: View {
             HStack {
                 if let url = WorkitJobSummary.webURL(job.issueURL) { Link("Issue", destination: url) }
                 if let url = WorkitJobSummary.webURL(job.prURL) { Link("PR", destination: url) }
-                if canOpen { Button("Conversation", action: open).buttonStyle(.link) }
+                if canOpen { Button(isBackgrounded ? "Show conversation" : "Conversation", action: open).buttonStyle(.link) }
             }.font(.caption)
             if !canOpen { Text("Conversation unavailable").font(.caption2).foregroundStyle(.secondary) }
             ForEach(Array(job.evidence.enumerated()), id: \.offset) { index, reference in

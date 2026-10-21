@@ -885,3 +885,12 @@ a Workit version supporting `job overview --format json` (schema version 1).
 It refreshes on opening, app activation, and the refresh button. Errors retain
 previous results with a stale-results notice; no tracker or workflow mutation
 occurs when opening the view. Missing or closed conversations do not remove jobs.
+
+For an active managed conversation, the close dialog offers **Hide and Keep
+Working**. It persists sidebar visibility separately from workflow state, keeps
+the conversation and its descendants running, and takes you to Work. Future
+children inherit the hidden parent's visibility. **Show conversation** in Work
+restores the hidden ancestor and its children. Hiding never pauses, suspends,
+closes, terminates, or verifies the job; **Pause and Close** retains its existing
+meaning. Active managed native threads retain their observation subscription so
+Workit can continue them while their conversations are hidden or unselected.
