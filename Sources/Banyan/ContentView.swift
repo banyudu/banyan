@@ -430,6 +430,12 @@ struct ContentView: View {
             switch store.sidebarMode {
             case .sessions:
                 sessionsSidebar
+            case .work:
+                WorkSidebarView(client: WorkitCommandOverviewClient(host: store.host),
+                    sessionIDs: Set(store.sessions.filter { $0.status != .closed }.map(\.id)),
+                    openSession: { store.userSelect(id: $0) })
+                Divider()
+                HStack { Spacer(); sidebarModeSwitcher }.padding(10)
             case .linear:
                 linearSidebar
             }
@@ -1461,7 +1467,7 @@ struct ContentView: View {
     @ViewBuilder
     private var detail: some View {
         switch store.sidebarMode {
-        case .sessions:
+        case .sessions, .work:
             sessionDetail
         case .linear:
             linearDetail

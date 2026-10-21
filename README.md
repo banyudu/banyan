@@ -869,3 +869,19 @@ notarization are not yet part of the release flow.
 
 Banyan is released under the [MIT License](LICENSE). The vendored
 `Packages/SwiftTerm` retains its own MIT license and copyright.
+
+### Durable work overview
+
+Choose **Work** in the sidebar switcher to see managed jobs across conversations.
+Jobs are grouped by working, waiting, decisions, paused, verified, and cancelled.
+Each row shows the saved checkpoint, proven acceptance count, next action, and
+available issue, PR, evidence, and conversation links. The progress timestamp
+changes with meaningful checkpoints, not each heartbeat. Older jobs show an
+unknown progress time until a new checkpoint is recorded.
+
+The view uses the same host-owned `~/.banyan/workit.json` configuration as Pause
+and Close, with an absolute `invocation` argv array and `stateDirectory`. It needs
+a Workit version supporting `job overview --format json` (schema version 1).
+It refreshes on opening, app activation, and the refresh button. Errors retain
+previous results with a stale-results notice; no tracker or workflow mutation
+occurs when opening the view. Missing or closed conversations do not remove jobs.
