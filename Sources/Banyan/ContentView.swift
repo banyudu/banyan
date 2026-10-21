@@ -2622,6 +2622,7 @@ struct SessionRow: View {
     @State private var isRenaming = false
     @State private var renameDraft = ""
     @State private var isIssueLinkHovered = false
+    @State private var workStatusBounds: CGRect = .null
     @State private var isHandoffHovered = false
     @State private var isRowHovered = false
     @State private var isPointerCursorPushed = false
@@ -2757,6 +2758,10 @@ struct SessionRow: View {
             if let summary = workSummary, summary.own.managed || summary.own.background || !summary.descendants.isEmpty {
                 SessionWorkStatusButton(summary: summary, error: workOverviewError,
                     updatedAt: workOverviewUpdatedAt, refresh: refreshWork, openSession: openWorkSession)
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .named("session-work-row-\(session.id)"))
+                    } action: { workStatusBounds = $0 }
+                    .onDisappear { workStatusBounds = .null }
             } else if session.workflowRecoveryError != nil {
                 Text("Workflow unavailable").font(.caption2).foregroundStyle(.red)
             }
@@ -2827,6 +2832,7 @@ struct SessionRow: View {
         .background(rowBackground)
         .opacity(dimsRow ? 0.55 : 1)
         .contentShape(Rectangle())
+        .coordinateSpace(name: "session-work-row-\(session.id)")
         .onHover(perform: setRowHovered)
         .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
         .onChange(of: selection.renameRequestID) { _, _ in
@@ -3058,7 +3064,8 @@ struct SessionRow: View {
     }
 
     private var doubleClickRenameGesture: some Gesture {
-        TapGesture(count: 2).onEnded {
+        SpatialTapGesture(count: 2, coordinateSpace: .named("session-work-row-\(session.id)")).onEnded { event in
+            guard !workStatusBounds.contains(event.location) else { return }
             if isHistory {
                 onReopenHistory()
             } else {
@@ -3068,8 +3075,10 @@ struct SessionRow: View {
     }
 
     private var singleClickSelectGesture: some Gesture {
-        TapGesture(count: 1).onEnded {
-            if !isRenaming {
+        SpatialTapGesture(count: 1, coordinateSpace: .named("session-work-row-\(session.id)")).onEnded { event in
+            // Status inspection must not bubble into the row's simultaneous
+            // selection gesture. Keyboard/AX button activation has no row tap.
+            if !isRenaming && !workStatusBounds.contains(event.location) {
                 onSelect()
             }
         }
