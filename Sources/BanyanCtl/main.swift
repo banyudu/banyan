@@ -103,7 +103,7 @@ struct BanyanCtl {
             case "mark":
                 try post("/mark", payload: parsePayload(Array(arguments.dropFirst())))
             case "coordination":
-                guard arguments.count >= 2 else { throw CLIError.message("coordination requires bind, status, observe, deliver, resolve, retire or release") }
+                if arguments.count == 1 || arguments[1] == "--help" { printHelp(); return }
                 var payload = try workflowPayload(Array(arguments.dropFirst(2)))
                 payload["action"] = arguments[1]
                 try post("/coordination", payload: payload)
