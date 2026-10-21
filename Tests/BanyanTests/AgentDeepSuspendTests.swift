@@ -823,3 +823,16 @@ struct AgentAdmissionDeepIntegrationTests {
         restored.cancelQueuedAgent(id: queued.id)
     }
 }
+
+extension AgentDeepSuspendTests {
+    @Test func automaticDeepSuspendProtectsManagedContinuationEvenUnderPressure() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex)
+        defer { f.cleanup() }
+        f.session.workflow = .init(owner: "workit", jobID: "job-a", revision: 0, state: .waiting)
+        f.session.lastFreezeInteractionAt = .distantPast
+        await #expect(throws: (any Error).self) { try await f.store.deepSuspendAgent(id: f.session.id, automatic: true, underPressure: true) }
+        #expect(!f.session.isDeepSuspended)
+        try await f.store.deepSuspendAgent(id: f.session.id)
+        #expect(f.session.isDeepSuspended)
+    }
+}

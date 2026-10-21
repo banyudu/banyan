@@ -11,6 +11,7 @@ extension SessionStore {
         for session in sessions {
             do { session.workflow = try workflowJournal.load(id: session.id) }
             catch { session.workflowRecoveryError = error.localizedDescription }
+            retainManagedNativeObservation(session)
         }
     }
 
@@ -22,6 +23,7 @@ extension SessionStore {
         let next = try session.workflow?.replacing(workflow) ?? workflow
         try workflowJournal.save(next, id: id)
         session.workflow = next
+        retainManagedNativeObservation(session)
         pauseCloseProjectionDidChange(id: id)
     }
 

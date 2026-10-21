@@ -630,3 +630,49 @@ private struct WorkflowTestHistory: SessionHistoryBackend {
     func prepareTrimmedTranscript(provider: CodingAgentProvider, sourceID: String, cwd: String, transcriptURL: URL?) -> String? { nil }
     func transcriptPreview(from url: URL, provider: CodingAgentProvider, maxMessages: Int) -> String { "" }
 }
+
+extension SessionWorkflowStoreTests {
+    @Test func hideKeepsWorkflowAndBackingWorkAndRestoresAfterRestart() throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let pause = FakeWorkitPauseClient()
+        let store = fixture.makeStore(pauseClient: pause)
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let session = try #require(store.sessions.first { $0.id == "managed" })
+        let child = try #require(store.sessions.first { $0.id == "legacy" })
+        child.parentSessionID = session.id
+        let workflow = SessionWorkflow(owner: "workit", jobID: "job-a", revision: 2, state: .working)
+        try store.setWorkflow(id: session.id, workflow: workflow)
+        let before = (session.status, session.command, session.isSuspended, session.isFrozen)
+        try store.hideAndKeepWorking(id: session.id)
+        #expect(store.backgroundedSessionIDs.contains(child.id))
+        #expect(!store.visibleSessions.contains { $0.id == session.id || $0.id == child.id })
+        #expect(session.workflow == workflow)
+        #expect(session.status == before.0 && session.command == before.1 && session.isSuspended == before.2 && session.isFrozen == before.3)
+        #expect(pause.requests.isEmpty && fixture.backend.killed.isEmpty && fixture.backend.launched.isEmpty)
+        let restored = fixture.makeStore()
+        defer { restored.flushPendingSessionSaves() }
+        restored.loadPersistedSessionsIfNeeded()
+        #expect(restored.backgroundSessionRoots == ["managed"])
+        #expect(restored.sessions.first { $0.id == "managed" }?.workflow == workflow)
+        try store.revealBackgroundConversation(id: child.id)
+        #expect(store.backgroundedSessionIDs.isEmpty)
+        #expect(try store.backgroundJournal.load().isEmpty)
+        #expect(session.workflow == workflow)
+    }
+
+    @Test func failedPresentationSaveCannotHideOrPauseWork() throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        try store.setWorkflow(id: "managed", workflow: .init(owner: "workit", jobID: "job-a", revision: 0, state: .working))
+        try FileManager.default.createDirectory(at: store.backgroundJournal.file, withIntermediateDirectories: true)
+        #expect(throws: (any Error).self) { try store.hideAndKeepWorking(id: "managed") }
+        #expect(store.backgroundSessionRoots.isEmpty)
+        #expect(store.sessions.first { $0.id == "managed" }?.workflow?.state == .working)
+        #expect(fixture.backend.killed.isEmpty)
+    }
+}

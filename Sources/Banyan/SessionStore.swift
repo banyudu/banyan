@@ -315,6 +315,10 @@ final class SessionStore: ObservableObject {
             saveWorkspace()
         }
     }
+    @Published var backgroundSessionRoots: Set<String> = [] {
+        didSet { sidebarGroupsRevision &+= 1 }
+    }
+    @Published var backgroundPresentationError: String?
     @Published private var pendingCloseSessionID: String?
     @Published var pauseCloseInFlightIDs: Set<String> = []
     @Published var pauseCloseError: String?
@@ -792,7 +796,8 @@ final class SessionStore: ObservableObject {
     var visibleSessions: [BanyanSession] {
         // Exclude closed history before resolving titles and constructing the
         // lookup, rather than making the visibility policy discard it afterwards.
-        let active = sessions.filter { $0.status != .closed }
+        let hidden = backgroundedSessionIDs
+        let active = sessions.filter { $0.status != .closed && !hidden.contains($0.id) }
         let items = active.map {
             SessionVisibilityItem(
                 id: $0.id,
@@ -1235,6 +1240,8 @@ final class SessionStore: ObservableObject {
             }
         }
         restoreWorkflows()
+        restoreBackgroundPresentation()
+        if visibleSessions.isEmpty && !backgroundSessionRoots.isEmpty { sidebarMode = .work }
         // Register the whole restored fleet before any recovery can claim a
         // new slot. Over-budget work stays intact, including parked/frozen rows.
         for terminal in terminalSessions where agentAdmission.running.contains(terminal.id) {
@@ -1646,7 +1653,7 @@ final class SessionStore: ObservableObject {
     /// already carry their titles and provider IDs; provider imports are still
     /// available to workflows that actually need new transcript metadata.
     func spawnDefaultSessionIfEmpty() {
-        guard visibleSessions.isEmpty else { return }
+        guard !sessions.contains(where: { $0.status != .closed }) else { return }
         spawn(cwd: homeDirectory)
     }
 
@@ -3433,6 +3440,7 @@ final class SessionStore: ObservableObject {
         let observedStatus = session.status
         let observedTone = session.tone
         session.resume()
+        retainManagedNativeObservation(session)
         if let terminal = session as? TerminalSession,
            !terminal.needsRecovery, terminal.loadedTerminalView != nil {
             // `onTerminalReady` fires once per container and this session already
@@ -3465,6 +3473,7 @@ final class SessionStore: ObservableObject {
         resumeFrozenForInteraction(id: session.id)
         guard session.isSuspended else { return }
         session.isSuspended = false
+        retainManagedNativeObservation(session)
         supervisorObservationStates.removeValue(forKey: session.id)
     }
 
@@ -4545,6 +4554,8 @@ final class SessionStore: ObservableObject {
     /// `selectedSessionID`/`selection` directly so a parked neighbor is not
     /// woken by accident.
     func userSelect(id: String) {
+        do { try revealBackgroundConversation(id: id) }
+        catch { backgroundPresentationError = "The conversation could not be restored. Check local presentation storage and retry."; return }
         if let session = sessions.first(where: { $0.id == id }), session.isSuspended {
             try? resume(id: id)
         }
@@ -4753,8 +4764,9 @@ final class SessionStore: ObservableObject {
         // status gate (built lazily, at most once per evaluation).
         let selectedID = selection.selectedSessionID
         var relationshipItems: [SessionRelationshipItem]?
+        let hidden = backgroundedSessionIDs
         for session in sessions {
-            guard session.id != selectedID,
+            guard session.id != selectedID, !hidden.contains(session.id),
                   session.status != .closed,
                   SessionLifecyclePolicy.needsAttention(
                       status: session.status,
@@ -5356,7 +5368,7 @@ final class SessionStore: ObservableObject {
                 self.isHistoryImportRunning = false
                 let shouldRunPendingImport = self.isHistoryImportPending
                 self.isHistoryImportPending = false
-                if spawnDefaultIfEmpty, self.visibleSessions.isEmpty {
+                if spawnDefaultIfEmpty, !self.sessions.contains(where: { $0.status != .closed }) {
                     self.spawn(cwd: homeDirectory)
                 }
                 if shouldRunPendingImport {

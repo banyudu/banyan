@@ -143,12 +143,15 @@ struct ContentView: View {
         }
         .alert(Text(closeConfirmationTitle), isPresented: closeConfirmationBinding) {
             Button("Cancel", role: .cancel) {}
+            if let session = store.pendingCloseSession, store.canHideAndKeepWorking(session) {
+                Button("Hide and Keep Working") { store.confirmPendingHideAndKeepWorking() }
+                    .keyboardShortcut(.defaultAction)
+            }
             if store.pendingCloseCanPause {
                 Button("Pause and Close", role: .destructive) {
                     store.confirmPendingPauseAndClose()
                 }
                 .disabled(store.pendingCloseIsPausing)
-                .keyboardShortcut(.defaultAction)
             } else {
                 Button(closeConfirmationAction, role: .destructive) {
                     store.confirmPendingClose()
@@ -158,6 +161,12 @@ struct ContentView: View {
             }
         } message: {
             Text(store.pendingCloseMessage)
+        }
+        .alert("Conversation visibility unchanged", isPresented: Binding(
+            get: { store.backgroundPresentationError != nil },
+            set: { if !$0 { store.backgroundPresentationError = nil } }
+        )) { Button("OK", role: .cancel) { store.backgroundPresentationError = nil } } message: {
+            Text(store.backgroundPresentationError ?? "")
         }
         .alert("Session remains open", isPresented: Binding(
             get: { store.pauseCloseError != nil },
@@ -433,6 +442,7 @@ struct ContentView: View {
             case .work:
                 WorkSidebarView(client: WorkitCommandOverviewClient(host: store.host),
                     sessionIDs: Set(store.sessions.filter { $0.status != .closed }.map(\.id)),
+                    backgroundSessionIDs: store.backgroundedSessionIDs,
                     openSession: { store.userSelect(id: $0) })
                 Divider()
                 HStack { Spacer(); sidebarModeSwitcher }.padding(10)

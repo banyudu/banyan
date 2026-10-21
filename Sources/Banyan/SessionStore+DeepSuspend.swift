@@ -36,7 +36,7 @@ extension SessionStore {
             throw AgentFreezeError.unsafe("Recovery journal is unavailable; retry Resume before suspending")
         }
         if terminal.isDeepSuspended { return }
-        guard !pendingAgentFreezeIDs.contains(id), !deepSuspendProtected(terminal),
+        guard !pendingAgentFreezeIDs.contains(id), !deepSuspendProtected(terminal, automatic: automatic),
               let provider = CodingAgentProvider.detect(in: terminal.command),
               [.claude, .codex, .opencode].contains(provider) else {
             throw AgentFreezeError.unsafe("Focused, busy, interacting or unsupported session")
@@ -178,7 +178,7 @@ extension SessionStore {
             // Closed/removed sessions cannot be journaled by preparation tasks.
             guard sessions.contains(where: { $0 === terminal }), terminal.freezeGeneration == generation,
                   terminal.deepLifecycleGeneration == lifecycleGeneration, !Task.isCancelled,
-                  !isAgentFreezeShuttingDown, !deepSuspendProtected(terminal),
+                  !isAgentFreezeShuttingDown, !deepSuspendProtected(terminal, automatic: automatic),
                   !automatic || deepSuspendPolicy(for: provider).automatic else {
                 throw AgentFreezeError.unsafe("Session became focused or changed during preparation")
             }
@@ -229,8 +229,9 @@ extension SessionStore {
         }
     }
 
-    private func deepSuspendProtected(_ terminal: TerminalSession) -> Bool {
-        terminal.id == selectedSessionID || terminal.id == selection.selectedSessionID || terminal.freezeInputInFlight > 0
+    private func deepSuspendProtected(_ terminal: TerminalSession, automatic: Bool = false) -> Bool {
+        (automatic && terminal.workflow?.state.permitsWake == true)
+            || terminal.id == selectedSessionID || terminal.id == selection.selectedSessionID || terminal.freezeInputInFlight > 0
             || terminal.status == .closed || ![.idle, .needInput].contains(terminal.status)
     }
 
@@ -242,7 +243,7 @@ extension SessionStore {
             let policy = session.agentProvider.map { deepSuspendPolicy(for: $0) } ?? .init()
             return AgentSuspendCandidate(id: session.id, lastInteraction: session.lastFreezeInteractionAt,
                 eligible: policy.automatic && !session.isDeepSuspended && !session.isSuspended
-                    && !deepSuspendProtected(session)
+                    && !deepSuspendProtected(session, automatic: true)
                     && now.timeIntervalSince(session.lastFreezeInteractionAt) >= policy.threshold(underPressure: underPressure))
         })
         guard !ids.isEmpty else { return }
