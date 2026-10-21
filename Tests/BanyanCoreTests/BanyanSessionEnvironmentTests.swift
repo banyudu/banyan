@@ -70,3 +70,9 @@ import Testing
     #expect(BanyanSessionEnvironment.sessionID(fromTmuxSessionName: "banyan-") == nil)
     #expect(BanyanSessionEnvironment.sessionID(fromTmuxSessionName: "") == nil)
 }
+
+@Test func currentSessionIdentityIgnoresSpawnParentAndStaleTmuxEnvironment() {
+    #expect(BanyanSessionEnvironment.currentSessionID(from: ["BANYAN_SESSION_ID": "worker", "BANYAN_PARENT_SESSION_ID": "parent"], enclosingTmuxSessionID: nil) == "worker")
+    #expect(BanyanSessionEnvironment.currentSessionID(from: ["TMUX_PANE": "%1", "BANYAN_SESSION_ID": "stale", "BANYAN_PARENT_SESSION_ID": "parent"], enclosingTmuxSessionID: "actual") == "actual")
+    #expect(BanyanSessionEnvironment.currentSessionID(from: ["TMUX": "foreign", "BANYAN_SESSION_ID": "stale"], enclosingTmuxSessionID: nil) == nil)
+}

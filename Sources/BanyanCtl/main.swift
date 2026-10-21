@@ -102,6 +102,11 @@ struct BanyanCtl {
                 try runPerfCommand(Array(arguments.dropFirst()))
             case "mark":
                 try post("/mark", payload: parsePayload(Array(arguments.dropFirst())))
+            case "coordination":
+                if arguments.count == 1 || arguments[1] == "--help" { printHelp(); return }
+                var payload = try workflowPayload(Array(arguments.dropFirst(2)))
+                payload["action"] = arguments[1]
+                try post("/coordination", payload: payload)
             case "workflow":
                 guard arguments.count >= 2, ["set", "wake", "resolve", "close-verified"].contains(arguments[1]) else {
                     throw CLIError.message("workflow requires set, wake, resolve or close-verified")
@@ -266,6 +271,11 @@ struct BanyanCtl {
                 throw CLIError.message("session title requires --title TEXT and an enclosing session or --id ID")
             }
             print(try updateSessionTitle(id: id, title: title) ? "Session title updated" : "Manual session title preserved")
+        case "current":
+            guard args.count == 1, let id = currentSessionID() else {
+                throw CLIError.message("Cannot identify this process's Banyan session; run from the main conversation")
+            }
+            print(String(decoding: try JSONSerialization.data(withJSONObject: ["id": id]), as: UTF8.self))
         case "suspend":
             try post("/agent-suspend", payload: sessionLifecyclePayload(Array(args.dropFirst())))
         case "freeze", "unfreeze":
@@ -286,6 +296,9 @@ struct BanyanCtl {
         var payload = try parsePayload(args)
         if let jobID = payload.removeValue(forKey: "job-id") { payload["jobID"] = jobID }
         if let wakeID = payload.removeValue(forKey: "wake-id") { payload["wakeID"] = wakeID }
+        if let runID = payload.removeValue(forKey: "run-id") { payload["runID"] = runID }
+        if let groupID = payload.removeValue(forKey: "group-id") { payload["groupID"] = groupID }
+        if let value = payload.removeValue(forKey: "intervention-id") { payload["interventionID"] = value }
         return payload
     }
 
@@ -454,6 +467,18 @@ struct BanyanCtl {
         )
     }
 
+    func currentSessionID() -> String? {
+        let environment = host.environment
+        if environment["TMUX"] == nil, environment["TMUX_PANE"] == nil,
+           let thread = environment["CODEX_THREAD_ID"], !thread.isEmpty {
+            guard let catalog = try? loadShellSessions(options: SessionListOptions(queryItems: ["query": thread])) else { return nil }
+            let matches = catalog.sessions.filter { $0["backend"] as? String == "codex" && $0["agentSessionID"] as? String == thread }
+            return matches.count == 1 ? matches[0]["id"] as? String : nil
+        }
+        return BanyanSessionEnvironment.currentSessionID(from: environment,
+            enclosingTmuxSessionID: enclosingTmuxSessionID(environment: environment))
+    }
+
     /// Banyan id of the tmux session this process runs inside, if any.
     /// Covers shells in sessions created before `BANYAN_SESSION_ID` injection
     /// existed, and any spawner that does not forward the variable. Sessions
@@ -462,12 +487,13 @@ struct BanyanCtl {
         guard environment["TMUX_PANE"] != nil || environment["TMUX"] != nil else {
             return nil
         }
+        let target = environment["TMUX_PANE"].map { ["-t", $0] } ?? []
         let tmuxArguments: [String]
         if let socket = environment["TMUX"]?.split(separator: ",").first.map(String.init),
            !socket.isEmpty {
-            tmuxArguments = ["tmux", "-S", socket, "display-message", "-p", "#{session_name}"]
+            tmuxArguments = ["tmux", "-S", socket, "display-message", "-p"] + target + ["#{session_name}"]
         } else {
-            tmuxArguments = ["tmux", "-L", TmuxBackend.socketName, "display-message", "-p", "#{session_name}"]
+            tmuxArguments = ["tmux", "-L", TmuxBackend.socketName, "display-message", "-p"] + target + ["#{session_name}"]
         }
         // `tmux` resolves through the caller's PATH; tmux looks at TMUX/TMUX_PANE
         // in the child's environment to pick the client, so forward everything.
@@ -1010,6 +1036,12 @@ struct BanyanCtl {
           banyanctl puck answer --id ID --call-id CALL --selections JSON
 
         Usage:
+          banyanctl coordination bind|status|release --id OWNER --group-id GROUP
+          banyanctl coordination helper|retire-helper --id HELPER --parent OWNER --group-id GROUP --worker CHILD --run-id RUN --job-id JOB [--revision N]
+          banyanctl coordination observe --id CHILD --parent OWNER --group-id GROUP
+          banyanctl coordination deliver --id OWNER --group-id GROUP --revision N --wake-id ID --text TEXT
+          banyanctl coordination resolve --id OWNER --group-id GROUP --revision N --wake-id ID --outcome delivered|not-delivered --detail TEXT
+          banyanctl coordination retire --id CHILD --parent OWNER --group-id GROUP --job-id JOB --revision N [--intervention-id ID]
           banyanctl workflow set --id ID --owner workit --job-id JOB --revision N --state working|waiting|needs-you|verified|paused|cancelled [--detail TEXT]
           banyanctl workflow wake --id ID --job-id JOB --revision N --wake-id WAKE --text TEXT
           banyanctl workflow resolve --id ID --job-id JOB --revision N --wake-id WAKE --outcome delivered|not-delivered --detail TEXT
@@ -1017,6 +1049,7 @@ struct BanyanCtl {
           banyanctl codex-remote configure --path policy.json
           banyanctl codex-remote resolve --workspace ID --operationID ID
           banyanctl codex-handoff --id ID [--detail prepare|check]
+          banyanctl session current
           banyanctl session list [--all] [--id ID] [--query TEXT]
           banyanctl spawn  [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]
           banyanctl session new [--id ID] [--title TITLE] [--title-url URL] [--cwd PATH] [--command CMD] [--cmd CMD] [--parent ID] [--no-parent] [--tone blue] [--focus|--background]

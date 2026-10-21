@@ -320,3 +320,67 @@ extension CodexConversationUITests {
         #expect(server.calls.allSatisfy { $0.0 != "turn/start" })
     }
 }
+
+extension CodexConversationUITests {
+    private func coordination(_ action: String, id: String, extra: [String: Any] = [:]) throws -> CoordinationControlPayload {
+        let object = ["action": action, "id": id, "groupID": "native-group"].merging(extra) { _, new in new }
+        return try JSONDecoder().decode(CoordinationControlPayload.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    @Test func coordinatorRemainsObservedAndBusySecondNotificationRetriesExactlyOnce() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon()), server = ConversationServer()
+        let store = fixture.makeStore(codexService: server); store.enableNativeCodex = true
+        let main = try await store.createCodexSession(cwd: fixture.project.path, id: "main")
+        _ = try await store.controlCoordination(coordination("bind", id: main.id))
+        try await store.codexThreads.select(sessionID: nil)
+        #expect(main.state.connection == .subscribed)
+        _ = try await store.controlCoordination(coordination("deliver", id: main.id, extra: ["revision": 1, "wakeID": "first", "text": "First result"]))
+        let next = try coordination("deliver", id: main.id, extra: ["revision": 2, "wakeID": "second", "text": "Second result"])
+        await #expect(throws: (any Error).self) { try await store.controlCoordination(next) }
+        #expect(try store.coordinationJournal.bindings.load(id: main.id)?.wake == .init(id: "second", status: .notDelivered))
+        server.emit("turn/completed", thread: try #require(main.state.binding.threadID), fields: ["turn": .object(["id": .string("turn-1"), "status": .string("completed")])])
+        try await waitForPuckState { main.state.activeTurnID == nil && main.state.runtime.type == "idle" }
+        main.draft = "My unfinished message"
+        await #expect(throws: (any Error).self) { try await store.controlCoordination(next) }
+        main.draft = ""
+        _ = try await store.controlCoordination(next)
+        _ = try await store.controlCoordination(next)
+        #expect(server.calls.filter { $0.0 == "turn/start" }.count == 2)
+    }
+
+    @Test func verifiedNativeChildStaysObservedUntilAcceptedRetirement() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon()), server = ConversationServer()
+        let store = fixture.makeStore(codexService: server); store.enableNativeCodex = true
+        let main = try await store.createCodexSession(cwd: fixture.project.path, id: "main")
+        _ = try await store.controlCoordination(coordination("bind", id: main.id))
+        let child = try await store.createCodexSession(cwd: fixture.project.path, id: "worker")
+        child.parentSessionID = main.id
+        try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "child-job", revision: 2, state: .verified))
+        store.selection.selectedSessionID = main.id
+        try await store.codexThreads.select(sessionID: main.id)
+        #expect(child.state.connection == .subscribed)
+        _ = try await store.controlCoordination(coordination("retire", id: child.id, extra: ["parent": main.id, "jobID": "child-job", "revision": 2]))
+        #expect(child.status == .closed)
+        #expect(store.sessions.contains { $0.id == child.id })
+        #expect(main.status != .closed)
+    }
+}
+
+extension CodexConversationUITests {
+    @Test func coordinatorHeldWhileWaitingForAdmissionNeverStartsATurn() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon()), server = ConversationServer()
+        let store = fixture.makeStore(codexService: server); store.enableNativeCodex = true
+        let main = try await store.createCodexSession(cwd: fixture.project.path, id: "main")
+        _ = try await store.controlCoordination(coordination("bind", id: main.id))
+        store.agentAdmission.setLimit(1)
+        #expect(store.agentAdmission.acquireImmediately("other-worker"))
+        let delivery = Task { try await store.controlCoordination(coordination("deliver", id: main.id,
+            extra: ["revision": 1, "wakeID": "held", "text": "Inspect child result"])) }
+        try await waitForPuckState { store.agentAdmission.queuedIDs.contains(main.id) }
+        try store.setWorkflow(id: main.id, workflow: .init(owner: "workit", jobID: "main-issue", revision: 1, state: .paused))
+        store.agentAdmission.release("other-worker")
+        await #expect(throws: (any Error).self) { try await delivery.value }
+        #expect(server.calls.allSatisfy { $0.0 != "turn/start" })
+        #expect(try store.coordinationJournal.bindings.load(id: main.id)?.wake?.status == .notDelivered)
+    }
+}

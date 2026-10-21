@@ -740,6 +740,28 @@ The selected theme applies to both the SwiftUI chrome, such as the sidebar, and 
 
 Banyan watches terminal output for common agent states and can mark sessions as `need-input`, `review`, `failed`, or `completed`. It sends macOS notifications for attention states.
 
+### Main-session coordination
+
+An external coordinator such as `workit group` can keep one existing conversation
+in charge of a bounded set of issue workers. The default Sessions tree stays in
+place; children and completed verifier helpers are nested under their owner.
+
+`banyanctl session current` resolves the caller from its actual tmux pane or exact
+native Codex thread binding. Spawn-parent overrides and sidebar selection do not
+change that identity. The authenticated `banyanctl coordination` protocol supports
+binding an owner, observing child input, delivering a numbered notification,
+resolving uncertain receipts and retiring a scoped verified child into history.
+The owning coordinator decides when evidence is accepted; Banyan checks original
+parent/job/revision, direct user input and live session state before closing.
+
+Coordinator bindings and receipts live separately from issue workflow badges in
+the private `Banyan/coordination/` journal. Switching away from a native coordinator
+keeps its remote observation available. Busy turns, drafts, holds and human
+prompts prevent automatic input. Ambiguous delivery is never replayed without
+inspection. Selected, busy, changed or uncertain children remain open; transcripts
+and worktrees are retained. This transport adds no scheduler or default sidebar.
+Use `banyanctl coordination --help` for the versioned control interface.
+
 ### Managed issue workflows
 
 The native close confirmation can **Pause and Close** unfinished Workit-owned

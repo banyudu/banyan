@@ -58,16 +58,24 @@ extension SessionStore {
     /// moves away, including after restoring a hidden conversation at startup.
     func retainManagedNativeObservation(_ session: BanyanSession) {
         guard session is CodexSession else { return }
-        let retained = session.workflow?.owner == "workit" && session.workflow?.state.permitsWake == true
-            && session.status != .closed && !session.isSuspended && session.workflowRecoveryError == nil
+        func eligible() -> Bool {
+            let coordinator = try? coordinationJournal.bindings.load(id: session.id)
+            let parent = session.parentSessionID.flatMap { try? coordinationJournal.bindings.load(id: $0) }
+            let acceptedCleanup = session.workflow?.owner == "workit" && session.workflow?.state == .verified && parent?.state == .working
+            let working = ((session.workflow?.owner == "workit" && session.workflow?.state.permitsWake == true) || coordinator?.state == .working)
+                && session.workflow?.state.permitsWake != false
+            return (working || acceptedCleanup) && session.status != .closed && !session.isSuspended && session.workflowRecoveryError == nil
+        }
+        let coordinator = try? coordinationJournal.bindings.load(id: session.id)
+        let retained = eligible()
         codexThreads.setRemoteObservation(sessionID: session.id, ownerID: "managed-workflow", retained: retained)
         let expected = session.workflow
         Task { [weak self, weak session] in
-            guard let self, let session, session.workflow == expected else { return }
+            guard let self, let session, session.workflow == expected,
+                  (try? self.coordinationJournal.bindings.load(id: session.id)) == coordinator else { return }
             try? await self.codexThreads.retainRemoteObservation(sessionID: session.id, retained: retained,
                 ownerID: "managed-workflow", authorization: {
-                    guard session.workflow?.state.permitsWake == true, session.status != .closed,
-                          !session.isSuspended, session.workflowRecoveryError == nil else {
+                    guard eligible() else {
                         throw WorkflowError.refused("Managed observation is held")
                     }
                 })

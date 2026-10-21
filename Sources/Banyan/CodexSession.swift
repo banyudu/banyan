@@ -119,6 +119,7 @@ final class CodexSession: BanyanSession {
             } else {
                 _ = try await coordinator.startTurn(sessionID: id, input: input)
             }
+            onUserSubmittedInput?(text)
             if draft == text { draft = "" }
         } catch is CancellationError { actionError = "Queued turn cancelled. Your draft is preserved." }
         catch { actionError = error.localizedDescription }
