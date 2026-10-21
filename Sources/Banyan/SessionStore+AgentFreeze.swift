@@ -48,7 +48,7 @@ extension SessionStore {
             throw ControlError.badRequest("freeze requires a live, unparked terminal agent session")
         }
         guard !terminal.isFrozen else { return }
-        guard !pendingAgentFreezeIDs.contains(id), !isFreezeProtected(terminal) else {
+        guard !pendingAgentFreezeIDs.contains(id), !isFreezeProtected(terminal, automatic: automatic) else {
             throw ControlError.badRequest("cannot freeze a selected, visible, busy, or interacting session")
         }
         pendingAgentFreezeIDs.insert(id)
@@ -119,7 +119,7 @@ extension SessionStore {
             // No await between the final focus/input guard and STOP. The UI and
             // control API serialize interaction with this commit on the main actor.
             guard sessions.contains(where: { $0 === terminal }), terminal.freezeGeneration == generation,
-                  !isAgentFreezeShuttingDown, !isFreezeProtected(terminal), !automatic || autoFreezeAgents else {
+                  !isAgentFreezeShuttingDown, !isFreezeProtected(terminal, automatic: automatic), !automatic || autoFreezeAgents else {
                 throw AgentFreezeError.unsafe("Session changed or became visible during freeze preparation")
             }
             terminal.frozenTicket = prepared.ticket
@@ -146,8 +146,9 @@ extension SessionStore {
         }
     }
 
-    private func isFreezeProtected(_ terminal: TerminalSession) -> Bool {
-        terminal.id == selectedSessionID || terminal.id == selection.selectedSessionID
+    private func isFreezeProtected(_ terminal: TerminalSession, automatic: Bool = false) -> Bool {
+        (automatic && terminal.workflow?.state.permitsWake == true)
+            || terminal.id == selectedSessionID || terminal.id == selection.selectedSessionID
             || terminal.freezeInputInFlight > 0 || terminal.status == .closed || terminal.isSuspended
             || ![.idle, .needInput].contains(terminal.status)
     }
@@ -159,7 +160,7 @@ extension SessionStore {
         let threshold = agentFreezeThreshold
         nextAutoFreezeProbeAt = now.addingTimeInterval(AgentInactivityPolicy.probeInterval(threshold: threshold))
         let ids = terminalSessions.filter {
-            !$0.isFrozen && !isFreezeProtected($0)
+            !$0.isFrozen && !isFreezeProtected($0, automatic: true)
                 && now.timeIntervalSince($0.lastFreezeInteractionAt) >= threshold
         }.map(\.id)
         guard !ids.isEmpty else { return }

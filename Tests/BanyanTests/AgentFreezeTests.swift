@@ -409,3 +409,16 @@ private struct AgedFreezeBackend: TmuxClientBackend {
     func freezeTicket(named name: String) -> AgentFreezeTicket? { base.freezeTicket(named: name) }
     func writeFreezeTicket(_ ticket: AgentFreezeTicket?, named name: String) throws { try base.writeFreezeTicket(ticket, named: name) }
 }
+
+extension AgentFreezeTests {
+    @Test func automaticFreezeProtectsManagedContinuationWhileManualFreezeRemainsExplicit() async throws {
+        let f = try await FreezeFixture(agedActivity: true)
+        defer { f.cleanup() }
+        f.session.workflow = .init(owner: "workit", jobID: "job-a", revision: 0, state: .waiting)
+        f.session.lastFreezeInteractionAt = .distantPast
+        await #expect(throws: (any Error).self) { try await f.store.freezeAgent(id: f.session.id, automatic: true) }
+        #expect(!f.session.isFrozen)
+        try await f.store.freezeAgent(id: f.session.id)
+        #expect(f.session.isFrozen)
+    }
+}

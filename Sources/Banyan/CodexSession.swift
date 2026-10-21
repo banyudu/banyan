@@ -197,6 +197,7 @@ final class CodexSession: BanyanSession {
     }
 
     private func detachIfIdle() {
+        coordinator.setRemoteObservation(sessionID: id, ownerID: "managed-workflow", retained: false)
         Task { [weak self] in
             guard let self else { return }
             try? await coordinator.detach(sessionID: id)

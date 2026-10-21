@@ -297,3 +297,26 @@ extension CodexConversationUITests {
         #expect(!session.isSuspended && session.status != .closed)
     }
 }
+
+
+extension CodexConversationUITests {
+    @Test func explicitParkingReleasesManagedObservationAndResumeRestoresOnlyEligibleWork() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let server = ConversationServer()
+        let store = fixture.makeStore(codexService: server)
+        store.enableNativeCodex = true
+        let session = try await store.createCodexSession(cwd: fixture.project.path, id: "managed-park")
+        try store.setWorkflow(id: session.id, workflow: .init(owner: "workit", jobID: "job-a", revision: 0, state: .working))
+        try store.suspend(id: session.id)
+        try await store.codexThreads.select(sessionID: nil)
+        try await waitForPuckState { session.state.connection == .unsubscribed }
+        #expect(session.workflow?.state == .working)
+        try store.resume(id: session.id)
+        try await waitForPuckState { session.state.connection == .subscribed }
+        try store.setWorkflow(id: session.id, workflow: .init(owner: "workit", jobID: "job-a", revision: 1, state: .paused))
+        try await store.codexThreads.select(sessionID: nil)
+        try await waitForPuckState { session.state.connection == .unsubscribed }
+        #expect(session.workflow?.state == .paused)
+        #expect(server.calls.allSatisfy { $0.0 != "turn/start" })
+    }
+}

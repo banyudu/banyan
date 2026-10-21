@@ -3440,6 +3440,7 @@ final class SessionStore: ObservableObject {
         let observedStatus = session.status
         let observedTone = session.tone
         session.resume()
+        retainManagedNativeObservation(session)
         if let terminal = session as? TerminalSession,
            !terminal.needsRecovery, terminal.loadedTerminalView != nil {
             // `onTerminalReady` fires once per container and this session already
@@ -3472,6 +3473,7 @@ final class SessionStore: ObservableObject {
         resumeFrozenForInteraction(id: session.id)
         guard session.isSuspended else { return }
         session.isSuspended = false
+        retainManagedNativeObservation(session)
         supervisorObservationStates.removeValue(forKey: session.id)
     }
 
