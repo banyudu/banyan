@@ -12,10 +12,16 @@ import Foundation
 ///
 /// The banyan-side default resolution order is:
 ///   1. explicit `--parent` / `--no-parent` on the command line,
-///   2. `$BANYAN_PARENT_SESSION_ID` (explicit override), then `$BANYAN_SESSION_ID`,
-///   3. the enclosing tmux session name (`banyan-<id>`) when running inside tmux —
-///      this covers sessions created before the `-e` injection existed.
-///   4. no parent (top-level session).
+///   2. `$BANYAN_PARENT_SESSION_ID` (explicit override),
+///   3. the enclosing tmux session name (`banyan-<id>`) when running inside tmux,
+///   4. `$BANYAN_SESSION_ID`,
+///   5. no parent (top-level session).
+///
+/// The tmux identity comes before `$BANYAN_SESSION_ID` because long-lived
+/// processes can inherit an old pane environment after their tmux server or
+/// Banyan session has gone away. The live pane is the current enclosing
+/// session; the inherited variable is only a fallback for callers that have no
+/// tmux context.
 public enum BanyanSessionEnvironment {
     /// Session environment variable set on every tmux session Banyan creates.
     public static let sessionIDKey = "BANYAN_SESSION_ID"
@@ -33,16 +39,37 @@ public enum BanyanSessionEnvironment {
         environment.filter { !inheritedContextKeys.contains($0.key) }
     }
 
-    /// Pure env-dict lookup shared by `banyanctl` (and any future spawner).
-    /// Returns the trimmed value, or nil when unset/blank.
-    public static func parentSessionID(from environment: [String: String]) -> String? {
-        for key in [parentSessionIDKey, sessionIDKey] {
-            if let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !value.isEmpty {
-                return value
-            }
+    /// Pure lookup shared by `banyanctl` (and any future spawner). An explicit
+    /// parent override wins, then the live enclosing tmux session, then the
+    /// inherited session identity. Values are trimmed; blank values are nil.
+    public static func parentSessionID(
+        from environment: [String: String],
+        enclosingTmuxSessionID: String? = nil
+    ) -> String? {
+        if let value = normalized(environment[parentSessionIDKey]) {
+            return value
         }
-        return nil
+        if let value = normalized(enclosingTmuxSessionID) {
+            return value
+        }
+        return normalized(environment[sessionIDKey])
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    /// The caller's identity is separate from its requested spawn parent.
+    public static func currentSessionID(from environment: [String: String], enclosingTmuxSessionID: String?) -> String? {
+        if environment["TMUX"] != nil || environment["TMUX_PANE"] != nil {
+            return enclosingTmuxSessionID
+        }
+        let value = environment[sessionIDKey]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value?.isEmpty == false ? value : nil
     }
 
     /// Recovers a Banyan session id from a tmux session name.

@@ -5177,6 +5177,7 @@ final class SessionStore: ObservableObject {
         }
         session.onUserSubmittedInput = { [weak self, weak session] submittedInput in
             guard let self, let session else { return }
+            self.recordCoordinationIntervention(session, text: submittedInput)
             session.codexAutoRetry.reset()
             if let terminal = session as? TerminalSession {
                 terminal.codexRetryAutomaticTurn = false

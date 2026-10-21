@@ -316,6 +316,7 @@ public enum ControlRoute: Equatable {
     /// Drops closed sessions that aged out of the retention window, or reports
     /// how many would go.
     case prune
+    case coordination
     case workflowSet
     case workflowWake
     case workflowCloseVerified
@@ -355,6 +356,7 @@ public enum ControlRoute: Equatable {
         case ("POST", "/answer"): return .answer
         case ("POST", "/suggest"): return .suggest
         case ("POST", "/prune"): return .prune
+        case ("POST", "/coordination"): return .coordination
         case ("POST", "/workflow-set"): return .workflowSet
         case ("POST", "/workflow-wake"): return .workflowWake
         case ("POST", "/workflow-close-verified"): return .workflowCloseVerified
@@ -386,7 +388,7 @@ public enum ControlRoute: Equatable {
     public var requiresID: Bool {
         switch self {
         case .select, .reparent, .mark, .sessionTitle, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
-             .output, .input, .answer, .workflowSet, .workflowWake, .workflowResolve: return true
+             .output, .input, .answer, .coordination, .workflowSet, .workflowWake, .workflowResolve: return true
         case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest,
              .prune, .agentQueue, .agentLimit, .puckTurn, .codexRemote, .codexRemoteConfigure, .codexRemoteResolve, .workflowCloseVerified: return false
         }

@@ -338,8 +338,10 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         } else {
             configureServerTerminalColors()
         }
+        let identity = banyanSessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !hasSession(named: name) else {
             configureSessionOptions(named: name)
+            configureSessionEnvironment(named: name, banyanSessionID: identity)
             return
         }
 
@@ -348,8 +350,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         // it (`workit`, `banyanctl`, agents) can default `--parent` to the
         // calling session. `-e` exists since tmux 3.2; the retry below covers
         // older servers by creating the session without it.
-        if let banyanSessionID, !banyanSessionID.isEmpty {
-            arguments.append(contentsOf: ["-e", "\(BanyanSessionEnvironment.sessionIDKey)=\(banyanSessionID)"])
+        if let identity, !identity.isEmpty {
+            arguments.append(contentsOf: ["-e", "\(BanyanSessionEnvironment.sessionIDKey)=\(identity)"])
         }
         let shell = HostShell.executablePath(environment: environment)
         let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -389,6 +391,7 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
             }
         }
         configureSessionOptions(named: name)
+        configureSessionEnvironment(named: name, banyanSessionID: identity)
     }
 
     /// Removes a `-e KEY=VALUE` pair previously added for the session
@@ -517,9 +520,28 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         // output-capture flags would otherwise disable Codex highlighting.
         _ = try? run(["set-environment", "-gu", "NO_COLOR", ";",
                       "set-environment", "-gu", "FORCE_COLOR", ";",
-                      "set-environment", "-gu", "CLICOLOR_FORCE"])
+                      "set-environment", "-gu", "CLICOLOR_FORCE", ";",
+                      "set-environment", "-gu", BanyanSessionEnvironment.sessionIDKey, ";",
+                      "set-environment", "-gu", BanyanSessionEnvironment.parentSessionIDKey])
         _ = try? run(["set-environment", "-g", "COLORTERM", "truecolor"])
         _ = try? run(["set-environment", "-g", "CLICOLOR", "1"])
+    }
+
+    /// Tmux copies the server environment into a new session. Refresh the
+    /// per-session identity on every ensure so an existing session never keeps
+    /// an old id after a restart, and remove any inherited parent override: a
+    /// session is the current context for its children, not a parent alias.
+    private func configureSessionEnvironment(named name: String, banyanSessionID: String?) {
+        if let banyanSessionID, !banyanSessionID.isEmpty {
+            _ = try? run([
+                "set-environment", "-t", name,
+                BanyanSessionEnvironment.sessionIDKey, banyanSessionID
+            ])
+        }
+        _ = try? run([
+            "set-environment", "-u", "-t", name,
+            BanyanSessionEnvironment.parentSessionIDKey
+        ])
     }
 
     private var baseArguments: [String] {

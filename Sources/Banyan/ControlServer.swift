@@ -255,7 +255,7 @@ final class ControlServer {
                     options.matches(id: session.id, status: session.status.rawValue) {
                         [session.title, session.displayTitle, session.reportedTitle ?? "",
                          session.generatedTitle ?? "", session.contextualTitle ?? "",
-                         session.cwd, session.titleURL ?? ""]
+                         session.cwd, session.titleURL ?? "", session.agentSessionID ?? ""]
                     }
                 }
                 // A hidden app row must not reappear as a daemon-only Puck row
@@ -375,6 +375,15 @@ final class ControlServer {
                     select: shouldSelect
                 )
                 return respond(.ok(["session": summary(session)]))
+
+            case .coordination:
+                let body = try request.decode(CoordinationControlPayload.self)
+                try validateVersion(body.apiVersion)
+                Task { @MainActor in
+                    do { respond(.ok(try await store.controlCoordination(body))) }
+                    catch { respond(.failure(409, "workflow_refused", error.localizedDescription)) }
+                }
+                return
 
             case .workflowSet:
                 let body = try request.decode(WorkflowControlPayload.self)
@@ -1051,6 +1060,7 @@ final class ControlServer {
             "createdAt": session.createdAt.ISO8601Format(),
             "updatedAt": session.updatedAt.ISO8601Format()
         ]
+
         if let workflow = session.workflow, let data = try? JSONEncoder().encode(workflow),
            let object = try? JSONSerialization.jsonObject(with: data) {
             summary["workflow"] = object

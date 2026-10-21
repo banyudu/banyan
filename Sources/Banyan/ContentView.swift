@@ -55,7 +55,7 @@ struct ContentView: View {
         let _ = EnergyTrace.count("content.body")
         NavigationSplitView {
             sidebar
-                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
+                .navigationSplitViewColumnWidth(min: 343, ideal: 429, max: 600)
         } detail: {
             detail
         }

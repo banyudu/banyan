@@ -27,6 +27,20 @@ import Testing
     ]) == "PARENT-1")
 }
 
+@Test func sessionEnvironmentPrefersEnclosingTmuxSessionOverInheritedSessionID() {
+    #expect(BanyanSessionEnvironment.parentSessionID(
+        from: [BanyanSessionEnvironment.sessionIDKey: "STALE-1"],
+        enclosingTmuxSessionID: "CURRENT-2"
+    ) == "CURRENT-2")
+}
+
+@Test func sessionEnvironmentKeepsExplicitOverrideAheadOfEnclosingTmuxSession() {
+    #expect(BanyanSessionEnvironment.parentSessionID(
+        from: [BanyanSessionEnvironment.parentSessionIDKey: "CHOSEN-1"],
+        enclosingTmuxSessionID: "CURRENT-2"
+    ) == "CHOSEN-1")
+}
+
 @Test func sessionEnvironmentFallsBackToSessionID() {
     #expect(BanyanSessionEnvironment.parentSessionID(from: [
         BanyanSessionEnvironment.sessionIDKey: "TASK-123",
@@ -55,4 +69,10 @@ import Testing
     #expect(BanyanSessionEnvironment.sessionID(fromTmuxSessionName: "other-session") == nil)
     #expect(BanyanSessionEnvironment.sessionID(fromTmuxSessionName: "banyan-") == nil)
     #expect(BanyanSessionEnvironment.sessionID(fromTmuxSessionName: "") == nil)
+}
+
+@Test func currentSessionIdentityIgnoresSpawnParentAndStaleTmuxEnvironment() {
+    #expect(BanyanSessionEnvironment.currentSessionID(from: ["BANYAN_SESSION_ID": "worker", "BANYAN_PARENT_SESSION_ID": "parent"], enclosingTmuxSessionID: nil) == "worker")
+    #expect(BanyanSessionEnvironment.currentSessionID(from: ["TMUX_PANE": "%1", "BANYAN_SESSION_ID": "stale", "BANYAN_PARENT_SESSION_ID": "parent"], enclosingTmuxSessionID: "actual") == "actual")
+    #expect(BanyanSessionEnvironment.currentSessionID(from: ["TMUX": "foreign", "BANYAN_SESSION_ID": "stale"], enclosingTmuxSessionID: nil) == nil)
 }
