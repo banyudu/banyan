@@ -43,6 +43,7 @@ struct SidebarSessionGroup: Identifiable {
 
 enum SidebarMode: String, CaseIterable, Identifiable {
     case sessions
+    case work
     case linear
 
     var id: String { rawValue }
@@ -50,6 +51,7 @@ enum SidebarMode: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .sessions: return "Sessions"
+        case .work: return "Work"
         case .linear: return "Issues"
         }
     }
