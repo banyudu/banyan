@@ -445,11 +445,13 @@ struct BanyanCtl {
 
     /// Parent for a spawn issued from inside a Banyan session: explicit env
     /// first, otherwise the enclosing tmux session when running inside one.
+    /// The live tmux name outranks `BANYAN_SESSION_ID`, which can be stale in
+    /// long-lived daemons that inherited it from a pane that has since closed.
     private func defaultParentSessionID() -> String? {
-        if let parent = BanyanSessionEnvironment.parentSessionID(from: host.environment) {
-            return parent
-        }
-        return enclosingTmuxSessionID(environment: host.environment)
+        BanyanSessionEnvironment.parentSessionID(
+            from: host.environment,
+            enclosingTmuxSessionID: enclosingTmuxSessionID(environment: host.environment)
+        )
     }
 
     /// Banyan id of the tmux session this process runs inside, if any.
@@ -1027,8 +1029,8 @@ struct BanyanCtl {
         to force background even when nothing is currently selected.
 
         A spawn issued from inside a Banyan session nests under it by default:
-        --parent comes from $BANYAN_PARENT_SESSION_ID / $BANYAN_SESSION_ID, or
-        from the enclosing tmux session. Pass --parent ID to pick a different
+        --parent comes from $BANYAN_PARENT_SESSION_ID, then the enclosing tmux
+        session, then $BANYAN_SESSION_ID. Pass --parent ID to pick a different
         parent, or --no-parent for a top-level session.
           banyanctl mark   --id ID [--status running|executing|long-running-shell|subagents|need-input|asking|review|completed|failed] [--tone red] [--title TITLE] [--title-url URL]
           banyanctl select --id ID

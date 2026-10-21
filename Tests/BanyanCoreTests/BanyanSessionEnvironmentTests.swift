@@ -27,6 +27,20 @@ import Testing
     ]) == "PARENT-1")
 }
 
+@Test func sessionEnvironmentPrefersEnclosingTmuxSessionOverInheritedSessionID() {
+    #expect(BanyanSessionEnvironment.parentSessionID(
+        from: [BanyanSessionEnvironment.sessionIDKey: "STALE-1"],
+        enclosingTmuxSessionID: "CURRENT-2"
+    ) == "CURRENT-2")
+}
+
+@Test func sessionEnvironmentKeepsExplicitOverrideAheadOfEnclosingTmuxSession() {
+    #expect(BanyanSessionEnvironment.parentSessionID(
+        from: [BanyanSessionEnvironment.parentSessionIDKey: "CHOSEN-1"],
+        enclosingTmuxSessionID: "CURRENT-2"
+    ) == "CHOSEN-1")
+}
+
 @Test func sessionEnvironmentFallsBackToSessionID() {
     #expect(BanyanSessionEnvironment.parentSessionID(from: [
         BanyanSessionEnvironment.sessionIDKey: "TASK-123",
