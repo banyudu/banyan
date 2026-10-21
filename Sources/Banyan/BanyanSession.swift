@@ -123,8 +123,8 @@ class BanyanSession: ObservableObject, Identifiable {
     /// command when a closed session is reopened, instead of replaying the
     /// original launch command from scratch.
     @Published var agentSessionID: String?
-    @Published var workflow: SessionWorkflow?
-    @Published var workflowRecoveryError: String?
+    @Published var workflow: SessionWorkflow? { didSet { onHistoryRelevantChange?() } }
+    @Published var workflowRecoveryError: String? { didSet { onHistoryRelevantChange?() } }
     @Published var codexRetryStatus: CodexRetryStatus?
     var autoRetryCodexFailures = true {
         didSet { if !autoRetryCodexFailures { codexAutoRetry.cancel() } }

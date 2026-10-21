@@ -42,7 +42,7 @@ extension SessionStore {
         guard let session = pendingCloseSession else { return "" }
         var details: [String] = []
         if canHideAndKeepWorking(session) {
-            details.append("Hide and Keep Working hides this conversation and its children while automatic work continues. Restore it from Work. The close options below stop continuation.")
+            details.append("Keep Working in Background leaves this conversation and its children running. Its compact row stays in Sessions; select it to return. Child sessions are collapsed. The close options below stop continuation.")
         }
         if pendingCloseCanPause {
             details.append("Pause and Close leaves the issue unfinished and stops future automatic continuation. It does not verify or cancel the issue.")

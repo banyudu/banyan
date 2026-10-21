@@ -64,6 +64,10 @@ struct ContentView: View {
         // the detail column's own background fills the titlebar and meets the
         // divider exactly.
         .toolbarBackground(.hidden, for: .windowToolbar)
+        .task { await store.refreshWorkOverview() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.scheduleWorkOverviewRefresh()
+        }
         .onOpenURL { url in
             guard let id = PuckSessionLink.sessionID(from: url) else { return }
             store.openPuckSession(id: id)
@@ -144,7 +148,7 @@ struct ContentView: View {
         .alert(Text(closeConfirmationTitle), isPresented: closeConfirmationBinding) {
             Button("Cancel", role: .cancel) {}
             if let session = store.pendingCloseSession, store.canHideAndKeepWorking(session) {
-                Button("Hide and Keep Working") { store.confirmPendingHideAndKeepWorking() }
+                Button("Keep Working in Background") { store.confirmPendingHideAndKeepWorking() }
                     .keyboardShortcut(.defaultAction)
             }
             if store.pendingCloseCanPause {
@@ -1308,6 +1312,11 @@ struct ContentView: View {
             isCollapsed: item.isCollapsed,
             hiddenChildCount: item.hiddenChildCount,
             jumpKeyLabel: jumpKeyLabel,
+            workSummary: store.sessionWorkSummaries[item.id],
+            workOverviewError: store.workOverviewError,
+            workOverviewUpdatedAt: store.workOverview?.generatedAt,
+            refreshWork: { store.scheduleWorkOverviewRefresh() },
+            openWorkSession: { store.userSelect(id: $0) },
             onSelect: {
                 store.userSelect(id: item.session.id)
             },
@@ -2571,7 +2580,7 @@ private struct SelectionAwareTerminalSwitcher: View {
     }
 }
 
-private struct SessionRow: View {
+struct SessionRow: View {
     @ObservedObject var session: BanyanSession
     @ObservedObject var selection: SessionSelection
     let launchProfile: NewSessionLaunch?
@@ -2587,6 +2596,11 @@ private struct SessionRow: View {
     let isCollapsed: Bool
     let hiddenChildCount: Int
     let jumpKeyLabel: String
+    let workSummary: SessionWorkSummary?
+    let workOverviewError: String?
+    let workOverviewUpdatedAt: String?
+    let refreshWork: () -> Void
+    let openWorkSession: (String) -> Void
     let onSelect: () -> Void
     let onToggleCollapse: () -> Void
     let onRevealHidden: () -> Void
@@ -2740,12 +2754,9 @@ private struct SessionRow: View {
                 titleLabel
             }
 
-            if let workflow = session.workflow {
-                Text(workflow.state.label)
-                    .font(.caption2)
-                    .foregroundStyle(workflow.state == .verified ? .green : .secondary)
-                    .help(workflow.detail)
-                    .accessibilityIdentifier("session.\(session.id).workflow")
+            if let summary = workSummary, summary.own.managed || summary.own.background || !summary.descendants.isEmpty {
+                SessionWorkStatusButton(summary: summary, error: workOverviewError,
+                    updatedAt: workOverviewUpdatedAt, refresh: refreshWork, openSession: openWorkSession)
             } else if session.workflowRecoveryError != nil {
                 Text("Workflow unavailable").font(.caption2).foregroundStyle(.red)
             }

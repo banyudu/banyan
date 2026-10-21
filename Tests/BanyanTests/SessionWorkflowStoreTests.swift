@@ -645,9 +645,15 @@ extension SessionWorkflowStoreTests {
         let workflow = SessionWorkflow(owner: "workit", jobID: "job-a", revision: 2, state: .working)
         try store.setWorkflow(id: session.id, workflow: workflow)
         let before = (session.status, session.command, session.isSuspended, session.isFrozen)
+        store.sidebarMode = .linear
         try store.hideAndKeepWorking(id: session.id)
         #expect(store.backgroundedSessionIDs.contains(child.id))
-        #expect(!store.visibleSessions.contains { $0.id == session.id || $0.id == child.id })
+        #expect(store.visibleSessions.contains { $0.id == session.id })
+        #expect(store.sidebarMode == .linear)
+        #expect(store.collapsedParentIDs.contains(session.id))
+        #expect(store.sessionWorkSummaries[session.id]?.descendants.count == 1)
+        child.workflow = .init(owner: "workit", jobID: "child-job", revision: 1, state: .waiting)
+        #expect(store.sessionWorkSummaries[session.id]?.groupLabel == "1 waiting")
         #expect(session.workflow == workflow)
         #expect(session.status == before.0 && session.command == before.1 && session.isSuspended == before.2 && session.isFrozen == before.3)
         #expect(pause.requests.isEmpty && fixture.backend.killed.isEmpty && fixture.backend.launched.isEmpty)
@@ -655,6 +661,8 @@ extension SessionWorkflowStoreTests {
         defer { restored.flushPendingSessionSaves() }
         restored.loadPersistedSessionsIfNeeded()
         #expect(restored.backgroundSessionRoots == ["managed"])
+        #expect(restored.sidebarMode == .sessions)
+        #expect(restored.visibleSessions.contains { $0.id == "managed" })
         #expect(restored.sessions.first { $0.id == "managed" }?.workflow == workflow)
         try store.revealBackgroundConversation(id: child.id)
         #expect(store.backgroundedSessionIDs.isEmpty)
@@ -674,5 +682,28 @@ extension SessionWorkflowStoreTests {
         #expect(store.backgroundSessionRoots.isEmpty)
         #expect(store.sessions.first { $0.id == "managed" }?.workflow?.state == .working)
         #expect(fixture.backend.killed.isEmpty)
+    }
+
+    @Test func attentionNavigationRevealsBackgroundWorkWithoutChangingWorkflow() throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let session = try #require(store.sessions.first { $0.id == "managed" })
+        try store.setWorkflow(id: session.id, workflow: .init(owner: "workit", jobID: "job-a", revision: 1, state: .working))
+        try store.hideAndKeepWorking(id: session.id)
+        let workflow = SessionWorkflow(owner: "workit", jobID: "job-a", revision: 2, state: .needsYou)
+        try store.setWorkflow(id: session.id, workflow: workflow)
+        session.status = .asking
+        store.selection.selectedSessionID = "legacy"
+        #expect(store.backgroundSessionRoots.contains(session.id))
+        #expect(store.canSelectSessionNeedingAttention)
+        store.selectNextSessionNeedingAttention()
+        #expect(store.selection.selectedSessionID == session.id)
+        #expect(store.backgroundSessionRoots.isEmpty)
+        #expect(try store.backgroundJournal.load().isEmpty)
+        #expect(session.workflow == workflow)
+        #expect(fixture.backend.killed.isEmpty && fixture.backend.launched.isEmpty)
     }
 }

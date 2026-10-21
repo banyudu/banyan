@@ -319,6 +319,16 @@ final class SessionStore: ObservableObject {
         didSet { sidebarGroupsRevision &+= 1 }
     }
     @Published var backgroundPresentationError: String?
+    @Published var workOverview: WorkitOverview? { didSet { workSummaryRevision &+= 1 } }
+    @Published var workOverviewError: String?
+    @Published var isRefreshingWorkOverview = false
+    @Published var workSummaryRevision = 0
+    var workOverviewRefreshTask: Task<Void, Never>?
+    var workOverviewRefreshRequested = false
+    var cachedWorkSummaries: [String: SessionWorkSummary] = [:]
+    var cachedWorkSummaryRevision = -1
+    var cachedWorkSidebarRevision = -1
+    var cachedWorkOverviewTime: String?
     @Published private var pendingCloseSessionID: String?
     @Published var pauseCloseInFlightIDs: Set<String> = []
     @Published var pauseCloseError: String?
@@ -796,8 +806,7 @@ final class SessionStore: ObservableObject {
     var visibleSessions: [BanyanSession] {
         // Exclude closed history before resolving titles and constructing the
         // lookup, rather than making the visibility policy discard it afterwards.
-        let hidden = backgroundedSessionIDs
-        let active = sessions.filter { $0.status != .closed && !hidden.contains($0.id) }
+        let active = sessions.filter { $0.status != .closed }
         let items = active.map {
             SessionVisibilityItem(
                 id: $0.id,
@@ -1241,7 +1250,8 @@ final class SessionStore: ObservableObject {
         }
         restoreWorkflows()
         restoreBackgroundPresentation()
-        if visibleSessions.isEmpty && !backgroundSessionRoots.isEmpty { sidebarMode = .work }
+        // Background roots remain discoverable in the familiar session tree.
+        collapsedParentIDs.formUnion(backgroundSessionRoots)
         // Register the whole restored fleet before any recovery can claim a
         // new slot. Over-budget work stays intact, including parked/frozen rows.
         for terminal in terminalSessions where agentAdmission.running.contains(terminal.id) {
@@ -4750,7 +4760,7 @@ final class SessionStore: ObservableObject {
         ) else {
             return
         }
-        selection.selectedSessionID = id
+        userSelect(id: id)
     }
 
     var canSelectSessionNeedingAttention: Bool {
@@ -4764,9 +4774,8 @@ final class SessionStore: ObservableObject {
         // status gate (built lazily, at most once per evaluation).
         let selectedID = selection.selectedSessionID
         var relationshipItems: [SessionRelationshipItem]?
-        let hidden = backgroundedSessionIDs
         for session in sessions {
-            guard session.id != selectedID, !hidden.contains(session.id),
+            guard session.id != selectedID,
                   session.status != .closed,
                   SessionLifecyclePolicy.needsAttention(
                       status: session.status,
@@ -5091,10 +5100,18 @@ final class SessionStore: ObservableObject {
                 }
             }
         }
+        var previousWorkNode = workNode(for: session)
         session.onHistoryRelevantChange = { [weak self, weak session] in
             guard let self, let session else { return }
             EnergyTrace.count("sidebar.historySignal", sessionID: session.id)
             self.sidebarGroupsRevision &+= 1
+            let node = self.workNode(for: session)
+            if node != previousWorkNode {
+                let workflowChanged = node.workflow != previousWorkNode.workflow
+                previousWorkNode = node
+                self.workSummaryRevision &+= 1
+                if workflowChanged { self.scheduleWorkOverviewRefresh() }
+            }
             self.noteSidebarHistoryChange(for: session)
         }
         session.onDidChange = { [weak self, weak session] in

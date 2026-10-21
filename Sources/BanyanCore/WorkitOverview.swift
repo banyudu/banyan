@@ -14,6 +14,7 @@ public struct WorkitOverview: Decodable, Sendable, Equatable {
               Set(value.jobs.map(\.id)).count == value.jobs.count,
               value.jobs.allSatisfy({ !$0.id.isEmpty && $0.title.count <= 600 && $0.detail.count <= 1000
                   && $0.nextAction.count <= 1000 && $0.progress.passed >= 0 && $0.progress.total >= $0.progress.passed
+                  && ($0.stopReason?.count ?? 0) <= 1000 && ($0.display?.label.count ?? 0) <= 80
                   && $0.evidence.count <= 5 }) else { throw WorkitOverviewError.invalidResponse }
         return value
     }
@@ -24,7 +25,7 @@ public struct WorkitJobSummary: Decodable, Sendable, Equatable, Identifiable {
         case needsYou = "needs-you", working, waiting, paused, verified, cancelled
         public var label: String {
             switch self {
-            case .needsYou: "Needs a decision"
+            case .needsYou: "Needs attention"
             case .working: "Working"
             case .waiting: "Waiting"
             case .paused: "Paused"
@@ -49,6 +50,12 @@ public struct WorkitJobSummary: Decodable, Sendable, Equatable, Identifiable {
     public let nextAction: String
     public let prURL: String?
     public let evidence: [String]
+    public struct Display: Decodable, Sendable, Equatable {
+        public let kind: String
+        public let label: String
+    }
+    public let display: Display?
+    public let stopReason: String?
 
     public static func webURL(_ text: String?) -> URL? {
         guard let text, let url = URL(string: text), ["https", "http"].contains(url.scheme?.lowercased() ?? ""),

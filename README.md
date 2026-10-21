@@ -872,8 +872,24 @@ Banyan is released under the [MIT License](LICENSE). The vendored
 
 ### Durable work overview
 
+**Sessions remains the main working surface.** Existing parent rows summarize
+their child sessions, including nested, collapsed and background work. Idle
+conversations are counted as idle, not as completed issues. Managed session rows
+show specific saved work status such as Tool error, Waiting for CI, or Verified.
+Click a status or parent summary to open **Work details** without replacing the
+conversation. The panel shows the original stop reason, next step, saved
+acceptance evidence and links; select a child to return to its conversation.
+**Copy inspection request** copies a recovery question to paste into that
+conversation. It does not send a prompt or resume a held job.
+
+Details refresh on app activation, explicit refresh and coalesced workflow
+updates. A single bounded read serves the whole tree. Old or mismatched job
+bindings fall back to the session's own workflow status. Tool failures and
+uncertain delivery remain blocked; displaying a reason never clears a hold.
+
 Choose **Work** in the sidebar switcher to see managed jobs across conversations.
-Jobs are grouped by working, waiting, decisions, paused, verified, and cancelled.
+This optional overview includes jobs whose original conversation is unavailable.
+Jobs are grouped by working, waiting, attention, paused, verified, and cancelled.
 Each row shows the saved checkpoint, proven acceptance count, next action, and
 available issue, PR, evidence, and conversation links. The progress timestamp
 changes with meaningful checkpoints, not each heartbeat. Older jobs show an
@@ -886,11 +902,11 @@ It refreshes on opening, app activation, and the refresh button. Errors retain
 previous results with a stale-results notice; no tracker or workflow mutation
 occurs when opening the view. Missing or closed conversations do not remove jobs.
 
-For an active managed conversation, the close dialog offers **Hide and Keep
-Working**. It persists sidebar visibility separately from workflow state, keeps
-the conversation and its descendants running, and takes you to Work. Future
-children inherit the hidden parent's visibility. **Show conversation** in Work
-restores the hidden ancestor and its children. Hiding never pauses, suspends,
+For an active managed conversation, the close dialog offers **Keep Working in
+Background**. Its compact row remains in Sessions with a background indicator,
+and its children collapse while work continues. The selected sidebar does not
+change. Future children inherit background membership. Selecting the conversation
+brings it back. Backgrounding never pauses, suspends,
 closes, terminates, or verifies the job; **Pause and Close** retains its existing
 meaning. Active managed native threads retain their observation subscription so
 Workit can continue them while their conversations are hidden or unselected.

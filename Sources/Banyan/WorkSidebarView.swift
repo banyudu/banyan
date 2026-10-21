@@ -107,9 +107,10 @@ struct WorkJobRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(job.title).font(.headline).fixedSize(horizontal: false, vertical: true)
-            Text("\(job.stage.replacingOccurrences(of: "-", with: " ").capitalized) · \(job.progress.passed)/\(job.progress.total) ACs proven")
+            Text("\(job.display?.label ?? job.stage.replacingOccurrences(of: "-", with: " ").capitalized) · \(job.progress.passed)/\(job.progress.total) ACs proven")
                 .font(.caption).foregroundStyle(.secondary)
             if !job.detail.isEmpty { Text(job.detail).font(.callout).lineLimit(3).help(job.detail) }
+            if let reason = job.stopReason, reason != job.detail { Text(reason).font(.callout).lineLimit(3).help(reason) }
             Text(job.nextAction).font(.caption).fixedSize(horizontal: false, vertical: true)
             if let date = WorkitJobSummary.date(job.lastProgressAt) {
                 Text("Progress \(date.formatted(date: .abbreviated, time: .shortened))")
