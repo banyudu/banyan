@@ -280,6 +280,7 @@ public enum ControlRoute: Equatable {
     case list
     case select
     case spawn
+    case reparent
     case mark
     case sessionTitle
     case close
@@ -329,6 +330,7 @@ public enum ControlRoute: Equatable {
         case ("GET", "/events"): return .events
         case ("POST", "/select"): return .select
         case ("POST", "/spawn"): return .spawn
+        case ("POST", "/reparent"): return .reparent
         case ("POST", "/mark"): return .mark
         case ("POST", "/session-title"): return .sessionTitle
         case ("POST", "/close"): return .close
@@ -385,7 +387,7 @@ public enum ControlRoute: Equatable {
 
     public var requiresID: Bool {
         switch self {
-        case .select, .mark, .sessionTitle, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
+        case .select, .reparent, .mark, .sessionTitle, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
              .output, .input, .answer, .coordination, .workflowSet, .workflowWake, .workflowResolve: return true
         case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest,
              .prune, .agentQueue, .agentLimit, .puckTurn, .codexRemote, .codexRemoteConfigure, .codexRemoteResolve, .workflowCloseVerified: return false

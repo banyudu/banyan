@@ -1353,6 +1353,8 @@ struct ContentView: View {
             onRemove: {
                 try? store.remove(id: item.session.id)
             },
+            reparentTargets: { store.reparentTargets(for: item.session.id) },
+            onReparent: { try store.reparent(id: item.session.id, parentSessionID: $0) },
             onToggleSuspended: {
                 try? store.toggleSuspended(id: item.session.id)
             },
@@ -2613,6 +2615,8 @@ struct SessionRow: View {
     let onHandoff: () -> Void
     let onCodexRemoteHandoff: () -> Void
     let onRemove: () -> Void
+    let reparentTargets: () -> [SidebarSessionItem]
+    let onReparent: (String?) throws -> Void
     let onToggleSuspended: () -> Void
     let onSetFrozen: (Bool) -> Void
     let onSetDeepSuspended: (Bool) -> Void
@@ -2621,6 +2625,7 @@ struct SessionRow: View {
 
     @State private var isRenaming = false
     @State private var renameDraft = ""
+    @State private var reparentError: String?
     @State private var isIssueLinkHovered = false
     @State private var workStatusBounds: CGRect = .null
     @State private var isHandoffHovered = false
@@ -2863,6 +2868,17 @@ struct SessionRow: View {
                 }
             }
             if !session.isImportedHistory && session.status != .closed {
+                Menu("Move to") {
+                    Button("Root level") { move(to: nil) }
+                        .disabled(session.parentSessionID == nil)
+                    Divider()
+                    ForEach(reparentTargets()) { target in
+                        Button(String(repeating: "\u{2003}", count: target.depth) + "\(target.session.displayTitle) (\(target.id))") {
+                            move(to: target.id)
+                        }
+                        .disabled(session.parentSessionID == target.id)
+                    }
+                }
                 if session is TerminalSession {
                     if session.agentProvider == .codex {
                         Button("Continue in ChatGPT Remote…", action: onCodexRemoteHandoff)
@@ -2896,6 +2912,14 @@ struct SessionRow: View {
             resetIssueLinkHover()
         }
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
+        .alert("Could not move session", isPresented: Binding(
+            get: { reparentError != nil },
+            set: { if !$0 { reparentError = nil } }
+        )) {
+            Button("OK") { reparentError = nil }
+        } message: {
+            Text(reparentError ?? "")
+        }
         .alert("Agent freeze", isPresented: Binding(
             get: { (session as? TerminalSession)?.freezeError != nil },
             set: { if !$0 { (session as? TerminalSession)?.freezeError = nil } }
@@ -2904,6 +2928,11 @@ struct SessionRow: View {
         } message: {
             Text((session as? TerminalSession)?.freezeError ?? "")
         }
+    }
+
+    private func move(to parentID: String?) {
+        do { try onReparent(parentID) }
+        catch { reparentError = error.localizedDescription }
     }
 
     private func beginRename() {

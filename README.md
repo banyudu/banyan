@@ -584,6 +584,8 @@ swift run banyanctl mark --id TASK-123 --status need-input --tone yellow
 swift run banyanctl mark --id TASK-123 --status review --tone purple --title "TASK-123 review"
 swift run banyanctl suspend --id TASK-123
 swift run banyanctl resume --id TASK-123
+swift run banyanctl reparent --id TASK-123-sub-1 --parent TASK-123
+swift run banyanctl reparent --id TASK-123-sub-1 --no-parent
 swift run banyanctl close --id TASK-123
 swift run banyanctl respawn --id TASK-123
 swift run banyanctl remove --id TASK-123
@@ -595,6 +597,27 @@ swift run banyanctl suggest --title "TASK-123 is stale" --target TASK-123 --comm
 ```
 
 `session new` is the preferred native terminal creation command; `spawn` remains as the low-level API-compatible alias. `agent run` builds an agent command, creates a Banyan session through the same control server, and lets Banyan detect the provider icon and generated title from the command. `--parent` groups a spawned session under another active session in the sidebar. Nesting can be arbitrarily deep. A spawn issued from inside a Banyan session nests under it by default: `banyanctl` takes `--parent` from `$BANYAN_PARENT_SESSION_ID`, then the live enclosing `banyan-<id>` tmux session, then `$BANYAN_SESSION_ID` (every tmux session Banyan creates carries its own ID) — so `workit ENG-123` run from a session pane lands as its child with no extra flags, even if a long-lived parent process inherited a stale ID. Pass `--parent ID` for a different parent, or `--no-parent` for a top-level session. `suspend` parks a session: Banyan drops it from the supervisor tick, branch/context refresh, and terminal rendering, while its tmux session and any agent inside keep running untouched — so the app's idle cost tracks the sessions you are actually watching rather than every session you have open. `resume` puts it back, keeping the status it had when it was parked. Neither one signals or terminates the agent. `close` detaches and hides the Banyan view while leaving the tmux session alive. If a closed session has child sessions, those children are detached to the closed session's parent level. `respawn` reattaches to an existing tmux session or recreates it from the saved command if it no longer exists. `remove` is destructive and kills the backing tmux session. `prune` drops closed sessions that aged out of the retention window — see [Session Retention](#session-retention).
+
+To move an existing session, use `reparent --id CHILD --parent PARENT`, or
+`reparent --id CHILD --no-parent` to move it to the root. In the sidebar,
+right-click an active session and choose **Move to**. The target menu follows
+the active hierarchy, including collapsed and hidden targets in the same project
+group. The session keeps its children, ID, process, metadata and manual sort
+position; only its parent relationship changes, and it survives app relaunch.
+Existing collapse and child visibility rules still apply at the destination.
+Self-parenting, cycles, missing/closed sessions and moves across project groups
+are rejected before any state is changed. The CLI requires an explicit target
+and does not inherit a parent from the environment.
+
+HTTP clients use authenticated `POST /reparent` with a JSON body:
+
+```json
+{"id":"child-id","parent":"new-parent-id"}
+```
+
+An empty, null or absent `parent` moves the source to the root. Success returns
+the updated `session` in the usual control response envelope; invalid moves
+return HTTP 400 with an error message and leave persisted state unchanged.
 
 Session lists return detailed **active sessions** by default: every row except
 closed history, including completed, failed, parked and suspended sessions that
