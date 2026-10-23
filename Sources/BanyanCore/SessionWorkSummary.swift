@@ -16,7 +16,7 @@ public struct SessionWorkNode: Sendable, Equatable {
     }
 }
 
-public struct SessionWorkEntry: Identifiable, Sendable {
+public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
     public enum Kind: String, Sendable { case working, waiting, blocked, decision, paused, verified, cancelled, idle }
     public let id: String
     public let title: String
@@ -59,7 +59,7 @@ public struct SessionWorkEntry: Identifiable, Sendable {
     }
 }
 
-public struct SessionWorkSummary: Sendable {
+public struct SessionWorkSummary: Sendable, Equatable {
     public let own: SessionWorkEntry
     public var descendants: [SessionWorkEntry] = []
     public var groupLabel: String {

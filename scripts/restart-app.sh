@@ -34,6 +34,8 @@
 #   --force      escalate to SIGKILL if the running instance ignores quit/SIGTERM
 #                (for rescuing from a hung dev build; may corrupt window-restoration
 #                state, which the next launch survives at the cost of window layout)
+#
+# Set BANYAN_ENERGY_TRACE=1 to enable the app's opt-in energy counters on launch.
 set -euo pipefail
 
 SCRIPT_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -176,7 +178,11 @@ if port_busy; then
 fi
 
 echo "Launching Banyan…"
-open "$APP"
+if [[ -n "${BANYAN_ENERGY_TRACE:-}" ]]; then
+  open --env "BANYAN_ENERGY_TRACE=$BANYAN_ENERGY_TRACE" "$APP"
+else
+  open "$APP"
+fi
 
 # Confirm the control server comes back up.
 CTL="$ROOT_DIR/dist/bin/banyanctl"

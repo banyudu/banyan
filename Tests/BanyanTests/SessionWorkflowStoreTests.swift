@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import BanyanCore
 import Foundation
 import Network
@@ -7,6 +8,107 @@ import Testing
 
 @MainActor
 @Suite struct SessionWorkflowStoreTests {
+    @Test func closedWorkflowUpdatesPersistWithoutRedrawingTheWindowOrRefreshingWorkit() throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let session = try #require(store.sessions.first { $0.id == "managed" })
+        session.status = .closed
+        session.isTitlePinned = true
+        store.workOverviewRefreshTask?.cancel()
+        store.workOverviewRefreshTask = nil
+        var publications = 0
+        let subscription = store.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel() }
+
+        for revision in 1...5 {
+            try store.setWorkflow(id: session.id, workflow: .init(owner: "workit", jobID: "job-a",
+                revision: revision, state: .paused, detail: "Waiting for the operator"))
+        }
+        #expect(publications == 0)
+        #expect(store.workOverviewRefreshTask == nil)
+        #expect(session.workflow?.revision == 5)
+        #expect(try store.workflowJournal.load(id: session.id) == session.workflow)
+        #expect(store.sessionWorkSummaries[session.id] == nil)
+        #expect(throws: (any Error).self) {
+            try store.setWorkflow(id: session.id, workflow: .init(owner: "workit", jobID: "job-a",
+                revision: 4, state: .working))
+        }
+
+        // History titles and a reopened conversation still update the sidebar.
+        session.title = "Renamed conversation"
+        #expect(publications > 0)
+        publications = 0
+        session.status = .completed
+        #expect(publications > 0)
+        #expect(store.sessionWorkSummaries[session.id]?.own.label == "Paused")
+        publications = 0
+        try store.setWorkflow(id: session.id, workflow: .init(owner: "workit", jobID: "job-a",
+            revision: 6, state: .working))
+        #expect(publications > 0)
+        #expect(store.workOverviewRefreshTask != nil)
+        #expect(store.sessionWorkSummaries[session.id]?.own.label == "Working")
+        store.workOverviewRefreshTask?.cancel()
+    }
+
+    @Test func duplicateWorkflowProjectionDoesNotRepublishTheSession() throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let session = try #require(store.sessions.first { $0.id == "managed" })
+        let workflow = SessionWorkflow(owner: "workit", jobID: "job-a", revision: 1, state: .paused)
+        try store.setWorkflow(id: session.id, workflow: workflow)
+        var publications = 0
+        let subscription = session.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel(); store.workOverviewRefreshTask?.cancel() }
+        try store.setWorkflow(id: session.id, workflow: workflow)
+        #expect(publications == 0)
+        #expect(try store.workflowJournal.load(id: session.id) == workflow)
+    }
+
+    @Test func workflowChangesUpdateOnlyTheirRowAndAncestors() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves(); store.workOverviewRefreshTask?.cancel() }
+        store.loadPersistedSessionsIfNeeded()
+        // Keep an unrelated asynchronous titlebar lookup out of the publication
+        // count, including when the test runner is under heavy CPU pressure.
+        store.selectedSessionID = nil
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        child.parentSessionID = "legacy"
+        try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "job-a",
+            revision: 0, state: .needsYou, detail: "Initial detail"))
+        let childState = store.workState(for: child.id)
+        let parentState = store.workState(for: "legacy")
+        let unrelated = store.workState(for: "busy")
+        await store.workSummaryUpdateTask?.value
+        var windowUpdates = 0, childUpdates = 0, parentUpdates = 0, unrelatedUpdates = 0
+        let subscriptions = [
+            store.objectWillChange.sink { windowUpdates += 1 },
+            childState.objectWillChange.sink { childUpdates += 1 },
+            parentState.objectWillChange.sink { parentUpdates += 1 },
+            unrelated.objectWillChange.sink { unrelatedUpdates += 1 }
+        ]
+        defer { for subscription in subscriptions { subscription.cancel() } }
+        for revision in 1...5 {
+            try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "job-a",
+                revision: revision, state: .needsYou))
+        }
+        try await waitForPuckState { childState.summary?.own.detail == "" }
+        #expect(childUpdates == 1 && parentUpdates == 1)
+        #expect(unrelatedUpdates == 0 && windowUpdates == 0)
+        #expect(parentState.summary?.groupLabel == "1 blocked")
+        #expect(try store.workflowJournal.load(id: child.id)?.revision == 5)
+        try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "job-a",
+            revision: 6, state: .paused))
+        #expect(windowUpdates > 0) // Close/menu permissions change with workflow state.
+    }
+
     @Test func restoredCompletedAgentCannotReplayItsInitialPromptWithoutAResumeTarget() throws {
         for sourceID in [nil, "", "unresumable"] as [String?] {
             let fixture = try WorkflowStoreFixture()

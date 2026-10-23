@@ -309,6 +309,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         } else {
             try updateMetalRenderer(enabled: false)
             useMetalRenderer = false
+            updateCursorPosition()
         }
     }
 
@@ -347,7 +348,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             metalView = nil
             metalRenderer = nil
             if let caretView = caretView {
-                caretView.isHidden = false
                 caretView.updateCursorStyle()
             }
             needsDisplay = true
@@ -2336,9 +2336,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             queueMetalDisplay()
             return
         }
-        if caretView.superview == nil {
-            addSubview(caretView)
-        }
+        updateCursorPosition()
     }
 
     open func hideCursor(source: Terminal) {
@@ -2346,7 +2344,9 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             queueMetalDisplay()
             return
         }
-        caretView.removeFromSuperview()
+        if !caretView.isHidden {
+            caretView.isHidden = true
+        }
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {

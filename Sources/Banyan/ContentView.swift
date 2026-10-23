@@ -1,5 +1,6 @@
 import AppKit
 import BanyanCore
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -31,10 +32,13 @@ struct ContentView: View {
     @EnvironmentObject private var store: SessionStore
     @EnvironmentObject private var updater: AppUpdater
     private let selection: SessionSelection
-    @StateObject private var sessionJumpShortcuts = SessionJumpShortcuts()
+    // Retain the window's map without observing every viewport change here.
+    // Badges, the open palette and focused menu commands observe it locally.
+    @State private var sessionJumpShortcuts = SessionJumpShortcuts()
     @State private var showingPreferences = false
     @State private var showingCommandPalette = false
     @State private var codexHandoffSession: TerminalSession?
+    @State private var reparentSession: BanyanSession?
     @State private var draggingSidebarSessionID: String?
     @State private var lastAutoScrolledSidebarSessionID: String?
 
@@ -142,6 +146,11 @@ struct ContentView: View {
         .sheet(item: $codexHandoffSession, onDismiss: { store.focusSelectedTerminal() }) { session in
             CodexTUIHandoffView(store: store, session: session)
         }
+        .sheet(item: $reparentSession) { session in
+            SessionParentPicker(session: session,
+                loadTargets: { store.reparentTargets(for: session.id) },
+                move: { try store.reparent(id: session.id, parentSessionID: $0) })
+        }
         .onChange(of: store.commandPaletteRequestID) {
             showingCommandPalette = true
         }
@@ -214,22 +223,24 @@ struct ContentView: View {
         }
         .overlay {
             if showingCommandPalette {
-                CommandPaletteView(
-                    items: commandPaletteItems,
-                    onDismiss: dismissCommandPalette,
-                    onOpenLinearIssue: { issueID in
-                        openLinearIssue(issueID)
-                    },
-                    onStartLinearIssue: store.startLinearIssueSession,
-                    onOpenPullRequest: { url in NSWorkspace.shared.open(url) },
-                    fallbackPullRequestURL: store.selectedPullRequestURL,
-                    paletteCommands: store.paletteCommands,
-                    onRunPaletteCommand: { command, target, query in
-                        store.runPaletteCommand(command, target: target, query: query)
-                    },
-                    agentProfiles: store.paletteAgentProfiles,
-                    selectedAgentID: $store.paletteAgentProfileID
-                )
+                SessionShortcutMapObserver(shortcuts: sessionJumpShortcuts) {
+                    CommandPaletteView(
+                        items: commandPaletteItems,
+                        onDismiss: dismissCommandPalette,
+                        onOpenLinearIssue: { issueID in
+                            openLinearIssue(issueID)
+                        },
+                        onStartLinearIssue: store.startLinearIssueSession,
+                        onOpenPullRequest: { url in NSWorkspace.shared.open(url) },
+                        fallbackPullRequestURL: store.selectedPullRequestURL,
+                        paletteCommands: store.paletteCommands,
+                        onRunPaletteCommand: { command, target, query in
+                            store.runPaletteCommand(command, target: target, query: query)
+                        },
+                        agentProfiles: store.paletteAgentProfiles,
+                        selectedAgentID: $store.paletteAgentProfileID
+                    )
+                }
             }
         }
         .accessibilityIdentifier(AccessibilityID.root)
@@ -553,8 +564,14 @@ struct ContentView: View {
                           store.unifiedSidebarContains(sessionID: id)
                     else { return }
                     lastAutoScrolledSidebarSessionID = id
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(id, anchor: .center)
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        // Reveal offscreen selections immediately. Animating a
+                        // distant jump lays out intermediate rows and remaps
+                        // their shortcut badges on every scroll frame.
+                        // No anchor keeps already-visible rows in place.
+                        proxy.scrollTo(id)
                     }
                 }
             }
@@ -1222,7 +1239,7 @@ struct ContentView: View {
                             allowsDragSort: false,
                             isHistory: item.isHistory,
                             showsDisclosureGutter: showsDisclosureGutter,
-                            jumpKeyLabel: sessionJumpShortcuts.label(for: item.id)
+                            jumpKeyLabel: ""
                         )
                     }
                 } else {
@@ -1233,7 +1250,7 @@ struct ContentView: View {
                             allowsDragSort: true,
                             isHistory: false,
                             showsDisclosureGutter: showsDisclosureGutter,
-                            jumpKeyLabel: sessionJumpShortcuts.label(for: item.id)
+                            jumpKeyLabel: ""
                         )
                     }
                     .onMove { source, destination in
@@ -1312,9 +1329,10 @@ struct ContentView: View {
             isCollapsed: item.isCollapsed,
             hiddenChildCount: item.hiddenChildCount,
             jumpKeyLabel: jumpKeyLabel,
-            workSummary: store.sessionWorkSummaries[item.id],
-            workOverviewError: store.workOverviewError,
-            workOverviewUpdatedAt: store.workOverview?.generatedAt,
+            jumpShortcuts: sessionJumpShortcuts,
+            workState: store.workState(for: item.id),
+            overviewStatus: store.workOverviewStatus,
+            actionOwner: ObjectIdentifier(store),
             refreshWork: { store.scheduleWorkOverviewRefresh() },
             openWorkSession: { store.userSelect(id: $0) },
             onSelect: {
@@ -1353,8 +1371,7 @@ struct ContentView: View {
             onRemove: {
                 try? store.remove(id: item.session.id)
             },
-            reparentTargets: { store.reparentTargets(for: item.session.id) },
-            onReparent: { try store.reparent(id: item.session.id, parentSessionID: $0) },
+            onChooseParent: { reparentSession = item.session },
             onToggleSuspended: {
                 try? store.toggleSuspended(id: item.session.id)
             },
@@ -1383,6 +1400,7 @@ struct ContentView: View {
                 reopenHistory(item)
             }
         )
+        .equatable()
         .id(item.session.id)
         .tag(item.session.id)
         .sessionJumpShortcutRow(id: item.id)
@@ -1557,7 +1575,6 @@ struct ContentView: View {
                             onRefresh: { store.refreshSelectedGitHubIssue(force: true) },
                             onOpen: store.openSelectedGitHubIssue
                         )
-                        .onAppear { store.refreshSelectedGitHubIssue(force: true) }
                     }
                 } else if let context = store.selectedContextInfo,
                           context.linearIssueID?.isEmpty == false,
@@ -1575,9 +1592,6 @@ struct ContentView: View {
                             onToggleTask: store.updateSelectedLinearIssueDescription,
                             onRetryDescription: store.retrySelectedLinearIssueDescription
                         )
-                        .onAppear {
-                            store.refreshSelectedLinearIssue(force: true)
-                        }
                     }
                 }
             }
@@ -2582,9 +2596,9 @@ private struct SelectionAwareTerminalSwitcher: View {
     }
 }
 
-struct SessionRow: View {
+struct SessionRow: View, Equatable {
     @ObservedObject var session: BanyanSession
-    @ObservedObject var selection: SessionSelection
+    let selection: SessionSelection
     let launchProfile: NewSessionLaunch?
     let depth: Int
     let titleOverride: String?
@@ -2598,9 +2612,11 @@ struct SessionRow: View {
     let isCollapsed: Bool
     let hiddenChildCount: Int
     let jumpKeyLabel: String
-    let workSummary: SessionWorkSummary?
-    let workOverviewError: String?
-    let workOverviewUpdatedAt: String?
+    var jumpShortcuts: SessionJumpShortcuts? = nil
+    @ObservedObject var workState: SessionWorkState
+    private var workSummary: SessionWorkSummary? { workState.summary }
+    let overviewStatus: WorkOverviewStatus
+    let actionOwner: ObjectIdentifier
     let refreshWork: () -> Void
     let openWorkSession: (String) -> Void
     let onSelect: () -> Void
@@ -2615,26 +2631,41 @@ struct SessionRow: View {
     let onHandoff: () -> Void
     let onCodexRemoteHandoff: () -> Void
     let onRemove: () -> Void
-    let reparentTargets: () -> [SidebarSessionItem]
-    let onReparent: (String?) throws -> Void
+    let onChooseParent: () -> Void
     let onToggleSuspended: () -> Void
     let onSetFrozen: (Bool) -> Void
     let onSetDeepSuspended: (Bool) -> Void
     let onFocusTerminal: () -> Void
     let onReopenHistory: () -> Void
 
+    // Actions target the same store and session for this row's lifetime; their
+    // captures are recreated by ContentView on unrelated store notifications.
+    // Compare their owner and all captured presentation inputs instead. Session
+    // updates and this row's selection subscription still redraw it directly.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.session === rhs.session && lhs.selection === rhs.selection
+            && lhs.actionOwner == rhs.actionOwner && lhs.overviewStatus === rhs.overviewStatus
+            && lhs.launchProfile == rhs.launchProfile && lhs.depth == rhs.depth
+            && lhs.titleOverride == rhs.titleOverride && lhs.isHistory == rhs.isHistory
+            && lhs.isParent == rhs.isParent && lhs.showsDisclosureGutter == rhs.showsDisclosureGutter
+            && lhs.isCollapsed == rhs.isCollapsed && lhs.hiddenChildCount == rhs.hiddenChildCount
+            && lhs.jumpKeyLabel == rhs.jumpKeyLabel && lhs.workState === rhs.workState
+            && lhs.jumpShortcuts === rhs.jumpShortcuts
+            && lhs.isHandoffAvailable == rhs.isHandoffAvailable && lhs.isHandoffPending == rhs.isHandoffPending
+    }
+
     @State private var isRenaming = false
     @State private var renameDraft = ""
-    @State private var reparentError: String?
     @State private var isIssueLinkHovered = false
     @State private var workStatusBounds: CGRect = .null
     @State private var isHandoffHovered = false
     @State private var isRowHovered = false
     @State private var isPointerCursorPushed = false
+    @State private var selectedInRow: Bool?
     @FocusState private var isRenameFocused: Bool
 
     private var isSelected: Bool {
-        selection.selectedSessionID == session.id
+        selectedInRow ?? (selection.selectedSessionID == session.id)
     }
 
     /// Provider whose brand the row shows: the launch profile's when it
@@ -2685,7 +2716,13 @@ struct SessionRow: View {
                 }
             }
 
-            JumpKeyBadge(label: jumpKeyLabel, provider: brandingProvider)
+            if let jumpShortcuts {
+                SessionShortcutMapObserver(shortcuts: jumpShortcuts) {
+                    JumpKeyBadge(label: jumpShortcuts.label(for: session.id), provider: brandingProvider)
+                }
+            } else {
+                JumpKeyBadge(label: jumpKeyLabel, provider: brandingProvider)
+            }
 
             // A plain-shell profile (the built-in `zsh`) matches every session
             // whose command is empty, including one that later became an agent
@@ -2761,8 +2798,8 @@ struct SessionRow: View {
             }
 
             if let summary = workSummary, summary.own.managed || summary.own.background || !summary.descendants.isEmpty {
-                SessionWorkStatusButton(summary: summary, error: workOverviewError,
-                    updatedAt: workOverviewUpdatedAt, refresh: refreshWork, openSession: openWorkSession)
+                SessionWorkStatusButton(summary: summary, overviewStatus: overviewStatus,
+                    refresh: refreshWork, openSession: openWorkSession)
                     .onGeometryChange(for: CGRect.self) { proxy in
                         proxy.frame(in: .named("session-work-row-\(session.id)"))
                     } action: { workStatusBounds = $0 }
@@ -2840,8 +2877,13 @@ struct SessionRow: View {
         .coordinateSpace(name: "session-work-row-\(session.id)")
         .onHover(perform: setRowHovered)
         .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
-        .onChange(of: selection.renameRequestID) { _, _ in
-            if isSelected {
+        // Observing the shared object redraws every row on every selection and
+        // rename request. Only the old/new selections need a new highlight.
+        .onReceive(selection.$selectedSessionID.map { $0 == session.id }.removeDuplicates()) { selected in
+            if selectedInRow != selected { selectedInRow = selected }
+        }
+        .onReceive(selection.$renameRequestID.dropFirst()) { _ in
+            if selection.selectedSessionID == session.id {
                 beginRename()
             }
         }
@@ -2868,17 +2910,9 @@ struct SessionRow: View {
                 }
             }
             if !session.isImportedHistory && session.status != .closed {
-                Menu("Move to") {
-                    Button("Root level") { move(to: nil) }
-                        .disabled(session.parentSessionID == nil)
-                    Divider()
-                    ForEach(reparentTargets()) { target in
-                        Button(String(repeating: "\u{2003}", count: target.depth) + "\(target.session.displayTitle) (\(target.id))") {
-                            move(to: target.id)
-                        }
-                        .disabled(session.parentSessionID == target.id)
-                    }
-                }
+                // SwiftUI builds context-menu content during ordinary row updates.
+                // Resolve the project hierarchy only when the user opens the picker.
+                Button("Move to…", action: onChooseParent)
                 if session is TerminalSession {
                     if session.agentProvider == .codex {
                         Button("Continue in ChatGPT Remote…", action: onCodexRemoteHandoff)
@@ -2912,14 +2946,6 @@ struct SessionRow: View {
             resetIssueLinkHover()
         }
         .accessibilityIdentifier(AccessibilityID.sessionRow(session.id))
-        .alert("Could not move session", isPresented: Binding(
-            get: { reparentError != nil },
-            set: { if !$0 { reparentError = nil } }
-        )) {
-            Button("OK") { reparentError = nil }
-        } message: {
-            Text(reparentError ?? "")
-        }
         .alert("Agent freeze", isPresented: Binding(
             get: { (session as? TerminalSession)?.freezeError != nil },
             set: { if !$0 { (session as? TerminalSession)?.freezeError = nil } }
@@ -2928,11 +2954,6 @@ struct SessionRow: View {
         } message: {
             Text((session as? TerminalSession)?.freezeError ?? "")
         }
-    }
-
-    private func move(to parentID: String?) {
-        do { try onReparent(parentID) }
-        catch { reparentError = error.localizedDescription }
     }
 
     private func beginRename() {

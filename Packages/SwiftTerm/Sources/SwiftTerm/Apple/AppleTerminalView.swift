@@ -1829,6 +1829,19 @@ extension TerminalView {
         let buffer = terminal.displayBuffer
         let vy = buffer.yBase + buffer.y
         
+        #if os(macOS)
+        // Keep the frame-managed caret attached. Agents toggle DEC cursor
+        // visibility around every redraw; removing/reinserting this NSView
+        // invalidates its SwiftUI host's layout through Auto Layout constraints.
+        let cursorOffscreen = vy >= buffer.yDisp + buffer.rows
+        let cursorHidden = terminal.cursorHidden || cursorOffscreen || metalView != nil
+        if caretView.isHidden != cursorHidden {
+            caretView.isHidden = cursorHidden
+        }
+        if cursorOffscreen {
+            return
+        }
+        #else
         if vy >= buffer.yDisp + buffer.rows {
             caretView.removeFromSuperview()
             return
@@ -1837,6 +1850,7 @@ extension TerminalView {
         } else if terminal.cursorHidden == true && caretView.superview == self {
             caretView.removeFromSuperview()
         }
+        #endif
         let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS) || os(visionOS)
         let offset = (cellDimension.height * (CGFloat(buffer.y+(buffer.yBase))))

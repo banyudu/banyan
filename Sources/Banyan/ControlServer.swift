@@ -1100,7 +1100,10 @@ final class ControlServer {
                 "message": error.message
             ]
         }
-        let body = (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        // Machine clients decode JSON; formatting and sorting every dictionary
+        // dominated list-response samples when clients requested large histories.
+        // The CLI applies its own display formatting after decoding the response.
+        let body = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
         let reason = status == 200 ? "OK" : "Error"
         var header = "HTTP/1.1 \(status) \(reason)\r\n"
         header += "Content-Type: application/json\r\n"

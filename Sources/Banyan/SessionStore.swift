@@ -108,6 +108,8 @@ final class SessionStore: ObservableObject {
     @Published private(set) var commandPaletteRequestID = UUID()
     @Published private(set) var scratchTerminalFocusRequestID = UUID()
     @Published private(set) var scratchSession: TerminalSession?
+    // Context selection owns issue loading. Mounting the detail panel must not
+    // force another fetch and cancel/restart the one already in flight.
     @Published private(set) var selectedContextInfo: SessionContextInfo? {
         didSet {
             refreshSelectedLinearIssue()
@@ -319,10 +321,23 @@ final class SessionStore: ObservableObject {
         didSet { sidebarGroupsRevision &+= 1 }
     }
     @Published var backgroundPresentationError: String?
-    @Published var workOverview: WorkitOverview? { didSet { workSummaryRevision &+= 1 } }
-    @Published var workOverviewError: String?
-    @Published var isRefreshingWorkOverview = false
-    @Published var workSummaryRevision = 0
+    let workOverviewStatus = WorkOverviewStatus()
+    var workOverview: WorkitOverview? {
+        didSet {
+            workSummaryRevision &+= 1
+            workOverviewStatus.updatedAt = workOverview?.generatedAt
+        }
+    }
+    var workOverviewError: String? {
+        get { workOverviewStatus.error }
+        set { workOverviewStatus.error = newValue }
+    }
+    // Fetch coordination only; no view reads this flag. Publishing it redraws
+    // the whole session list before and after every overview request.
+    var isRefreshingWorkOverview = false
+    var workSummaryRevision = 0 { didSet { scheduleWorkSummaryUpdate() } }
+    var workStates: [String: SessionWorkState] = [:]
+    var workSummaryUpdateTask: Task<Void, Never>?
     var workOverviewRefreshTask: Task<Void, Never>?
     var workOverviewRefreshRequested = false
     var cachedWorkSummaries: [String: SessionWorkSummary] = [:]
@@ -603,7 +618,7 @@ final class SessionStore: ObservableObject {
     /// Bumped whenever an input to the active sidebar projection changes. The
     /// projection used to hash every active row on every SwiftUI pass; even a
     /// cache hit walked the active set and read every presentation field.
-    private(set) var sidebarGroupsRevision = 0
+    private(set) var sidebarGroupsRevision = 0 { didSet { scheduleWorkSummaryUpdate() } }
     private var cachedSidebarHistoryItems: [SidebarSessionItem]?
     /// Bumped whenever a row that is (or was) shown in History changes. The
     /// projection used to hash every persisted session on every SwiftUI pass to
@@ -4072,11 +4087,12 @@ final class SessionStore: ObservableObject {
         let hasStaleDetails = cachedDetails != nil
             || selectedLinearIssueDetails?.identifier == issueID
         if let cachedDetails {
-            selectedLinearIssueDetails = cachedDetails
+            if selectedLinearIssueDetails != cachedDetails { selectedLinearIssueDetails = cachedDetails }
         } else if !hasStaleDetails {
-            selectedLinearIssueDetails = nil
+            if selectedLinearIssueDetails != nil { selectedLinearIssueDetails = nil }
         }
-        selectedLinearIssueLoadState = hasStaleDetails ? .loaded : .loading
+        let loadState: LinearIssueLoadState = hasStaleDetails ? .loaded : .loading
+        if selectedLinearIssueLoadState != loadState { selectedLinearIssueLoadState = loadState }
 
         let cwd = session.cwd
         let sessionID = session.id
@@ -4093,9 +4109,9 @@ final class SessionStore: ObservableObject {
                         return
                     }
                     self.linearIssueDetailsCache[issueID] = issue
-                    self.selectedLinearIssueDetails = issue
+                    if self.selectedLinearIssueDetails != issue { self.selectedLinearIssueDetails = issue }
                     self.mergeLinearWorkflowStates(issue.workflowStates)
-                    self.selectedLinearIssueLoadState = .loaded
+                    if self.selectedLinearIssueLoadState != .loaded { self.selectedLinearIssueLoadState = .loaded }
                     self.startSelectedLinearIssueStatusRefreshIfNeeded()
                 }
             } catch {
@@ -4332,7 +4348,11 @@ final class SessionStore: ObservableObject {
             return
         }
         let updatedIssue = issue.applying(status: status)
-        selectedLinearIssueDetails = updatedIssue
+        // The status poll usually returns the current value. Publishing it
+        // again rebuilds the scene and the entire selected issue panel.
+        if updatedIssue != issue {
+            selectedLinearIssueDetails = updatedIssue
+        }
         linearIssueDetailsCache[updatedIssue.identifier] = updatedIssue
         mergeLinearWorkflowStates(status.workflowStates)
     }
@@ -5140,12 +5160,37 @@ final class SessionStore: ObservableObject {
         session.onHistoryRelevantChange = { [weak self, weak session] in
             guard let self, let session else { return }
             EnergyTrace.count("sidebar.historySignal", sessionID: session.id)
-            self.sidebarGroupsRevision &+= 1
             let node = self.workNode(for: session)
-            if node != previousWorkNode {
-                let workflowChanged = node.workflow != previousWorkNode.workflow
-                previousWorkNode = node
+            let previous = previousWorkNode
+            previousWorkNode = node
+            // Closed workflows still receive durable revision updates from their
+            // owner. They are absent from the work tree, and workflow metadata
+            // does not affect history ordering/filtering. Keep row observation
+            // local instead of rebuilding the sidebar and fetching Workit again.
+            let workflowOnly = node.status == previous.status && node.workflow != previous.workflow &&
+                node.title == previous.title && node.parentID == previous.parentID &&
+                node.recoveryError == previous.recoveryError
+            if workflowOnly, node.status == .closed {
+                EnergyTrace.count("sidebar.closedWorkflowSkipped", sessionID: session.id)
+                return
+            }
+            if workflowOnly {
                 self.workSummaryRevision &+= 1
+                self.scheduleWorkOverviewRefresh()
+                // State transitions also change menu/close permissions. A new
+                // revision or detail at the same state only changes row data.
+                if node.workflow?.state != previous.workflow?.state {
+                    self.objectWillChange.send()
+                }
+                return
+            }
+            self.sidebarGroupsRevision &+= 1
+            if node != previous {
+                let workflowChanged = node.workflow != previous.workflow
+                self.workSummaryRevision &+= 1
+                // Titles, hierarchy and process status can change the list's
+                // membership/order. Work details alone update row state instead.
+                self.objectWillChange.send()
                 if workflowChanged { self.scheduleWorkOverviewRefresh() }
             }
             self.noteSidebarHistoryChange(for: session)

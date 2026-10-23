@@ -21,8 +21,10 @@ extension SessionStore {
         }
         guard session.workflowRecoveryError == nil else { throw WorkflowError.refused("workflow journal is unreadable") }
         let next = try session.workflow?.replacing(workflow) ?? workflow
-        try workflowJournal.save(next, id: id)
-        session.workflow = next
+        if next != session.workflow {
+            try workflowJournal.save(next, id: id)
+            session.workflow = next
+        }
         retainManagedNativeObservation(session)
         pauseCloseProjectionDidChange(id: id)
     }

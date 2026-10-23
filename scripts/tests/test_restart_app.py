@@ -61,9 +61,15 @@ class RestartAppTests(unittest.TestCase):
         path.write_text(content)
         path.chmod(0o755)
 
-    def run_restart(self, mode):
+    def run_restart(self, mode, energy_trace=None):
         env = dict(os.environ, PATH=f"{self.bin}{os.pathsep}{os.environ['PATH']}",
                    RESTART_TEST_ROOT=str(self.root), RESTART_TEST_MODE=mode)
+        # Developer sessions can inherit this opt-in diagnostic from Banyan.
+        # Exercise the default launch independently of the runner's environment.
+        env.pop("BANYAN_ENERGY_TRACE", None)
+        if energy_trace is not None:
+            env["BANYAN_ENERGY_TRACE"] = energy_trace
+        (self.root / "calls.json").unlink(missing_ok=True)
         result = subprocess.run(
             ["bash", str(self.root / "scripts/restart-app.sh"), "--here"],
             env=env, capture_output=True, text=True, timeout=30,
@@ -88,6 +94,19 @@ class RestartAppTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("possible windowless launch", result.stderr)
         self.assert_calls(opens=2, probes=26)
+
+    def test_explicit_energy_trace_survives_recovery(self):
+        for value in ("0", "1"):
+            with self.subTest(energy_trace=value):
+                result = self.run_restart("reopen", energy_trace=value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                # Recovery reopens the same running process. Only its initial
+                # launch needs the requested diagnostic environment.
+                self.assertEqual([call for call in self.calls if call[0] == "open"], [
+                    ["open", "--env", f"BANYAN_ENERGY_TRACE={value}", str(self.app)],
+                    ["open", str(self.app)],
+                ])
+                self.assertEqual(sum(call[0] == "banyanctl" for call in self.calls), 26)
 
     def test_failed_recovery_is_bounded_and_returns_failure(self):
         result = self.run_restart("unresponsive")

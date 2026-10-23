@@ -265,7 +265,7 @@ extension BanyanSession {
     func refreshGeneratedTitle() {
         guard !hasUsefulPinnedTitle else { return }
         guard agentProvider != nil else {
-            generatedTitle = nil
+            if generatedTitle != nil { generatedTitle = nil }
             return
         }
         let titleCommand = lastConversationResetAt == nil
@@ -294,16 +294,19 @@ extension BanyanSession {
         // transient false-negative. This also prevents a second consecutive failure
         // from replacing the trustworthy reading retained after the first one.
         guard !displayContext.gitLookupDegraded else {
-            displayContextDegraded = true
+            if !displayContextDegraded { displayContextDegraded = true }
             return
         }
-        displayProject = displayContext.project
-        displayBranch = displayContext.branch
-        displayIsGitWorktree = displayContext.isGitWorktree
-        displayIsDefaultBranch = displayContext.isDefaultBranch
-        projectGroupID = displayContext.groupID
-        projectGroupTitle = displayContext.groupTitle
-        displayContextDegraded = displayContext.gitLookupDegraded
+        // Branch refreshes often return identical metadata for every live row.
+        // Assigning it again still publishes Combine changes and invalidates
+        // sidebar caches, even though applyProjectContext later detects no change.
+        if displayProject != displayContext.project { displayProject = displayContext.project }
+        if displayBranch != displayContext.branch { displayBranch = displayContext.branch }
+        if displayIsGitWorktree != displayContext.isGitWorktree { displayIsGitWorktree = displayContext.isGitWorktree }
+        if displayIsDefaultBranch != displayContext.isDefaultBranch { displayIsDefaultBranch = displayContext.isDefaultBranch }
+        if projectGroupID != displayContext.groupID { projectGroupID = displayContext.groupID }
+        if projectGroupTitle != displayContext.groupTitle { projectGroupTitle = displayContext.groupTitle }
+        if displayContextDegraded { displayContextDegraded = false }
     }
 
     /// Keeps the issue binding tracking the pane's current working directory and

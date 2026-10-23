@@ -1,5 +1,6 @@
 import AppKit
 import BanyanCore
+import Combine
 import Darwin
 import SwiftUI
 
@@ -97,19 +98,10 @@ struct BanyanApp: App {
             )
         }
     }()
-    @StateObject private var store = Self.sessionStore
+    // The static runtime owns the store. Observing it at the App level rebuilds
+    // the scene environment on every session update, invalidating every window.
+    private let store = Self.sessionStore
     @StateObject private var updater = AppUpdater()
-    @FocusedObject private var sessionJumpShortcuts: SessionJumpShortcuts?
-
-    private var jumpMenuSessions: [(offset: Int, element: BanyanSession)] {
-        let ids = sessionJumpShortcuts?.sessionIDs ?? store.sidebarSessionIDs(limit: 10)
-        let sessionsByID = Dictionary(uniqueKeysWithValues: store.sessions.map { ($0.id, $0) })
-        return ids.prefix(10).enumerated().compactMap { index, id in
-            guard let session = sessionsByID[id] else { return nil }
-            return (offset: index, element: session)
-        }
-    }
-
     var body: some Scene {
         WindowGroup {
             ContentView(selection: store.selection)
@@ -183,7 +175,8 @@ struct BanyanApp: App {
                         Self.resourceDiagnostics.updateSelectedSessionID(id)
                     }
                 }
-                .onChange(of: store.sessions.count) { _, _ in
+                .onReceive(store.$sessions.map { $0.count }.removeDuplicates().dropFirst()
+                    .receive(on: DispatchQueue.main)) { _ in
                     if Self.host.environment["BANYAN_CPU_CAPTURE"] != "0" {
                         Self.resourceDiagnostics.refreshContext()
                     }
@@ -213,148 +206,168 @@ struct BanyanApp: App {
         // the window keeps its real name for the Window menu.
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("New Session") {
-                    store.spawnSiblingSession()
-                }
-                .keyboardShortcut("n")
+            BanyanCommands(store: store, updater: updater)
+        }
+    }
+}
 
-                Button("New Terminal") {
-                    store.spawnTerminalSiblingSession()
-                }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+// Menu availability and labels still observe the runtime, independently of the scene.
+private struct BanyanCommands: Commands {
+    @ObservedObject var store: SessionStore
+    @ObservedObject var updater: AppUpdater
+    @FocusedObject private var sessionJumpShortcuts: SessionJumpShortcuts?
+
+    private var jumpMenuSessions: [(offset: Int, element: BanyanSession)] {
+        let ids = sessionJumpShortcuts?.sessionIDs ?? store.sidebarSessionIDs(limit: 10)
+        let sessionsByID = Dictionary(uniqueKeysWithValues: store.sessions.map { ($0.id, $0) })
+        return ids.prefix(10).enumerated().compactMap { index, id in
+            guard let session = sessionsByID[id] else { return nil }
+            return (offset: index, element: session)
+        }
+    }
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Session") {
+                store.spawnSiblingSession()
             }
-            CommandGroup(after: .pasteboard) {
-                Button("Find") {
-                    if store.sidebarMode == .linear {
-                        store.requestLinearFilterFocus()
-                    } else {
-                        store.showFindInSelectedSession()
-                    }
-                }
-                .keyboardShortcut("f")
-                .disabled(store.sidebarMode == .linear
-                    ? false
-                    : !store.canFindInSelectedSession)
+            .keyboardShortcut("n")
+
+            Button("New Terminal") {
+                store.spawnTerminalSiblingSession()
             }
-            CommandGroup(after: .appInfo) {
-                Button("Check for Updates…") {
-                    updater.checkForUpdates(userInitiated: true)
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+        }
+        CommandGroup(after: .pasteboard) {
+            Button("Find") {
+                if store.sidebarMode == .linear {
+                    store.requestLinearFilterFocus()
+                } else {
+                    store.showFindInSelectedSession()
                 }
-                .disabled(updater.isChecking || updater.isDownloading || updater.isInstalling)
             }
-            CommandMenu("Session") {
-                Button("Rename Session") {
-                    store.selection.requestRenameSelectedSession()
-                }
-                .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(0xF705)!)))
-                .disabled(store.sidebarMode != .sessions || store.selectedSession == nil)
+            .keyboardShortcut("f")
+            .disabled(store.sidebarMode == .linear
+                ? false
+                : !store.canFindInSelectedSession)
+        }
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                updater.checkForUpdates(userInitiated: true)
             }
-            CommandMenu("View") {
-                Button("Show Command Palette") {
-                    store.requestCommandPalette()
-                }
-                .keyboardShortcut("p")
+            .disabled(updater.isChecking || updater.isDownloading || updater.isInstalling)
+        }
+        CommandMenu("Session") {
+            Button("Rename Session") {
+                store.selection.requestRenameSelectedSession()
             }
-            CommandMenu("Terminal") {
-                Button("Close Current Terminal") {
-                    store.handleCloseCommand(in: NSApp.keyWindow)
+            .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(0xF705)!)))
+            .disabled(store.sidebarMode != .sessions || store.selectedSession == nil)
+        }
+        CommandMenu("View") {
+            Button("Show Command Palette") {
+                store.requestCommandPalette()
+            }
+            .keyboardShortcut("p")
+        }
+        CommandMenu("Terminal") {
+            Button("Close Current Terminal") {
+                store.handleCloseCommand(in: NSApp.keyWindow)
+            }
+            .keyboardShortcut("w")
+            .disabled(store.selectedSession == nil && !store.hasScratchTerminal)
+
+            Divider()
+
+            Button("Open Scratch Terminal") {
+                store.openScratchTerminal()
+            }
+            .keyboardShortcut("d")
+
+            Divider()
+
+            Button("Open GitHub Pull Request") {
+                store.openSelectedPullRequest()
+            }
+            .keyboardShortcut("g")
+            .disabled(store.selectedSession?.status == .closed || store.selectedSession == nil)
+
+            Button("Open Linear Issue") {
+                store.openSelectedLinearIssue()
+            }
+            .keyboardShortcut("l")
+            .disabled(store.sidebarMode == .linear
+                ? store.selectedLinearListIssueURL == nil
+                : store.selectedLinearIssueURL == nil)
+
+            Button("Show Linear Issues") {
+                store.sidebarMode = .linear
+            }
+            .keyboardShortcut("l", modifiers: [.command, .shift])
+
+            Button("Show Sessions") {
+                store.sidebarMode = .sessions
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+
+            Button("Start Selected Linear Issue") {
+                store.startSelectedLinearListIssueSession()
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(store.sidebarMode != .linear || store.selectedLinearListIssueID == nil)
+
+            Button("Refresh Linear Issues") {
+                store.refreshLinearIssueList()
+            }
+            .keyboardShortcut("r")
+            .disabled(store.sidebarMode != .linear || store.isLinearIssueListRefreshing)
+
+            Divider()
+
+            Button("Next Terminal") {
+                store.selectNextSession()
+            }
+            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+            .disabled(!store.hasMultipleSidebarSessions)
+
+            Button("Previous Terminal") {
+                store.selectPreviousSession()
+            }
+            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            .disabled(!store.hasMultipleSidebarSessions)
+
+            Button("Next Workable Terminal") {
+                store.selectNextWorkableSession()
+            }
+            .disabled(!store.hasWorkableSession)
+
+            Button("Next Terminal Needing Attention") {
+                store.selectNextSessionNeedingAttention()
+            }
+            .keyboardShortcut(
+                SessionAttentionShortcuts.next.keyEquivalent,
+                modifiers: SessionAttentionShortcuts.next.eventModifiers
+            )
+            .disabled(!store.canSelectSessionNeedingAttention)
+
+            Button("Previous Terminal Needing Attention") {
+                store.selectPreviousSessionNeedingAttention()
+            }
+            .keyboardShortcut(
+                SessionAttentionShortcuts.previous.keyEquivalent,
+                modifiers: SessionAttentionShortcuts.previous.eventModifiers
+            )
+            .disabled(!store.canSelectSessionNeedingAttention)
+
+            Divider()
+
+            ForEach(jumpMenuSessions, id: \.offset) { index, session in
+                let shortcutIndex = index + 1
+                let shortcutCharacter = String(index)
+                Button("Switch to Terminal \(shortcutIndex): \(session.displayTitle)") {
+                    store.selectSession(shortcutIndex: shortcutIndex)
                 }
-                .keyboardShortcut("w")
-                .disabled(store.selectedSession == nil && !store.hasScratchTerminal)
-
-                Divider()
-
-                Button("Open Scratch Terminal") {
-                    store.openScratchTerminal()
-                }
-                .keyboardShortcut("d")
-
-                Divider()
-
-                Button("Open GitHub Pull Request") {
-                    store.openSelectedPullRequest()
-                }
-                .keyboardShortcut("g")
-                .disabled(store.selectedSession?.status == .closed || store.selectedSession == nil)
-
-                Button("Open Linear Issue") {
-                    store.openSelectedLinearIssue()
-                }
-                .keyboardShortcut("l")
-                .disabled(store.sidebarMode == .linear
-                    ? store.selectedLinearListIssueURL == nil
-                    : store.selectedLinearIssueURL == nil)
-
-                Button("Show Linear Issues") {
-                    store.sidebarMode = .linear
-                }
-                .keyboardShortcut("l", modifiers: [.command, .shift])
-
-                Button("Show Sessions") {
-                    store.sidebarMode = .sessions
-                }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-
-                Button("Start Selected Linear Issue") {
-                    store.startSelectedLinearListIssueSession()
-                }
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(store.sidebarMode != .linear || store.selectedLinearListIssueID == nil)
-
-                Button("Refresh Linear Issues") {
-                    store.refreshLinearIssueList()
-                }
-                .keyboardShortcut("r")
-                .disabled(store.sidebarMode != .linear || store.isLinearIssueListRefreshing)
-
-                Divider()
-
-                Button("Next Terminal") {
-                    store.selectNextSession()
-                }
-                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-                .disabled(!store.hasMultipleSidebarSessions)
-
-                Button("Previous Terminal") {
-                    store.selectPreviousSession()
-                }
-                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-                .disabled(!store.hasMultipleSidebarSessions)
-
-                Button("Next Workable Terminal") {
-                    store.selectNextWorkableSession()
-                }
-                .disabled(!store.hasWorkableSession)
-
-                Button("Next Terminal Needing Attention") {
-                    store.selectNextSessionNeedingAttention()
-                }
-                .keyboardShortcut(
-                    SessionAttentionShortcuts.next.keyEquivalent,
-                    modifiers: SessionAttentionShortcuts.next.eventModifiers
-                )
-                .disabled(!store.canSelectSessionNeedingAttention)
-
-                Button("Previous Terminal Needing Attention") {
-                    store.selectPreviousSessionNeedingAttention()
-                }
-                .keyboardShortcut(
-                    SessionAttentionShortcuts.previous.keyEquivalent,
-                    modifiers: SessionAttentionShortcuts.previous.eventModifiers
-                )
-                .disabled(!store.canSelectSessionNeedingAttention)
-
-                Divider()
-
-                ForEach(jumpMenuSessions, id: \.offset) { index, session in
-                    let shortcutIndex = index + 1
-                    let shortcutCharacter = String(index)
-                    Button("Switch to Terminal \(shortcutIndex): \(session.displayTitle)") {
-                        store.selectSession(shortcutIndex: shortcutIndex)
-                    }
-                    .keyboardShortcut(KeyEquivalent(Character(shortcutCharacter)), modifiers: .command)
-                }
+                .keyboardShortcut(KeyEquivalent(Character(shortcutCharacter)), modifiers: .command)
             }
         }
     }

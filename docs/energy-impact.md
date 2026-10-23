@@ -64,10 +64,9 @@ without rebuilding ICU formatters.
 about 4.5 MB and took roughly half a second per request. Prefer the active
 default, exact `--id`/`--query` lookups, or the event stream unless closed
 history is genuinely required. A maintenance client that polls `--all` can make
-the Banyan process look busy even while its UI is idle. The control server still
-pretty-prints and sorts the complete response; compact output or a lighter
-history projection is a candidate optimization, but should be justified with a
-matching workload capture rather than assumed.
+the Banyan process look busy even while its UI is idle. The HTTP transport now
+uses compact JSON without sorting keys: a matching large-history capture found
+formatting and sorting in the hot path. The CLI still formats its decoded output.
 
 The active sidebar excludes closed history before resolving display titles or
 constructing its lookup. It also has a revision-keyed cache, so a cache hit is a
@@ -104,6 +103,44 @@ the pane rewrites those rows. Banyan now resolves plain-text links when the
 user Cmd-hovers or Cmd-clicks them, instead of coloring every detected link on
 every frame. Links remain clickable and highlight under the pointer, while
 ordinary output avoids regex work during drawing.
+
+A SwiftUI Instruments capture also traced repeated layout invalidations to
+the terminal cursor. Full-screen agents toggle cursor visibility around redraws;
+removing and reinserting the caret's AppKit view propagated Auto Layout changes
+through the terminal's SwiftUI host. On macOS the caret now stays attached and
+changes visibility, including when scrolling away from it or switching renderers.
+Cursor visibility and hierarchy regression tests cover these transitions.
+
+Unchanged branch metadata and selected-issue status are no longer republished
+on every refresh. Sidebar
+rows observe their own workflow summary and selection changes, and parent-move
+targets are resolved when the picker opens instead of constructing the complete
+hierarchy in every row's context menu. Menus observe the shared store in their
+own `Commands` component; the app scene retains the existing runtime without
+subscribing to every store publication. This avoids rebuilding the scene's
+environment on routine session updates. These remove measured redundant work;
+they do not establish an Energy Impact ceiling. Verify the live score over the
+same workload and retain any spikes as counterexamples.
+
+Session-switch investigations should include repeated jumps, not only idle
+samples. Compare the same sequence with the session sidebar shown and hidden;
+also distinguish sessions that mount an issue panel. Selection owns issue
+fetching instead of forcing a second fetch when the panel appears. Unchanged
+issue responses do not
+republish the same details or loading state. These avoid redundant work but do
+not guarantee a ceiling during rapid switching. CPU percentage and kernel CPU
+energy counters are supporting measurements, not substitutes for the actual
+Energy Impact score.
+
+The window retains its rolling shortcut map without observing it at the root.
+Viewport changes update shortcut badges, the open palette, and focused menu
+commands locally. Otherwise scrolling while switching sessions republishes the
+map to the whole window and changes every row's badge input, defeating the row's
+equality check. A native rendering test verifies that the badge still updates
+while its containing row remains equal, alongside selection and work updates.
+Automatic selection reveals use a transaction with animation disabled and no
+scroll anchor. Visible rows stay in place; distant selections appear immediately
+without laying out and remapping intermediate rows throughout an animated scroll.
 
 ## Idle behavior and background throttling
 

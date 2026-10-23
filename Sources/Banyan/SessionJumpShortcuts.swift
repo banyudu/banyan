@@ -82,6 +82,17 @@ final class SessionJumpShortcuts: ObservableObject {
     }
 }
 
+/// Limit viewport-driven publications to the UI that displays shortcut labels.
+/// The containing window should retain the map without observing it.
+struct SessionShortcutMapObserver<Content: View>: View {
+    @ObservedObject var shortcuts: SessionJumpShortcuts
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+    }
+}
+
 /// Row lifetime is not visibility: List may prefetch offscreen rows. Measure
 /// intersections with its viewport instead, using macOS 14 SwiftUI geometry.
 struct SessionSidebarGeometry: Equatable {

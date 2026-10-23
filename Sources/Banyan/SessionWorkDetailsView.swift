@@ -2,10 +2,26 @@ import AppKit
 import BanyanCore
 import SwiftUI
 
+@MainActor final class SessionWorkState: ObservableObject {
+    @Published private(set) var summary: SessionWorkSummary?
+
+    init(summary: SessionWorkSummary? = nil) { self.summary = summary }
+
+    func update(_ summary: SessionWorkSummary?) {
+        guard self.summary != summary else { return }
+        self.summary = summary
+    }
+}
+
+/// Refresh metadata belongs to the open details popup, not every sidebar row.
+@MainActor final class WorkOverviewStatus: ObservableObject {
+    @Published var error: String?
+    @Published var updatedAt: String?
+}
+
 struct SessionWorkStatusButton: View {
     let summary: SessionWorkSummary
-    let error: String?
-    let updatedAt: String?
+    let overviewStatus: WorkOverviewStatus
     let refresh: () -> Void
     let openSession: (String) -> Void
     @State private var isPresented = false
@@ -31,11 +47,23 @@ struct SessionWorkStatusButton: View {
         .accessibilityLabel("Work details: \(label)")
         .accessibilityIdentifier("session.\(summary.own.id).workflow")
         .popover(isPresented: $isPresented, arrowEdge: .trailing) {
-            SessionWorkDetailsView(summary: summary, error: error, updatedAt: updatedAt, refresh: refresh) { id in
+            LiveSessionWorkDetailsView(summary: summary, status: overviewStatus, refresh: refresh) { id in
                 isPresented = false
                 openSession(id)
             }
         }
+    }
+}
+
+private struct LiveSessionWorkDetailsView: View {
+    let summary: SessionWorkSummary
+    @ObservedObject var status: WorkOverviewStatus
+    let refresh: () -> Void
+    let openSession: (String) -> Void
+
+    var body: some View {
+        SessionWorkDetailsView(summary: summary, error: status.error, updatedAt: status.updatedAt,
+            refresh: refresh, openSession: openSession)
     }
 }
 
