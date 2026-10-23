@@ -319,6 +319,7 @@ struct LinearIssuePanel: View {
                 } icon: {
                     Circle()
                         .fill(Color.linearHex(state.color))
+                        .frame(width: 8, height: 8)
                 }
                 .tag(state.id)
             }
