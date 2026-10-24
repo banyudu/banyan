@@ -2650,6 +2650,9 @@ final class SessionStore: ObservableObject {
     /// selected session's own directory. The root is the main checkout of the
     /// repository containing the selected session, so a session in a worktree or
     /// a subdirectory opens at `<repo>`; a path outside any repository stays put.
+    /// The new session is top-level rather than inheriting the selected row's
+    /// place in the hierarchy: opening the project root is a fresh entry point,
+    /// not a sibling of whatever nested session happened to be selected.
     /// On Auto the runtime mirrors the current session, like the sibling command.
     @discardableResult
     func spawnPaletteAgentSessionInProjectRoot() -> BanyanSession? {
@@ -2659,7 +2662,7 @@ final class SessionStore: ObservableObject {
         )
         let launch = paletteAgentLaunch?.launchSpec(codexLaunchMode: codexLaunchMode)
             ?? siblingLaunch(of: selectedSession)
-        return spawn(launch, cwd: cwd, parentSessionID: selectedSession?.parentSessionID)
+        return spawn(launch, cwd: cwd, parentSessionID: nil)
     }
 
     /// Spawn a sibling using the selected session's coding-agent runtime when it
