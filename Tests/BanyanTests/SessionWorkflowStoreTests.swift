@@ -8,6 +8,111 @@ import Testing
 
 @MainActor
 @Suite struct SessionWorkflowStoreTests {
+    @Test(arguments: ["legacy", "profile", "empty", "narrow", "malformed", "extra", "draft", "multiline",
+        "approval", "settings", "model", "shell", "busy", "parked", "frozen", "copy-mode"], ["wake", "retire"])
+    func compiledFooterObservationHasNoDeliveryEffects(scenario: String, caller: String) async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let footer = "Model-v2 high · ~/dev/my-project · Context 48% used · weekly 99% left"
+        var screen = "Work complete\n› Ask Codex to do anything\n\n\(footer) · Research Team [research_2]\n? for shortcuts"
+        switch scenario {
+        case "legacy": screen = screen.replacingOccurrences(of: " · Research Team [research_2]", with: "")
+        case "empty": screen = screen.replacingOccurrences(of: "› Ask Codex to do anything", with: "›")
+        case "narrow": screen = "Work complete\n› Ask Codex to do anything\nModel-v2 high · ~/dev/my-project · Con…"
+        case "malformed": screen = screen.replacingOccurrences(of: "[research_2]", with: "[[research_2]]")
+        case "extra": screen += "\nUnexpected footer field"
+        case "draft": screen = screen.replacingOccurrences(of: "Ask Codex to do anything", with: "Unsent draft")
+        case "multiline": screen = screen.replacingOccurrences(of: "Ask Codex to do anything", with: "Ask Codex to do anything\nSecond draft line")
+        case "approval": screen += "\nWould you like to run this command?\n› 1. Yes, proceed\n2. No"
+        case "settings": screen += "\nSettings · Permissions\nPress esc to close"
+        case "model": screen += "\nSelect model\n› 1. Model-v2\nPress enter to confirm"
+        default: break
+        }
+        // Synthetic PIDs and an injected table: no provider or real process runs.
+        let pane = TmuxPaneSnapshot(paneID: "%fixture", rootPID: 2_000_000_000,
+            currentCommand: "zsh", currentPath: fixture.root.path, isDead: false, isInMode: scenario == "copy-mode")
+        fixture.backend.readablePane = pane
+        fixture.backend.visibleText = screen
+        var rows: [ProcessInfoRow] = scenario == "shell" ? [] : [
+            .init(pid: 2_000_000_001, parentPID: pane.rootPID, state: "S", elapsed: 10, commandName: "codex", arguments: "codex")
+        ]
+        if scenario == "busy" {
+            rows.append(.init(pid: 2_000_000_002, parentPID: 2_000_000_001, state: "S", elapsed: 1,
+                commandName: "curl", arguments: "curl https://example.com"))
+        }
+        let native = WorkflowObserverService()
+        let store = fixture.makeStore(processes: WorkflowTestProcesses(rows: rows), codexService: native)
+        defer { store.flushPendingSessionSaves(); store.workOverviewRefreshTask?.cancel() }
+        store.loadPersistedSessionsIfNeeded()
+        store.selectedSessionID = "legacy"
+        let terminal = try #require(store.sessions.first { $0.id == "managed" } as? TerminalSession)
+        terminal.parentSessionID = "legacy"
+        terminal.isSuspended = scenario == "parked"
+        terminal.isFrozen = scenario == "frozen"
+        let positive = ["legacy", "profile", "empty"].contains(scenario)
+        let workflow = SessionWorkflow(owner: "workit", jobID: "job-a", revision: 4,
+            state: positive || caller == "retire" ? .verified : .waiting,
+            wake: .init(id: "earlier", status: .delivered))
+        try store.setWorkflow(id: terminal.id, workflow: workflow)
+        try store.coordinationJournal.bindings.save(.init(owner: "workit-coordinator", jobID: "group-a",
+            revision: 1, state: .working), id: "legacy")
+        let journalURL = store.workflowJournal.directory.appendingPathComponent("managed.json")
+        let bindingURL = store.coordinationJournal.bindings.directory.appendingPathComponent("legacy.json")
+        let journalBefore = try Data(contentsOf: journalURL)
+        let bindingBefore = try Data(contentsOf: bindingURL)
+        let commandBefore = terminal.command
+
+        let reading = try await store.readPaneOutput(id: terminal.id, lines: nil)
+        #expect(reading.paneID == pane.paneID)
+        #expect(reading.visibleText == screen)
+        let candidate = SessionWorkflowPolicy.canWake(status: reading.status, isSuspended: terminal.isSuspended,
+            isFrozen: terminal.isFrozen, isDeepSuspended: terminal.isDeepSuspended,
+            hasObservation: reading.observation != nil, isAgent: reading.observation?.provider != nil,
+            hasHumanPrompt: reading.prompt != nil, hasEmptyInput: SessionWorkflowPolicy.hasEmptyInput(reading.visibleText))
+            && !pane.isInMode
+        #expect(candidate == positive)
+        if positive {
+            #expect(reading.status == .needInput)
+            #expect(reading.observation?.provider == .codex)
+            #expect(reading.prompt == nil)
+            // Readability cannot override the verified workflow's delivery hold.
+            do {
+                try await store.wakeWorkflow(id: terminal.id, jobID: "job-a", revision: 4, wakeID: "new", text: "Continue")
+                Issue.record("Expected verified workflow refusal")
+            } catch { #expect(error.localizedDescription == "workflow is verified") }
+        } else if caller == "wake" {
+            do {
+                try await store.wakeWorkflow(id: terminal.id, jobID: "job-a", revision: 4, wakeID: "new", text: "Continue")
+                Issue.record("Expected guarded wake refusal")
+            } catch {
+                #expect(["unsupported or uncertain agent session", "agent is busy, unobserved, or awaiting human input",
+                    "session is closed, parked, frozen or unavailable"].contains(error.localizedDescription))
+            }
+        } else {
+            if scenario == "shell" { #expect(reading.observation?.provider == nil) }
+            if ["parked", "frozen"].contains(scenario) { #expect(reading.observation == nil) }
+            // Exercise the real retirement caller without ever closing a pane.
+            let payload = try JSONDecoder().decode(CoordinationControlPayload.self, from: Data(
+                #"{"action":"retire","id":"managed","groupID":"group-a","parent":"legacy","jobID":"job-a","revision":4}"#.utf8))
+            do {
+                _ = try await store.controlCoordination(payload)
+                Issue.record("Expected guarded retirement refusal")
+            } catch {
+                #expect(["child is busy or awaiting user input", "selected or suspended children are retained"].contains(error.localizedDescription))
+            }
+        }
+        #expect(terminal.status != .closed)
+        #expect(terminal.command == commandBefore)
+        #expect(terminal.workflow == workflow)
+        #expect(try Data(contentsOf: journalURL) == journalBefore)
+        #expect(try Data(contentsOf: bindingURL) == bindingBefore)
+        #expect(try store.coordinationJournal.interventions(id: terminal.id).isEmpty)
+        #expect(fixture.backend.sent.isEmpty) // literal input and keys
+        #expect(fixture.backend.launched.isEmpty) // terminal resume and new conversation
+        #expect(fixture.backend.killed.isEmpty)
+        #expect(native.requests.isEmpty) // includes thread/resume and turn/start
+    }
+
     @Test func closedWorkflowUpdatesPersistWithoutRedrawingTheWindowOrRefreshingWorkit() throws {
         let fixture = try WorkflowStoreFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -310,7 +415,8 @@ private struct WorkflowStoreFixture {
     let backend = WorkflowTestBackend()
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("banyan-workflow-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
         persistence = SessionPersistence(databaseURL: root.appendingPathComponent("state.sqlite"),
             legacyJSONURL: root.appendingPathComponent("sessions.json"))
         let now = Date()
@@ -322,14 +428,16 @@ private struct WorkflowStoreFixture {
     }
     func makeStore(history: WorkflowTestHistory = WorkflowTestHistory(),
                    pauseClient: (any WorkitPauseClient)? = nil,
-                   projectionTimeout: Duration = .milliseconds(50)) -> SessionStore {
+                   projectionTimeout: Duration = .milliseconds(50),
+                   processes: WorkflowTestProcesses = WorkflowTestProcesses(),
+                   codexService: (any CodexThreadService)? = nil) -> SessionStore {
         _ = NSApplication.shared
         return SessionStore(persistence: persistence, tmuxBackend: backend, sessionBackend: backend,
-            processTable: WorkflowTestProcesses(), historyBackend: history,
+            processTable: processes, historyBackend: history,
             detector: AgentStateDetector(rules: []),
             host: HostRuntimeContext(environment: ["BANYAN_FIXTURE_DATA_HOME": root.path, "PATH": "/usr/bin:/bin", "SHELL": "/bin/zsh"],
                 homeDirectory: root, currentDirectory: root.path),
-            telemetry: banyanTestTelemetry, attentionNotifier: AttentionNotifier(),
+            telemetry: banyanTestTelemetry, attentionNotifier: AttentionNotifier(), codexService: codexService,
             workitPauseClient: pauseClient, pauseCloseProjectionTimeout: projectionTimeout)
     }
 }
@@ -340,6 +448,8 @@ private final class WorkflowTestBackend: TmuxSessionStoreBackend, TmuxClientBack
     var killed: [String] = []
     var replacementAfterFirstInspection: TmuxPaneSnapshot?
     var observedPane: TmuxPaneSnapshot?
+    var readablePane: TmuxPaneSnapshot?
+    var visibleText = ""
     private var inspections = 0
     var executableURL: URL { URL(fileURLWithPath: "/usr/bin/false") }
     func attachArguments(for name: String) -> [String] { [] }
@@ -348,10 +458,11 @@ private final class WorkflowTestBackend: TmuxSessionStoreBackend, TmuxClientBack
         inspections += 1
         if inspections > 1, let replacementAfterFirstInspection { return .present(replacementAfterFirstInspection) }
         if let observedPane { return .present(observedPane) }
+        if let readablePane { return .present(readablePane) }
         return .absent
     }
-    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
-    func captureVisibleText(paneID: String, lineLimit: Int) -> String { "" }
+    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { readablePane }
+    func captureVisibleText(paneID: String, lineLimit: Int) -> String { visibleText }
     func captureCurrentVisibleText(paneID: String) -> String { "" }
     func listBanyanSessions() -> [String] { [] }
     func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String?) throws { launched.append(command) }
@@ -718,7 +829,19 @@ private final class FakeWorkitPauseClient: WorkitPauseClient {
 }
 
 private struct WorkflowTestProcesses: ProcessTableProvider {
-    func snapshot() -> ProcessTable { ProcessTable(rows: []) }
+    var rows: [ProcessInfoRow] = []
+    func snapshot() -> ProcessTable { ProcessTable(rows: rows) }
+}
+
+@MainActor
+private final class WorkflowObserverService: CodexThreadService {
+    var requests: [String] = []
+    func events() async -> AsyncStream<CodexAppServerEvent> { AsyncStream { $0.finish() } }
+    func setServerRequestHandler(_ handler: CodexAppServerClient.RequestHandler?) async {}
+    func request(_ method: String, params: CodexJSONValue) async throws -> CodexJSONValue {
+        requests.append(method)
+        throw WorkflowError.refused("observer fixture does not deliver native requests")
+    }
 }
 private struct WorkflowTestHistory: SessionHistoryBackend {
     var candidates: [AgentResumeCandidate] = []
