@@ -86,6 +86,73 @@ import Testing
             of: "› Ask Codex to do anything", with: "›")))
     }
 
+    @Test(arguments: [
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [default]",
+        "Other-Model medium · /tmp/sample project · Context 0% used · weekly 100% left · Research Team [research_2]",
+        "Model-v2 low · /Users/example/dev/sample · Context 100% used · weekly 0% left · Local [local.dev-3]"
+    ])
+    func completeCodexFootersRequireAnEmptyComposer(footer: String) {
+        for composer in ["›", "› Ask Codex to do anything"] {
+            #expect(SessionWorkflowPolicy.hasEmptyInput("Completed work\n\(composer)\n\n\(footer)\n? for shortcuts"))
+        }
+        for draft in ["Continue", "Ask Codex to do anything else", "Ask Codex to do anything\nUnsent second line"] {
+            #expect(!SessionWorkflowPolicy.hasEmptyInput("› \(draft)\n\(footer)\n? for shortcuts"))
+        }
+        #expect(!SessionWorkflowPolicy.hasEmptyInput("\(footer)\nCompleted work"))
+        #expect(!SessionWorkflowPolicy.hasEmptyInput("›\n" + String(repeating: "\n", count: 12) + footer))
+    }
+
+    @Test(arguments: [
+        "  · ~/dev/my-project · Context 48% used · weekly 99% left · Main [default]",
+        "GPT-6 xhigh ·   · Context 48% used · weekly 99% left · Main [default]",
+        "GPT-6 xhigh · ~/dev/my-project · Con…",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% lef",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · ",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [def",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main []",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · [default]",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [[default]]",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [two ids]",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [default] trailing",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [default] · Extra [other]",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [default] for shortcuts",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · context left [broken",
+        "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [default]\rUnknown overlay"
+    ])
+    func incompleteOrAmbiguousCodexFootersRemainUnknown(footer: String) {
+        #expect(!SessionWorkflowPolicy.hasEmptyInput("› Ask Codex to do anything\n\n\(footer)\n? for shortcuts"))
+    }
+
+    @Test func aRecognizedFooterDoesNotOverrideWakeAuthorization() throws {
+        for status in SessionStatus.allCases {
+            #expect(SessionWorkflowPolicy.canWake(status: status, isSuspended: false, isFrozen: false,
+                isDeepSuspended: false, hasObservation: true, isAgent: true, hasEmptyInput: true)
+                == [.idle, .review, .needInput].contains(status))
+        }
+        for flag in ["parked", "frozen", "deep-suspended", "unobserved", "not-agent", "human-prompt"] {
+            #expect(!SessionWorkflowPolicy.canWake(status: .needInput, isSuspended: flag == "parked",
+                isFrozen: flag == "frozen", isDeepSuspended: flag == "deep-suspended",
+                hasObservation: flag != "unobserved", isAgent: flag != "not-agent",
+                hasHumanPrompt: flag == "human-prompt", hasEmptyInput: true))
+        }
+        for state in SessionWorkflow.State.allCases {
+            let workflow = SessionWorkflow(owner: "workit", jobID: "job-a", revision: 4, state: state)
+            if state.permitsWake {
+                #expect(try workflow.shouldDeliver(jobID: "job-a", revision: 4, wakeID: "wake-a"))
+            } else {
+                #expect(throws: (any Error).self) { try workflow.shouldDeliver(jobID: "job-a", revision: 4, wakeID: "wake-a") }
+            }
+        }
+        for receipt in [SessionWorkflow.Wake.Status.pending, .uncertain] {
+            let workflow = SessionWorkflow(owner: "workit", jobID: "job-a", revision: 4, state: .waiting,
+                wake: .init(id: "wake-a", status: receipt))
+            #expect(throws: (any Error).self) { try workflow.shouldDeliver(jobID: "job-a", revision: 4, wakeID: "wake-b") }
+        }
+    }
+
     @Test func codexDraftsAndOverlaysStillRefuseWake() {
         for draft in ["continue the task", "Ask Codex to do anything please", "Ask Codex to do anything\ncontinued draft"] {
             #expect(!SessionWorkflowPolicy.hasEmptyInput(codexEmptyComposer.replacingOccurrences(
@@ -97,7 +164,10 @@ import Testing
             "Would you like to run this command?\n› 1. Yes, proceed\n  2. No, and tell Codex what to do differently",
             "Permission required · Context unavailable"
         ] {
-            #expect(!SessionWorkflowPolicy.hasEmptyInput(codexEmptyComposer + "\n" + overlay))
+            for capture in [codexEmptyComposer, codexEmptyComposer.replacingOccurrences(
+                of: "weekly 81% left", with: "weekly 81% left · Main [default]")] {
+                #expect(!SessionWorkflowPolicy.hasEmptyInput(capture + "\n" + overlay))
+            }
         }
         #expect(!SessionWorkflowPolicy.hasEmptyInput(codexEmptyComposer.replacingOccurrences(
             of: "›", with: "❯")))

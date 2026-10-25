@@ -136,13 +136,15 @@ public enum SessionWorkflowPolicy {
             guard index >= max(0, lines.count - 12),
                   draft.isEmpty || (isCodexComposer && draft == "Ask Codex to do anything") else { return false }
             return lines.dropFirst(index + 1).allSatisfy {
-                $0.isEmpty || $0.contains("for shortcuts") || $0.contains("context left")
+                // Footer-shaped rows must match the entire known layout, even
+                // if a malformed suffix happens to contain a hint phrase.
+                if isCodexComposer && $0.contains(" · ") && !$0.hasPrefix("? for shortcuts") {
+                    return $0.range(
+                        of: #"\A[^\s·][^·\r\n]* · [^\s·][^·\r\n]* · Context [0-9]{1,3}% used · weekly [0-9]{1,3}% left(?: · [^\s·\[\]](?:[^·\[\]\r\n]*[^\s·\[\]])? \[[A-Za-z0-9_-][A-Za-z0-9_.-]*\])?\z"#,
+                        options: .regularExpression) != nil
+                }
+                return $0.isEmpty || $0.contains("for shortcuts") || $0.contains("context left")
                     || $0.contains("shift+tab to cycle") || $0.contains("ctrl+t to hide")
-                    // Codex's current model/path/usage footer. Keep the full
-                    // shape anchored so arbitrary overlay text is not allowed.
-                    || (isCodexComposer && $0.range(
-                        of: #"^[^·]+ · [^·]+ · Context [0-9]{1,3}% used · weekly [0-9]{1,3}% left$"#,
-                        options: .regularExpression) != nil)
             }
         }
         // OpenCode's input block ends with its model/footer line. A draft,
