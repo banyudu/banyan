@@ -465,7 +465,7 @@ final class SessionStore: ObservableObject {
     }
     /// When false (the default), completed child rows hide behind their
     /// parent's count badge instead of spending a row each. Failed children
-    /// always stay visible: they need a human decision.
+    /// stay visible under expanded parents: they need a human decision.
     @Published var showFinishedChildren = false {
         didSet {
             sidebarGroupsRevision &+= 1

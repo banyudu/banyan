@@ -27,17 +27,9 @@ public struct SessionChildVisibilityItem: Sendable, Equatable {
 public enum SessionChildVisibilityPolicy {
     /// Terminal children hidden by the "show finished" toggle. Deliberately
     /// completed-only: a failed session needs a human decision (see
-    /// `SessionLifecyclePolicy.needsAttention`), so it always stays visible.
+    /// `SessionLifecyclePolicy.needsAttention`), so it is not finished-hidden.
     public static func isFinishedHidden(status: SessionStatus) -> Bool {
         status == .completed
-    }
-
-    /// A collapsed parent still reveals children that need a human right now.
-    /// Parked sessions never peek: nothing observes them, so a parked status
-    /// is frozen and would otherwise compete for attention forever.
-    public static func peeksThrough(status: SessionStatus, isSuspended: Bool) -> Bool {
-        guard !isSuspended else { return false }
-        return [.asking, .needInput, .failed].contains(status)
     }
 
     /// Parents whose whole subtree is finished or parked start collapsed, so a
@@ -91,7 +83,8 @@ public enum SessionChildVisibilityPolicy {
     /// Filters hierarchy-ordered (parent-first) rows. Returns the rows to
     /// render plus, per row ID, how many descendants were hidden beneath it —
     /// attributed to the nearest collapsed ancestor, or to the direct parent
-    /// for finished-hidden children under an expanded parent.
+    /// for finished-hidden children under an expanded parent. Collapsed parents
+    /// hide every descendant, including selected sessions and those needing attention.
     public static func visibleRows(
         rows: [SessionSidebarRow],
         itemsByID: [String: SessionChildVisibilityItem],
@@ -142,20 +135,16 @@ public enum SessionChildVisibilityPolicy {
                 hide(rowID: row.id, item: item)
                 continue
             }
+            if nearestCollapsedAncestor(of: item) != nil {
+                hide(rowID: row.id, item: item)
+                continue
+            }
             if row.id == selectedID || selectedAncestors.contains(row.id) {
                 visible.append(row)
                 continue
             }
             if !showFinishedChildren, isFinishedHidden(status: item.status) {
                 hide(rowID: row.id, item: item)
-                continue
-            }
-            if nearestCollapsedAncestor(of: item) != nil {
-                if peeksThrough(status: item.status, isSuspended: item.isSuspended) {
-                    visible.append(row)
-                } else {
-                    hide(rowID: row.id, item: item)
-                }
                 continue
             }
             visible.append(row)

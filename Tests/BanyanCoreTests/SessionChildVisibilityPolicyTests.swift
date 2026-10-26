@@ -22,7 +22,6 @@ private func hierarchyRow(_ id: String, depth: Int) -> SessionSidebarRow {
     ]
     let items: [String: SessionChildVisibilityItem] = [
         "parent": visibilityItem("parent"),
-        // Parked need-input never peeks: its status is frozen while suspended.
         "parked-a": visibilityItem("parked-a", parent: "parent", status: .needInput, suspended: true),
         "parked-b": visibilityItem("parked-b", parent: "parent", status: .asking, suspended: true),
     ]
@@ -36,25 +35,39 @@ private func hierarchyRow(_ id: String, depth: Int) -> SessionSidebarRow {
     #expect(counts == ["parent": 2])
 }
 
-@Test func collapsedParentStillRevealsLiveChildrenNeedingAttention() {
+@Test(arguments: [SessionStatus.asking, .needInput, .failed, .idle, .running, .completed])
+func collapsedParentHidesAllDescendantsUntilExpanded(status: SessionStatus) {
     let rows = [
         hierarchyRow("parent", depth: 0),
-        hierarchyRow("blocked", depth: 1),
+        hierarchyRow("child", depth: 1),
+        hierarchyRow("grandchild", depth: 2),
         hierarchyRow("quiet", depth: 1),
+        hierarchyRow("other-parent", depth: 0),
     ]
     let items: [String: SessionChildVisibilityItem] = [
         "parent": visibilityItem("parent"),
-        "blocked": visibilityItem("blocked", parent: "parent", status: .needInput),
+        "child": visibilityItem("child", parent: "parent", status: status),
+        "grandchild": visibilityItem("grandchild", parent: "child", status: .asking),
         "quiet": visibilityItem("quiet", parent: "parent", status: .idle),
+        "other-parent": visibilityItem("other-parent"),
     ]
     let (visible, counts) = SessionChildVisibilityPolicy.visibleRows(
         rows: rows,
         itemsByID: items,
         collapsedParentIDs: ["parent"],
-        showFinishedChildren: false
+        showFinishedChildren: true
     )
-    #expect(visible.map(\.id) == ["parent", "blocked"])
-    #expect(counts == ["parent": 1])
+    #expect(visible.map(\.id) == ["parent", "other-parent"])
+    #expect(counts == ["parent": 3])
+
+    let (expanded, expandedCounts) = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows,
+        itemsByID: items,
+        collapsedParentIDs: [],
+        showFinishedChildren: true
+    )
+    #expect(expanded == rows)
+    #expect(expandedCounts == [:])
 }
 
 @Test func finishedChildrenHideUnderExpandedParentsUntilToggled() {
@@ -88,14 +101,16 @@ private func hierarchyRow(_ id: String, depth: Int) -> SessionSidebarRow {
     #expect(shownCounts == [:])
 }
 
-@Test func selectedChildAndItsAncestorsStayVisible() {
+@Test func selectedChildAndItsAncestorsOnlyStayVisibleWhenExpanded() {
     let rows = [
         hierarchyRow("parent", depth: 0),
-        hierarchyRow("done", depth: 1),
+        hierarchyRow("done-parent", depth: 1),
+        hierarchyRow("done", depth: 2),
     ]
     let items: [String: SessionChildVisibilityItem] = [
         "parent": visibilityItem("parent"),
-        "done": visibilityItem("done", parent: "parent", status: .completed),
+        "done-parent": visibilityItem("done-parent", parent: "parent", status: .completed),
+        "done": visibilityItem("done", parent: "done-parent", status: .completed),
     ]
     let (visible, counts) = SessionChildVisibilityPolicy.visibleRows(
         rows: rows,
@@ -104,8 +119,18 @@ private func hierarchyRow(_ id: String, depth: Int) -> SessionSidebarRow {
         showFinishedChildren: false,
         selectedID: "done"
     )
-    #expect(visible.map(\.id) == ["parent", "done"])
-    #expect(counts == [:])
+    #expect(visible.map(\.id) == ["parent"])
+    #expect(counts == ["parent": 2])
+
+    let (expanded, expandedCounts) = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows,
+        itemsByID: items,
+        collapsedParentIDs: [],
+        showFinishedChildren: false,
+        selectedID: "done"
+    )
+    #expect(expanded == rows)
+    #expect(expandedCounts == [:])
 }
 
 @Test func topLevelSessionsAreNeverHidden() {

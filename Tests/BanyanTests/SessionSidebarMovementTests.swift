@@ -47,6 +47,33 @@ import Testing
         }
     }
 
+    @Test func collapseToggleHidesSelectedAndAttentionChildrenUntilExpanded() throws {
+        let (_, store, _) = try fixture()
+        defer { store.flushPendingSessionSaves() }
+        try session("a1", in: store).status = .asking
+        try session("a2", in: store).status = .needInput
+        try session("b", in: store).parentSessionID = "a1"
+        try session("b", in: store).status = .failed
+        store.userSelect(id: "b")
+        let expandedRows = visibleRows(in: store)
+        #expect(expandedRows.map(\.id) == ["a", "a1", "b", "a2", "c"])
+
+        store.toggleChildrenCollapsed(for: "a")
+
+        #expect(visibleRows(in: store).map(\.id) == ["a", "c"])
+        let parent = try #require(store.sessionSidebarGroups.flatMap(\.items).first { $0.id == "a" })
+        #expect(parent.isCollapsed)
+        #expect(parent.hiddenChildCount == 3)
+        #expect(store.selectedSessionID == "b")
+
+        store.toggleChildrenCollapsed(for: "a")
+        #expect(visibleRows(in: store) == expandedRows)
+
+        store.toggleChildrenCollapsed(for: "a")
+        store.userSelect(id: "b")
+        #expect(visibleRows(in: store) == expandedRows)
+    }
+
     @Test func indentAndOutdentUpdateHierarchyWithoutChangingRowOrder() throws {
         let (fixture, store, groupID) = try fixture()
         defer { store.flushPendingSessionSaves() }
