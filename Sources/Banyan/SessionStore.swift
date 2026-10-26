@@ -6065,17 +6065,34 @@ final class SessionStore: ObservableObject {
         "Scratch - \(PathDisplayName.make(path: session.cwd, homeDirectory: homeDirectory))"
     }
 
-    /// Chooses the nearest visible session before the closing session is removed.
+    /// Chooses the nearest session before the closing session is removed.
     /// Sidebar groups are already in their rendered order, so this preserves the
     /// user's project/session navigation order across all sort modes.
+    ///
+    /// Include active rows hidden by collapsed/finished filtering: closing
+    /// their parent promotes them into the visible tree. Falling back to the
+    /// global session list instead can jump to another project while rows from
+    /// the closing project remain.
     private func preferredSelectionAfterClosing(id: String) -> String? {
-        let groups = sessionSidebarGroups.map { group in
+        let active = visibleSessions.filter { !$0.isImportedHistory }
+        let parentByID = Dictionary(
+            active.map { ($0.id, $0.parentSessionID) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let groups = SessionSidebarGroupingPolicy.groups(for: active.map {
+            SessionSidebarCandidate(
+                id: $0.id,
+                groupID: $0.projectGroupID,
+                groupTitle: $0.projectGroupTitle,
+                parentSessionID: $0.parentSessionID
+            )
+        }).map { group in
             SessionSelectionGroup(
                 id: group.id,
-                items: group.items.map { item in
+                items: group.rows.map { row in
                     SessionSelectionItem(
-                        id: item.id,
-                        parentSessionID: item.session.parentSessionID
+                        id: row.id,
+                        parentSessionID: parentByID[row.id] ?? nil
                     )
                 }
             )

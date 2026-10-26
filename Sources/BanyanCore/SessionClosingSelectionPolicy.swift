@@ -34,9 +34,20 @@ public enum SessionClosingSelectionPolicy {
         }
 
         let group = groups[groupIndex]
+        let groupIDs = Set(group.items.map(\.id))
         let closingItem = group.items[closingIndex]
+        // Match the sidebar's effective hierarchy: a parent that is not part
+        // of this group does not exist, so its children render as roots.
+        func renderedParent(of item: SessionSelectionItem) -> String? {
+            guard let parentID = item.parentSessionID, groupIDs.contains(parentID) else {
+                return nil
+            }
+            return parentID
+        }
+
+        let closingParentID = renderedParent(of: closingItem)
         let siblings = group.items.enumerated().filter { index, item in
-            item.parentSessionID == closingItem.parentSessionID
+            renderedParent(of: item) == closingParentID
                 && item.id != closingID
                 && index != closingIndex
         }
@@ -50,13 +61,19 @@ public enum SessionClosingSelectionPolicy {
         // A sub session with no remaining sibling stays in its own tree: fall
         // back to its parent instead of jumping to the next project group,
         // mirroring how closing the last session in a project stays local.
-        if let parentID = closingItem.parentSessionID {
-            let parentExists = groups.contains { group in
-                group.items.contains { $0.id == parentID }
-            }
-            if parentExists {
-                return parentID
-            }
+        if let parentID = closingParentID {
+            return parentID
+        }
+
+        // Rows near the closing session may not share its raw parent. Closing
+        // a parent promotes its children into its slot, and an orphaned row
+        // renders as a top-level peer. Keep selection inside this project
+        // whenever another row remains.
+        if closingIndex + 1 < group.items.count {
+            return group.items[closingIndex + 1].id
+        }
+        if closingIndex > 0 {
+            return group.items[closingIndex - 1].id
         }
 
         if groupIndex + 1 < groups.count {

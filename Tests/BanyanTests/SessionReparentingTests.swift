@@ -146,6 +146,24 @@ import Testing
         }
     }
 
+    @Test func closingParentSelectsPromotedChildBeforeAnotherProject() throws {
+        let (_, store, _) = try fixture()
+        defer { store.flushPendingSessionSaves() }
+        for id in ["target", "hidden"] {
+            try session(id, in: store).status = .closed
+        }
+        for id in ["source", "child", "leaf"] {
+            try session(id, in: store).status = .completed
+        }
+        store.showFinishedChildren = false
+        store.selectedSessionID = "old"
+
+        try store.close(id: "old")
+
+        #expect(store.selectedSessionID == "source")
+        #expect(try session("source", in: store).parentSessionID == nil)
+    }
+
     @Test func httpMovesAndErrorsUseTheValidatedStoreOperation() async throws {
         let (fixture, store, _) = try fixture()
         let server = ControlServer(store: store, host: store.host, port: .any)

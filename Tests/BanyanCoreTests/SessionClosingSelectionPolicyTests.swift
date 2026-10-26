@@ -71,3 +71,34 @@ private func selectionItem(_ id: String, parent: String? = nil) -> SessionSelect
 
     #expect(SessionClosingSelectionPolicy.preferredIDAfterClosing(closingID: "closing", groups: groups) == "next-group-first")
 }
+
+@Test func closingParentPrefersPromotedChildOverAnotherProject() {
+    let groups = [
+        SessionSelectionGroup(
+            id: "project",
+            items: [
+                selectionItem("closing"),
+                selectionItem("child-a", parent: "closing"),
+                selectionItem("child-b", parent: "closing")
+            ]
+        ),
+        SessionSelectionGroup(id: "next-project", items: [selectionItem("next-group-first")])
+    ]
+
+    #expect(SessionClosingSelectionPolicy.preferredIDAfterClosing(closingID: "closing", groups: groups) == "child-a")
+}
+
+@Test func closingOrphanPrefersRenderedPeerOverAnotherProject() {
+    let groups = [
+        SessionSelectionGroup(
+            id: "project",
+            items: [
+                selectionItem("closing", parent: "gone"),
+                selectionItem("peer")
+            ]
+        ),
+        SessionSelectionGroup(id: "next-project", items: [selectionItem("next-group-first")])
+    ]
+
+    #expect(SessionClosingSelectionPolicy.preferredIDAfterClosing(closingID: "closing", groups: groups) == "peer")
+}
