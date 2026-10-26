@@ -52,11 +52,27 @@ struct SessionShortcut {
 /// Moves selection to the nearest session that is waiting on a decision.
 ///
 /// `⌥` reads as "same direction as ⌘J/⌘K, narrower set". The obvious `⌘⇧J` /
-/// `⌘⇧K` mirror is unavailable: `⌘⇧`+letter is the session slot-jump range, and
-/// those chords are reserved even when their slot is empty.
+/// `⌘⇧K` mirror belongs to project navigation, while the rest of `⌘⇧`+letter is
+/// the session slot-jump range.
 enum SessionAttentionShortcuts {
     static let next = SessionShortcut(key: "j", modifiers: [.command, .option])
     static let previous = SessionShortcut(key: "k", modifiers: [.command, .option])
+
+    static func direction(
+        for character: Character,
+        modifiers: NSEvent.ModifierFlags
+    ) -> SessionSelectionDirection? {
+        if next.matches(character: character, modifiers: modifiers) { return .next }
+        if previous.matches(character: character, modifiers: modifiers) { return .previous }
+        return nil
+    }
+}
+
+/// Moves selection to the top session of the next or previous project group.
+/// `J` / `K` follow the same down/up reading as the adjacent-session chords.
+enum SessionProjectShortcuts {
+    static let next = SessionShortcut(key: "j", modifiers: [.command, .shift])
+    static let previous = SessionShortcut(key: "k", modifiers: [.command, .shift])
 
     static func direction(
         for character: Character,

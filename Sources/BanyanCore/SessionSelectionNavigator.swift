@@ -29,6 +29,29 @@ public enum SessionSelectionNavigator {
         return orderedIDs[oneBasedIndex - 1]
     }
 
+    /// Moves by a fixed number of rows without wrapping, so paging stops at the
+    /// first and last row instead of jumping back to the other end.
+    public static func pagedID(
+        in orderedIDs: [String],
+        selectedID: String?,
+        direction: SessionSelectionDirection,
+        pageSize: Int
+    ) -> String? {
+        guard !orderedIDs.isEmpty else { return nil }
+        guard let selectedID,
+              let selectedIndex = orderedIDs.firstIndex(of: selectedID) else {
+            return direction == .next ? orderedIDs.first : orderedIDs.last
+        }
+
+        let stride = max(1, pageSize)
+        switch direction {
+        case .next:
+            return orderedIDs[min(selectedIndex + stride, orderedIDs.count - 1)]
+        case .previous:
+            return orderedIDs[max(selectedIndex - stride, 0)]
+        }
+    }
+
     public static func nextMatchingID(
         in orderedIDs: [String],
         selectedID: String?,

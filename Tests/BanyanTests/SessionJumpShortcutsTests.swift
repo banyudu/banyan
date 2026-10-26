@@ -43,8 +43,8 @@ import Testing
         shortcuts.updateVisibleSessionIDs(Array(ids[60..<70]))
         shortcuts.setRollingEnabled(false)
 
-        #expect(shortcuts.sessionIDs == Array(ids.prefix(45)))
-        #expect(shortcuts.label(for: "session-44") == "F12")
+        #expect(shortcuts.sessionIDs == Array(ids.prefix(JumpOverlayMonitor.maxSessionSlots)))
+        #expect(shortcuts.label(for: "session-42") == "F12")
         #expect(shortcuts.label(for: "session-60").isEmpty)
         shortcuts.updateVisibleSessionIDs(Array(ids[80..<90]))
         #expect(shortcuts.sessionID(for: 1) == "session-0")
@@ -60,6 +60,17 @@ import Testing
         shortcuts.updateSessionIDs(Array(ids.reversed()))
         shortcuts.updateVisibleSessionIDs(Array(ids.prefix(10).reversed()))
         #expect(shortcuts.sessionIDs == Array(ids.prefix(10)))
+    }
+
+    @Test func pageStrideMatchesTheVisibleRows() {
+        let shortcuts = SessionJumpShortcuts()
+        shortcuts.updateSessionIDs(ids)
+
+        #expect(shortcuts.pageStride == 1)
+
+        shortcuts.updateVisibleSessionIDs(Array(ids[20..<35]))
+
+        #expect(shortcuts.pageStride == 15)
     }
 
     @Test func anEmptyViewportDoesNotFallThroughToOffscreenSessions() {
@@ -197,7 +208,7 @@ struct SessionJumpShortcutUITests {
         try await Task.sleep(for: .milliseconds(150))
         let firstVisible = try #require(shortcuts.sessionID(for: 1))
         let firstIndex = try #require(ids.firstIndex(of: firstVisible))
-        #expect(firstIndex > 45)
+        #expect(firstIndex > JumpOverlayMonitor.maxSessionSlots)
         #expect(shortcuts.label(for: firstVisible) == "0")
         #expect(shortcuts.label(for: "session-0").isEmpty)
 
@@ -211,7 +222,7 @@ struct SessionJumpShortcutUITests {
         #expect(shortcuts.sessionID(for: 1) == "session-0")
 
         shortcuts.setRollingEnabled(false)
-        #expect(shortcuts.sessionIDs == Array(ids.prefix(45)))
+        #expect(shortcuts.sessionIDs == Array(ids.prefix(JumpOverlayMonitor.maxSessionSlots)))
     }
 
     private func firstScrollView(in view: NSView) -> NSScrollView? {

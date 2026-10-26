@@ -4,13 +4,18 @@ import BanyanCore
 /// Handles the always-visible session jump shortcuts and ⌘J/⌘K navigation.
 /// Digits use ⌘+0…9; letters use ⌘⇧+A…Z so ordinary editing shortcuts remain free;
 /// function keys use ⌘+F1…F12 (⌘⇧3/4/5 stay free for macOS screenshots).
-/// L and S are reserved for switching between the Linear and Sessions sidebars;
-/// N is reserved for Cmd+Shift+N, the plain-terminal fallback.
+/// J and K are reserved for project navigation, L and S for switching between
+/// the Linear and Sessions sidebars, and N for Cmd+Shift+N, the plain-terminal
+/// fallback.
 final class JumpOverlayMonitor {
     var onJump: ((Int) -> Bool)?
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onSelectNeedingAttention: ((SessionSelectionDirection) -> Void)?
+    var onProject: ((SessionSelectionDirection) -> Void)?
+    var onFirstSession: (() -> Void)?
+    var onLastSession: (() -> Void)?
+    var onPage: ((SessionSelectionDirection) -> Void)?
     var onHandoff: (() -> Bool)?
     var onCommandModifierChange: ((Bool) -> Void)?
 
@@ -83,6 +88,8 @@ final class JumpOverlayMonitor {
         guard event.type == .keyDown else { return event }
         if handleHandoff(event) { return nil }
         if handleAttentionShortcut(event) { return nil }
+        if handleProjectShortcut(event) { return nil }
+        if handleEdgeShortcut(event) { return nil }
         if handleCmdJK(event) { return nil }
         if handleJumpKey(event) { return nil }
         return event
@@ -104,6 +111,25 @@ final class JumpOverlayMonitor {
             for: char,
             modifiers: event.modifierFlags,
             onSelect: onSelectNeedingAttention
+        )
+    }
+
+    private func handleProjectShortcut(_ event: NSEvent) -> Bool {
+        guard let char = event.charactersIgnoringModifiers?.first else { return false }
+        return Self.dispatchProjectShortcut(
+            for: char,
+            modifiers: event.modifierFlags,
+            onProject: onProject
+        )
+    }
+
+    private func handleEdgeShortcut(_ event: NSEvent) -> Bool {
+        Self.dispatchEdgeShortcut(
+            keyCode: event.keyCode,
+            modifiers: event.modifierFlags,
+            onFirst: onFirstSession,
+            onLast: onLastSession,
+            onPage: onPage
         )
     }
 
@@ -132,7 +158,10 @@ final class JumpOverlayMonitor {
 
     // MARK: - Key ↔ index mapping
 
-    private static let sessionJumpLetters = Array("abcdefghijkmopqrtuvwxyz")
+    private static let sessionJumpLetters = Array("abcdefghimopqrtuvwxyz")
+
+    /// Ten digits, the letters above, and twelve function keys.
+    static let maxSessionSlots = 10 + sessionJumpLetters.count + 12
 
     /// F-keys arrive in `charactersIgnoringModifiers` as private-use Unicode
     /// scalars (NSF1FunctionKey…NSF12FunctionKey) instead of printable characters.
@@ -140,14 +169,14 @@ final class JumpOverlayMonitor {
         (UInt32(0xF704)...UInt32(0xF70F)).compactMap { UnicodeScalar($0).map(Character.init) }
 
     /// Maps a key character to a 1-based session index.
-    /// "0" → 1, "1"–"9" → 2–10; letters other than L, N, and S → 11–33;
-    /// F1–F12 → 34–45.
+    /// "0" → 1, "1"–"9" → 2–10; letters other than J, K, L, N, and S → 11–31;
+    /// F1–F12 → 32–43.
     static func jumpIndex(for char: Character) -> Int? {
         if let digit = char.wholeNumberValue, digit >= 0, digit <= 9 {
             return digit + 1
         }
         if let offset = sessionJumpFunctionKeys.firstIndex(of: char) {
-            return 34 + offset
+            return 10 + sessionJumpLetters.count + 1 + offset
         }
         guard char == Character(char.lowercased()),
               let offset = sessionJumpLetters.firstIndex(of: char) else {
@@ -201,6 +230,70 @@ final class JumpOverlayMonitor {
         return true
     }
 
+    /// ⌘⇧J/⌘⇧K are consumed even when no handler is attached, matching the
+    /// reserve-even-when-unmapped convention used for the slot-jump chords.
+    static func dispatchProjectShortcut(
+        for char: Character,
+        modifiers: NSEvent.ModifierFlags,
+        onProject: ((SessionSelectionDirection) -> Void)?
+    ) -> Bool {
+        guard let direction = SessionProjectShortcuts.direction(
+            for: char,
+            modifiers: modifiers
+        ) else {
+            return false
+        }
+        onProject?(direction)
+        return true
+    }
+
+    enum EdgeAction: Equatable {
+        case first
+        case last
+        case pageUp
+        case pageDown
+    }
+
+    /// Home, End, Page Up, and Page Down with plain ⌘. Key codes rather than
+    /// characters because macOS sends the navigation keys as function-key
+    /// scalars, and laptops produce Home/End via fn+Left/Right.
+    static func edgeAction(
+        keyCode: UInt16,
+        modifiers: NSEvent.ModifierFlags
+    ) -> EdgeAction? {
+        let relevant = modifiers.intersection(SessionShortcut.comparedModifiers)
+        guard relevant == .command else { return nil }
+        switch keyCode {
+        case 115: return .first
+        case 119: return .last
+        case 116: return .pageUp
+        case 121: return .pageDown
+        default: return nil
+        }
+    }
+
+    static func dispatchEdgeShortcut(
+        keyCode: UInt16,
+        modifiers: NSEvent.ModifierFlags,
+        onFirst: (() -> Void)?,
+        onLast: (() -> Void)?,
+        onPage: ((SessionSelectionDirection) -> Void)?
+    ) -> Bool {
+        switch edgeAction(keyCode: keyCode, modifiers: modifiers) {
+        case .first:
+            onFirst?()
+        case .last:
+            onLast?()
+        case .pageUp:
+            onPage?(.previous)
+        case .pageDown:
+            onPage?(.next)
+        case nil:
+            return false
+        }
+        return true
+    }
+
     static func isHandoffShortcut(
         for char: Character,
         modifiers: NSEvent.ModifierFlags
@@ -211,8 +304,8 @@ final class JumpOverlayMonitor {
     }
 
     /// Maps a 1-based session index to its jump key label.
-    /// 1 → "0", 2–10 → "1"–"9", 11–33 → letters excluding L, N, and S,
-    /// 34–45 → "F1"–"F12".
+    /// 1 → "0", 2–10 → "1"–"9", 11–31 → letters excluding J, K, L, N, and S,
+    /// 32–43 → "F1"–"F12".
     static func jumpLabel(for oneBasedIndex: Int) -> String? {
         if oneBasedIndex >= 1, oneBasedIndex <= 10 {
             return String(oneBasedIndex - 1)
@@ -230,10 +323,11 @@ final class JumpOverlayMonitor {
     }
 
     /// Full chord for a session index as shown in menus and the command palette,
-    /// e.g. 1 → "⌘0", 11 → "⌘⇧A", 34 → "⌘F1".
+    /// e.g. 1 → "⌘0", 11 → "⌘⇧A", 32 → "⌘F1".
     static func shortcutDisplay(for oneBasedIndex: Int) -> String? {
         guard let label = jumpLabel(for: oneBasedIndex) else { return nil }
-        if oneBasedIndex <= 10 || oneBasedIndex >= 34 {
+        let firstFunctionIndex = 11 + sessionJumpLetters.count
+        if oneBasedIndex <= 10 || oneBasedIndex >= firstFunctionIndex {
             return "⌘\(label)"
         }
         return "⌘⇧\(label)"

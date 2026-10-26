@@ -151,6 +151,27 @@ struct BanyanApp: App {
                         Self.jumpOverlayMonitor.onSelectNeedingAttention = { [weak store] direction in
                             store?.selectSessionNeedingAttention(direction: direction)
                         }
+                        Self.jumpOverlayMonitor.onProject = { [weak store] direction in
+                            guard let store, store.sidebarMode == .sessions else { return }
+                            switch direction {
+                            case .next: store.selectNextProject()
+                            case .previous: store.selectPreviousProject()
+                            }
+                        }
+                        Self.jumpOverlayMonitor.onFirstSession = { [weak store] in
+                            guard let store, store.sidebarMode == .sessions else { return }
+                            store.selectFirstSession()
+                        }
+                        Self.jumpOverlayMonitor.onLastSession = { [weak store] in
+                            guard let store, store.sidebarMode == .sessions else { return }
+                            store.selectLastSession()
+                        }
+                        Self.jumpOverlayMonitor.onPage = { [weak store] direction in
+                            guard let store, store.sidebarMode == .sessions else { return }
+                            let pageSize = SessionJumpShortcuts
+                                .forWindow(NSApp.keyWindow)?.pageStride ?? 10
+                            store.selectSessionPage(direction: direction, pageSize: pageSize)
+                        }
                         Self.jumpOverlayMonitor.onHandoff = { [weak store] in
                             store?.handleHandoffShortcut()
                             return true
@@ -335,6 +356,54 @@ private struct BanyanCommands: Commands {
             }
             .keyboardShortcut(.upArrow, modifiers: [.command, .option])
             .disabled(!store.hasMultipleSidebarSessions)
+
+            Button("First Terminal") {
+                store.selectFirstSession()
+            }
+            .keyboardShortcut(.home, modifiers: .command)
+            .disabled(store.sidebarMode != .sessions || !store.hasMultipleSidebarSessions)
+
+            Button("Last Terminal") {
+                store.selectLastSession()
+            }
+            .keyboardShortcut(.end, modifiers: .command)
+            .disabled(store.sidebarMode != .sessions || !store.hasMultipleSidebarSessions)
+
+            Button("Previous Page of Terminals") {
+                store.selectSessionPage(
+                    direction: .previous,
+                    pageSize: sessionJumpShortcuts?.pageStride ?? 10
+                )
+            }
+            .keyboardShortcut(.pageUp, modifiers: .command)
+            .disabled(store.sidebarMode != .sessions || !store.hasMultipleSidebarSessions)
+
+            Button("Next Page of Terminals") {
+                store.selectSessionPage(
+                    direction: .next,
+                    pageSize: sessionJumpShortcuts?.pageStride ?? 10
+                )
+            }
+            .keyboardShortcut(.pageDown, modifiers: .command)
+            .disabled(store.sidebarMode != .sessions || !store.hasMultipleSidebarSessions)
+
+            Button("Next Project") {
+                store.selectNextProject()
+            }
+            .keyboardShortcut(
+                SessionProjectShortcuts.next.keyEquivalent,
+                modifiers: SessionProjectShortcuts.next.eventModifiers
+            )
+            .disabled(store.sidebarMode != .sessions || store.sessionSidebarGroups.count < 2)
+
+            Button("Previous Project") {
+                store.selectPreviousProject()
+            }
+            .keyboardShortcut(
+                SessionProjectShortcuts.previous.keyEquivalent,
+                modifiers: SessionProjectShortcuts.previous.eventModifiers
+            )
+            .disabled(store.sidebarMode != .sessions || store.sessionSidebarGroups.count < 2)
 
             Button("Next Workable Terminal") {
                 store.selectNextWorkableSession()

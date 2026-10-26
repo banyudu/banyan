@@ -27,13 +27,13 @@ The first screen is the working surface:
 
 The macOS sidebar assigns shortcuts to the sessions currently visible, starting
 at the top: `Cmd+0` through `Cmd+9`, then `Cmd+Shift+A` through `Cmd+Shift+Z`
-(except L, N and S, which are reserved), then `Cmd+F1` through `Cmd+F12`.
+(except J, K, L, N and S, which are reserved), then `Cmd+F1` through `Cmd+F12`.
 Scrolling reuses these keys for the rows brought into view. Assignments stay
 fixed while Command is held, and the Terminal menu and command palette show
 the same shortcuts as the sidebar.
 
 Visible-row rolling is enabled by default. To restore shortcuts based on the
-full sidebar order (the first 45 sessions), add this top-level setting to
+full sidebar order (the first 43 sessions), add this top-level setting to
 `~/.banyan/config.yml`:
 
 ```yaml
@@ -42,6 +42,18 @@ visible_row_shortcuts: false
 
 Config edits apply without restarting Banyan. Remove the setting or set it to
 `true` to enable rolling again. Use `Cmd+P` to search for an offscreen session.
+
+### Session navigation
+
+- `Cmd+J` / `Cmd+K` move to the next and previous session.
+- `Cmd+Shift+J` / `Cmd+Shift+K` move to the next and previous project,
+  selecting that project's top session.
+- `Cmd+Home` / `Cmd+End` jump to the first and last session.
+- `Cmd+PageUp` / `Cmd+PageDown` move by one screenful of visible session rows.
+
+Adjacent and project navigation wrap around the sidebar. First/last and paging
+stop at the ends instead. Plain `PageUp` / `PageDown` remain terminal scrollback
+commands, so the session chords keep `Command` held.
 
 ### Linear keyboard navigation
 

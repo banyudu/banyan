@@ -73,11 +73,17 @@ final class SessionJumpShortcuts: ObservableObject {
         index(for: sessionID).flatMap(JumpOverlayMonitor.shortcutDisplay)
     }
 
+    /// One viewport of session rows. Paging uses this so the target lands in
+    /// the next screenful rather than at a fixed, arbitrary row count.
+    var pageStride: Int {
+        max(1, visibleSessionIDs.count)
+    }
+
     private func refresh() {
         guard !commandHeld else { return }
         let available = Set(allSessionIDs)
         let candidates = rollingEnabled ? visibleSessionIDs.filter { available.contains($0) } : allSessionIDs
-        let updated = Array(candidates.prefix(45))
+        let updated = Array(candidates.prefix(JumpOverlayMonitor.maxSessionSlots))
         if updated != sessionIDs { sessionIDs = updated }
     }
 }

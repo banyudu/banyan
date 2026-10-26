@@ -12,19 +12,19 @@ import Testing
 @Test func jumpIndexMapsAllLetters() {
     #expect(JumpOverlayMonitor.jumpIndex(for: "a") == 11)
     #expect(JumpOverlayMonitor.jumpIndex(for: "b") == 12)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "j") == 20)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "k") == 21)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "j") == nil)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "k") == nil)
     #expect(JumpOverlayMonitor.jumpIndex(for: "l") == nil)
     #expect(JumpOverlayMonitor.jumpIndex(for: "n") == nil)
     #expect(JumpOverlayMonitor.jumpIndex(for: "s") == nil)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "m") == 22)
-    #expect(JumpOverlayMonitor.jumpIndex(for: "z") == 33)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "m") == 20)
+    #expect(JumpOverlayMonitor.jumpIndex(for: "z") == 31)
 }
 
 @Test func jumpIndexMapsFunctionKeysAfterLetters() {
-    #expect(JumpOverlayMonitor.jumpIndex(for: fKey(1)) == 34)
-    #expect(JumpOverlayMonitor.jumpIndex(for: fKey(5)) == 38)
-    #expect(JumpOverlayMonitor.jumpIndex(for: fKey(12)) == 45)
+    #expect(JumpOverlayMonitor.jumpIndex(for: fKey(1)) == 32)
+    #expect(JumpOverlayMonitor.jumpIndex(for: fKey(5)) == 36)
+    #expect(JumpOverlayMonitor.jumpIndex(for: fKey(12)) == 43)
 }
 
 @Test func jumpIndexRejectsInvalidCharacters() {
@@ -38,21 +38,20 @@ import Testing
     #expect(JumpOverlayMonitor.jumpLabel(for: 9) == "8")
     #expect(JumpOverlayMonitor.jumpLabel(for: 10) == "9")
     #expect(JumpOverlayMonitor.jumpLabel(for: 11) == "A")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 20) == "J")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 21) == "K")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 22) == "M")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 33) == "Z")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 34) == "F1")
-    #expect(JumpOverlayMonitor.jumpLabel(for: 45) == "F12")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 20) == "M")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 21) == "O")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 31) == "Z")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 32) == "F1")
+    #expect(JumpOverlayMonitor.jumpLabel(for: 43) == "F12")
 }
 
 @Test func jumpLabelReturnsNilForOutOfRange() {
     #expect(JumpOverlayMonitor.jumpLabel(for: 0) == nil)
-    #expect(JumpOverlayMonitor.jumpLabel(for: 46) == nil)
+    #expect(JumpOverlayMonitor.jumpLabel(for: 44) == nil)
 }
 
 @Test func jumpIndexAndLabelAreInverses() {
-    for index in 1...45 {
+    for index in 1...JumpOverlayMonitor.maxSessionSlots {
         guard let label = JumpOverlayMonitor.jumpLabel(for: index) else {
             Issue.record("No label for index \(index)")
             continue
@@ -66,10 +65,10 @@ import Testing
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 10) == "⌘9")
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 11) == "⌘⇧A")
     #expect(JumpOverlayMonitor.shortcutDisplay(for: 16) == "⌘⇧F")
-    #expect(JumpOverlayMonitor.shortcutDisplay(for: 33) == "⌘⇧Z")
-    #expect(JumpOverlayMonitor.shortcutDisplay(for: 34) == "⌘F1")
-    #expect(JumpOverlayMonitor.shortcutDisplay(for: 45) == "⌘F12")
-    #expect(JumpOverlayMonitor.shortcutDisplay(for: 46) == nil)
+    #expect(JumpOverlayMonitor.shortcutDisplay(for: 31) == "⌘⇧Z")
+    #expect(JumpOverlayMonitor.shortcutDisplay(for: 32) == "⌘F1")
+    #expect(JumpOverlayMonitor.shortcutDisplay(for: 43) == "⌘F12")
+    #expect(JumpOverlayMonitor.shortcutDisplay(for: 44) == nil)
 }
 
 @Test func visibleJumpShortcutsActivateWithoutOverlayState() {
@@ -81,8 +80,8 @@ import Testing
 }
 
 @Test func functionKeyShortcutsRequirePlainCommand() {
-    #expect(JumpOverlayMonitor.shortcutIndex(for: fKey(1), modifiers: .command) == 34)
-    #expect(JumpOverlayMonitor.shortcutIndex(for: fKey(12), modifiers: .command) == 45)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: fKey(1), modifiers: .command) == 32)
+    #expect(JumpOverlayMonitor.shortcutIndex(for: fKey(12), modifiers: .command) == 43)
     #expect(JumpOverlayMonitor.shortcutIndex(for: fKey(1), modifiers: [.command, .shift]) == nil)
     #expect(JumpOverlayMonitor.shortcutIndex(for: fKey(1), modifiers: []) == nil)
 }
@@ -98,7 +97,7 @@ import Testing
         }
     )
 
-    #expect(requestedIndex == 45)
+    #expect(requestedIndex == 43)
     #expect(consumed)
     #expect(JumpOverlayMonitor.dispatchJumpShortcut(
         for: fKey(1),
@@ -161,7 +160,7 @@ private func jumpKeyCharacter(forLabel label: String) -> Character {
 }
 
 @Test func attentionShortcutsDoNotCollideWithJumpOrHandoffChords() {
-    // ⌘⇧J/⌘⇧K belong to the slot-jump range, ⌘⌥⇧H to handoff; ⌘⌥J/⌘⌥K must
+    // ⌘⇧J/⌘⇧K belong to project navigation, ⌘⌥⇧H to handoff; ⌘⌥J/⌘⌥K must
     // stay out of both so no chord is handled twice.
     #expect(JumpOverlayMonitor.shortcutIndex(for: "j", modifiers: [.command, .option]) == nil)
     #expect(JumpOverlayMonitor.shortcutIndex(for: "k", modifiers: [.command, .option]) == nil)
@@ -206,5 +205,98 @@ private func jumpKeyCharacter(forLabel label: String) -> Character {
         for: "j",
         modifiers: .command,
         onSelect: nil
+    ))
+}
+
+@Test func projectShortcutsUseCommandShiftJAndK() {
+    #expect(SessionProjectShortcuts.next.display == "⌘⇧J")
+    #expect(SessionProjectShortcuts.previous.display == "⌘⇧K")
+    #expect(SessionProjectShortcuts.direction(for: "j", modifiers: [.command, .shift]) == .next)
+    #expect(SessionProjectShortcuts.direction(for: "K", modifiers: [.command, .shift]) == .previous)
+    #expect(SessionProjectShortcuts.direction(for: "j", modifiers: .command) == nil)
+    #expect(SessionProjectShortcuts.direction(for: "j", modifiers: [.command, .option, .shift]) == nil)
+}
+
+@Test func projectShortcutDispatchForwardsDirectionAndIsConsumedWithoutAHandler() {
+    var directions: [SessionSelectionDirection] = []
+    #expect(JumpOverlayMonitor.dispatchProjectShortcut(
+        for: "j",
+        modifiers: [.command, .shift],
+        onProject: { directions.append($0) }
+    ))
+    #expect(JumpOverlayMonitor.dispatchProjectShortcut(
+        for: "k",
+        modifiers: [.command, .shift],
+        onProject: { directions.append($0) }
+    ))
+    #expect(directions == [.next, .previous])
+
+    #expect(JumpOverlayMonitor.dispatchProjectShortcut(
+        for: "j",
+        modifiers: [.command, .shift],
+        onProject: nil
+    ))
+    #expect(!JumpOverlayMonitor.dispatchProjectShortcut(
+        for: "j",
+        modifiers: .command,
+        onProject: nil
+    ))
+}
+
+@Test func edgeShortcutsUseCommandHomeEndAndPageKeys() {
+    #expect(JumpOverlayMonitor.edgeAction(keyCode: 115, modifiers: .command) == .first)
+    #expect(JumpOverlayMonitor.edgeAction(keyCode: 119, modifiers: .command) == .last)
+    #expect(JumpOverlayMonitor.edgeAction(keyCode: 116, modifiers: .command) == .pageUp)
+    #expect(JumpOverlayMonitor.edgeAction(keyCode: 121, modifiers: .command) == .pageDown)
+    #expect(JumpOverlayMonitor.edgeAction(keyCode: 115, modifiers: [.command, .option]) == nil)
+    #expect(JumpOverlayMonitor.edgeAction(keyCode: 116, modifiers: []) == nil)
+    #expect(JumpOverlayMonitor.edgeAction(keyCode: 36, modifiers: .command) == nil)
+}
+
+@Test func edgeShortcutDispatchForwardsActionsAndIsConsumedWithoutHandlers() {
+    var actions: [String] = []
+    #expect(JumpOverlayMonitor.dispatchEdgeShortcut(
+        keyCode: 115,
+        modifiers: .command,
+        onFirst: { actions.append("first") },
+        onLast: { actions.append("last") },
+        onPage: { actions.append($0 == .next ? "page-down" : "page-up") }
+    ))
+    #expect(JumpOverlayMonitor.dispatchEdgeShortcut(
+        keyCode: 119,
+        modifiers: .command,
+        onFirst: { actions.append("first") },
+        onLast: { actions.append("last") },
+        onPage: { actions.append($0 == .next ? "page-down" : "page-up") }
+    ))
+    #expect(JumpOverlayMonitor.dispatchEdgeShortcut(
+        keyCode: 116,
+        modifiers: .command,
+        onFirst: { actions.append("first") },
+        onLast: { actions.append("last") },
+        onPage: { actions.append($0 == .next ? "page-down" : "page-up") }
+    ))
+    #expect(JumpOverlayMonitor.dispatchEdgeShortcut(
+        keyCode: 121,
+        modifiers: .command,
+        onFirst: { actions.append("first") },
+        onLast: { actions.append("last") },
+        onPage: { actions.append($0 == .next ? "page-down" : "page-up") }
+    ))
+    #expect(actions == ["first", "last", "page-up", "page-down"])
+
+    #expect(JumpOverlayMonitor.dispatchEdgeShortcut(
+        keyCode: 115,
+        modifiers: .command,
+        onFirst: nil,
+        onLast: nil,
+        onPage: nil
+    ))
+    #expect(!JumpOverlayMonitor.dispatchEdgeShortcut(
+        keyCode: 36,
+        modifiers: .command,
+        onFirst: nil,
+        onLast: nil,
+        onPage: nil
     ))
 }

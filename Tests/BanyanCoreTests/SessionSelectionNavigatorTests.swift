@@ -33,6 +33,77 @@ import Testing
     #expect(SessionSelectionNavigator.directID(in: ids, oneBasedIndex: 4) == nil)
 }
 
+@Test func pagedSelectionMovesByOneScreenfulAndClampsAtTheEnds() {
+    let ids = (0..<10).map(String.init)
+
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "0", direction: .next, pageSize: 4
+    ) == "4")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "4", direction: .next, pageSize: 4
+    ) == "8")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "8", direction: .next, pageSize: 4
+    ) == "9")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "9", direction: .next, pageSize: 4
+    ) == "9")
+}
+
+@Test func pagedSelectionMovesBackwardWithoutWrapping() {
+    let ids = (0..<10).map(String.init)
+
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "9", direction: .previous, pageSize: 4
+    ) == "5")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "5", direction: .previous, pageSize: 4
+    ) == "1")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "1", direction: .previous, pageSize: 4
+    ) == "0")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "0", direction: .previous, pageSize: 4
+    ) == "0")
+}
+
+@Test func pagedSelectionStartsFromTheCorrespondingEndWhenSelectionIsMissing() {
+    let ids = ["one", "two", "three"]
+
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: nil, direction: .next, pageSize: 2
+    ) == "one")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "missing", direction: .next, pageSize: 2
+    ) == "one")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: nil, direction: .previous, pageSize: 2
+    ) == "three")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "missing", direction: .previous, pageSize: 2
+    ) == "three")
+}
+
+@Test func pagedSelectionTreatsNonPositivePageSizesAsOneRow() {
+    let ids = ["one", "two", "three"]
+
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "one", direction: .next, pageSize: 0
+    ) == "two")
+    #expect(SessionSelectionNavigator.pagedID(
+        in: ids, selectedID: "two", direction: .previous, pageSize: -5
+    ) == "one")
+}
+
+@Test func pagedSelectionReturnsNilForEmptySessionList() {
+    #expect(SessionSelectionNavigator.pagedID(
+        in: [], selectedID: "one", direction: .next, pageSize: 5
+    ) == nil)
+    #expect(SessionSelectionNavigator.pagedID(
+        in: [], selectedID: "one", direction: .previous, pageSize: 5
+    ) == nil)
+}
+
 @Test func nextMatchingSelectionCyclesThroughMatches() {
     let ids = ["one", "two", "three", "four"]
     let matches: Set<String> = ["two", "four"]

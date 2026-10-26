@@ -4706,6 +4706,54 @@ final class SessionStore: ObservableObject {
         selectAdjacentSession(direction: .previous)
     }
 
+    func selectFirstSession() {
+        guard let id = sidebarSessions.first?.id else { return }
+        userSelect(id: id)
+    }
+
+    func selectLastSession() {
+        guard let id = sidebarSessions.last?.id else { return }
+        userSelect(id: id)
+    }
+
+    func selectSessionPage(direction: SessionSelectionDirection, pageSize: Int) {
+        guard let id = SessionSelectionNavigator.pagedID(
+            in: sidebarSessions.map(\.id),
+            selectedID: selection.selectedSessionID,
+            direction: direction,
+            pageSize: pageSize
+        ) else {
+            return
+        }
+        userSelect(id: id)
+    }
+
+    func selectNextProject() {
+        selectAdjacentProject(direction: .next)
+    }
+
+    func selectPreviousProject() {
+        selectAdjacentProject(direction: .previous)
+    }
+
+    /// Selects the top row of the next or previous project group. Groups wrap,
+    /// matching adjacent-session navigation; a selection outside every project
+    /// (for example one in History) enters from the corresponding end.
+    private func selectAdjacentProject(direction: SessionSelectionDirection) {
+        let groups = sessionSidebarGroups
+        let selectedGroupID = selection.selectedSessionID.flatMap { selectedID in
+            groups.first { group in group.items.contains { $0.id == selectedID } }?.id
+        }
+        guard let groupID = SessionSelectionNavigator.adjacentID(
+            in: groups.map(\.id),
+            selectedID: selectedGroupID,
+            direction: direction
+        ), let targetID = groups.first(where: { $0.id == groupID })?.items.first?.id else {
+            return
+        }
+        userSelect(id: targetID)
+    }
+
     func selectNextLinearIssue() {
         selectAdjacentLinearIssue(direction: .next)
     }
