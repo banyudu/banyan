@@ -1253,9 +1253,6 @@ struct ContentView: View {
                             jumpKeyLabel: ""
                         )
                     }
-                    .onMove { source, destination in
-                        store.moveSidebarSessions(in: group.id, from: source, to: destination)
-                    }
                 }
             }
             .listSectionSeparator(isStatic ? .visible : .hidden, edges: .top)
@@ -1372,6 +1369,10 @@ struct ContentView: View {
                 try? store.remove(id: item.session.id)
             },
             onChooseParent: { reparentSession = item.session },
+            moveOptions: item.moveOptions,
+            onMove: { command in
+                store.moveSidebarSession(item.session.id, command: command, in: groupID)
+            },
             onToggleSuspended: {
                 try? store.toggleSuspended(id: item.session.id)
             },
@@ -1407,10 +1408,22 @@ struct ContentView: View {
         .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
         .modifier(SidebarDragSortModifier(
             sessionID: item.session.id,
-            groupID: groupID,
             isEnabled: allowsDragSort,
             draggingSessionID: $draggingSidebarSessionID,
-            onMove: store.moveSidebarSession
+            canMove: { sourceID, targetID, zone in
+                store.canMoveSidebarSession(
+                    sourceID,
+                    command: zone.command(targetID: targetID),
+                    in: groupID
+                )
+            },
+            onMove: { sourceID, targetID, zone in
+                store.moveSidebarSession(
+                    sourceID,
+                    command: zone.command(targetID: targetID),
+                    in: groupID
+                )
+            }
         ))
     }
 
@@ -2013,14 +2026,28 @@ private final class WindowRestorationConfigurationView: NSView {
 
 private struct SidebarDragSortModifier: ViewModifier {
     let sessionID: String
-    let groupID: String
     let isEnabled: Bool
     @Binding var draggingSessionID: String?
-    let onMove: (String, String, String) -> Void
+    let canMove: (String, String, SidebarSessionDropZone) -> Bool
+    let onMove: (String, String, SidebarSessionDropZone) -> Void
+    @State private var rowHeight: CGFloat = 26
+    @State private var dropZone: SidebarSessionDropZone?
 
     func body(content: Content) -> some View {
         if isEnabled {
             content
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: SidebarRowHeightPreferenceKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                }
+                .onPreferenceChange(SidebarRowHeightPreferenceKey.self) { height in
+                    guard height > 0, abs(height - rowHeight) > 0.5 else { return }
+                    rowHeight = height
+                }
                 .opacity(draggingSessionID == sessionID ? 0.55 : 1)
                 .onDrag {
                     draggingSessionID = sessionID
@@ -2038,41 +2065,129 @@ private struct SidebarDragSortModifier: ViewModifier {
                     of: [SidebarSessionDrag.type],
                     delegate: SidebarSessionDropDelegate(
                         targetSessionID: sessionID,
-                        groupID: groupID,
+                        rowHeight: rowHeight,
                         draggingSessionID: $draggingSessionID,
+                        dropZone: $dropZone,
+                        canMove: canMove,
                         onMove: onMove
                     )
                 )
+                .overlay(alignment: .top) {
+                    if dropZone == .before {
+                        Rectangle()
+                            .fill(Color.accentColor)
+                            .frame(height: 2)
+                            .offset(y: -1)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if dropZone == .after {
+                        Rectangle()
+                            .fill(Color.accentColor)
+                            .frame(height: 2)
+                            .offset(y: 1)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .overlay {
+                    if dropZone == .child {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .strokeBorder(Color.accentColor, lineWidth: 1.5)
+                            .padding(.horizontal, 1)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .animation(.easeOut(duration: 0.08), value: dropZone)
         } else {
             content
         }
     }
 }
 
+private enum SidebarSessionDropZone: Equatable {
+    case before
+    case child
+    case after
+
+    func command(targetID: String) -> SessionSidebarMoveCommand {
+        switch self {
+        case .before: return .before(targetID)
+        case .child: return .child(targetID)
+        case .after: return .after(targetID)
+        }
+    }
+}
+
 private struct SidebarSessionDropDelegate: DropDelegate {
     let targetSessionID: String
-    let groupID: String
+    let rowHeight: CGFloat
     @Binding var draggingSessionID: String?
-    let onMove: (String, String, String) -> Void
+    @Binding var dropZone: SidebarSessionDropZone?
+    let canMove: (String, String, SidebarSessionDropZone) -> Bool
+    let onMove: (String, String, SidebarSessionDropZone) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
         draggingSessionID != nil && info.hasItemsConforming(to: [SidebarSessionDrag.type])
     }
 
     func dropEntered(info: DropInfo) {
-        guard let draggingSessionID, draggingSessionID != targetSessionID else { return }
-        onMove(draggingSessionID, targetSessionID, groupID)
+        guard let zone = resolvedZone(for: info) else {
+            dropZone = nil
+            return
+        }
+        dropZone = zone
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard let zone = resolvedZone(for: info) else {
+            dropZone = nil
+            return DropProposal(operation: .forbidden)
+        }
+        dropZone = zone
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        dropZone = nil
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard draggingSessionID != nil else { return false }
-        self.draggingSessionID = nil
+        guard let draggingSessionID else { return false }
+        defer {
+            self.draggingSessionID = nil
+            dropZone = nil
+        }
+        guard let zone = resolvedZone(for: info) else { return false }
+        onMove(draggingSessionID, targetSessionID, zone)
         return true
+    }
+
+    private func resolvedZone(for info: DropInfo) -> SidebarSessionDropZone? {
+        guard let draggingSessionID, draggingSessionID != targetSessionID else { return nil }
+        let zone = dropZone(at: info.location.y)
+        guard canMove(draggingSessionID, targetSessionID, zone) else { return nil }
+        return zone
+    }
+
+    private func dropZone(at y: CGFloat) -> SidebarSessionDropZone {
+        let edge = max(6, rowHeight * 0.28)
+        if y < edge { return .before }
+        if y > rowHeight - edge { return .after }
+        return .child
     }
 }
 
 private enum SidebarSessionDrag {
     static let type = UTType(exportedAs: "dev.banyudu.banyan.sidebar-session")
+}
+
+private struct SidebarRowHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }
 
 private struct PendingHandoffJobsView: View {
@@ -2632,6 +2747,8 @@ struct SessionRow: View, Equatable {
     let onCodexRemoteHandoff: () -> Void
     let onRemove: () -> Void
     let onChooseParent: () -> Void
+    var moveOptions: SessionSidebarMoveOptions = []
+    var onMove: (SessionSidebarMoveCommand) -> Void = { _ in }
     let onToggleSuspended: () -> Void
     let onSetFrozen: (Bool) -> Void
     let onSetDeepSuspended: (Bool) -> Void
@@ -2652,6 +2769,7 @@ struct SessionRow: View, Equatable {
             && lhs.jumpKeyLabel == rhs.jumpKeyLabel && lhs.workState === rhs.workState
             && lhs.jumpShortcuts === rhs.jumpShortcuts
             && lhs.isHandoffAvailable == rhs.isHandoffAvailable && lhs.isHandoffPending == rhs.isHandoffPending
+            && lhs.moveOptions == rhs.moveOptions
     }
 
     @State private var isRenaming = false
@@ -2910,9 +3028,21 @@ struct SessionRow: View, Equatable {
                 }
             }
             if !session.isImportedHistory && session.status != .closed {
+                Divider()
+                Button("Move Up") { onMove(.up) }
+                    .disabled(!moveOptions.contains(.up))
+                Button("Move Down") { onMove(.down) }
+                    .disabled(!moveOptions.contains(.down))
+                Button("Indent Under Previous Sibling") { onMove(.indent) }
+                    .disabled(!moveOptions.contains(.indent))
+                Button("Move Out One Level") { onMove(.outdent) }
+                    .disabled(!moveOptions.contains(.outdent))
+                Button("Move to Top Level") { onMove(.topLevel) }
+                    .disabled(!moveOptions.contains(.topLevel))
                 // SwiftUI builds context-menu content during ordinary row updates.
                 // Resolve the project hierarchy only when the user opens the picker.
                 Button("Move to…", action: onChooseParent)
+                Divider()
                 if session is TerminalSession {
                     if session.agentProvider == .codex {
                         Button("Continue in ChatGPT Remote…", action: onCodexRemoteHandoff)

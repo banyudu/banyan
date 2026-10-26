@@ -612,14 +612,21 @@ swift run banyanctl suggest --title "TASK-123 is stale" --target TASK-123 --comm
 
 To move an existing session, use `reparent --id CHILD --parent PARENT`, or
 `reparent --id CHILD --no-parent` to move it to the root. In the sidebar,
-right-click an active session and choose **Move to**. The target menu follows
-the active hierarchy, including collapsed and hidden targets in the same project
-group. The session keeps its children, ID, process, metadata and manual sort
-position; only its parent relationship changes, and it survives app relaunch.
-Existing collapse and child visibility rules still apply at the destination.
-Self-parenting, cycles, missing/closed sessions and moves across project groups
-are rejected before any state is changed. The CLI requires an explicit target
-and does not inherit a parent from the environment.
+right-click an active session to use **Move Up**, **Move Down**, **Indent Under
+Previous Sibling**, **Move Out One Level**, **Move to Top Level**, or **Move
+to…**. The commands preserve the session's subtree, and **Move to…** lists the
+active hierarchy, including collapsed and hidden targets in the same project
+group.
+
+You can also drag a session row. Drop on the top or bottom edge to place its
+subtree before or after the target at the target's level; drop on the center to
+make it the target's last child. A collapsed target expands to reveal the moved
+session. Reordering switches the sidebar to manual sort.
+
+Within the same project group, moves keep the session's ID, process, metadata,
+and children. Self-parenting, cycles, missing or closed targets, and moves
+across project groups are rejected before any state is changed. The CLI
+requires an explicit target and does not inherit a parent from the environment.
 
 HTTP clients use authenticated `POST /reparent` with a JSON body:
 

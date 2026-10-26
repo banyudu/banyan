@@ -11,6 +11,7 @@ struct SidebarSessionItem: Identifiable {
     let isParent: Bool
     let isCollapsed: Bool
     let hiddenChildCount: Int
+    let moveOptions: SessionSidebarMoveOptions
 
     init(
         session: BanyanSession,
@@ -19,7 +20,8 @@ struct SidebarSessionItem: Identifiable {
         isHistory: Bool = false,
         isParent: Bool = false,
         isCollapsed: Bool = false,
-        hiddenChildCount: Int = 0
+        hiddenChildCount: Int = 0,
+        moveOptions: SessionSidebarMoveOptions = []
     ) {
         self.session = session
         self.depth = depth
@@ -28,6 +30,7 @@ struct SidebarSessionItem: Identifiable {
         self.isParent = isParent
         self.isCollapsed = isCollapsed
         self.hiddenChildCount = hiddenChildCount
+        self.moveOptions = moveOptions
     }
 
     var id: String {
@@ -39,6 +42,19 @@ struct SidebarSessionGroup: Identifiable {
     let id: String
     let title: String
     let items: [SidebarSessionItem]
+    let moveItems: [SessionSelectionItem]
+
+    init(
+        id: String,
+        title: String,
+        items: [SidebarSessionItem],
+        moveItems: [SessionSelectionItem] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.items = items
+        self.moveItems = moveItems
+    }
 }
 
 enum SidebarMode: String, CaseIterable, Identifiable {
@@ -885,6 +901,11 @@ final class SessionStore: ObservableObject {
         ).subtracting(expandedParentIDs)
         let result = SessionSidebarGroupingPolicy.groups(for: candidates).map { group in
             let rowIDs = Set(group.rows.map(\.id))
+            let moveItems = group.rows.compactMap { row -> SessionSelectionItem? in
+                guard let session = sessionsByID[row.id] else { return nil }
+                return SessionSelectionItem(id: session.id, parentSessionID: session.parentSessionID)
+            }
+            let moveOptionsByID = SessionSidebarMovePolicy.optionsByID(in: moveItems)
             let parentsInGroup = Set(
                 group.rows.compactMap { visibilityByID[$0.id]?.parentSessionID }
                     .filter { rowIDs.contains($0) }
@@ -906,9 +927,11 @@ final class SessionStore: ObservableObject {
                         depth: row.depth,
                         isParent: parentsInGroup.contains(row.id),
                         isCollapsed: effectiveCollapsed.contains(row.id),
-                        hiddenChildCount: hiddenCounts[row.id] ?? 0
+                        hiddenChildCount: hiddenCounts[row.id] ?? 0,
+                        moveOptions: moveOptionsByID[row.id] ?? []
                     )
-                }
+                },
+                moveItems: moveItems
             )
         }
         cachedSessionSidebarGroupsRevision = sidebarGroupsRevision
@@ -4643,24 +4666,6 @@ final class SessionStore: ObservableObject {
         return collapsedParentIDs.union(auto).subtracting(expandedParentIDs)
     }
 
-    func moveSidebarSessions(in groupID: String, from sourceOffsets: IndexSet, to destinationOffset: Int) {
-        let groups = sessionSidebarGroups
-        guard let group = groups.first(where: { $0.id == groupID }) else { return }
-
-        let activeSidebarIDs = groups.flatMap { $0.items.map(\.id) }
-        let groupSessionIDs = group.items.map(\.id)
-        guard let reorderedIDs = SessionSidebarOrdering.reorderedIDs(
-            activeIDs: activeSidebarIDs,
-            groupIDs: groupSessionIDs,
-            sourceOffsets: sourceOffsets,
-            destinationOffset: destinationOffset
-        ), reorderedIDs != activeSidebarIDs else {
-            return
-        }
-
-        applySidebarSessionOrder(activeSidebarIDs: activeSidebarIDs, reorderedIDs: reorderedIDs)
-    }
-
     private func applySidebarSessionOrder(activeSidebarIDs: [String], reorderedIDs: [String]) {
         let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
         let reorderedSidebarSessions = reorderedIDs.compactMap { sessionsByID[$0] }
@@ -4680,22 +4685,85 @@ final class SessionStore: ObservableObject {
         saveSessions()
     }
 
-    func moveSidebarSession(_ sourceID: String, to targetID: String, in groupID: String) {
-        let groups = sessionSidebarGroups
-        guard let group = groups.first(where: { $0.id == groupID }) else { return }
-
-        let groupSessionIDs = group.items.map(\.id)
-        let activeSidebarIDs = groups.flatMap { $0.items.map(\.id) }
-        guard let reorderedIDs = SessionSidebarOrdering.reorderedIDs(
-            activeIDs: activeSidebarIDs,
-            groupIDs: groupSessionIDs,
-            sourceID: sourceID,
-            targetID: targetID
-        ), reorderedIDs != activeSidebarIDs else {
+    /// Applies one hierarchy or sibling-order change. Context-menu commands and
+    /// drag/drop both route through this method after resolving a target zone.
+    func moveSidebarSession(
+        _ sourceID: String,
+        command: SessionSidebarMoveCommand,
+        in groupID: String
+    ) {
+        guard let group = sidebarMoveGroup(for: groupID),
+              let result = SessionSidebarMovePolicy.move(
+                sourceID: sourceID,
+                command: command,
+                in: group.moveItems
+              ),
+              let session = sessions.first(where: { $0.id == sourceID }),
+              isValidSidebarMoveParent(for: sourceID, parentID: result.parentSessionID) else {
             return
         }
 
-        applySidebarSessionOrder(activeSidebarIDs: activeSidebarIDs, reorderedIDs: reorderedIDs)
+        let currentIDs = group.moveItems.map(\.id)
+        let parentChanged = session.parentSessionID != result.parentSessionID
+        let orderChanged = result.orderedIDs != currentIDs
+        guard parentChanged || orderChanged else { return }
+
+        if parentChanged {
+            session.parentSessionID = result.parentSessionID
+            if let parentID = result.parentSessionID {
+                // A drop onto or an indent under a collapsed parent should reveal
+                // the moved session immediately rather than hiding the result.
+                collapsedParentIDs.remove(parentID)
+                expandedParentIDs.insert(parentID)
+            }
+        }
+        if orderChanged {
+            applySidebarSessionOrder(
+                activeSidebarIDs: currentIDs,
+                reorderedIDs: result.orderedIDs
+            )
+        } else {
+            sidebarGroupsRevision &+= 1
+            sortMode = .manual
+            objectWillChange.send()
+            saveSessions()
+        }
+    }
+
+    func canMoveSidebarSession(
+        _ sourceID: String,
+        command: SessionSidebarMoveCommand,
+        in groupID: String
+    ) -> Bool {
+        guard let group = sidebarMoveGroup(for: groupID),
+              let result = SessionSidebarMovePolicy.move(
+                sourceID: sourceID,
+                command: command,
+                in: group.moveItems
+              ),
+              let session = sessions.first(where: { $0.id == sourceID }),
+              isValidSidebarMoveParent(for: sourceID, parentID: result.parentSessionID) else {
+            return false
+        }
+        return session.parentSessionID != result.parentSessionID ||
+            group.moveItems.map(\.id) != result.orderedIDs
+    }
+
+    private func sidebarMoveGroup(for groupID: String) -> SidebarSessionGroup? {
+        sessionSidebarGroups.first { $0.id == groupID }
+    }
+
+    private func isValidSidebarMoveParent(for sourceID: String, parentID: String?) -> Bool {
+        do {
+            _ = try SessionRelationshipPolicy.validatedParentID(
+                for: sourceID,
+                proposedParentID: parentID,
+                in: reparentingItems
+            )
+            return true
+        } catch {
+            return false
+        }
     }
 
     func selectNextSession() {
