@@ -16,6 +16,40 @@ public enum AgentSessionHistory {
         return parsed.tokens
     }
 
+    /// Extract only unambiguous literal resume invocations. Shell pipelines and
+    /// unknown options are left unbound rather than guessing at their meaning.
+    public static func explicitResumeIdentity(in command: String) -> (provider: CodingAgentProvider, sourceID: String)? {
+        // Banyan's app-server launch has a fixed daemon prelude. Parse only
+        // its literal TUI invocation, never an arbitrary shell command.
+        let appServerPrefix = "'codex' 'remote-control' 'start' && exec "
+        let invocation = command.hasPrefix(appServerPrefix) ? String(command.dropFirst(appServerPrefix.count)) : command
+        guard let args = literalArguments(invocation), let executable = args.first else { return nil }
+        let name = (executable as NSString).lastPathComponent
+        if name == "claude" || name == "opencode" {
+            let flags = name == "claude" ? ["--resume", "-r"] : ["--session", "-s"]
+            // Only bind the leading resume flag. A later flag-like word could
+            // be a prompt or another option's value.
+            guard args.count >= 3, flags.contains(args[1]),
+                  !args[2].isEmpty, !args[2].hasPrefix("-") else { return nil }
+            return (name == "claude" ? .claude : .opencode, args[2])
+        }
+        guard name == "codex" else { return nil }
+        var index = 1
+        let valueOptions: Set<String> = ["-C", "--cd", "-p", "--profile", "-m", "--model", "-c", "--config", "-s", "--sandbox", "-a", "--ask-for-approval", "--remote"]
+        let switchOptions: Set<String> = ["--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--search", "--oss", "--all"]
+        var sawResume = false
+        while index < args.count {
+            let arg = args[index]
+            if !sawResume && arg == "resume" { sawResume = true; index += 1; continue }
+            if valueOptions.contains(arg) { index += 2; continue }
+            if switchOptions.contains(arg) { index += 1; continue }
+            if arg.hasPrefix("-") { return nil }
+            guard sawResume, !arg.isEmpty else { return nil }
+            return (.codex, arg)
+        }
+        return nil
+    }
+
     public static func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? {
         let prefix = "history-\(provider.rawValue)-"
         guard id.hasPrefix(prefix) else { return nil }

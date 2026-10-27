@@ -77,3 +77,37 @@ private func imported(
     #expect(result.count == 1)
     #expect(result.values.first?.id == "only")
 }
+
+@Test func matcherReservesBoundIdentityAndDiscoversUnboundSession() {
+    let now = Date()
+    let a = imported(id: "a", createdAt: now.addingTimeInterval(-86_400))
+    let b = imported(id: "b", createdAt: now.addingTimeInterval(-16))
+    let sessions = [
+        AgentSessionMatchInput(id: "bound", cwd: "/tmp/banyan", createdAt: now, resetAt: nil, provider: .codex, sourceID: "a"),
+        AgentSessionMatchInput(id: "fresh", cwd: "/tmp/banyan", createdAt: now, resetAt: nil, provider: .codex)
+    ]
+    let matches = AgentSessionMatcher.bestPromptTitleAssignments(for: sessions, in: [a, b])
+    #expect(matches["bound"]?.sourceID == "a")
+    #expect(matches["fresh"]?.sourceID == "b")
+    #expect(AgentSessionMatcher.bestPromptTitleAssignments(for: sessions, in: [b])["bound"] == nil)
+}
+
+@Test func explicitResumeIdentityParsesLiteralSupportedCommands() {
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "codex -p work resume -C '/tmp/project' thread-a")?.sourceID == "thread-a")
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "'claude' '--resume' 'thread-a'")?.provider == .claude)
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "opencode --session thread-a")?.provider == .opencode)
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: CodexAppServerLaunch.resumeCommand(sourceID: "thread-a", cwd: "/tmp"))?.sourceID == "thread-a")
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "codex resume --last") == nil)
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "echo codex resume thread-a") == nil)
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "claude -p --resume thread-a") == nil)
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "codex resume $THREAD") == nil)
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "codex resume --unknown value") == nil)
+}
+
+@Test func matcherKeepsProviderAndDirectoryIsolationForUnboundSessions() {
+    let now = Date()
+    let input = AgentSessionMatchInput(id: "fresh", cwd: "/tmp/banyan", createdAt: now, resetAt: nil, provider: .codex)
+    let wrongProvider = imported(id: "claude", provider: .claude, createdAt: now)
+    let wrongDirectory = imported(id: "other", cwd: "/tmp/other", createdAt: now)
+    #expect(AgentSessionMatcher.bestPromptTitleAssignments(for: [input], in: [wrongProvider, wrongDirectory]).isEmpty)
+}

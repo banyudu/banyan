@@ -48,6 +48,7 @@ extension BanyanSession {
     func noteUserSubmittedInput(_ submittedInput: String? = nil) {
         if SessionInputPolicy.isConversationResetCommand(submittedInput), agentProvider != nil {
             lastConversationResetAt = Date()
+            agentSessionID = nil
             if !hasUsefulPinnedTitle {
                 reportedTitle = nil
                 generatedTitle = nil
