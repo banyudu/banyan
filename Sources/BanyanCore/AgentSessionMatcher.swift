@@ -6,19 +6,22 @@ public struct AgentSessionMatchInput: Equatable, Sendable {
     public let createdAt: Date
     public let resetAt: Date?
     public let provider: CodingAgentProvider?
+    public let sourceID: String?
 
     public init(
         id: String,
         cwd: String,
         createdAt: Date,
         resetAt: Date?,
-        provider: CodingAgentProvider?
+        provider: CodingAgentProvider?,
+        sourceID: String? = nil
     ) {
         self.id = id
         self.cwd = cwd
         self.createdAt = createdAt
         self.resetAt = resetAt
         self.provider = provider
+        self.sourceID = sourceID
     }
 }
 
@@ -120,8 +123,13 @@ public enum AgentSessionMatcher {
             let score: TimeInterval
         }
 
-        let optionsBySessionID = Dictionary(uniqueKeysWithValues: sessions.map { session in
-            let options = promptTitleMatchCandidates(for: session, in: candidates).map { candidate in
+        let boundCandidates = candidates.filter { candidate in
+            sessions.contains { $0.sourceID == candidate.sourceID && providersMatch(sessionProvider: $0.provider, candidateProvider: candidate.provider) }
+        }
+        let boundIDs = Set(boundCandidates.map(\.id))
+        let unboundSessions = sessions.filter { $0.sourceID == nil }
+        let optionsBySessionID = Dictionary(uniqueKeysWithValues: unboundSessions.map { session in
+            let options = promptTitleMatchCandidates(for: session, in: candidates.filter { !boundIDs.contains($0.id) }).map { candidate in
                 Pair(
                     candidate: candidate,
                     score: promptTitleMatchScore(session: session, candidate: candidate)
@@ -135,7 +143,7 @@ public enum AgentSessionMatcher {
             return (session.id, options)
         })
         let candidateByID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0) })
-        let orderedSessionIDs = sessions
+        let orderedSessionIDs = unboundSessions
             .filter { optionsBySessionID[$0.id]?.isEmpty == false }
             .sorted {
                 let lhsCount = optionsBySessionID[$0.id]?.count ?? 0
@@ -173,6 +181,11 @@ public enum AgentSessionMatcher {
         }
 
         var result: [String: ImportedAgentSession] = [:]
+        for session in sessions where session.sourceID != nil {
+            result[session.id] = candidates.first {
+                $0.sourceID == session.sourceID && providersMatch(sessionProvider: session.provider, candidateProvider: $0.provider)
+            }
+        }
         for (candidateID, sessionID) in sessionIDByCandidateID {
             if let candidate = candidateByID[candidateID] {
                 result[sessionID] = candidate

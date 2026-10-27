@@ -3015,6 +3015,7 @@ final class SessionStore: ObservableObject {
             command: plan.command,
             tone: tone,
             parentSessionID: plan.parentSessionID,
+            agentSessionID: proposedCommand.flatMap { AgentSessionHistory.explicitResumeIdentity(in: $0)?.sourceID },
             theme: terminalTheme,
             fontFamily: terminalFontFamily,
             fontSize: terminalFontSize,
@@ -3209,6 +3210,7 @@ final class SessionStore: ObservableObject {
             return
         }
         let cwd = session.cwd
+        let resetAt = session.lastConversationResetAt
         let historyBackend = historyBackend
         Task.detached(priority: .userInitiated) {
             let plan = SessionResumePolicy.plan(
@@ -3222,8 +3224,10 @@ final class SessionStore: ObservableObject {
             )
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                guard let plan,
-                      let session = self.sessions.first(where: { $0.id == id }) as? TerminalSession else {
+                guard let session = self.sessions.first(where: { $0.id == id }) as? TerminalSession,
+                      session.agentSessionID == sourceID, session.lastConversationResetAt == resetAt,
+                      session.status == .closed else { return }
+                guard let plan else {
                     try? self.respawn(id: id)
                     return
                 }
@@ -3373,6 +3377,7 @@ final class SessionStore: ObservableObject {
                       session.status == .closed else {
                     return
                 }
+                guard session.agentSessionID == nil, session.lastConversationResetAt == resetAt else { return }
                 if let match {
                     if !(match.provider.isOpencodeBacked && session.agentProvider?.isOpencodeBacked == true) {
                         session.markDetectedAgentProvider(match.provider)
@@ -5624,7 +5629,7 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    private func refreshLiveAgentTitles(from imported: [ImportedAgentSession]) {
+    func refreshLiveAgentTitles(from imported: [ImportedAgentSession]) {
         let candidates = imported.filter {
             [.claude, .codex].contains($0.provider) || $0.provider.isOpencodeBacked
         }
@@ -5643,7 +5648,8 @@ final class SessionStore: ObservableObject {
                 cwd: $0.cwd,
                 createdAt: $0.createdAt,
                 resetAt: $0.lastConversationResetAt,
-                provider: $0.agentProvider
+                provider: $0.agentProvider,
+                sourceID: $0.agentSessionID
             )
         }
         let matchesBySessionID = AgentSessionMatcher.bestPromptTitleAssignments(
