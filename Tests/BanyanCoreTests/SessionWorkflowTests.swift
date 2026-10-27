@@ -39,7 +39,8 @@ import Testing
         #expect(try workflow.shouldDeliver(jobID: "job-a", revision: 4, wakeID: "wake-a"))
         #expect(throws: (any Error).self) { try workflow.shouldDeliver(jobID: "job-a", revision: 3, wakeID: "wake-a") }
         #expect(try journal.load(id: "legacy-session") == nil)
-        #expect(throws: (any Error).self) { try journal.save(workflow, id: "../escape") }
+        try journal.save(workflow, id: "../escape")
+        #expect(try journal.load(id: "../escape") == workflow)
     }
 
     @Test func busyHumanAndParkedSessionsRefuseWake() {

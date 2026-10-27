@@ -25,8 +25,9 @@ extension SessionStore {
             guard let binding = try coordinationJournal.bindings.load(id: parent), binding.state == .working else { return }
             try coordinationJournal.appendIntervention(id: session.id, text: text ?? "User submitted terminal input; inspect the original conversation.")
         } catch {
-            // A lost human intervention must prevent automated teardown.
-            session.workflowRecoveryError = "Coordination input could not be recorded: \(error.localizedDescription)"
+            // Keep a lost intervention fenced even if a later input succeeds.
+            // This hold belongs to the current parent, not the issue workflow.
+            session.coordinationRecoveryError = "Coordination input for session '\(session.id)' under parent '\(parent)' could not be recorded: \(error.localizedDescription)"
         }
     }
 
@@ -40,10 +41,12 @@ extension SessionStore {
                   try coordinationJournal.bindings.load(id: parent)?.jobID == body.groupID else {
                 throw WorkflowError.refused("child does not belong to this coordinator")
             }
-            return ["ok": true, "session": ["id": session.id, "parent": parent, "status": session.status.rawValue,
+            var observed: [String: Any] = ["id": session.id, "parent": parent, "status": session.status.rawValue,
                 "coordinationInterventions": try coordinationJournal.interventions(id: session.id).map {
                     ["id": $0.id, "at": $0.at, "text": $0.text]
-                }]]
+                }]
+            if let error = session.coordinationRecoveryError { observed["coordinationRecoveryError"] = error }
+            return ["ok": true, "session": observed]
         }
         if body.action == "helper" {
             guard let parent = body.parent, session.parentSessionID == parent,
@@ -164,6 +167,8 @@ extension SessionStore {
                   evidenceSession.workflow?.revision == revision, evidenceSession.workflow?.state == .verified,
                   evidenceSession.workflowRecoveryError == nil,
                   session.workflowRecoveryError == nil,
+                  evidenceSession.coordinationRecoveryError == nil,
+                  session.coordinationRecoveryError == nil,
                   try workflowJournal.load(id: evidenceSession.id) == evidenceSession.workflow,
                   try (workerID != nil && session.status == .closed) || (coordinationJournal.interventions(id: session.id).last?.id ?? "") == interventionID,
                   !sessions.contains(where: { $0.parentSessionID == session.id && $0.status != .closed }) else {

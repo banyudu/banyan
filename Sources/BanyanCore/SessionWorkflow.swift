@@ -86,25 +86,16 @@ public struct SessionWorkflowJournal: Sendable {
     public let directory: URL
     public init(directory: URL) { self.directory = directory }
 
-    private func url(_ id: String) throws -> URL {
-        guard !id.isEmpty, id.utf8.count <= 128,
-              id.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.").contains($0) }),
-              id != ".", id != ".." else { throw WorkflowError.refused("invalid workflow session ID") }
-        return directory.appendingPathComponent(id + ".json")
+    private var storage: SessionJournalStorage<SessionWorkflow> {
+        .init(directory: directory)
     }
 
     public func load(id: String) throws -> SessionWorkflow? {
-        let path = try url(id)
-        guard FileManager.default.fileExists(atPath: path.path) else { return nil }
-        return try JSONDecoder().decode(SessionWorkflow.self, from: Data(contentsOf: path))
+        try storage.load(id: id)
     }
 
     public func save(_ workflow: SessionWorkflow, id: String) throws {
-        let path = try url(id)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        try JSONEncoder().encode(workflow).write(to: path, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        try storage.save(workflow, id: id)
     }
 }
 

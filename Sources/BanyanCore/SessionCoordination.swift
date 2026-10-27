@@ -35,23 +35,15 @@ public struct SessionCoordinationJournal: Sendable {
     public init(directory: URL) { self.directory = directory }
     public var bindings: SessionWorkflowJournal { .init(directory: directory.appendingPathComponent("bindings")) }
 
-    private func inputURL(_ id: String) throws -> URL {
-        guard id.range(of: #"^[A-Za-z0-9_.-]{1,128}$"#, options: .regularExpression) != nil,
-              id != ".", id != ".." else { throw WorkflowError.refused("invalid coordination session ID") }
-        return directory.appendingPathComponent("inputs").appendingPathComponent(id + ".json")
+    private var inputs: SessionJournalStorage<[CoordinationIntervention]> {
+        .init(directory: directory.appendingPathComponent("inputs"))
     }
     public func interventions(id: String) throws -> [CoordinationIntervention] {
-        let url = try inputURL(id)
-        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
-        return try JSONDecoder().decode([CoordinationIntervention].self, from: Data(contentsOf: url))
+        try inputs.load(id: id) ?? []
     }
     public func appendIntervention(id: String, text: String) throws {
-        let url = try inputURL(id)
         var values = try interventions(id: id)
         values.append(.init(text: text))
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
-        try JSONEncoder().encode(values).write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try inputs.save(values, id: id)
     }
 }

@@ -30,7 +30,7 @@ extension SessionStore {
     }
 
     var verifiedWorkflowSessionIDs: [String] {
-        sessions.filter { SessionWorkflowPolicy.shouldCloseVerified(workflow: $0.workflow, status: $0.status) }.map(\.id)
+        sessions.filter { $0.coordinationRecoveryError == nil && SessionWorkflowPolicy.shouldCloseVerified(workflow: $0.workflow, status: $0.status) }.map(\.id)
     }
 
     /// Explicit inspection-based recovery, separate from automatic retries.

@@ -116,7 +116,10 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var isDeepResuming = false
     @Published var isDeepTerminating = false
     @Published var parentSessionID: String? {
-        didSet { onHistoryRelevantChange?() }
+        didSet {
+            if parentSessionID != oldValue { coordinationRecoveryError = nil }
+            onHistoryRelevantChange?()
+        }
     }
     /// Underlying coding-agent session UUID (codex/claude), resolved by matching
     /// live sessions against imported transcript history. Used to build a resume
@@ -125,6 +128,7 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var agentSessionID: String?
     @Published var workflow: SessionWorkflow? { didSet { onHistoryRelevantChange?() } }
     @Published var workflowRecoveryError: String? { didSet { onHistoryRelevantChange?() } }
+    @Published var coordinationRecoveryError: String? { didSet { onHistoryRelevantChange?() } }
     @Published var codexRetryStatus: CodexRetryStatus?
     var autoRetryCodexFailures = true {
         didSet { if !autoRetryCodexFailures { codexAutoRetry.cancel() } }

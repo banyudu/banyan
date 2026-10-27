@@ -5396,7 +5396,7 @@ final class SessionStore: ObservableObject {
             self.resetSupervisorObservationBackoff(for: session.id)
             if self.tmuxBackend.hasSession(named: session.tmuxSessionName) {
                 session.detachTerminalClient()
-            } else {
+            } else if session.coordinationRecoveryError == nil {
                 try? self.close(id: session.id)
             }
         }
