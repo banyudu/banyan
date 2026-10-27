@@ -37,6 +37,7 @@ struct ContentView: View {
     @State private var sessionJumpShortcuts = SessionJumpShortcuts()
     @State private var showingPreferences = false
     @State private var showingCommandPalette = false
+    @State private var commandModifierHeld = false
     @State private var codexHandoffSession: TerminalSession?
     @State private var reparentSession: BanyanSession?
     @State private var draggingSidebarSessionID: String?
@@ -71,6 +72,9 @@ struct ContentView: View {
         .task { await store.refreshWorkOverview() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.scheduleWorkOverviewRefresh()
+        }
+        .onReceive(sessionJumpShortcuts.commandModifierChanges) { held in
+            commandModifierHeld = held
         }
         .onOpenURL { url in
             guard let id = PuckSessionLink.sessionID(from: url) else { return }
@@ -165,11 +169,18 @@ struct ContentView: View {
                     store.confirmPendingPauseAndClose()
                 }
                 .disabled(store.pendingCloseIsPausing)
-            } else {
+                .keyboardShortcut(.defaultAction)
+            }
+            if store.pendingCloseNeedsForce {
+                Button(closeConfirmationAction, role: .destructive) {
+                    store.confirmPendingForceClose()
+                }
+                .disabled(store.pendingCloseIsPausing || !commandModifierHeld)
+            } else if !store.pendingCloseCanPause {
                 Button(closeConfirmationAction, role: .destructive) {
                     store.confirmPendingClose()
                 }
-                .disabled(store.pendingCloseIsPausing || store.pendingCloseSession?.workflow?.state.permitsClose == false || store.pendingCloseSession?.workflowRecoveryError != nil)
+                .disabled(store.pendingCloseIsPausing)
                 .keyboardShortcut(.defaultAction)
             }
         } message: {
@@ -1479,7 +1490,10 @@ struct ContentView: View {
 
 
     private var closeConfirmationAction: String {
-        store.pendingCloseSession?.closeEndsAgentWork == false ? "Close" : "Close and Kill"
+        if store.pendingCloseNeedsForce, commandModifierHeld {
+            return store.pendingCloseSession?.closeEndsAgentWork == false ? "Force Close" : "Force Close and Kill"
+        }
+        return store.pendingCloseSession?.closeEndsAgentWork == false ? "Close" : "Close and Kill"
     }
 
     private var puckSessionErrorBinding: Binding<Bool> {

@@ -1,5 +1,6 @@
 import AppKit
 import BanyanCore
+import Combine
 import SwiftUI
 
 /// One map per window, shared by its badges, keyboard dispatch, menu and palette.
@@ -11,6 +12,10 @@ final class SessionJumpShortcuts: ObservableObject {
     private var visibleSessionIDs: [String] = []
     private var rollingEnabled = true
     private var commandHeld = false
+    private let commandModifierSubject = CurrentValueSubject<Bool, Never>(false)
+    var commandModifierChanges: AnyPublisher<Bool, Never> {
+        commandModifierSubject.eraseToAnyPublisher()
+    }
 
     private static let windows = NSMapTable<NSWindow, SessionJumpShortcuts>(
         keyOptions: .weakMemory, valueOptions: .weakMemory
@@ -54,6 +59,7 @@ final class SessionJumpShortcuts: ObservableObject {
     func setCommandHeld(_ held: Bool) {
         guard held != commandHeld else { return }
         commandHeld = held
+        commandModifierSubject.send(held)
         if !held { refresh() }
     }
 

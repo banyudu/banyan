@@ -4436,23 +4436,37 @@ final class SessionStore: ObservableObject {
     }
 
     func close(id: String) throws {
+        try close(id: id, force: false)
+    }
+
+    /// Explicitly closes despite a workflow/recovery hold. This does not
+    /// modify the workflow owner state or its journal.
+    func forceClose(id: String) throws {
+        try close(id: id, force: true)
+    }
+
+    private func close(id: String, force: Bool) throws {
         guard let session = sessions.first(where: { $0.id == id }) else {
             throw ControlError.notFound(id)
         }
-        guard session.workflow?.state.permitsClose != false, session.workflowRecoveryError == nil else {
-            throw ControlError.conflict(code: "workflow_unfinished", message: "Issue is unfinished; verify it or explicitly pause/cancel its workflow before closing")
+        if !force {
+            guard session.workflow?.state.permitsClose != false, session.workflowRecoveryError == nil else {
+                throw ControlError.conflict(code: "workflow_unfinished", message: "Issue is unfinished; verify it or explicitly pause/cancel its workflow before closing")
+            }
         }
         guard !pauseCloseInFlightIDs.contains(id) else {
             throw WorkflowError.refused("Pause and Close is in progress; wait for the owner acknowledgement and matching projection.")
         }
-        // Re-read at the destructive boundary: a previously readable journal
-        // must not authorize teardown after corruption or a projection change.
-        do {
-            guard try workflowJournal.load(id: id) == session.workflow else {
-                throw WorkflowError.refused("workflow journal differs from the current projection")
+        if !force {
+            // Re-read at the destructive boundary: a previously readable journal
+            // must not authorize teardown after corruption or a projection change.
+            do {
+                guard try workflowJournal.load(id: id) == session.workflow else {
+                    throw WorkflowError.refused("workflow journal differs from the current projection")
+                }
+            } catch {
+                throw WorkflowError.refused("The workflow journal cannot confirm close. Repair it or have its owner project the current workflow, then retry. The terminal remains open.")
             }
-        } catch {
-            throw WorkflowError.refused("The workflow journal cannot confirm close. Repair it or have its owner project the current workflow, then retry. The terminal remains open.")
         }
         try (session as? TerminalSession)?.prepareFrozenAgentForTeardown()
         let replacementID = selectedSessionID == id

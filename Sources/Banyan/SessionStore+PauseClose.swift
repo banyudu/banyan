@@ -27,6 +27,11 @@ extension SessionStore {
         return canPauseAndClose(session)
     }
 
+    var pendingCloseNeedsForce: Bool {
+        guard let session = pendingCloseSession else { return false }
+        return session.workflow?.state.permitsClose == false || session.workflowRecoveryError != nil
+    }
+
     func canPauseAndClose(_ session: BanyanSession) -> Bool {
         guard !session.isImportedHistory, session.status != .closed, session.workflowRecoveryError == nil,
               let workflow = session.workflow else { return false }
@@ -49,8 +54,10 @@ extension SessionStore {
             if session.closeEndsAgentWork {
                 details.append("Closing may terminate the current coding agent.")
             }
-        } else if session.workflow?.state.permitsClose == false || session.workflowRecoveryError != nil {
-            details.append("This issue is unfinished or its workflow journal is unreadable. Use its workflow owner to resolve the hold before closing. Closing cannot mark an issue verified.")
+        }
+        if pendingCloseNeedsForce {
+            details.append("Normal close is blocked by an unfinished workflow or recovery error. Hold Command while clicking the close action to force close. This does not mark work verified, pause or repair the workflow.")
+            details.append("The workflow owner may continue scheduling work. If the recovery error came from coordination input, that input remains unrecorded.")
         }
         details.append(session.closeConsequence)
         if pendingCloseHasOngoingAgent {
@@ -66,6 +73,16 @@ extension SessionStore {
         guard let id = pendingCloseSession?.id, !pauseCloseInFlightIDs.contains(id) else { return }
         cancelPendingClose()
         startPauseAndClose(id: id)
+    }
+
+    func confirmPendingForceClose() {
+        guard let id = pendingCloseSession?.id, !pauseCloseInFlightIDs.contains(id) else { return }
+        cancelPendingClose()
+        do { try forceClose(id: id) }
+        catch {
+            pauseCloseRetrySessionID = nil
+            pauseCloseError = error.localizedDescription
+        }
     }
 
     func retryPauseAndClose() {
