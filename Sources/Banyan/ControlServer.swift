@@ -1066,6 +1066,7 @@ final class ControlServer {
             summary["workflow"] = object
         }
         if let error = session.workflowRecoveryError { summary["workflowRecoveryError"] = error }
+        if let error = session.coordinationRecoveryError { summary["coordinationRecoveryError"] = error }
         if let state = store?.codexTUIOwnership[session.id], state.threadID == session.agentSessionID {
             summary["codexTUIOwnership"] = ["threadID": state.threadID, "state": state.state.rawValue, "message": state.state.message,
                 "observedAt": state.observedAt.ISO8601Format()]

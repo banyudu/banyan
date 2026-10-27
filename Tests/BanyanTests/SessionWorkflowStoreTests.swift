@@ -413,14 +413,14 @@ private struct WorkflowStoreFixture {
     let root: URL
     let persistence: SessionPersistence
     let backend = WorkflowTestBackend()
-    init() throws {
+    init(sessionIDs: [String] = ["managed", "legacy", "busy"]) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("banyan-workflow-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
         persistence = SessionPersistence(databaseURL: root.appendingPathComponent("state.sqlite"),
             legacyJSONURL: root.appendingPathComponent("sessions.json"))
         let now = Date()
-        persistence.save(["managed", "legacy", "busy"].map { id in
+        persistence.save(sessionIDs.map { id in
             SessionSnapshot(id: id, tmuxSessionName: "banyan-\(id)", title: id, reportedTitle: nil,
                 cwd: root.path, command: "codex 'Original implementation prompt'", status: id == "busy" ? .executing : .completed,
                 tone: .neutral, createdAt: now, updatedAt: now)
@@ -936,6 +936,149 @@ extension SessionWorkflowStoreTests {
 
 @MainActor
 @Suite struct CoordinationStoreTests {
+    @Test(arguments: ["协调者", String(repeating: "long-session-", count: 40)])
+    func createdSessionIDsSupportCoordination(proposedID: String) async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let parent = store.spawn(id: proposedID, cwd: fixture.root.path, command: "codex", select: false)
+        #expect(parent.id == proposedID.trimmingCharacters(in: CharacterSet(charactersIn: "-_")))
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        try store.reparent(id: child.id, parentSessionID: parent.id)
+        _ = try await store.controlCoordination(payload("bind", id: parent.id))
+        child.onUserSubmittedInput?(nil)
+        #expect(try store.coordinationJournal.interventions(id: child.id).count == 1)
+        #expect(child.workflowRecoveryError == nil)
+        #expect(child.coordinationRecoveryError == nil)
+        #expect(parent.workflowRecoveryError == nil)
+    }
+
+    @Test(arguments: ["协调者", "parent: [review]!?/segment", String(repeating: "long-session-", count: 40)])
+    func reparentedIDsSupportBindingsInterventionsAndWorkflowRecovery(parentID: String) async throws {
+        let childID = "child-" + parentID
+        let fixture = try WorkflowStoreFixture(sessionIDs: ["legacy", parentID, childID])
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        let parent = try #require(store.sessions.first { $0.id == parentID })
+        let child = try #require(store.sessions.first { $0.id == childID })
+        #expect(parent.workflowRecoveryError == nil)
+        #expect(child.workflowRecoveryError == nil)
+        try store.reparent(id: childID, parentSessionID: parentID)
+        _ = try await store.controlCoordination(payload("bind", id: parentID))
+        try store.setWorkflow(id: childID, workflow: .init(owner: "workit", jobID: "child-job", revision: 1, state: .verified))
+        child.onUserSubmittedInput?("Keep the existing behavior")
+        let inputs = try store.coordinationJournal.interventions(id: childID)
+        #expect(inputs.map(\.text) == ["Keep the existing behavior"])
+        #expect(child.workflowRecoveryError == nil)
+        #expect(child.coordinationRecoveryError == nil)
+        let result = try await store.controlCoordination(payload("observe", id: childID, extra: ["parent": parentID]))
+        let observed = try #require(result["session"] as? [String: Any])
+        #expect((observed["coordinationInterventions"] as? [[String: String]])?.first?["text"] == "Keep the existing behavior")
+        store.flushPendingSessionSaves()
+        let restored = fixture.makeStore()
+        defer { restored.flushPendingSessionSaves() }
+        restored.loadPersistedSessionsIfNeeded()
+        let restoredChild = try #require(restored.sessions.first { $0.id == childID })
+        #expect(restoredChild.parentSessionID == parentID)
+        #expect(restoredChild.workflow == child.workflow)
+        #expect(restoredChild.workflowRecoveryError == nil)
+        #expect(try restored.coordinationJournal.interventions(id: childID) == inputs)
+        try restored.close(id: childID)
+        #expect(restoredChild.status == .closed)
+    }
+
+    @Test(arguments: ["binding", "intervention"])
+    func coordinationFailuresHaveTheirOwnDiagnosticsAndFenceAutomatedRetirement(kind: String) async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture)
+        defer { store.flushPendingSessionSaves() }
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "child-job", revision: 2, state: .verified))
+        let file = store.coordinationJournal.directory.appendingPathComponent(
+            kind == "binding" ? "bindings/legacy.json" : "inputs/managed.json")
+        if kind == "intervention" {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        let before = try? Data(contentsOf: file)
+        try Data("{".utf8).write(to: file)
+        child.onUserSubmittedInput?("Do not retire yet")
+        let error = try #require(child.coordinationRecoveryError)
+        #expect(error.contains("'managed'"))
+        #expect(error.contains("parent 'legacy'"))
+        #expect(child.workflowRecoveryError == nil)
+        #expect(!store.workNode(for: child).recoveryError)
+        let summary = ControlServer(store: store, host: store.host).summary(child)
+        #expect(summary["coordinationRecoveryError"] as? String == error)
+        #expect(summary["workflowRecoveryError"] == nil)
+        if let before { try before.write(to: file) }
+        else { try FileManager.default.removeItem(at: file) }
+        // Repairing storage and recording a later input cannot acknowledge an
+        // earlier lost input. The hold remains scoped to this parent relation.
+        child.onUserSubmittedInput?("Later input")
+        #expect(child.coordinationRecoveryError == error)
+        #expect(!store.verifiedWorkflowSessionIDs.contains(child.id))
+        let observed = try await store.controlCoordination(payload("observe", id: child.id, extra: ["parent": "legacy"]))
+        #expect((observed["session"] as? [String: Any])?["coordinationRecoveryError"] as? String == error)
+        let intervention = try #require(try store.coordinationJournal.interventions(id: child.id).last)
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("retire", id: child.id, extra: ["parent": "legacy", "jobID": "child-job", "revision": 2,
+                "interventionID": intervention.id]))
+        }
+        // Explicit close still checks the real workflow, independently of the
+        // coordination hold; verified work can be closed by the operator.
+        try store.close(id: child.id)
+        #expect(child.status == .closed)
+    }
+
+    @Test func changingParentClearsOnlyTheCoordinationHoldAndKeepsWorkflowCloseGuards() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture)
+        defer { store.flushPendingSessionSaves() }
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        child.coordinationRecoveryError = "Input under parent 'legacy' could not be recorded"
+        child.workflowRecoveryError = "Actual workflow journal failure"
+        try store.reparent(id: child.id, parentSessionID: "legacy")
+        #expect(child.coordinationRecoveryError != nil) // No relationship change.
+        try store.reparent(id: child.id, parentSessionID: "busy")
+        #expect(child.coordinationRecoveryError == nil)
+        #expect(child.workflowRecoveryError == "Actual workflow journal failure")
+        #expect(throws: (any Error).self) { try store.close(id: child.id) }
+        child.workflowRecoveryError = nil
+        try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "child-job", revision: 1, state: .working))
+        child.coordinationRecoveryError = "Another coordination failure"
+        try store.reparent(id: child.id, parentSessionID: nil)
+        #expect(child.coordinationRecoveryError == nil)
+        #expect(throws: (any Error).self) { try store.close(id: child.id) }
+        try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "child-job", revision: 2, state: .verified))
+        let file = store.workflowJournal.directory.appendingPathComponent(child.id + ".json")
+        try Data("{".utf8).write(to: file)
+        #expect(throws: (any Error).self) { try store.close(id: child.id) }
+    }
+
+    @Test func coordinationFailureAllowsExplicitCloseWhenNoIssueWorkflowExists() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture)
+        defer { store.flushPendingSessionSaves() }
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        let file = store.coordinationJournal.bindings.directory.appendingPathComponent("legacy.json")
+        try Data("{".utf8).write(to: file)
+        child.onUserSubmittedInput?("Inspect this child")
+        #expect(child.coordinationRecoveryError != nil)
+        #expect(child.workflow == nil)
+        #expect(child.workflowRecoveryError == nil)
+        child.onProcessExit?(0)
+        #expect(child.status != .closed)
+        try store.close(id: child.id)
+        #expect(child.status == .closed)
+    }
+
     private func payload(_ action: String, id: String = "legacy", group: String = "group-a",
                          extra: [String: Any] = [:]) throws -> CoordinationControlPayload {
         var values: [String: Any] = ["action": action, "id": id, "groupID": group]

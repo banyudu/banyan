@@ -2925,6 +2925,10 @@ struct SessionRow: View, Equatable {
             } else if session.workflowRecoveryError != nil {
                 Text("Workflow unavailable").font(.caption2).foregroundStyle(.red)
             }
+            if let error = session.coordinationRecoveryError {
+                Text("Coordination unavailable").font(.caption2).foregroundStyle(.red)
+                    .help(error)
+            }
 
             if hiddenChildCount > 0 {
                 Button(action: onRevealHidden) {
