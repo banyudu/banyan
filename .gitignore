@@ -2,6 +2,7 @@
 /.build
 /Packages/*
 !/Packages/SwiftTerm
+!/Packages/PuckSwift
 xcuserdata/
 DerivedData/
 dist/

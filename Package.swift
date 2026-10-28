@@ -15,7 +15,7 @@ var packageTargets: [Target] = [
         ),
         .target(
             name: "BanyanCore",
-            dependencies: ["CSQLite", "CTerminalPTY"]
+            dependencies: ["CSQLite", "CTerminalPTY", .product(name: "PuckSwift", package: "PuckSwift")]
         ),
         .executableTarget(
             name: "BanyanCtl",
@@ -75,7 +75,8 @@ let package = Package(
     ],
     products: packageProducts,
     dependencies: [
-        .package(path: "Packages/SwiftTerm")
+        .package(path: "Packages/SwiftTerm"),
+        .package(path: "Packages/PuckSwift")
     ],
     targets: packageTargets,
     swiftLanguageModes: [.v5]
