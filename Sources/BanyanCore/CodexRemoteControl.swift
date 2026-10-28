@@ -196,7 +196,11 @@ public final class CodexRemoteControl {
             events = []
         }
         wake()
-        Task { [weak self] in await self?.restoreObservation() }
+        // Restore the attachments affected by this policy change. A later
+        // attach performs its own observation and must not be picked up by a
+        // delayed task scheduled while the journal was still empty.
+        let attachments = journal.attachments
+        Task { [weak self] in await self?.restoreObservation(attachments: attachments) }
     }
 
     private func isCurrent(_ attachment: CodexRemoteAttachment) -> Bool {
@@ -213,7 +217,11 @@ public final class CodexRemoteControl {
     }
 
     public func restoreObservation() async {
-        for attachment in journal.attachments {
+        await restoreObservation(attachments: journal.attachments)
+    }
+
+    private func restoreObservation(attachments: [CodexRemoteAttachment]) async {
+        for attachment in attachments {
             let retain = isCurrent(attachment)
             do {
                 try await coordinator.retainRemoteObservation(sessionID: attachment.sessionID, retained: retain,
