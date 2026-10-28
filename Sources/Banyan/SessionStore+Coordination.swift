@@ -210,7 +210,7 @@ extension SessionStore {
                 return ["ok": true, "recoverable": true, "inspectionID": inspection.id,
                         "coordinationRecoveryError": inspection.error,
                         "coordinationInterventions": inspection.interventions.map { ["id": $0.id, "at": $0.at, "text": $0.text] },
-                        "nextAction": "Inspect the original conversation and recorded interventions for potentially lost input, then recover with this inspection ID and an acknowledgment detail. No input will be replayed."]
+                        "nextAction": "Inspect the original conversation and recorded interventions for potentially lost input, then recover with this inspection ID and an acknowledgment detail. Recovery also requires a successful coordination journal write. No input will be replayed."]
             } catch {
                 return ["ok": true, "recoverable": false, "nextAction": error.localizedDescription]
             }
@@ -223,8 +223,12 @@ extension SessionStore {
         guard try snapshot(id: inspection.id) == inspection else {
             throw WorkflowError.refused("recovery inspection is stale; inspect again")
         }
-        try coordinationJournal.appendIntervention(id: session.id,
-            text: "Coordination recovery acknowledged (failure: \(inspection.error.prefix(500))): \(detail)")
+        do {
+            try coordinationJournal.appendIntervention(id: session.id,
+                text: "Coordination recovery acknowledged (failure: \(inspection.error.prefix(500))): \(detail)")
+        } catch {
+            throw WorkflowError.refused("coordination acknowledgment could not be written: \(error.localizedDescription); repair storage and inspect again; the coordination error remains")
+        }
         session.coordinationRecoveryError = nil
         session.coordinationFailureID = nil
         session.coordinationRecoveryInspection = nil

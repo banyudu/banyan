@@ -1094,6 +1094,36 @@ extension SessionWorkflowStoreTests {
         #expect(child.status == .closed)
     }
 
+    @Test func coordinationRecoveryRetainsFailureWhenAcknowledgmentCannotBeWritten() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        let binding = store.coordinationJournal.bindings.directory.appendingPathComponent("legacy.json")
+        let original = try Data(contentsOf: binding)
+        try Data("{".utf8).write(to: binding)
+        child.onUserSubmittedInput?("Potentially lost input")
+        try original.write(to: binding)
+        child.onUserSubmittedInput?("Later input")
+        let inputs = store.coordinationJournal.directory.appendingPathComponent("inputs")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: inputs.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: inputs.path) }
+        let scope: [String: Any] = ["parent": "legacy"]
+        let inspection = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        #expect((inspection["nextAction"] as? String)?.contains("successful coordination journal write") == true)
+        let token = try #require(inspection["inspectionID"] as? String)
+        do {
+            _ = try await store.controlCoordination(payload("recover", id: child.id,
+                extra: ["parent": "legacy", "inspectionID": token, "detail": "Inspected the original conversation"]))
+            Issue.record("Expected acknowledgment write to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("coordination acknowledgment could not be written"))
+            #expect(error.localizedDescription.contains("coordination error remains"))
+        }
+        #expect(child.coordinationRecoveryError != nil)
+        #expect(try store.coordinationJournal.interventions(id: child.id).map(\.text) == ["Later input"])
+        #expect(fixture.backend.sent.isEmpty)
+    }
+
     @Test func coordinationRecoveryPreservesWorkflowHoldAndUnresolvedReceipt() async throws {
         let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
         let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
