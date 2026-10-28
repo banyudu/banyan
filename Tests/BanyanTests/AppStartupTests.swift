@@ -42,6 +42,23 @@ struct AppStartupTests {
         try await waitForPuckState { successor.listeningPort == port.rawValue }
     }
 
+    @Test func controlServerBindsOnlyToLoopback() async throws {
+        let fixture = try StartupFixture()
+        let store = fixture.makeStore()
+        defer { fixture.stop(store) }
+        let server = ControlServer(store: store, host: fixture.host, port: .any)
+        server.start()
+        defer { server.stop() }
+        try await waitForPuckState { server.listeningPort != nil }
+        let port = try #require(server.listeningPort)
+        // Check the kernel's actual local endpoint rather than the client URL.
+        let result = try SubprocessRunner.run(arguments: ["/usr/sbin/lsof", "-nP", "-a", "-p", String(ProcessInfo.processInfo.processIdentifier), "-iTCP:\(port)", "-sTCP:LISTEN", "-Fn"],
+            cwd: "/", environment: ["PATH": "/usr/bin:/bin:/usr/sbin"], timeout: 5)
+        #expect(result.terminationStatus == 0)
+        let endpoints = String(decoding: result.standardOutput, as: UTF8.self).split(separator: "\n").filter { $0.hasPrefix("n") }
+        #expect(endpoints == ["n127.0.0.1:\(port)"])
+    }
+
     @Test func stopBeforeFirstStartPreventsBinding() async throws {
         let fixture = try StartupFixture()
         let store = fixture.makeStore()

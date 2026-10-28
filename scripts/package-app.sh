@@ -61,6 +61,10 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$DIST_DIR/bin"
 cp "$BUILD_PRODUCTS_DIR/Banyan" "$MACOS_DIR/Banyan"
 cp "$BUILD_PRODUCTS_DIR/banyanctl" "$DIST_DIR/bin/banyanctl"
 cp "$BUILD_PRODUCTS_DIR/banyanctl" "$MACOS_DIR/banyanctl"
+mkdir -p "$RESOURCES_DIR/Slack/banyan_slack"
+cp "$ROOT_DIR/scripts/slack-connector.py" "$RESOURCES_DIR/Slack/slack-connector.py"
+cp "$ROOT_DIR/scripts/banyan_slack/"*.py "$RESOURCES_DIR/Slack/banyan_slack/"
+cp "$ROOT_DIR/scripts/banyan_slack/requirements.txt" "$RESOURCES_DIR/Slack/banyan_slack/requirements.txt"
 if [[ ! -f "$ICON_FILE" ]]; then
   "$ROOT_DIR/scripts/generate-icons.sh"
 fi

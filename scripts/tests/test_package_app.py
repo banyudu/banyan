@@ -34,6 +34,11 @@ class PackageAppTests(unittest.TestCase):
         (self.root / "scripts/lib").mkdir(parents=True)
         shutil.copy2(source / "package-app.sh", self.root / "scripts/package-app.sh")
         shutil.copy2(source / "lib/repo-root.sh", self.root / "scripts/lib/repo-root.sh")
+        shutil.copy2(source / "slack-connector.py", self.root / "scripts/slack-connector.py")
+        slack = self.root / "scripts/banyan_slack"
+        slack.mkdir()
+        for path in list((source / "banyan_slack").glob("*.py")) + [source / "banyan_slack/requirements.txt"]:
+            shutil.copy2(path, slack / path.name)
         (self.root / "Assets").mkdir()
         (self.root / "Assets/AppIcon.icns").write_bytes(b"icon")
         self.bin = self.root / "fake-bin"
@@ -70,6 +75,11 @@ class PackageAppTests(unittest.TestCase):
             self.assertEqual((app / "Contents/MacOS/banyanctl").read_bytes(), b"banyanctl")
             for name in ("Banyan_Banyan.bundle", "SwiftTerm_SwiftTerm.bundle"):
                 self.assertEqual((app / "Contents/Resources" / name / "resource.txt").read_text(), name)
+            slack = app / "Contents/Resources/Slack"
+            source = Path(__file__).resolve().parents[1]
+            self.assertEqual((slack / "slack-connector.py").read_bytes(), (source / "slack-connector.py").read_bytes())
+            for path in list((source / "banyan_slack").glob("*.py")) + [source / "banyan_slack/requirements.txt"]:
+                self.assertEqual((slack / "banyan_slack" / path.name).read_bytes(), path.read_bytes())
 
     def test_capitalized_release_layout_includes_required_bundles(self):
         self.assert_bundles_packaged(".build/out/Products/Release")

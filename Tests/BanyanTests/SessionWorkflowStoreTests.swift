@@ -414,9 +414,19 @@ private struct WorkflowStoreFixture {
     let persistence: SessionPersistence
     let backend = WorkflowTestBackend()
     init(sessionIDs: [String] = ["managed", "legacy", "busy"]) throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("banyan-workflow-\(UUID().uuidString)")
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("banyan_workflow_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
+        // This fixture exercises sidebar presentation, not a live tracker or
+        // the developer's login shell. Intercept both before building a store.
+        let bin = root.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let shell = bin.appendingPathComponent("fixture-shell")
+        let linear = bin.appendingPathComponent("linear")
+        try "#!/bin/sh\nprintf '\\n__BANYAN_SHELL_ENV_START__\\nPATH=/usr/bin:/bin\\0'\n".write(to: shell, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\nprintf fixture > \"$HOME/linear-invoked\"\nexit 1\n".write(to: linear, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shell.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: linear.path)
         persistence = SessionPersistence(databaseURL: root.appendingPathComponent("state.sqlite"),
             legacyJSONURL: root.appendingPathComponent("sessions.json"))
         let now = Date()
@@ -435,7 +445,8 @@ private struct WorkflowStoreFixture {
         return SessionStore(persistence: persistence, tmuxBackend: backend, sessionBackend: backend,
             processTable: processes, historyBackend: history,
             detector: AgentStateDetector(rules: []),
-            host: HostRuntimeContext(environment: ["BANYAN_FIXTURE_DATA_HOME": root.path, "PATH": "/usr/bin:/bin", "SHELL": "/bin/zsh"],
+            host: HostRuntimeContext(environment: ["BANYAN_FIXTURE_DATA_HOME": root.path, "HOME": root.path,
+                "PATH": root.appendingPathComponent("bin").path + ":/usr/bin:/bin", "SHELL": root.appendingPathComponent("bin/fixture-shell").path],
                 homeDirectory: root, currentDirectory: root.path),
             telemetry: banyanTestTelemetry, attentionNotifier: AttentionNotifier(), codexService: codexService,
             workitPauseClient: pauseClient, pauseCloseProjectionTimeout: projectionTimeout)
@@ -857,6 +868,20 @@ private struct WorkflowTestHistory: SessionHistoryBackend {
 }
 
 extension SessionWorkflowStoreTests {
+    @Test func linearSidebarUsesOnlyTheFixtureCommand() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        store.sidebarMode = .linear
+        try await waitForPuckState { FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("linear-invoked").path) }
+        try await waitForPuckState { if case .failed = store.linearIssueListLoadState { return true }; return false }
+        #expect(try String(contentsOf: fixture.root.appendingPathComponent("linear-invoked"), encoding: .utf8) == "fixture")
+        let log = fixture.root.appendingPathComponent("Banyan/linear-debug.log")
+        #expect(try String(contentsOf: log, encoding: .utf8).contains("command start"))
+    }
+
     @Test func hideKeepsWorkflowAndBackingWorkAndRestoresAfterRestart() throws {
         let fixture = try WorkflowStoreFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

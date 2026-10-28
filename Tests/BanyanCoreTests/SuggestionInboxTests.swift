@@ -161,7 +161,7 @@ private func makeSuggestion(
     #expect(inbox.offer(pending, now: now) == .accepted(pending))
 
     #expect(inbox.suppressedUntil["pending"] == pending.expiresAt)
-    #expect(inbox.suppressedUntil.count <= SuggestionInbox.maximumSuppressedKeys + 1)
+    #expect(inbox.suppressedUntil.count == SuggestionInbox.maximumSuppressedKeys)
 }
 
 @Test func rejectionCodesAreTheWireContract() {

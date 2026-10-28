@@ -140,3 +140,26 @@ private final class SynchronizerBackend: AgentSupervisorBackend, @unchecked Send
     #expect(backend.batchRequestedNames.isEmpty)
     #expect(backend.requestedNames.isEmpty)
 }
+
+@Test func statusSynchronizerOnlyExtractsAwayPromptFingerprintsForSelectedSessions() {
+    let pane = TmuxPaneSnapshot(paneID: "%1", rootPID: 100, currentCommand: "codex", currentPath: "/tmp", isDead: false, isInMode: false)
+    let backend = AwayPromptBackend(pane: pane)
+    let processes = ProcessTable(rows: [.init(pid: 101, parentPID: 100, state: "S", elapsed: 5, commandName: "codex", arguments: "codex")])
+    let inputs = ["one", "two"].map { SessionStatusObservationInput(id: $0, tmuxSessionName: $0,
+        command: "codex", status: .asking, isAwaitingAttach: false) }
+    let results = SessionStatusSynchronizer(backend: backend, processTable: processes)
+        .observe(inputs, promptSessionIDs: ["one"], promptActivationID: "activation")
+    let selected = results.first { $0.id == "one" }
+    let other = results.first { $0.id == "two" }
+    #expect(selected?.promptObserved == true && selected?.promptFootprint != nil && selected?.promptActivationID == "activation")
+    #expect(other?.promptObserved == false && other?.promptFootprint == nil)
+}
+
+private struct AwayPromptBackend: AgentSupervisorBackend {
+    let pane: TmuxPaneSnapshot
+    func hasSession(named: String) -> Bool { true }
+    func primaryPaneSnapshot(named: String) -> TmuxPaneSnapshot? { pane }
+    func captureVisibleText(paneID: String, lineLimit: Int) -> String {
+        "Bash command\n  echo fixture\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel"
+    }
+}

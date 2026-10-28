@@ -43,6 +43,7 @@ final class ControlServer {
     private struct EventWaiter {
         let id: UUID
         let since: Int?
+        let awayRequest: SlackBrowserRequest?
         let respond: (Response) -> Void
     }
 
@@ -98,7 +99,11 @@ final class ControlServer {
         guard !isStopped, listener == nil, bindRetry == nil else { return }
         let listener: NWListener
         do {
-            listener = try NWListener(using: .tcp, on: port)
+            let parameters = NWParameters.tcp
+            // The control token grants local process and terminal access. Bind
+            // the listener itself to loopback, not just the client URLs.
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: port)
+            listener = try NWListener(using: parameters)
         } catch {
             NSLog("Banyan control server could not create listener on port \(port): \(error.localizedDescription)")
             scheduleBindRetry()
@@ -115,6 +120,10 @@ final class ControlServer {
             guard let self, !self.isStopped, self.listener === listener else { return }
             switch state {
             case .ready:
+                Task { @MainActor [weak self] in
+                    guard let self, let port = self.listeningPort else { return }
+                    self.store?.slackIntegration.controlServerBecameReady(port: port)
+                }
                 if self.bindAttempts > 0 {
                     NSLog("Banyan control server bound to port \(self.port) after \(self.bindAttempts) retr\(self.bindAttempts == 1 ? "y" : "ies")")
                 }
@@ -228,14 +237,34 @@ final class ControlServer {
 
             switch route {
             case .codexRemoteResolve:
-                struct Resolution: Decodable { var workspace: String; var operationID: String }
+                struct Resolution: Decodable { var workspace: String; var operationID: String; var kind: String? }
                 let resolution = try request.decode(Resolution.self)
-                try store.codexRemote.resolveLocally(workspace: resolution.workspace, operationID: resolution.operationID)
+                if resolution.kind == "terminalFollowup" {
+                    do { try store.slackFollowUpJournal.acknowledgeUncertain(operationID: resolution.operationID, workspace: resolution.workspace) }
+                    catch { return respond(.failure(409, "reconciliation_unavailable", "No matching uncertain session reply")) }
+                } else if resolution.kind == nil || resolution.kind == "native" {
+                    try store.codexRemote.resolveLocally(workspace: resolution.workspace, operationID: resolution.operationID)
+                } else { return respond(.failure(400, "invalid_kind", "Unknown reconciliation kind")) }
                 return respond(.ok(["status": "acknowledged"]))
             case .codexRemoteConfigure:
                 let policy = try request.decode(CodexRemotePolicy.self)
                 try store.codexRemote.configure(policy)
+                deliverParkedEvents()
                 return respond(.ok(["enabled": store.codexRemote.policy.enabled]))
+            case .slackBrowser:
+                let body = try request.decode(SlackBrowserRequest.self)
+                if body.action == "awayEvents" { return waitForAwayEvents(store: store, request: body, respond: respond) }
+                Task { @MainActor in
+                    do {
+                        let result = try await store.slackBrowser(body)
+                        if body.action == "awayConfigure" { self.deliverParkedEvents() }
+                        respond(.ok(result))
+                    }
+                    catch CodexRemoteError.denied {
+                        respond(.failure(403, "remote_denied", "Slack control is disabled or principal is not allowed"))
+                    } catch { respond(.failure(409, "remote_unavailable", error.localizedDescription)) }
+                }
+                return
             case .codexRemote:
                 let body = try request.decode(CodexRemoteRequest.self)
                 Task { @MainActor in
@@ -803,7 +832,7 @@ final class ControlServer {
         }
 
         let id = UUID()
-        eventWaiters.append(EventWaiter(id: id, since: since, respond: respond))
+        eventWaiters.append(EventWaiter(id: id, since: since, awayRequest: nil, respond: respond))
         queue.asyncAfter(deadline: .now() + Self.eventHoldSeconds) { [weak self] in
             Task { @MainActor in
                 self?.releaseWaiter(id: id)
@@ -812,12 +841,44 @@ final class ControlServer {
     }
 
     @MainActor
+    private func waitForAwayEvents(store: SessionStore, request: SlackBrowserRequest,
+                                   respond: @escaping @MainActor (Response) -> Void) {
+        do {
+            let result = try store.slackAwayEvents(request)
+            let currentRevision = (result["revision"] as? UInt64)
+            let unchanged = request.eventEpoch == result["epoch"] as? String &&
+                request.eventCursor == result["cursor"] as? Int && request.awayRevision == currentRevision &&
+                request.awayActivationID == result["activationID"] as? String && result["refresh"] as? Bool == false &&
+                (result["events"] as? [[String: Any]])?.isEmpty == true
+            guard unchanged, eventWaiters.count < Self.maxEventWaiters else { return respond(.ok(result)) }
+            let id = UUID()
+            eventWaiters.append(EventWaiter(id: id, since: request.eventCursor, awayRequest: request, respond: respond))
+            queue.asyncAfter(deadline: .now() + Self.eventHoldSeconds) { [weak self] in
+                Task { @MainActor in self?.releaseWaiter(id: id) }
+            }
+        } catch CodexRemoteError.denied {
+            respond(.failure(403, "remote_denied", "Slack control is disabled or principal is not allowed"))
+        } catch { respond(.failure(409, "remote_unavailable", error.localizedDescription)) }
+    }
+
+    @MainActor
+    var parkedAwayWaiterCount: Int { eventWaiters.filter { $0.awayRequest != nil }.count }
+
+    @MainActor
+    private func response(for waiter: EventWaiter, store: SessionStore) -> Response {
+        guard let request = waiter.awayRequest else { return .ok(eventsBody(store.sessionEvents(since: waiter.since))) }
+        do { return .ok(try store.slackAwayEvents(request)) }
+        catch CodexRemoteError.denied { return .failure(403, "remote_denied", "Slack control is disabled or principal is not allowed") }
+        catch { return .failure(409, "remote_unavailable", error.localizedDescription) }
+    }
+
+    @MainActor
     private func deliverParkedEvents() {
         guard !eventWaiters.isEmpty, let store else { return }
         let waiting = eventWaiters
         eventWaiters = []
         for waiter in waiting {
-            waiter.respond(.ok(eventsBody(store.sessionEvents(since: waiter.since))))
+            waiter.respond(response(for: waiter, store: store))
         }
     }
 
@@ -825,9 +886,8 @@ final class ControlServer {
     private func releaseWaiter(id: UUID) {
         guard let index = eventWaiters.firstIndex(where: { $0.id == id }) else { return }
         let waiter = eventWaiters.remove(at: index)
-        let batch = store?.sessionEvents(since: waiter.since)
-            ?? SessionEventBatch(events: [], cursor: waiter.since ?? 0, truncated: false)
-        waiter.respond(.ok(eventsBody(batch)))
+        guard let store else { return waiter.respond(.failure(500, "store_unavailable", "session store is unavailable")) }
+        waiter.respond(response(for: waiter, store: store))
     }
 
     private func eventsBody(_ batch: SessionEventBatch) -> [String: Any] {

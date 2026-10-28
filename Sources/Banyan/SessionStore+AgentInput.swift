@@ -24,6 +24,8 @@ struct SessionPaneTarget: Sendable {
 /// blocked on.
 struct SessionPaneReading: Sendable {
     let paneID: String
+    let rootPID: Int
+    let paneInMode: Bool
     let status: SessionStatus
     let visibleText: String
     /// Non-nil only when the supervisor agrees the session is waiting on a human.
@@ -183,7 +185,7 @@ extension SessionStore {
         )
     }
 
-    nonisolated private static func read(
+    nonisolated static func read(
         _ target: SessionPaneTarget,
         lines: Int?,
         backend: any TmuxSessionStoreBackend,
@@ -195,7 +197,7 @@ extension SessionStore {
             // Read the pane, observe nothing. One capture in answer to an explicit
             // request is not the supervision loop parking switched off.
             return SessionPaneReading(
-                paneID: pane.paneID,
+                paneID: pane.paneID, rootPID: pane.rootPID, paneInMode: pane.isInMode,
                 status: target.status,
                 visibleText: backend.captureVisibleText(
                     paneID: pane.paneID,
@@ -235,7 +237,7 @@ extension SessionStore {
         }
 
         return SessionPaneReading(
-            paneID: pane.paneID,
+            paneID: pane.paneID, rootPID: pane.rootPID, paneInMode: pane.isInMode,
             status: status,
             visibleText: visibleText,
             prompt: prompt,

@@ -43,6 +43,20 @@ class FakeAPI:
             "attachment": {"id": "attachment", "sessionID": "native", "threadID": "original-thread",
                 "workspace": "T_TEST", "channel": "C_TEST", "slackThread": "100.1"}}
         self.events = []
+        self.away = {"enabled": False, "sessionIDs": [], "projectIDs": [], "activationID": None, "revision": 0}
+
+    async def browser(self, body):
+        if not self.allowed:
+            raise Denied("Denied")
+        if body["action"] == "awayStatus":
+            return copy.deepcopy(self.away)
+        if body["action"] == "awayCheck":
+            return {"allowed": self.away["enabled"] and (not body.get("sessionID") or body["sessionID"] in self.away["sessionIDs"]),
+                    "activationID": self.away["activationID"], "revision": self.away["revision"]}
+        if body["action"] == "awaySession":
+            return {"pending": any(r.get("answerable", True) for r in self.session["requests"]),
+                    "activationID": self.away["activationID"], "revision": self.away["revision"]}
+        raise AssertionError(body["action"])
 
     async def call(self, body):
         self.calls.append(copy.deepcopy(body))
@@ -380,6 +394,76 @@ class ConnectorTests(unittest.IsolatedAsyncioTestCase):
             await pending
         self.assertEqual(self.slack.posts, 1)
         self.assertEqual(self.connector.journal.data["posts"]["rate"]["status"], "retryable")
+
+    async def test_native_request_resolved_during_rate_limit_never_posts_stale_controls(self):
+        self.api.session.update(needsAttention=True, turnID="active")
+        self.api.session["requests"] = [{"id": 42, "turnID": "active", "title": "Approval", "detail": "fixture",
+                                        "decisions": ["accept", "decline"], "questions": [], "answerable": True}]
+        self.slack.rate_rejections = 1
+        self.slack.retry_after = 0.05
+        running = asyncio.create_task(self.connector.render(self.api.session, PRINCIPAL))
+        await asyncio.wait_for(self.slack.rate_seen.wait(), 1)
+        self.api.session.update(needsAttention=False, turnID=None, requests=[])
+        await running
+        self.assertEqual(self.slack.posts, 1)  # The sole attempt was explicitly rejected by Slack.
+        self.assertIsNone(self.connector.journal.data["posts"]["status-attachment"].get("ts"))
+
+    async def test_native_away_request_overlap_is_deduplicated_and_resolved_events_are_not_announced(self):
+        self.api.away.update(enabled=True, sessionIDs=["native"], activationID="activation-a", revision=1)
+        self.connector.away_ready[("T_TEST", "C_TEST")] = "activation-a"
+        self.api.session.update(needsAttention=True, turnID="active")
+        request = {"id": 42, "turnID": "active", "title": "Approval", "detail": "fixture",
+                   "decisions": ["accept", "decline"], "questions": [], "answerable": True}
+        self.api.session["requests"] = [request]
+        seen = stable_id("native", "activation-a", "native", 42, "active")
+        self.connector.journal.commit(lambda d: d["awaySeen"].__setitem__(seen, True))
+        self.api.events = [{"cursor": 1, "kind": "attention", "attachment": self.api.session["attachment"]}]
+        await self.connector.refresh(PRINCIPAL)
+        self.assertFalse(any(f["text"].endswith("input needed") for m, f in self.slack.calls if m == "chat.postMessage"))
+        self.api.session["requests"] = [{**request, "id": 43}]
+        self.api.events.append({"cursor": 2, "kind": "attention", "attachment": self.api.session["attachment"]})
+        await self.connector.refresh(PRINCIPAL)
+        notices = [f for m, f in self.slack.calls if m == "chat.postMessage" and f["text"].endswith("input needed")]
+        self.assertEqual(len(notices), 1)
+        self.api.events.append({"cursor": 3, "kind": "attention", "attachment": self.api.session["attachment"]})
+        await self.connector.refresh(PRINCIPAL)
+        notices = [f for m, f in self.slack.calls if m == "chat.postMessage" and f["text"].endswith("input needed")]
+        self.assertEqual(len(notices), 1)
+        self.api.session.update(needsAttention=False, turnID=None, requests=[])
+        self.api.events.append({"cursor": 4, "kind": "attention", "attachment": self.api.session["attachment"]})
+        await self.connector.refresh(PRINCIPAL)
+        notices = [f for m, f in self.slack.calls if m == "chat.postMessage" and f["text"].endswith("input needed")]
+        self.assertEqual(len(notices), 1)
+
+    async def test_away_off_suppresses_native_notifications_but_manual_read_remains(self):
+        self.api.events = [{"cursor": 1, "kind": "turn/completed", "attachment": self.api.session["attachment"]}]
+        await self.connector.refresh(PRINCIPAL, first=True)
+        self.assertFalse(self.slack.calls)
+        self.assertTrue(self.connector.sessions)
+        await self.connector.render(self.api.session, PRINCIPAL)
+        self.assertTrue(self.slack.calls)
+        self.slack.calls.clear()
+        self.api.away.update(enabled=True, sessionIDs=["native"], activationID="activation-a", revision=1)
+        self.connector.away_ready[("T_TEST", "C_TEST")] = "activation-a"
+        await self.connector.refresh(PRINCIPAL, first=False)
+        self.assertTrue(self.slack.calls)
+
+    async def test_native_desktop_resolution_retires_controls_while_away_is_off(self):
+        self.api.session.update(needsAttention=True, turnID="active")
+        self.api.session["requests"] = [{"id": 42, "turnID": "active", "title": "Approval", "detail": "fixture",
+                                        "decisions": ["accept", "decline"], "questions": [], "answerable": True}]
+        await self.connector.render(self.api.session, PRINCIPAL)
+        posts = self.slack.posts
+        self.slack.calls.clear()
+        self.api.session.update(needsAttention=False, turnID=None, requests=[])
+        self.api.events = [{"cursor": 1, "kind": "attention", "attachment": self.api.session["attachment"]}]
+        await self.connector.refresh(PRINCIPAL)
+        updates = [fields for method, fields in self.slack.calls if method == "chat.update"]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("Controls are paused", updates[0]["blocks"][0]["text"]["text"])
+        self.assertEqual(self.slack.posts, posts)
+        await self.connector.refresh(PRINCIPAL)
+        self.assertEqual(len([1 for method, _ in self.slack.calls if method == "chat.update"]), 1)
 
     async def test_model_output_is_plain_text_and_no_token_stream_is_posted(self):
         self.api.session["context"] = [{"type": "agentMessage", "text": "<@EVERYONE> <!channel> *inject*"}]

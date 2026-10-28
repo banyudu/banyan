@@ -64,6 +64,7 @@ final class PuckSession: BanyanSession {
     @Published private(set) var admissionTurnInFlight = false
     @Published var draft = ""
     var onAdmissionTurnStarting: (() -> Void)?
+    var onPendingChangedWithoutStatusTransition: (() -> Void)?
     private var summaryRevision = 0
 
     deinit { followTask?.cancel(); historyTask?.cancel() }
@@ -235,6 +236,7 @@ final class PuckSession: BanyanSession {
 
     /// Mirrors one daemon summary into the shared session state.
     func apply(summary: PuckSessionSummary) {
+        let previousApproval = pendingApproval, previousQuestion = pendingQuestion
         summaryRevision += 1
         lastSummary = summary
         daemonError = nil
@@ -270,8 +272,11 @@ final class PuckSession: BanyanSession {
         // keeps what it last showed: Banyan was asked to stop watching both.
         guard status != .closed, !isSuspended else { return }
         let next = PuckSessionStatusPolicy.status(for: summary)
-        guard next != status else { return }
-        mark(status: next, tone: PuckSessionStatusPolicy.tone(for: next))
+        if next != status {
+            mark(status: next, tone: PuckSessionStatusPolicy.tone(for: next))
+        } else if previousApproval != pendingApproval || previousQuestion != pendingQuestion {
+            onPendingChangedWithoutStatusTransition?()
+        }
     }
 
     private func reconcileAdmissionFromSummary() {
@@ -386,7 +391,9 @@ final class PuckSession: BanyanSession {
         }
     }
 
-    func startTurn(_ prompt: String) async throws {
+    func startTurn(_ prompt: String, authorization: (() throws -> Void)? = nil,
+                   willSubmit: (() throws -> Void)? = nil,
+                   mayDispatch: @escaping @Sendable () -> Bool = { true }) async throws {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard !admissionTurnInFlight else { throw ControlError.badRequest("A turn is already starting for this session") }
@@ -406,13 +413,16 @@ final class PuckSession: BanyanSession {
         onAdmissionTurnStarting?()
         try await agentAdmission?.acquire(id)
         try Task.checkCancellation()
+        try authorization?()
         guard turnUnavailableReason == nil else { throw ControlError.badRequest(turnUnavailableReason!) }
+        try willSubmit?()
         markSubmittedPromptTitle(text)
         let daemon = self.daemon
         let id = self.id
         sent = true
         do {
             try await PuckBackgroundIO.run {
+                guard mayDispatch() else { throw PuckDaemonError.rejected("Remote authorization changed before dispatch") }
                 try daemon.turn(id, prompt: text)
             }
         } catch {

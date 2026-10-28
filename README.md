@@ -165,6 +165,14 @@ This builds all products, installs `Banyan.app` to `/Applications`, and places
 the companion CLI at `dist/bin/banyanctl`. For iterative development, use
 `swift run Banyan` or `./scripts/dev-watch.sh`.
 
+## Slack session browser
+
+The Slack integration can browse existing sessions and read their available
+context from App Home. Away mode follows selected sessions or projects and
+delivers catch-up and subsequent notifications while the Mac is running. See
+[Slack setup and history limits](docs/slack-native-control.md) for the private
+channel, Keychain credentials, supported actions, and recovery instructions.
+
 ## Puck sessions
 
 Start `puckd` after configuring an account with `puck auth login`. In the

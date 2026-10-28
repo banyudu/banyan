@@ -27,6 +27,7 @@ extension SessionStore {
             terminal.onAgentRuntimeChanged = { [weak self, weak terminal] in
                 guard let self, let terminal else { return }
                 self.reconcileAgentAdmission(id: terminal.id)
+                self.noteSlackSessionAvailability(terminal)
             }
         }
     }

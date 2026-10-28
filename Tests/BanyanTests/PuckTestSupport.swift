@@ -5,7 +5,7 @@ import Foundation
 
 /// An in-memory `puckd`: serves the sessions a test puts in it and records
 /// what Banyan asked of it.
-final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
+final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchecked Sendable {
     struct Creation: Equatable {
         let id: String
         let provider: String
@@ -22,10 +22,14 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     private let lock = NSLock()
     private var summaries: [String: PuckSessionSummary] = [:]
     private var transcripts: [String: [PuckSessionEvent]] = [:]
+    private var historyPages: [String: PuckHistoryPage] = [:]
     private var followers: [String: AsyncThrowingStream<PuckSessionUpdate, Error>.Continuation] = [:]
     private var recordedCreations: [Creation] = []
     private var recordedTurns: [Turn] = []
+    private var recordedTurnAttempts = 0
+    private var _turnError: PuckDaemonError?
     private var recordedDecisions: [String] = []
+    private var recordedAnswers: [[PuckQuestionSelection]] = []
     private var reachable = true
     private var turnGate: DispatchSemaphore?
     func holdTurns() -> DispatchSemaphore {
@@ -34,11 +38,17 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         return gate
     }
     private var getGate: DispatchSemaphore?
+    private var heldGetNumber: Int?
     private var startedGets = 0
     var getsStarted: Int { locked { startedGets } }
     func holdGets() -> DispatchSemaphore {
         let gate = DispatchSemaphore(value: 0)
-        locked { getGate = gate }
+        locked { getGate = gate; heldGetNumber = nil }
+        return gate
+    }
+    func holdNextGet(after additionalGets: Int) -> DispatchSemaphore {
+        let gate = DispatchSemaphore(value: 0)
+        locked { getGate = gate; heldGetNumber = startedGets + additionalGets + 1 }
         return gate
     }
     private var createGate: DispatchSemaphore?
@@ -47,7 +57,13 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
 
     var creations: [Creation] { locked { recordedCreations } }
     var turns: [Turn] { locked { recordedTurns } }
+    var turnAttempts: Int { locked { recordedTurnAttempts } }
+    var turnError: PuckDaemonError? {
+        get { locked { _turnError } }
+        set { locked { _turnError = newValue } }
+    }
     var decisions: [String] { locked { recordedDecisions } }
+    var answers: [[PuckQuestionSelection]] { locked { recordedAnswers } }
 
     var isReachable: Bool {
         get { locked { reachable } }
@@ -83,6 +99,10 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         }
     }
 
+    func putHistoryPage(_ page: PuckHistoryPage, cursor: String? = nil) {
+        locked { historyPages[page.session + "\u{0}" + (cursor ?? "")] = page }
+    }
+
     func forget(_ id: String) {
         _ = locked { summaries.removeValue(forKey: id) }
     }
@@ -110,12 +130,41 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     }
 
     func get(_ id: String) throws -> PuckSessionSummary {
-        let gate = locked { startedGets += 1; return getGate }
+        let gate = locked { () -> DispatchSemaphore? in
+            startedGets += 1
+            if let heldGetNumber {
+                guard startedGets == heldGetNumber else { return nil }
+                let gate = getGate; getGate = nil; self.heldGetNumber = nil
+                return gate
+            }
+            return getGate
+        }
         gate?.wait()
         return try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
             return summary
+        }
+    }
+
+    func recentEvents(_ id: String, maximum: Int) throws -> PuckRecentHistory {
+        try locked {
+            try checkReachable()
+            guard summaries[id] != nil else { throw PuckDaemonError.rejected("unknown fixture session") }
+            let all = transcripts[id] ?? []
+            let limit = min(max(maximum, 1), 200)
+            return PuckRecentHistory(events: Array(all.suffix(limit)), cursor: all.last?.cursor ?? 0,
+                                     truncated: all.count > limit, incomplete: false)
+        }
+    }
+
+    func history(_ id: String, cursor: String?, limit: Int) throws -> PuckHistoryPage {
+        try locked {
+            try checkReachable()
+            guard let page = historyPages[id + "\u{0}" + (cursor ?? "")] else {
+                throw PuckDaemonError.rejected("no paged fixture history")
+            }
+            return page
         }
     }
 
@@ -142,6 +191,8 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         let gate = try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
+            recordedTurnAttempts += 1
+            if let error = _turnError { throw error }
             recordedTurns.append(Turn(id: id, prompt: prompt))
             summaries[id] = summary.with(position: "running", historyItems: summary.historyItems + 1)
             return turnGate
@@ -153,6 +204,7 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
+            guard summary.pendingApproval?.callID == callID else { throw PuckDaemonError.rejected("stale approval") }
             recordedDecisions.append(decision)
             summaries[id] = summary.with(position: "running", pendingApproval: .some(nil))
         }
@@ -162,6 +214,8 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
+            guard summary.pendingQuestion?.callID == callID else { throw PuckDaemonError.rejected("stale question") }
+            recordedAnswers.append(selections)
             summaries[id] = summary.with(position: "running", pendingQuestion: .some(nil))
         }
     }
@@ -296,7 +350,7 @@ struct PuckStoreFixture {
 
     init(daemon: any PuckDaemonService) throws {
         root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("banyan-puck-\(UUID().uuidString)")
+            .appendingPathComponent("banyan_puck_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))")
         home = root.appendingPathComponent("home")
         project = root.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -310,10 +364,10 @@ struct PuckStoreFixture {
 
     func makeStore(codexService: (any CodexThreadService)? = nil,
                    historyBackend: (any SessionHistoryBackend)? = nil,
-                   tmuxBackend: TmuxBackend? = nil,
+                   tmuxBackend: (any TmuxSessionStoreBackend)? = nil,
                    sessionBackend: (any TmuxClientBackend)? = nil,
                    processTable: (any ProcessTableProvider)? = nil,
-                   freezePreferences: UserDefaults = .standard,
+                   freezePreferences: UserDefaults? = nil,
                    makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
                        ControlServer(store: $0, host: $1)
                    }) -> SessionStore {
@@ -324,7 +378,7 @@ struct PuckStoreFixture {
         return SessionStore(
             persistence: persistence,
             tmuxBackend: tmux,
-            sessionBackend: sessionBackend ?? tmux,
+            sessionBackend: sessionBackend ?? (tmux as? any TmuxClientBackend) ?? banyanTestTmuxBackend,
             processTable: processTable ?? EmptyPuckTestProcessTable(),
             historyBackend: historyBackend ?? EmptyPuckTestHistoryBackend(),
             detector: AgentStateDetector(rules: []),
@@ -342,7 +396,9 @@ struct PuckStoreFixture {
             attentionNotifier: AttentionNotifier(),
             puckDaemon: daemon,
             codexService: codexService,
-            freezePreferences: freezePreferences,
+            // Keep admission and freeze preferences private to this fixture;
+            // the test host's standard defaults can retain another run's limit.
+            freezePreferences: freezePreferences ?? UserDefaults(suiteName: "banyan-fixture-\(root.lastPathComponent)")!,
             makeControlServer: makeControlServer
         )
     }

@@ -168,6 +168,9 @@ public struct SuggestionInbox: Sendable {
         // where its expiry sorts, so the slot it holds and the key it reserves
         // never disagree.
         if let pendingKey = pending?.key, kept[pendingKey] == nil {
+            if let evictedKey = kept.min(by: { $0.value < $1.value })?.key {
+                kept.removeValue(forKey: evictedKey)
+            }
             kept[pendingKey] = suppressedUntil[pendingKey]
         }
         suppressedUntil = kept

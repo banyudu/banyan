@@ -481,6 +481,15 @@ final class SessionStore: ObservableObject {
 
     let codexThreads: CodexThreadCoordinator
     let codexRemote: CodexRemoteControl
+    var slackTerminalContext: any TerminalConversationContextReading
+    let slackStructuredHistory = SlackStructuredHistory()
+    let slackNativeTranscriptHistory = SlackNativeTranscriptHistory()
+    let slackThreadJournal: SlackThreadJournal
+    let slackDecisionJournal: SlackDecisionJournal
+    let slackFollowUpJournal: SlackFollowUpJournal
+    let slackAwayJournal: SlackAwayJournal
+    lazy var slackIntegration = SlackIntegrationController.live(remote: codexRemote, host: host)
+    let slackSessionEventEpoch = UUID().uuidString
     @Published var codexSessionError: String?
     var pendingCodexTUIHandoffs: Set<String> = []
     @Published var codexTUIOwnership: [String: CodexTUIOwnershipObservation] = [:]
@@ -512,6 +521,8 @@ final class SessionStore: ObservableObject {
     private var answerLedger = AgentAnswerLedger()
     /// Status transitions a `/events` long-poll has not read yet.
     private var sessionEventLog = SessionEventLog()
+    private var awayPromptActivationID: String?
+    private var awayPromptFootprints: [String: String] = [:]
     /// Last status written to the event log per session, so a transition can name
     /// what it came from.
     private var lastRecordedEventStatuses: [String: SessionStatus] = [:]
@@ -682,6 +693,14 @@ final class SessionStore: ObservableObject {
         self.codexRemote = CodexRemoteControl(coordinator: codexThreads,
             file: BanyanDataDirectory.url(for: "Banyan/remote/slack.json",
                 environment: host.environment, homeDirectory: host.homeDirectory))
+        self.slackThreadJournal = SlackThreadJournal(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-threads.json",
+            environment: host.environment, homeDirectory: host.homeDirectory))
+        self.slackDecisionJournal = SlackDecisionJournal(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-decisions.json",
+            environment: host.environment, homeDirectory: host.homeDirectory))
+        self.slackFollowUpJournal = SlackFollowUpJournal(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-followups.json",
+            environment: host.environment, homeDirectory: host.homeDirectory))
+        self.slackAwayJournal = SlackAwayJournal(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-away.json",
+            environment: host.environment, homeDirectory: host.homeDirectory))
         self.puckDaemon = puckDaemon ?? PuckDaemonClient(
             environment: host.environment,
             homeDirectory: host.homeDirectory.path
@@ -689,6 +708,9 @@ final class SessionStore: ObservableObject {
         self.persistence = persistence
         self.githubReferenceCache = GitHubReferenceCache(persistence: persistence)
         self.tmuxBackend = tmuxBackend
+        self.slackTerminalContext = TerminalConversationContextReader(backend: tmuxBackend, inspector: CodexTUIProcessInspector(),
+            generations: SlackConversationGenerationTracker(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-generations.json",
+                environment: host.environment, homeDirectory: host.homeDirectory)))
         self.sessionBackend = sessionBackend
         self.processTable = processTable
         self.historyBackend = historyBackend
@@ -726,11 +748,18 @@ final class SessionStore: ObservableObject {
             guard let session = self?.sessions.first(where: { $0.id == id }) as? CodexSession else { return nil }
             return (session.displayTitle, session.cwd)
         }
+        codexRemote.externalThreadAvailable = { [weak self] sessionID, threadID, principal, slackThread in
+            guard let self else { return false }
+            return (try? self.slackThreadJournal.permitsNativeAttachment(sessionID: sessionID, threadID: threadID,
+                principal: principal, slackThread: slackThread)) == true
+        }
         codexRemote.recentConversation = { [weak self] id in
             (self?.sessions.first(where: { $0.id == id }) as? CodexSession)?.conversation
         }
         codexRemote.onChange = { [weak self] in
             guard let self else { return }
+            try? self.slackAwayJournal.resetIfChannelRemoved(allowed: self.codexRemote.policy.allowed)
+            self.slackIntegration.policyChanged()
             for case let session as CodexSession in self.sessions {
                 session.remoteStatus = self.codexRemote.desktopStatus(sessionID: session.id)
             }
@@ -1740,7 +1769,7 @@ final class SessionStore: ObservableObject {
     func refreshLinearIssueList() {
         loadCachedLinearIssuesIfNeeded()
         guard linearIssueListTask == nil else {
-            linearDebugLog("list refresh ignored because refresh is already running")
+            linearDebugLog("list refresh ignored because refresh is already running", environment: self.environment, homeDirectory: self.homeDirectory)
             return
         }
         let hasStaleIssues = !linearIssues.isEmpty
@@ -1750,7 +1779,7 @@ final class SessionStore: ObservableObject {
         let deadline = Date().addingTimeInterval(Self.linearIssueListLoadTimeout)
         let requestID = UUID()
         linearIssueListRequestID = requestID
-        linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]")
+        linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]", environment: self.environment, homeDirectory: self.homeDirectory)
         let environment = self.environment
         let homeDirectory = self.homeDirectory
         linearIssueListTask = Task.detached(priority: .utility) { [environment, homeDirectory] in
@@ -1762,7 +1791,7 @@ final class SessionStore: ObservableObject {
                 do {
                     workflowStates = try await workflowStatesRequest
                 } catch {
-                    linearDebugLog("workflow states refresh failed error=\(error.localizedDescription)")
+                    linearDebugLog("workflow states refresh failed error=\(error.localizedDescription)", environment: environment, homeDirectory: homeDirectory)
                     workflowStates = nil
                 }
                 await MainActor.run { [weak self] in
@@ -1774,7 +1803,7 @@ final class SessionStore: ObservableObject {
                     self.linearIssues = issues
                     let workflowStateSource = workflowStates ?? self.linearIssueWorkflowStates
                     self.linearIssueWorkflowStates = LinearIssuePolicy.mergedWorkflowStates(workflowStateSource, issues: issues)
-                    linearDebugLog("list refresh applied issueCount=\(issues.count) issueStates=[\(linearIssueStateCountSummary(issues))] workflowStateCount=\(self.linearIssueWorkflowStates.count) workflowStates=[\(linearWorkflowStateSummary(self.linearIssueWorkflowStates))]")
+                    linearDebugLog("list refresh applied issueCount=\(issues.count) issueStates=[\(linearIssueStateCountSummary(issues))] workflowStateCount=\(self.linearIssueWorkflowStates.count) workflowStates=[\(linearWorkflowStateSummary(self.linearIssueWorkflowStates))]", environment: environment, homeDirectory: homeDirectory)
                     if let selectedLinearListIssueID = self.selectedLinearListIssueID,
                        !issues.contains(where: { $0.identifier == selectedLinearListIssueID }) {
                         self.selectedLinearListIssueID = issues.first?.identifier
@@ -1792,7 +1821,7 @@ final class SessionStore: ObservableObject {
                     self.linearIssueListLoadState = .loaded
                 }
             } catch {
-                linearDebugLog("list refresh failed error=\(error.localizedDescription)")
+                linearDebugLog("list refresh failed error=\(error.localizedDescription)", environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self, self.linearIssueListRequestID == requestID else { return }
                     self.linearIssueListWatchdogTask?.cancel()
@@ -1827,7 +1856,7 @@ final class SessionStore: ObservableObject {
             self.linearIssueListTask = nil
             self.isLinearIssueListRefreshing = false
             self.linearIssueListLoadState = .failed("Linear refresh timed out. Click refresh to try again.")
-            linearDebugLog("list refresh watchdog expired")
+            linearDebugLog("list refresh watchdog expired", environment: self.environment, homeDirectory: self.homeDirectory)
         }
     }
 
@@ -1857,7 +1886,7 @@ final class SessionStore: ObservableObject {
 
         linearIssues = cache.issues
         linearIssueWorkflowStates = LinearIssuePolicy.mergedWorkflowStates(cache.workflowStates ?? [], issues: cache.issues)
-        linearDebugLog("list cache loaded issueCount=\(cache.issues.count) issueStates=[\(linearIssueStateCountSummary(cache.issues))] workflowStateCount=\(linearIssueWorkflowStates.count) selectedIssueID=\(cache.selectedIssueID ?? "nil") updatedAt=\(cache.updatedAt)")
+        linearDebugLog("list cache loaded issueCount=\(cache.issues.count) issueStates=[\(linearIssueStateCountSummary(cache.issues))] workflowStateCount=\(linearIssueWorkflowStates.count) selectedIssueID=\(cache.selectedIssueID ?? "nil") updatedAt=\(cache.updatedAt)", environment: self.environment, homeDirectory: self.homeDirectory)
         let cachedIssueIDs = Set(cache.issues.map(\.identifier))
         if let selectedLinearListIssueID, cachedIssueIDs.contains(selectedLinearListIssueID) {
             linearIssueListLoadState = .loaded
@@ -3468,6 +3497,7 @@ final class SessionStore: ObservableObject {
            native.state.runtime.type == "active" || native.state.activeTurnID != nil || native.state.needsAttention {
             throw ControlError.badRequest("Finish the active Codex turn and pending requests before parking this session")
         }
+        fenceSlackInput(for: session)
         session.suspend()
         // Its backoff state describes a session nothing is observing any more.
         supervisorObservationStates.removeValue(forKey: id)
@@ -3685,7 +3715,10 @@ final class SessionStore: ObservableObject {
 
     /// Synchronous CLI/TUI delivery never leaves a prompt waiting behind a
     /// transport that can time out. UI sends keep their cancellable FIFO queue.
-    func startPuckTurnImmediately(id: String, prompt: String, expiresAt: Date) async throws -> PuckSession {
+    func startPuckTurnImmediately(id: String, prompt: String, expiresAt: Date,
+                                  authorization: (() throws -> Void)? = nil,
+                                  willSubmit: (() throws -> Void)? = nil,
+                                  mayDispatch: @escaping @Sendable () -> Bool = { true }) async throws -> PuckSession {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ControlError.badRequest("Turn prompt must not be empty; nothing was queued")
         }
@@ -3697,6 +3730,7 @@ final class SessionStore: ObservableObject {
             }
         }
         try validateOwnership()
+        try authorization?()
         let session: PuckSession
         if let existing = admissionPuckSessions[id] { session = existing }
         else {
@@ -3705,6 +3739,7 @@ final class SessionStore: ObservableObject {
             try validateOwnership()
             session = adoptPuckSession(summary)
         }
+        try authorization?()
         guard Date() < expiresAt else { throw ControlError.conflict(code: "request_expired", message: "Turn request expired; nothing was queued") }
         guard !session.admissionTurnInFlight, session.turnUnavailableReason == nil else {
             throw ControlError.conflict(code: "turn_busy", message: session.turnUnavailableReason ?? "A turn is already starting")
@@ -3720,7 +3755,7 @@ final class SessionStore: ObservableObject {
         session.reopen()
         // No suspension point lies between reservation and startTurn entering
         // its in-flight guard. Errors release only a definitively unused slot.
-        try await session.startTurn(prompt)
+        try await session.startTurn(prompt, authorization: authorization, willSubmit: willSubmit, mayDispatch: mayDispatch)
         return session
     }
 
@@ -3997,6 +4032,37 @@ final class SessionStore: ObservableObject {
 
     func sessionEvents(since: Int?) -> SessionEventBatch {
         sessionEventLog.batch(since: since)
+    }
+
+    /// Seed the supervisor's fingerprint when an on-demand decision card is
+    /// opened, so a desktop resolution before the next tick is observable.
+    func noteSlackObservedPrompt(sessionID: String, footprint: String) {
+        let scope = slackPromptObservationScope()
+        guard scope.ids.contains(sessionID), let token = scope.token else { return }
+        if awayPromptActivationID != token {
+            awayPromptActivationID = token
+            awayPromptFootprints = slackDecisionJournal.observedPromptFootprints(allowed: codexRemote.policy.allowed)
+        }
+        awayPromptFootprints[sessionID] = footprint
+    }
+
+    /// A parked/frozen row can no longer accept remote input. Fence any
+    /// off-main send first, then wake the card-maintenance stream if needed.
+    func noteSlackSessionAvailability(_ session: BanyanSession) {
+        guard sessions.contains(where: { $0 === session }) else { return }
+        if session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended {
+            fenceSlackInput(for: session)
+        }
+        guard codexRemote.policy.enabled,
+              slackDecisionJournal.observedSessionIDs(allowed: codexRemote.policy.allowed).contains(session.id) else { return }
+        let event = sessionEventLog.append(sessionID: session.id, status: session.status, previousStatus: session.status)
+        onSessionEvent?(event)
+    }
+
+    private func fenceSlackInput(for session: BanyanSession) {
+        guard sessions.contains(where: { $0 === session }) else { return }
+        slackDecisionJournal.invalidateSession(session.id)
+        slackFollowUpJournal.invalidateSession(session.id)
     }
 
     private func recordStatusEvent(id: String, status: SessionStatus) {
@@ -4478,6 +4544,7 @@ final class SessionStore: ObservableObject {
             ? preferredSelectionAfterClosing(id: id)
             : nil
         let promotedChildIDs = detachChildren(of: id, to: session.parentSessionID)
+        fenceSlackInput(for: session)
         if session.isImportedHistory {
             session.terminate(markClosed: true)
         } else {
@@ -4511,6 +4578,7 @@ final class SessionStore: ObservableObject {
         let replacementID = selectedSessionID == id
             ? preferredSelectionAfterClosing(id: id)
             : nil
+        fenceSlackInput(for: sessions[index])
         if sessions[index].isImportedHistory {
             sessions[index].status = .closed
             if selectedSessionID == id {
@@ -5266,6 +5334,15 @@ final class SessionStore: ObservableObject {
     private func attach(_ session: BanyanSession) {
         session.autoRetryCodexFailures = autoRetryCodexFailures
         configureAgentAdmission(session)
+        if let puck = session as? PuckSession {
+            puck.onPendingChangedWithoutStatusTransition = { [weak self, weak puck] in
+                guard let self, let puck, self.sessions.contains(where: { $0 === puck }),
+                      puck.status != .closed, !puck.isSuspended,
+                      self.slackPromptObservationScope().ids.contains(puck.id) else { return }
+                let event = self.sessionEventLog.append(sessionID: puck.id, status: puck.status, previousStatus: puck.status)
+                self.onSessionEvent?(event)
+            }
+        }
         if let terminal = session as? TerminalSession, terminal.isRestored, terminal.status != .closed {
             let backend = terminal.tmuxBackend
             let name = terminal.tmuxSessionName
@@ -5333,10 +5410,16 @@ final class SessionStore: ObservableObject {
             }
             self.noteSidebarHistoryChange(for: session)
         }
+        var wasUnavailable = session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended
         session.onDidChange = { [weak self, weak session] in
             if let session { EnergyTrace.count("session.didChange", sessionID: session.id) }
             if let self, let session {
                 self.noteSidebarHistoryChange(for: session)
+                let unavailable = session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended
+                if unavailable != wasUnavailable {
+                    wasUnavailable = unavailable
+                    self.noteSlackSessionAvailability(session)
+                }
             }
             Task { @MainActor in
                 // A native row may have been replaced by a terminal with the
@@ -5379,7 +5462,10 @@ final class SessionStore: ObservableObject {
             }
         }
         session.onStatusSignal = { [weak self, weak session] status in
-            guard let self, let session else { return }
+            guard let self, let session, self.sessions.contains(where: { $0 === session }) else { return }
+            if status == .closed {
+                self.fenceSlackInput(for: session)
+            }
             EnergyTrace.count("session.statusSignal", sessionID: session.id)
             self.resetSupervisorObservationBackoff(for: session.id)
             self.recordStatusEvent(id: session.id, status: status)
@@ -5760,6 +5846,8 @@ final class SessionStore: ObservableObject {
 
         let backend = tmuxBackend
         let processTableProvider = processTable
+        let promptScope = slackPromptObservationScope()
+        let promptSessionIDs = promptScope.ids, promptActivation = promptScope.token
         let inspectionCache = supervisorInspectionCache
         let states = supervisorObservationStates
         let cadence = force || sessionID != nil ? supervisorInterval : supervisorScheduledInterval
@@ -5779,7 +5867,8 @@ final class SessionStore: ObservableObject {
                     processTable: processTableProvider.snapshot(),
                     cache: inspectionCache
                 )
-                results = synchronizer.observe(inputs, paneSnapshots: panes) { sessionID, durationMS in
+                results = synchronizer.observe(inputs, paneSnapshots: panes, promptSessionIDs: promptSessionIDs,
+                                               promptActivationID: promptActivation) { sessionID, durationMS in
                     telemetry.recordDurationIfSlow(
                         "supervisor.session",
                         durationMS: durationMS,
@@ -6132,10 +6221,27 @@ final class SessionStore: ObservableObject {
     func applySupervisorResults(_ results: [SessionStatusObservation]) -> Bool {
         var didUpdateProvider = false
         var didChangePersistentState = false
+        let promptScope = slackPromptObservationScope()
         for var result in results {
             guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
                   !session.isFrozen, !session.isDeepSuspended else { continue }
             observeCodexRetry(session, observation: result)
+            if awayPromptActivationID != promptScope.token {
+                awayPromptActivationID = promptScope.token
+                awayPromptFootprints = slackDecisionJournal.observedPromptFootprints(allowed: codexRemote.policy.allowed)
+            }
+            if result.promptObserved, result.promptActivationID == promptScope.token,
+               promptScope.ids.contains(session.id) {
+                let previous = awayPromptFootprints[session.id]
+                if let footprint = result.promptFootprint { awayPromptFootprints[session.id] = footprint }
+                else { awayPromptFootprints.removeValue(forKey: session.id) }
+                // Status transitions already generate an event. Emit a second
+                // kind only when the prompt changed while the status did not.
+                if previous != result.promptFootprint, session.status == result.status {
+                    let event = sessionEventLog.append(sessionID: session.id, status: result.status, previousStatus: session.status)
+                    onSessionEvent?(event)
+                }
+            }
             if result.status == .closed, session.workflow?.state.permitsClose == false {
                 // Missing process ≠ closed issue. Keep managed rows visible and
                 // their worktrees owned while the supervisor recovers the thread.
