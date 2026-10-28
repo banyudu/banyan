@@ -26,6 +26,8 @@ class BrowserAPI(FakeAPI):
         self.decision_calls = 0
         self.resolve_on_decision_call = None
         self.answers = []
+        self.puck_questions = None
+        self.puck_selections = []
         self.receipts = {}
         self.lose_answer_response = False
         self.replies = []
@@ -76,13 +78,15 @@ class BrowserAPI(FakeAPI):
             return copy.deepcopy(self.away)
         if action == "awayEvents":
             cursor = body.get("eventCursor")
-            same = (body.get("eventEpoch") == self.away_epoch and
+            same_cursor = body.get("eventEpoch") == self.away_epoch and cursor is not None
+            same = (same_cursor and
                     body.get("awayActivationID") == self.away["activationID"] and
-                    body.get("awayRevision") == self.away["revision"] and cursor is not None)
+                    body.get("awayRevision") == self.away["revision"])
             return {"enabled": self.away["enabled"], "activationID": self.away["activationID"],
                     "revision": self.away["revision"], "epoch": self.away_epoch, "cursor": self.away_cursor,
                     "gap": self.away_gap, "refresh": self.away["enabled"] and (not same or self.away_gap),
-                    "events": [copy.deepcopy(e) for e in self.away_events if same and e["cursor"] > cursor]}
+                    "refreshCards": not same or self.away_gap,
+                    "events": [copy.deepcopy(e) for e in self.away_events if same_cursor and not self.away_gap and e["cursor"] > cursor]}
         if action == "awaySnapshot":
             self.away_snapshot_calls += 1
             if self.resolve_on_snapshot_call == self.away_snapshot_calls:
@@ -150,6 +154,11 @@ class BrowserAPI(FakeAPI):
                 self.pending = False
             if not self.pending:
                 return {"status": "resolved", "requestID": None, "options": [], "answerable": False}
+            if self.puck_questions is not None:
+                return {"status": "pending", "requestID": self.request_id, "kind": "puckQuestion",
+                        "question": "\n".join(q["question"] for q in self.puck_questions), "questions": self.puck_questions,
+                        "context": [], "recentContext": [{"role": "user", "text": "before away"}],
+                        "options": [], "answerable": True}
             return {"status": "pending", "requestID": self.request_id, "question": "Do you want to proceed?",
                     "context": ["echo fixture"], "recentContext": [{"role": "user", "text": "before away"}],
                     "options": [{"index": 1, "label": "Yes"}, {"index": 2, "label": "No"}], "answerable": True}
@@ -174,6 +183,8 @@ class BrowserAPI(FakeAPI):
             if body["identity"] != identity or attachment.get("slackThread") != body["slackThread"] or not self.pending or body["requestID"] != self.request_id:
                 raise Unavailable("Stale request")
             self.answers.append(body["option"])
+            if "selections" in body:
+                self.puck_selections.append(copy.deepcopy(body["selections"]))
             self.pending = False
             self.receipts[body["operationID"]] = {"status": "submitted", "operationID": body["operationID"]}
             if self.lose_answer_response:
@@ -477,6 +488,104 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["identity"]["kind"], "puck")
         self.assertEqual(calls[0]["sessionID"], "row-0")
+
+    async def test_puck_decision_uses_its_bound_thread_and_is_not_replayed(self):
+        self.api.rows[0]["backend"] = "puck"
+        self.api.identity = lambda session_id: {"kind": "puck", "conversationID": session_id, "generation": "puck"}
+        self.api.pending = True
+        await self.connector.envelope(home_event(), self.ack)
+        await self.connector.envelope(interaction("banyan_home", self.home_open_button()["value"], view=self.last_home()), self.ack)
+        card = next(fields for method, fields in self.slack.calls if method == "chat.postMessage" and fields["text"] == "Puck decision")
+        self.assertEqual(card["thread_ts"], "200.1")
+        option = next(element for block in card["blocks"] if block.get("type") == "actions"
+                      for element in block["elements"] if element["text"]["text"] == "1")
+        clicked = interaction("banyan_browser", option["value"], channel="C_TEST")
+        await self.connector.envelope(clicked, self.ack)
+        await self.connector.envelope(clicked, self.ack)
+        self.assertEqual(self.api.answers, [1])
+        self.assertEqual(len([call for call in self.api.browser_calls if call["action"] == "answer"]), 1)
+
+    async def test_desktop_resolution_retires_existing_card_with_away_off(self):
+        self.api.pending = True
+        await self.connector.envelope(home_event(), self.ack)
+        await self.connector.envelope(interaction("banyan_home", self.home_open_button()["value"], view=self.last_home()), self.ack)
+        await self.connector.refresh_away(PRINCIPAL)
+        posts_before = len([1 for method, _ in self.slack.calls if method == "chat.postMessage"])
+        self.api.pending = False
+        self.api.away_cursor = 1
+        self.api.away_events = [{"cursor": 1, "sessionID": "row-0", "status": "executing"}]
+        await self.connector.refresh_away(PRINCIPAL)
+        update = [fields for method, fields in self.slack.calls if method == "chat.update"][-1]
+        self.assertIn("No answer controls", update["blocks"][0]["text"]["text"])
+        self.assertEqual(len([1 for method, _ in self.slack.calls if method == "chat.postMessage"]), posts_before)
+        self.api.pending = True
+        self.api.request_id = "new-request"
+        self.api.away_cursor = 2
+        self.api.away_events.append({"cursor": 2, "sessionID": "row-0", "status": "asking"})
+        await self.connector.refresh_away(PRINCIPAL)
+        self.assertEqual(len([1 for method, _ in self.slack.calls if method == "chat.postMessage"]), posts_before)
+
+    async def test_away_catchup_opens_a_pending_puck_decision_once(self):
+        self.api.rows[0]["backend"] = "puck"
+        self.api.identity = lambda session_id: {"kind": "puck", "conversationID": session_id, "generation": "puck"}
+        self.api.pending = True
+        self.api.away = {"enabled": True, "sessionIDs": ["row-0"], "projectIDs": [], "activationID": "activation-a", "revision": 1}
+        await self.connector.refresh_away(PRINCIPAL)
+        await self.connector.refresh_away(PRINCIPAL)
+        posts = [fields for method, fields in self.slack.calls if method == "chat.postMessage"]
+        self.assertEqual(len([post for post in posts if post["text"] == "Puck decision"]), 1)
+        self.assertEqual(len([post for post in posts if post["text"].startswith("Away catch-up")]), 1)
+
+    async def test_away_reports_puck_completion_but_not_an_idle_input(self):
+        self.api.rows[0]["backend"] = "puck"
+        self.api.identity = lambda session_id: {"kind": "puck", "conversationID": session_id, "generation": "puck"}
+        self.api.away = {"enabled": True, "sessionIDs": ["row-0"], "projectIDs": [], "activationID": "activation-a", "revision": 1}
+        self.api.rows[0]["status"] = "needInput"
+        await self.connector.refresh_away(PRINCIPAL)
+        self.assertFalse(any(fields["text"].endswith(": completed") for method, fields in self.slack.calls if method == "chat.postMessage"))
+        self.api.away_cursor = 1
+        self.api.away_events = [{"cursor": 1, "sessionID": "row-0", "status": "needInput", "previousStatus": "executing"}]
+        await self.connector.refresh_away(PRINCIPAL)
+        await self.connector.refresh_away(PRINCIPAL)
+        posts = [fields for method, fields in self.slack.calls if method == "chat.postMessage" and fields["text"].endswith(": completed")]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["thread_ts"], "200.2")
+
+    async def test_puck_question_modal_preserves_multiple_and_custom_answers_once(self):
+        self.api.rows[0]["backend"] = "puck"
+        self.api.identity = lambda session_id: {"kind": "puck", "conversationID": session_id, "generation": "puck"}
+        self.api.pending = True
+        self.api.puck_questions = [
+            {"id": "0", "question": "Which checks?", "multiple": True, "custom": False,
+             "options": [{"label": "A", "description": "First"}, {"label": "B", "description": "Second"}]},
+            {"id": "1", "question": "Any details?", "multiple": False, "custom": True,
+             "options": [{"label": "None", "description": "No details"}]}]
+        await self.connector.envelope(home_event(), self.ack)
+        await self.connector.envelope(interaction("banyan_home", self.home_open_button()["value"], view=self.last_home()), self.ack)
+        card = next(fields for method, fields in self.slack.calls if method == "chat.postMessage" and fields["text"] == "Puck decision")
+        button = next(element for block in card["blocks"] if block.get("type") == "actions"
+                      for element in block["elements"] if element["text"]["text"] == "Answer questions")
+        click = interaction("banyan_browser", button["value"], channel="C_TEST")
+        click["payload"]["trigger_id"] = "TRIGGER"
+        await self.connector.envelope(click, self.ack)
+        view = next(fields["view"] for method, fields in self.slack.calls if method == "views.open")
+        self.assertEqual(view["blocks"][0]["element"]["type"], "multi_static_select")
+        invalid_values = {"q0-choice": {"choice": {"selected_options": [{"value": "A"}]}},
+            "q1-choice": {"choice": {"selected_option": {"value": "None"}}},
+            "q1-custom": {"custom": {"value": "details"}}}
+        invalid = {"envelope_id": "invalid-puck-modal", "type": "interactive", "payload": {"type": "view_submission",
+            "team": {"id": "T_TEST"}, "user": {"id": "U_TEST"}, "view": {**view, "id": "INVALID", "state": {"values": invalid_values}}}}
+        await self.connector.envelope(invalid, self.ack)
+        self.assertFalse(any(call["action"] == "answer" for call in self.api.browser_calls))
+        self.assertIn("Answer not sent", [fields for method, fields in self.slack.calls if method == "chat.postMessage"][-1]["text"])
+        values = {"q0-choice": {"choice": {"selected_options": [{"value": "B"}, {"value": "A"}]}},
+                  "q1-custom": {"custom": {"value": "details"}}}
+        submit = {"envelope_id": "puck-modal", "type": "interactive", "payload": {"type": "view_submission",
+            "team": {"id": "T_TEST"}, "user": {"id": "U_TEST"}, "view": {**view, "id": "VIEW", "state": {"values": values}}}}
+        await self.connector.envelope(submit, self.ack)
+        await self.connector.envelope(submit, self.ack)
+        self.assertEqual(self.api.puck_selections, [[{"labels": ["B", "A"], "text": None}, {"labels": [], "text": "details"}]])
+        self.assertEqual(len([call for call in self.api.browser_calls if call["action"] == "answer"]), 1)
 
     async def test_history_page_displays_all_messages_before_advancing_cursor(self):
         original = self.api.browser

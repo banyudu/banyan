@@ -448,6 +448,23 @@ class ConnectorTests(unittest.IsolatedAsyncioTestCase):
         await self.connector.refresh(PRINCIPAL, first=False)
         self.assertTrue(self.slack.calls)
 
+    async def test_native_desktop_resolution_retires_controls_while_away_is_off(self):
+        self.api.session.update(needsAttention=True, turnID="active")
+        self.api.session["requests"] = [{"id": 42, "turnID": "active", "title": "Approval", "detail": "fixture",
+                                        "decisions": ["accept", "decline"], "questions": [], "answerable": True}]
+        await self.connector.render(self.api.session, PRINCIPAL)
+        posts = self.slack.posts
+        self.slack.calls.clear()
+        self.api.session.update(needsAttention=False, turnID=None, requests=[])
+        self.api.events = [{"cursor": 1, "kind": "attention", "attachment": self.api.session["attachment"]}]
+        await self.connector.refresh(PRINCIPAL)
+        updates = [fields for method, fields in self.slack.calls if method == "chat.update"]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("Controls are paused", updates[0]["blocks"][0]["text"]["text"])
+        self.assertEqual(self.slack.posts, posts)
+        await self.connector.refresh(PRINCIPAL)
+        self.assertEqual(len([1 for method, _ in self.slack.calls if method == "chat.update"]), 1)
+
     async def test_model_output_is_plain_text_and_no_token_stream_is_posted(self):
         self.api.session["context"] = [{"type": "agentMessage", "text": "<@EVERYONE> <!channel> *inject*"}]
         self.api.events = [{"cursor": 1, "kind": "turn/completed", "attachment": self.api.session["attachment"]}]

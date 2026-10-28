@@ -171,6 +171,26 @@ struct SlackDecisionAPITests {
         #expect(store.sessionEvents(since: offCursor).events.isEmpty)
     }
 
+    @Test func openedDecisionIsObservedAndRetiredWhileAwayIsOff() async throws {
+        let (fixture, store, _) = try fixture()
+        defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
+        _ = try await store.slackBrowser(request("decision"))
+        let scope = store.slackPromptObservationScope()
+        #expect(scope.ids.contains("row"))
+        let activation = try #require(scope.token)
+        func observation(_ footprint: String?) -> SessionStatusObservation {
+            .init(id: "row", status: .asking, tone: .yellow, provider: .codex, currentPath: fixture.project.path,
+                  promptObserved: true, promptFootprint: footprint, promptActivationID: activation)
+        }
+        _ = store.applySupervisorResults([observation("first")])
+        let cursor = store.sessionEvents(since: nil).cursor
+        _ = store.applySupervisorResults([observation(nil)])
+        let events = try await store.slackBrowser(request("awayEvents", extra: ["eventEpoch": store.slackSessionEventEpoch,
+            "eventCursor": cursor, "awayRevision": 0]))
+        #expect(events["enabled"] as? Bool == false)
+        #expect((events["events"] as? [[String: Any]])?.contains { $0["sessionID"] as? String == "row" } == true)
+    }
+
     @Test func awaySnapshotIncludesTransitionsDuringCaptureAndDoesNotOfferResolvedDecision() async throws {
         let (fixture, store, backend) = try fixture()
         defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }

@@ -38,7 +38,7 @@ async def drive(config):
         "type": "app_home_opened", "tab": "home", "user": "U_TEST"}}}
     await connector.envelope(home, ack)
     view = next(fields["view"] for method, fields in reversed(slack.calls) if method == "views.publish")
-    if config.get("mode") == "away":
+    if config.get("mode") in ("away", "puck_away"):
         follow = next(element for block in view["blocks"] if block.get("type") == "actions"
                       for element in block["elements"] if element["text"]["text"] == "Follow")
         await connector.envelope({"envelope_id": "follow", "type": "interactive", "payload": {
@@ -52,7 +52,8 @@ async def drive(config):
             "view": view, "actions": [{**toggle, "action_ts": "300.2"}]}}, ack)
         await connector.refresh_away(PRINCIPAL)
         digests = [fields for method, fields in slack.calls if method == "chat.postMessage" and fields["text"].startswith("Away catch-up")]
-        assert len(digests) == 1 and "Do you want to proceed?" in digests[0]["text"]
+        expected = "Approval needed: shell" if config.get("mode") == "puck_away" else "Do you want to proceed?"
+        assert len(digests) == 1 and expected in digests[0]["text"]
     else:
         button = next(block["accessory"] for block in view["blocks"] if "accessory" in block)
         open_action = {"envelope_id": "open", "type": "interactive", "payload": {
@@ -70,13 +71,38 @@ async def drive(config):
         assert len(acked) == 4
         print(json.dumps({"ok": True, "replyReceipts": len(receipts)}))
         return
-    card = next(fields for method, fields in slack.calls if method == "chat.postMessage" and fields["text"] == "Terminal decision")
+    puck = config.get("mode") in ("puck", "puck_away", "puck_question")
+    card = next(fields for method, fields in slack.calls if method == "chat.postMessage" and fields["text"] == ("Puck decision" if puck else "Terminal decision"))
     texts = [block.get("text", {}).get("text", "") for block in card["blocks"]]
-    assert "Do you want to proceed?" in texts
-    assert "1. Yes" in texts and "2. No" in texts
-    assert any("Earlier context" in text for text in texts)
+    if config.get("mode") == "puck_question":
+        assert "Which checks?" in texts and "Any details?" in texts
+        button = next(element for block in card["blocks"] if block.get("type") == "actions"
+                      for element in block["elements"] if element["text"]["text"] == "Answer questions")
+        await connector.envelope({"envelope_id": "question", "type": "interactive", "payload": {
+            "type": "block_actions", "team": {"id": "T_TEST"}, "channel": {"id": "C_TEST"},
+            "user": {"id": "U_TEST"}, "trigger_id": "TRIGGER", "actions": [{**button, "action_ts": "300.2"}]}}, ack)
+        modal = next(fields["view"] for method, fields in slack.calls if method == "views.open")
+        values = {"q0-choice": {"choice": {"selected_options": [{"value": "B"}, {"value": "A"}]}},
+                  "q1-custom": {"custom": {"value": "details"}}}
+        submit = {"envelope_id": "modal", "type": "interactive", "payload": {"type": "view_submission",
+            "team": {"id": "T_TEST"}, "user": {"id": "U_TEST"},
+            "view": {**modal, "id": "VIEW", "state": {"values": values}}}}
+        await connector.envelope(submit, ack)
+        await connector.envelope({**submit, "envelope_id": "modal-redelivery"}, ack)
+        receipts = [entry for key, entry in connector.journal.data["incoming"].items() if key.startswith("browser-answer-")]
+        assert len(receipts) == 1 and receipts[0]["result"]["status"] == "submitted"
+        print(json.dumps({"ok": True, "answerReceipts": len(receipts)}))
+        return
+    if puck:
+        assert "Approval needed: shell" in texts
+        assert "1. Approve" in texts and "3. Deny" in texts
+        assert any("prior context" in text for text in texts)
+    else:
+        assert "Do you want to proceed?" in texts
+        assert "1. Yes" in texts and "2. No" in texts
+        assert any("Earlier context" in text for text in texts)
     choice = next(element for block in card["blocks"] if block.get("type") == "actions"
-                  for element in block["elements"] if element["text"]["text"] == "2")
+                  for element in block["elements"] if element["text"]["text"] == ("3" if puck else "2"))
     answer = {"envelope_id": "answer", "type": "interactive", "payload": {
         "type": "block_actions", "team": {"id": "T_TEST"}, "channel": {"id": "C_TEST"},
         "user": {"id": "U_TEST"}, "container": {"message_ts": "200.2"},
@@ -85,7 +111,7 @@ async def drive(config):
     await connector.envelope({**answer, "envelope_id": "answer-redelivery"}, ack)
     receipts = [entry for key, entry in connector.journal.data["incoming"].items() if key.startswith("browser-answer-")]
     assert len(receipts) == 1 and receipts[0]["result"]["status"] == "submitted"
-    assert len(acked) == (5 if config.get("mode") == "away" else 4)
+    assert len(acked) == (5 if config.get("mode") in ("away", "puck_away") else 4)
     print(json.dumps({"ok": True, "answerReceipts": len(receipts)}))
 
 

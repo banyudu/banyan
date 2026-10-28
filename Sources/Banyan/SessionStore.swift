@@ -4032,6 +4032,30 @@ final class SessionStore: ObservableObject {
         sessionEventLog.batch(since: since)
     }
 
+    /// Seed the supervisor's fingerprint when an on-demand decision card is
+    /// opened, so a desktop resolution before the next tick is observable.
+    func noteSlackObservedPrompt(sessionID: String, footprint: String) {
+        let scope = slackPromptObservationScope()
+        guard scope.ids.contains(sessionID), let token = scope.token else { return }
+        if awayPromptActivationID != token {
+            awayPromptActivationID = token
+            awayPromptFootprints = slackDecisionJournal.observedPromptFootprints(allowed: codexRemote.policy.allowed)
+        }
+        awayPromptFootprints[sessionID] = footprint
+    }
+
+    /// A parked/frozen row can no longer accept an old remote decision. Fence
+    /// any off-main send first, then wake the card-maintenance stream.
+    func noteSlackSessionAvailability(_ session: BanyanSession) {
+        guard codexRemote.policy.enabled,
+              slackDecisionJournal.observedSessionIDs(allowed: codexRemote.policy.allowed).contains(session.id) else { return }
+        if session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended {
+            slackDecisionJournal.invalidateSession(session.id)
+        }
+        let event = sessionEventLog.append(sessionID: session.id, status: session.status, previousStatus: session.status)
+        onSessionEvent?(event)
+    }
+
     private func recordStatusEvent(id: String, status: SessionStatus) {
         let previous = lastRecordedEventStatuses[id]
         guard previous != status else { return }
@@ -5299,6 +5323,15 @@ final class SessionStore: ObservableObject {
     private func attach(_ session: BanyanSession) {
         session.autoRetryCodexFailures = autoRetryCodexFailures
         configureAgentAdmission(session)
+        if let puck = session as? PuckSession {
+            puck.onPendingChangedWithoutStatusTransition = { [weak self, weak puck] in
+                guard let self, let puck, self.sessions.contains(where: { $0 === puck }),
+                      puck.status != .closed, !puck.isSuspended,
+                      self.slackPromptObservationScope().ids.contains(puck.id) else { return }
+                let event = self.sessionEventLog.append(sessionID: puck.id, status: puck.status, previousStatus: puck.status)
+                self.onSessionEvent?(event)
+            }
+        }
         if let terminal = session as? TerminalSession, terminal.isRestored, terminal.status != .closed {
             let backend = terminal.tmuxBackend
             let name = terminal.tmuxSessionName
@@ -5366,10 +5399,16 @@ final class SessionStore: ObservableObject {
             }
             self.noteSidebarHistoryChange(for: session)
         }
+        var wasUnavailable = session.isSuspended || session.isFrozen || session.isDeepSuspended
         session.onDidChange = { [weak self, weak session] in
             if let session { EnergyTrace.count("session.didChange", sessionID: session.id) }
             if let self, let session {
                 self.noteSidebarHistoryChange(for: session)
+                let unavailable = session.isSuspended || session.isFrozen || session.isDeepSuspended
+                if unavailable != wasUnavailable {
+                    wasUnavailable = unavailable
+                    self.noteSlackSessionAvailability(session)
+                }
             }
             Task { @MainActor in
                 // A native row may have been replaced by a terminal with the
@@ -5413,6 +5452,7 @@ final class SessionStore: ObservableObject {
         }
         session.onStatusSignal = { [weak self, weak session] status in
             guard let self, let session else { return }
+            if status == .closed { self.slackDecisionJournal.invalidateSession(session.id) }
             EnergyTrace.count("session.statusSignal", sessionID: session.id)
             self.resetSupervisorObservationBackoff(for: session.id)
             self.recordStatusEvent(id: session.id, status: status)
@@ -5793,12 +5833,8 @@ final class SessionStore: ObservableObject {
 
         let backend = tmuxBackend
         let processTableProvider = processTable
-        let awayState = slackAwayJournal.state
-        let awayActive = slackAwayJournal.storageError == nil && awayState.enabled && codexRemote.policy.enabled &&
-            codexRemote.policy.allowed.contains { $0.workspace == awayState.workspace && $0.channel == awayState.channel }
-        let promptSessionIDs = Set(sessions.filter { session in awayActive &&
-            (awayState.sessionIDs.contains(session.id) || awayState.projectIDs.contains(session.projectGroupID)) }.map(\.id))
-        let promptActivation = awayActive ? awayState.activationID : nil
+        let promptScope = slackPromptObservationScope()
+        let promptSessionIDs = promptScope.ids, promptActivation = promptScope.token
         let inspectionCache = supervisorInspectionCache
         let states = supervisorObservationStates
         let cadence = force || sessionID != nil ? supervisorInterval : supervisorScheduledInterval
@@ -6172,17 +6208,17 @@ final class SessionStore: ObservableObject {
     func applySupervisorResults(_ results: [SessionStatusObservation]) -> Bool {
         var didUpdateProvider = false
         var didChangePersistentState = false
+        let promptScope = slackPromptObservationScope()
         for var result in results {
             guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
                   !session.isFrozen, !session.isDeepSuspended else { continue }
             observeCodexRetry(session, observation: result)
-            let away = slackAwayJournal.state
-            if awayPromptActivationID != away.activationID {
-                awayPromptActivationID = away.activationID
-                awayPromptFootprints.removeAll()
+            if awayPromptActivationID != promptScope.token {
+                awayPromptActivationID = promptScope.token
+                awayPromptFootprints = slackDecisionJournal.observedPromptFootprints(allowed: codexRemote.policy.allowed)
             }
-            if away.enabled, result.promptObserved, result.promptActivationID == away.activationID,
-               away.sessionIDs.contains(session.id) || away.projectIDs.contains(session.projectGroupID) {
+            if result.promptObserved, result.promptActivationID == promptScope.token,
+               promptScope.ids.contains(session.id) {
                 let previous = awayPromptFootprints[session.id]
                 if let footprint = result.promptFootprint { awayPromptFootprints[session.id] = footprint }
                 else { awayPromptFootprints.removeValue(forKey: session.id) }

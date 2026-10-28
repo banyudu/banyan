@@ -2,6 +2,11 @@ import BanyanCore
 import CryptoKit
 import Foundation
 
+struct SlackPuckSelection: Codable, Sendable {
+    var labels: [String]
+    var text: String?
+}
+
 struct SlackBrowserRequest: Decodable {
     var action: String
     var principal: CodexRemotePrincipal
@@ -17,6 +22,7 @@ struct SlackBrowserRequest: Decodable {
     var requestID: String?
     var operationID: String?
     var option: Int?
+    var selections: [SlackPuckSelection]?
     var text: String?
     var awayEnabled: Bool?
     var followSessionID: String?
@@ -108,8 +114,10 @@ extension SessionStore {
             }
             return slackFollowUpReceiptObject(receipt)
         case "decision":
+            if request.identity?.kind == "puck" { return try await slackPuckDecision(request) }
             return try await slackTerminalDecision(request)
         case "answer":
+            if request.identity?.kind == "puck" { return try await slackPuckAnswer(request) }
             return try await slackTerminalAnswer(request)
         case "decisionReceipt":
             guard let operationID = request.operationID else { throw CodexRemoteError.invalid("Operation ID is required") }

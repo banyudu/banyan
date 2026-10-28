@@ -26,6 +26,7 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     private var recordedCreations: [Creation] = []
     private var recordedTurns: [Turn] = []
     private var recordedDecisions: [String] = []
+    private var recordedAnswers: [[PuckQuestionSelection]] = []
     private var reachable = true
     private var turnGate: DispatchSemaphore?
     func holdTurns() -> DispatchSemaphore {
@@ -34,11 +35,17 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         return gate
     }
     private var getGate: DispatchSemaphore?
+    private var heldGetNumber: Int?
     private var startedGets = 0
     var getsStarted: Int { locked { startedGets } }
     func holdGets() -> DispatchSemaphore {
         let gate = DispatchSemaphore(value: 0)
-        locked { getGate = gate }
+        locked { getGate = gate; heldGetNumber = nil }
+        return gate
+    }
+    func holdNextGet(after additionalGets: Int) -> DispatchSemaphore {
+        let gate = DispatchSemaphore(value: 0)
+        locked { getGate = gate; heldGetNumber = startedGets + additionalGets + 1 }
         return gate
     }
     private var createGate: DispatchSemaphore?
@@ -48,6 +55,7 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     var creations: [Creation] { locked { recordedCreations } }
     var turns: [Turn] { locked { recordedTurns } }
     var decisions: [String] { locked { recordedDecisions } }
+    var answers: [[PuckQuestionSelection]] { locked { recordedAnswers } }
 
     var isReachable: Bool {
         get { locked { reachable } }
@@ -110,7 +118,15 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     }
 
     func get(_ id: String) throws -> PuckSessionSummary {
-        let gate = locked { startedGets += 1; return getGate }
+        let gate = locked { () -> DispatchSemaphore? in
+            startedGets += 1
+            if let heldGetNumber {
+                guard startedGets == heldGetNumber else { return nil }
+                let gate = getGate; getGate = nil; self.heldGetNumber = nil
+                return gate
+            }
+            return getGate
+        }
         gate?.wait()
         return try locked {
             try checkReachable()
@@ -164,6 +180,7 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
+            guard summary.pendingApproval?.callID == callID else { throw PuckDaemonError.rejected("stale approval") }
             recordedDecisions.append(decision)
             summaries[id] = summary.with(position: "running", pendingApproval: .some(nil))
         }
@@ -173,6 +190,8 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
+            guard summary.pendingQuestion?.callID == callID else { throw PuckDaemonError.rejected("stale question") }
+            recordedAnswers.append(selections)
             summaries[id] = summary.with(position: "running", pendingQuestion: .some(nil))
         }
     }

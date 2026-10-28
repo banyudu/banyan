@@ -5,9 +5,11 @@ import Foundation
 final class SlackDecisionFence: @unchecked Sendable {
     private let lock = NSLock()
     private var active: Set<String> = []
-    func replace(_ ids: Set<String>) { lock.lock(); defer { lock.unlock() }; active = ids }
-    func invalidate(_ id: String) { lock.lock(); defer { lock.unlock() }; active.remove(id) }
+    private var retired: Set<String> = []
+    func replace(_ ids: Set<String>) { lock.lock(); defer { lock.unlock() }; active = ids.subtracting(retired) }
+    func invalidate(_ id: String) { lock.lock(); defer { lock.unlock() }; active.remove(id); retired.insert(id) }
     func contains(_ id: String) -> Bool { lock.lock(); defer { lock.unlock() }; return active.contains(id) }
+    func isRetired(_ id: String) -> Bool { lock.lock(); defer { lock.unlock() }; return retired.contains(id) }
 }
 
 /// Request identities and write-ahead operation receipts. No prompt, answer
@@ -31,10 +33,12 @@ final class SlackDecisionJournal {
         let principal: CodexRemotePrincipal
         let requestID: String
         let option: Int
+        let payloadDigest: String?
         var status: String
         var reason: String?
     }
     private struct State: Codable { var version = 1; var requests: [Request] = []; var receipts: [Receipt] = [] }
+    private struct ChannelKey: Hashable { let workspace: String; let channel: String }
     private let file: URL
     private var state: State
     private(set) var storageError: String?
@@ -79,7 +83,7 @@ final class SlackDecisionJournal {
         if let active {
             let old = next.requests[active]
             if let footprint, old.identity == identity, old.paneID == paneID, old.rootPID == rootPID, old.footprint == footprint {
-                return old
+                if old.status != "pending" || !fence.isRetired(old.id) { return old }
             }
             // Fence any already-running dispatch before the journal write.
             fence.invalidate(old.id)
@@ -108,11 +112,14 @@ final class SlackDecisionJournal {
 
     /// Claims a request before any async work can deliver input. Replays return
     /// the same receipt; a second operation cannot consume the same request.
-    func claim(operationID: String, principal: CodexRemotePrincipal, request: Request, option: Int) throws -> (Receipt, Bool) {
+    func claim(operationID: String, principal: CodexRemotePrincipal, request: Request, option: Int,
+               payloadDigest: String? = nil) throws -> (Receipt, Bool) {
         try available()
-        guard !operationID.isEmpty, operationID.utf8.count <= 256, option > 0 else { throw Failure.invalid }
+        guard !operationID.isEmpty, operationID.utf8.count <= 256, option > 0,
+              payloadDigest.map({ $0.count == 64 && $0.allSatisfy(\.isHexDigit) }) ?? true else { throw Failure.invalid }
         if let old = state.receipts.first(where: { $0.operationID == operationID && $0.principal.workspace == principal.workspace }) {
-            guard old.principal == principal, old.requestID == request.id, old.option == option else { throw Failure.stale }
+            guard old.principal == principal, old.requestID == request.id, old.option == option,
+                  old.payloadDigest == payloadDigest else { throw Failure.stale }
             return (old, false)
         }
         guard let index = state.requests.firstIndex(where: { $0.id == request.id }),
@@ -121,7 +128,7 @@ final class SlackDecisionJournal {
         var next = state
         next.requests[index].status = "preparing"
         let receipt = Receipt(operationID: operationID, principal: principal, requestID: request.id,
-                              option: option, status: "preparing", reason: nil)
+                              option: option, payloadDigest: payloadDigest, status: "preparing", reason: nil)
         next.receipts.append(receipt)
         try commit(next)
         return (receipt, true)
@@ -138,6 +145,35 @@ final class SlackDecisionJournal {
     func receipt(operationID: String, principal: CodexRemotePrincipal) throws -> Receipt? {
         try available()
         return state.receipts.first { $0.operationID == operationID && $0.principal == principal }
+    }
+
+    /// Existing cards need status maintenance even while Away is off. This
+    /// returns metadata only and never reads a transcript.
+    func observedSessionIDs(allowed: [CodexRemotePrincipal]) -> Set<String> {
+        guard storageError == nil else { return [] }
+        let channels = Set(allowed.map { ChannelKey(workspace: $0.workspace, channel: $0.channel) })
+        return Set(state.requests.filter { request in
+            request.status != "resolved" && channels.contains(ChannelKey(workspace: request.workspace, channel: request.channel))
+        }.map(\.sessionID))
+    }
+
+    func observedPromptFootprints(allowed: [CodexRemotePrincipal]) -> [String: String] {
+        guard storageError == nil else { return [:] }
+        let channels = Set(allowed.map { ChannelKey(workspace: $0.workspace, channel: $0.channel) })
+        var result: [String: String] = [:]
+        for request in state.requests where request.status != "resolved" &&
+            channels.contains(ChannelKey(workspace: request.workspace, channel: request.channel)) {
+            result[request.sessionID] = request.footprint
+        }
+        return result
+    }
+
+    /// Fence off-main dispatch immediately when a row is parked or otherwise
+    /// made unavailable. A later observation can create a fresh pending ID.
+    func invalidateSession(_ sessionID: String) {
+        for request in state.requests where request.sessionID == sessionID && request.status != "resolved" {
+            fence.invalidate(request.id)
+        }
     }
 
     private func transition(_ receipt: Receipt, from: String, to: String, requestStatus: String, reason: String?) throws {
@@ -186,6 +222,7 @@ final class SlackDecisionJournal {
             state.receipts.allSatisfy { receipt in
                 let key = "\(receipt.principal.workspace.utf8.count):\(receipt.principal.workspace)\(receipt.operationID)"
                 return !receipt.operationID.isEmpty && receipt.operationID.utf8.count <= 256 && receipt.option > 0 &&
+                    (receipt.payloadDigest.map { $0.count == 64 && $0.allSatisfy(\.isHexDigit) } ?? true) &&
                     requestIDs.contains(receipt.requestID) && keys.insert(key).inserted &&
                     ["preparing", "sending", "submitted", "rejected", "uncertain"].contains(receipt.status)
             }

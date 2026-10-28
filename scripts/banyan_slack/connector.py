@@ -549,6 +549,11 @@ class Connector:
                 await self.show_home(principal, notice=notice)
         elif body.get("action") == "browser_page":
             await self.post_browser_page(principal, body)
+        elif body.get("action") == "puck_question":
+            binding = {"sessionID": body["sessionID"], "identity": body["identity"], "slackThread": body["slackThread"]}
+            decision = await self.call_browser({"action": "decision", "principal": principal, **binding})
+            if decision.get("requestID") == body.get("requestID") and decision.get("answerable"):
+                await self.open_puck_question(principal, binding, decision, payload.get("trigger_id"))
         elif body.get("action") == "browser_answer":
             operation = stable_id(workspace, principal["channel"], user,
                 (payload.get("container") or {}).get("message_ts"), action.get("action_id"), action.get("action_ts"))
@@ -777,7 +782,7 @@ class Connector:
         key = "browser-page-" + stable_id(principal["workspace"], principal["channel"], guard, body.get("cursor"), body.get("terminalOutput"), context)
         await self.post_once(key, principal, body["slackThread"], label + "\n" + text[:2400], blocks,
                              browser_binding=guard, away_guard=away_guard)
-        if body["identity"].get("kind") == "terminalCodex" and not body.get("cursor") and not body.get("terminalOutput"):
+        if body["identity"].get("kind") in ("terminalCodex", "puck") and not body.get("cursor") and not body.get("terminalOutput"):
             await self.render_terminal_decision(principal, guard, away_guard=away_guard)
 
     async def answer_browser(self, principal, body, operation):
@@ -785,6 +790,8 @@ class Connector:
         request = {"action": "answer", "principal": principal, "sessionID": body["sessionID"],
                    "identity": body["identity"], "slackThread": body["slackThread"],
                    "requestID": body["requestID"], "option": body["option"], "operationID": operation}
+        if "selections" in body:
+            request["selections"] = body["selections"]
         key = "browser-answer-" + operation
         old = self.journal.data["incoming"].get(key)
         if old:
@@ -811,6 +818,29 @@ class Connector:
     def terminal_decision_blocks(self, principal, binding, decision):
         if not decision.get("answerable") or decision.get("status") != "pending":
             return [section("Decision resolved or unavailable. No answer controls are active.")]
+        if decision.get("kind") == "puckQuestion":
+            questions = decision.get("questions", [])
+            if not questions or len(questions) > 12:
+                return [section("This decision cannot be displayed safely. Answer it on the Mac.")]
+            blocks = []
+            for question in questions:
+                text = str(question.get("question", ""))
+                options = question.get("options", [])
+                choices = "\n".join(f"• {item.get('label', '')}: {item.get('description', '')}" for item in options)
+                if not text or len(text) > 2800 or len(choices) > 2800:
+                    return [section("This decision is too large to display safely in Slack. Answer it on the Mac.")]
+                blocks.append(section(text))
+                if choices:
+                    blocks.append(section(choices))
+            recent = "\n".join(f"{m.get('role', 'message')}: {m.get('text', '')}" for m in decision.get("recentContext", [])[-3:])
+            if recent:
+                blocks.append(section("Recent context:\n" + recent[-2000:]))
+            controls = [self.browser_button("Answer questions", {"action": "puck_question", **binding,
+                "requestID": decision["requestID"]}, principal),
+                self.browser_button("Read more", {"action": "browser_page", **binding,
+                    "cursor": None, "terminalOutput": False}, principal)]
+            blocks.append({"type": "actions", "elements": controls})
+            return blocks
         question, options = decision.get("question", ""), decision.get("options", [])
         if not question or len(question) > 2800 or not options or len(options) > 24 or any(len(str(o.get("label", ""))) > 2800 for o in options):
             return [section("This decision is too large to display safely in Slack. Answer it on the Mac.")]
@@ -840,6 +870,7 @@ class Connector:
         request = {"action": "decision", "principal": principal, **binding}
         decision = await self.call_browser(request)
         key = "browser-decision-" + stable_id(principal["workspace"], principal["channel"], binding)
+        title = "Puck decision" if binding["identity"].get("kind") == "puck" else "Terminal decision"
         existing = self.journal.data["posts"].get(key, {})
         active = decision.get("status") == "pending" and decision.get("answerable")
         if not active and not existing.get("ts"):
@@ -848,7 +879,7 @@ class Connector:
         if active:
             guard = {**binding, "requestID": decision["requestID"]}
             try:
-                ts = await self.post_once(key, principal, binding["slackThread"], "Terminal decision", blocks,
+                ts = await self.post_once(key, principal, binding["slackThread"], title, blocks,
                                           browser_binding=guard, away_guard=away_guard)
             except StaleBrowser:
                 decision = await self.call_browser(request)
@@ -874,7 +905,8 @@ class Connector:
             blocks = [section("Decision resolved or unavailable. No answer controls are active.")]
         await self.check_away(principal, away_guard)
         await self.slack.call("chat.update", channel=principal["channel"], ts=ts,
-                              text="Terminal decision", blocks=blocks[:50], parse="none")
+                              text=title, blocks=blocks[:50], parse="none")
+        self.journal.commit(lambda d: d["posts"][key].update(browser_binding=guard))
 
     async def interaction(self, payload):
         workspace = payload.get("team", {}).get("id", "")
@@ -889,6 +921,9 @@ class Connector:
             if not modal or modal["principal"]["workspace"] != workspace or modal["principal"]["user"] != user:
                 return
             principal = modal["principal"]  # Channel comes from trusted opening action, never button JSON.
+            if modal.get("kind") == "puck":
+                await self.submit_puck_question(payload, modal, token, principal)
+                return
             await self.check(principal)
             body = copy.deepcopy(modal["body"])
             values = payload["view"].get("state", {}).get("values", {})
@@ -933,6 +968,65 @@ class Connector:
     @staticmethod
     def binding_from_body(body):
         return {k: body[k] for k in ("sessionID", "threadID", "attachmentID", "slackThread")}
+
+    async def open_puck_question(self, principal, binding, decision, trigger):
+        questions = decision.get("questions", [])
+        if not trigger or not questions or len(questions) > 12:
+            return
+        blocks = []
+        for index, question in enumerate(questions):
+            text, options = str(question.get("question", "")), question.get("options", [])
+            custom, multiple = bool(question.get("custom")), bool(question.get("multiple"))
+            if not text or len(text) > 2000 or len(options) > 100 or (not options and not custom) or any(
+                    not item.get("label") or len(item["label"]) > 75 for item in options):
+                return
+            if options:
+                element = {"type": "multi_static_select" if multiple else "static_select", "action_id": "choice",
+                    "options": [{"text": plain(item["label"]), "value": item["label"]} for item in options]}
+                blocks.append({"type": "input", "block_id": f"q{index}-choice", "optional": custom,
+                               "label": plain(text), "element": element})
+            if custom:
+                blocks.append({"type": "input", "block_id": f"q{index}-custom", "optional": bool(options),
+                    "label": plain("Other answer: " + text[:1900]),
+                    "element": {"type": "plain_text_input", "action_id": "custom", "multiline": True, "max_length": 4000}})
+        token = str(uuid.uuid4())
+        body = {**binding, "requestID": decision["requestID"], "option": 1}
+        self.journal.commit(lambda d: d["modals"].__setitem__(token, {"kind": "puck", "body": body,
+            "principal": principal, "forms": [{"multiple": bool(q.get("multiple")), "custom": bool(q.get("custom"))}
+                                                    for q in questions]}))
+        await self.check_browser(principal, {**binding, "requestID": decision["requestID"]})
+        await self.slack.call("views.open", trigger_id=trigger, view={"type": "modal", "callback_id": "banyan_puck_answer",
+            "private_metadata": token, "title": plain("Answer Puck"), "submit": plain("Send"), "blocks": blocks})
+
+    async def submit_puck_question(self, payload, modal, token, principal):
+        await self.check(principal)
+        values = (payload.get("view") or {}).get("state", {}).get("values", {})
+        selections = []
+        valid = True
+        for index, form in enumerate(modal["forms"]):
+            choice = values.get(f"q{index}-choice", {}).get("choice", {})
+            selected = choice.get("selected_options")
+            if selected is None:
+                one = choice.get("selected_option")
+                selected = [one] if one else []
+            labels = [item.get("value", "") for item in selected]
+            custom = values.get(f"q{index}-custom", {}).get("custom", {}).get("value") or None
+            text = custom.strip() if custom else ""
+            if (text and (not form["custom"] or labels)) or (not text and (not labels or (not form["multiple"] and len(labels) != 1))):
+                valid = False
+            selections.append({"labels": labels, "text": custom})
+        body = {**modal["body"], "selections": selections}
+        operation = stable_id(principal["workspace"], principal["user"], payload["view"]["id"], token)
+        binding = {key: body[key] for key in ("sessionID", "identity", "slackThread")}
+        if not valid:
+            await self.post_once("browser-answer-invalid-" + operation, principal, binding["slackThread"],
+                "Answer not sent: choose offered options or enter a custom answer for each question.",
+                browser_binding={**binding, "requestID": body["requestID"]})
+            return
+        result = await self.answer_browser(principal, body, operation)
+        await self.post_once("browser-answer-receipt-" + operation, principal, binding["slackThread"],
+                             "Answer: " + result.get("status", "uncertain"), browser_binding=binding)
+        await self.render_terminal_decision(principal, binding)
 
     async def open_question(self, request, body, principal, trigger):
         if not trigger or any(q["secret"] for q in request["questions"]) or len(request["questions"]) > 15:
@@ -1009,6 +1103,7 @@ class Connector:
                 await self.check_away(principal, away_guard)
                 await self.slack.call("chat.update", channel=principal["channel"], ts=ts,
                     text=heading.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + ": " + state, blocks=blocks[:50], parse="none")
+                self.journal.commit(lambda d: d["posts"][key].update(native_guard=signature, controlsRetired=False))
             if notify:
                 await self.post_once("notice-" + stable_id(attachment["id"], notify), principal,
                     attachment["slackThread"], heading + ": " + state, binding=binding, away_guard=away_guard, native_guard=signature)
@@ -1022,6 +1117,20 @@ class Connector:
                 await self.slack.call("chat.update", channel=principal["channel"], ts=ts,
                     text="Native session changed. Refresh to continue.",
                     blocks=[section("Native session changed. Controls are paused until refreshed.")], parse="none")
+                self.journal.commit(lambda d: d["posts"][key].update(native_guard=None, controlsRetired=True))
+
+    async def retire_obsolete_native_card(self, session, principal):
+        binding = self.binding(session)
+        key = "status-" + session["attachment"]["id"]
+        post = self.journal.data["posts"].get(key, {})
+        signature = post.get("native_guard")
+        if not post.get("ts") or post.get("controlsRetired") or (signature is not None and signature == self.native_control_signature(session)):
+            return
+        await self.check(principal, binding=binding)
+        await self.slack.call("chat.update", channel=principal["channel"], ts=post["ts"],
+            text="Native session changed. Refresh to continue.",
+            blocks=[section("Native session changed. Controls are paused until refreshed.")], parse="none")
+        self.journal.commit(lambda d: d["posts"][key].update(native_guard=None, controlsRetired=True))
 
     async def offline_message(self, attachment_id, principal):
         self.online = False
@@ -1061,6 +1170,7 @@ class Connector:
                 return
             await self.check(principal)
             channel_key = (principal["workspace"], principal["channel"])
+            await self.retire_obsolete_browser_cards(principal, response.get("events", []), response.get("refreshCards", False))
             if not response.get("enabled"):
                 self.away_ready.pop(channel_key, None)
                 self.save_away_cursor(cursor_key, response)
@@ -1078,6 +1188,40 @@ class Connector:
             else:
                 await self.process_away_events(principal, guard, response.get("events", []), response["epoch"])
                 self.save_away_cursor(cursor_key, response)
+
+    async def retire_obsolete_browser_cards(self, principal, events, refresh_all):
+        """Remove stale controls from already published cards without a new post.
+
+        This maintenance runs even when Away is off. New decisions are shown
+        only after an explicit open or through enabled Away delivery.
+        """
+        changed = {event.get("sessionID") for event in events}
+        for thread_key, binding in list(self.journal.data["browserThreads"].items()):
+            if thread_key != stable_id(principal["workspace"], principal["channel"], binding.get("slackThread")):
+                continue
+            if binding.get("identity", {}).get("kind") not in ("terminalCodex", "puck"):
+                continue
+            if not refresh_all and binding.get("sessionID") not in changed:
+                continue
+            key = "browser-decision-" + stable_id(principal["workspace"], principal["channel"], binding)
+            post = self.journal.data["posts"].get(key, {})
+            if not post.get("ts") or not (post.get("browser_binding") or {}).get("requestID"):
+                continue
+            old_id = post["browser_binding"]["requestID"]
+            try:
+                await self.check_browser(principal, binding)
+                current = await self.call_browser({"action": "decision", "principal": principal, **binding})
+                if current.get("requestID") == old_id and current.get("status") == "pending" and current.get("answerable"):
+                    continue
+            except Unavailable:
+                # A local policy refusal must still prevent the content-free
+                # update; the fresh check below enforces that boundary.
+                pass
+            await self.check(principal)
+            await self.slack.call("chat.update", channel=principal["channel"], ts=post["ts"],
+                text="Decision resolved or unavailable.",
+                blocks=[section("Decision resolved or unavailable. No answer controls are active.")], parse="none")
+            self.journal.commit(lambda d: d["posts"][key].update(browser_binding=binding))
 
     def save_away_cursor(self, key, response):
         value = {"eventEpoch": response["epoch"], "eventCursor": response["cursor"],
@@ -1097,10 +1241,6 @@ class Connector:
         for candidate in snapshot.get("decisions", []):
             row = rows.get(candidate.get("sessionID"))
             if not row:
-                continue
-            if row.get("backend") == "puck":
-                # Puck activity is represented in the digest; its actionable
-                # adapter is not yet available, so do not create controls.
                 continue
             session_guard = {**guard, "sessionID": row["sessionID"], "requirePending": True}
             try:
@@ -1128,7 +1268,7 @@ class Connector:
                 if keys:
                     self.journal.commit(lambda d: d["awaySeen"].update({key: True for key in keys}))
             return
-        if identity.get("kind") != "terminalCodex":
+        if identity.get("kind") not in ("terminalCodex", "puck"):
             return
         binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment["slackThread"]}
         decision = await self.call_browser({"action": "decision", "principal": principal, **binding})
@@ -1139,15 +1279,18 @@ class Connector:
     async def process_away_events(self, principal, guard, events, epoch):
         # Current state wins over transient status bursts; no progress stream is posted.
         latest = {}
+        completed = set()
         for event in events:
             latest[event["sessionID"]] = event
+            if event.get("status") == "needInput" and event.get("previousStatus") in ("running", "executing", "longRunningShell", "subagents"):
+                completed.add(event["sessionID"])
         for session_id, event in latest.items():
             session_guard = {**guard, "sessionID": session_id}
             try:
                 await self.check_away(principal, session_guard)
                 current = await self.call_browser({"action": "awaySession", "principal": principal, "sessionID": session_id})
-                if current.get("backend") in ("codex", "puck"):
-                    continue  # Native has its own stream; Puck actions need its runtime adapter.
+                if current.get("backend") == "codex":
+                    continue  # Native has its own stream.
                 if current.get("pending"):
                     pending_guard = {**session_guard, "requirePending": True}
                     opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
@@ -1158,7 +1301,7 @@ class Connector:
                     await self.open_browser_session(principal, current, away_guard=pending_guard)
                     opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
                     identity, attachment = opened.get("binding"), opened.get("attachment") or {}
-                    if not identity or not attachment.get("slackThread") or identity.get("kind") != "terminalCodex":
+                    if not identity or not attachment.get("slackThread") or identity.get("kind") not in ("terminalCodex", "puck"):
                         continue
                     binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment["slackThread"]}
                     decision = await self.call_browser({"action": "decision", "principal": principal, **binding})
@@ -1172,18 +1315,20 @@ class Connector:
                                 "A new decision needs your attention.",
                                 browser_binding={**binding, "requestID": request_id}, away_guard=pending_guard)
                         self.journal.commit(lambda d: d["awaySeen"].__setitem__(seen, True))
-                elif current.get("status") in ("failed", "completed") and current.get("status") == event.get("status"):
+                elif (current.get("status") in ("failed", "completed") or
+                      (current.get("status") == "needInput" and session_id in completed)) and current.get("status") == event.get("status"):
                     await self.open_browser_session(principal, current, away_guard=session_guard)
                     opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
                     identity, attachment = opened.get("binding"), opened.get("attachment") or {}
                     if identity and attachment.get("slackThread"):
                         binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment["slackThread"]}
                         await self.post_once("away-event-" + stable_id(epoch, event["cursor"]), principal, binding["slackThread"],
-                            f"{current['title']}: {current['status']}", browser_binding=binding, away_guard=session_guard)
+                            f"{current['title']}: {'completed' if current['status'] == 'needInput' else current['status']}",
+                            browser_binding=binding, away_guard=session_guard)
                 else:
                     # Refresh an existing card to remove controls after desktop resolution.
                     for key, binding in list(self.journal.data["browserThreads"].items()):
-                        if binding.get("sessionID") == session_id and key == stable_id(principal["workspace"], principal["channel"], binding.get("slackThread")) and binding.get("identity", {}).get("kind") == "terminalCodex":
+                        if binding.get("sessionID") == session_id and key == stable_id(principal["workspace"], principal["channel"], binding.get("slackThread")) and binding.get("identity", {}).get("kind") in ("terminalCodex", "puck"):
                             await self.render_terminal_decision(principal, binding, away_guard=session_guard)
             except (StaleAway, StaleBrowser):
                 continue
@@ -1229,6 +1374,8 @@ class Connector:
                 aid = session["attachment"]["id"]
                 self.sessions[aid] = session
                 if not ready:
+                    if relevant or first:
+                        await self.retire_obsolete_native_card(session, principal)
                     continue
                 guard = {"activationID": away["activationID"], "revision": away["revision"], "sessionID": session["sessionID"]}
                 try:

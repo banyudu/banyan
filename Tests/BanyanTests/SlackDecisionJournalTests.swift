@@ -79,4 +79,41 @@ struct SlackDecisionJournalTests {
         let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
         #expect(permissions?.intValue == 0o600)
     }
+
+    @Test func olderReceiptsWithoutPayloadDigestRemainReadable() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("decision_legacy_\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("journal.json")
+        let journal = SlackDecisionJournal(file: file)
+        let decision = try #require(try journal.observe(sessionID: "row", identity: identity, principal: principal,
+            slackThread: "100.1", paneID: "%1", rootPID: 100, footprint: "first"))
+        let (receipt, _) = try journal.claim(operationID: "legacy", principal: principal, request: decision, option: 1)
+        try journal.markSending(receipt); try journal.finish(receipt, sent: true, reason: nil)
+        var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        var receipts = try #require(object["receipts"] as? [[String: Any]])
+        receipts[0].removeValue(forKey: "payloadDigest")
+        object["receipts"] = receipts
+        try JSONSerialization.data(withJSONObject: object).write(to: file)
+        let restored = SlackDecisionJournal(file: file)
+        #expect(restored.storageError == nil)
+        #expect(try restored.receipt(operationID: "legacy", principal: principal)?.status == "submitted")
+    }
+
+    @Test func parkingFencesPendingDispatchAcrossUnrelatedJournalWrites() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("decision_park_\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = SlackDecisionJournal(file: directory.appendingPathComponent("journal.json"))
+        let first = try #require(try journal.observe(sessionID: "row", identity: identity, principal: principal,
+            slackThread: "100.1", paneID: "%1", rootPID: 100, footprint: "first"))
+        journal.invalidateSession("row")
+        _ = try journal.observe(sessionID: "other", identity: identity, principal: principal,
+            slackThread: "100.2", paneID: "%2", rootPID: 101, footprint: "other")
+        #expect(!journal.fence.contains(first.id))
+        let reopened = try #require(try journal.observe(sessionID: "row", identity: identity, principal: principal,
+            slackThread: "100.1", paneID: "%1", rootPID: 100, footprint: "first"))
+        #expect(reopened.id != first.id && journal.fence.contains(reopened.id))
+        #expect(throws: SlackDecisionJournal.Failure.self) {
+            try journal.claim(operationID: "old-action", principal: principal, request: first, option: 1)
+        }
+    }
 }

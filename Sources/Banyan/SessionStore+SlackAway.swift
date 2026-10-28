@@ -2,6 +2,20 @@ import BanyanCore
 import Foundation
 
 extension SessionStore {
+    func slackPromptObservationScope() -> (ids: Set<String>, token: String?) {
+        guard codexRemote.policy.enabled else { return ([], nil) }
+        let allowed = codexRemote.policy.allowed
+        var ids = slackDecisionJournal.observedSessionIDs(allowed: allowed)
+        let away = slackAwayJournal.state
+        let active = slackAwayJournal.storageError == nil && away.enabled && allowed.contains {
+            $0.workspace == away.workspace && $0.channel == away.channel
+        }
+        if active {
+            ids.formUnion(sessions.filter { away.sessionIDs.contains($0.id) || away.projectIDs.contains($0.projectGroupID) }.map(\.id))
+        }
+        return (ids, ids.isEmpty ? nil : (active ? away.activationID : "off:\(codexRemote.policyGeneration)"))
+    }
+
     func slackAwayStatusObject(_ state: SlackAwayJournal.State) -> [String: Any] {
         ["enabled": state.enabled, "sessionIDs": state.sessionIDs, "projectIDs": state.projectIDs,
          "activationID": state.activationID as Any? ?? NSNull(), "checkpointEpoch": state.checkpointEpoch as Any? ?? NSNull(),
@@ -19,13 +33,15 @@ extension SessionStore {
         let batch = validCursor ? sessionEvents(since: request.eventCursor) : sessionEvents(since: nil)
         let gap = away.enabled && (!validCursor || batch.truncated)
         let refresh = away.enabled && (gap || !sameActivation)
-        let scoped = Set(sessions.filter { !$0.isImportedHistory && $0.status != .closed &&
+        var scoped = Set(sessions.filter { !$0.isImportedHistory && $0.status != .closed &&
             slackAwayJournal.includes(sessionID: $0.id, projectID: $0.projectGroupID, principal: request.principal) }.map(\.id))
+        scoped.formUnion(slackDecisionJournal.observedSessionIDs(allowed: [request.principal]))
         return ["enabled": away.enabled, "activationID": away.activationID as Any? ?? NSNull(),
                 "revision": away.revision, "epoch": slackSessionEventEpoch, "cursor": batch.cursor,
-                "gap": gap, "refresh": refresh,
-                "events": away.enabled && !refresh ? batch.events.filter { scoped.contains($0.sessionID) }.map {
-                    ["cursor": $0.cursor, "sessionID": $0.sessionID, "status": $0.status.rawValue]
+                "gap": gap, "refresh": refresh, "refreshCards": !validCursor || batch.truncated || !sameActivation,
+                "events": validCursor && !batch.truncated ? batch.events.filter { scoped.contains($0.sessionID) }.map {
+                    ["cursor": $0.cursor, "sessionID": $0.sessionID, "status": $0.status.rawValue,
+                     "previousStatus": $0.previousStatus?.rawValue as Any? ?? NSNull()]
                 } : []]
     }
 
@@ -62,7 +78,10 @@ extension SessionStore {
                   sessions.contains(where: { $0 === puck }), puck.binding == binding else {
                 throw CodexRemoteError.invalid("Away scope or session changed")
             }
-            pending = summary?.id == id && (summary?.pendingApproval != nil || summary?.pendingQuestion != nil)
+            if let summary, summary.id == id, PuckSessionBinding(summary: summary) == binding,
+               let decision = PuckSlackDecision(summary), decision.isUnexpired {
+                pending = true; question = decision.question
+            }
         }
         try authorizeSlackBrowser(request.principal)
         guard codexRemote.policyGeneration == policy, slackAwayJournal.state.revision == away.revision,
@@ -114,8 +133,10 @@ extension SessionStore {
                       sessions.contains(where: { $0 === puck }), puck.binding == binding else {
                     throw CodexRemoteError.invalid("Away scope or session changed during catch-up")
                 }
-                if let summary, summary.id == id, summary.pendingApproval != nil || summary.pendingQuestion != nil {
-                    decisions.append(["sessionID": id, "count": 1])
+                if let summary, summary.id == id, PuckSessionBinding(summary: summary) == binding,
+                   let decision = PuckSlackDecision(summary), decision.isUnexpired {
+                    decisions.append(["sessionID": id, "question": decision.question,
+                                      "options": decision.options.map { ["index": $0.index, "label": $0.label] }])
                 }
             }
         }
@@ -134,7 +155,8 @@ extension SessionStore {
                 "cursor": changes.cursor, "gap": epochGap || changes.truncated,
                 "sessions": rows, "decisions": decisions,
                 "events": changes.events.filter { currentIDs.contains($0.sessionID) }.map {
-                    ["cursor": $0.cursor, "sessionID": $0.sessionID, "status": $0.status.rawValue]
+                    ["cursor": $0.cursor, "sessionID": $0.sessionID, "status": $0.status.rawValue,
+                     "previousStatus": $0.previousStatus?.rawValue as Any? ?? NSNull()]
                 }]
     }
 }

@@ -81,9 +81,10 @@ subsequent notifications. Turning Away off stops proactive delivery while
 on-demand browsing remains available. Terminal decisions are actionable only
 when Banyan identifies the exact current Codex prompt and conversation; a reply
 is accepted only at a verified empty composer and must be one printable line.
-Puck replies use the existing Puck session and admission controller. Puck pending
-decisions currently appear in the catch-up count but require desktop action;
-subsequent Puck notifications are not yet delivered by this connector.
+Puck replies use the existing Puck session and admission controller. Puck
+approvals and questions, including multiple selections and custom answers, can
+be answered from their bound thread when they fit Slack's form limits. Oversized
+or ambiguous questions require desktop action.
 When input or a Slack post has an uncertain outcome, inspect the session and
 receipt before acknowledging it locally; the connector does not retry it blindly.
 

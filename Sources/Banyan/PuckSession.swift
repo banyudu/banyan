@@ -45,6 +45,7 @@ final class PuckSession: BanyanSession {
     @Published private(set) var admissionTurnInFlight = false
     @Published var draft = ""
     var onAdmissionTurnStarting: (() -> Void)?
+    var onPendingChangedWithoutStatusTransition: (() -> Void)?
     private var summaryRevision = 0
 
     deinit { followTask?.cancel() }
@@ -165,6 +166,7 @@ final class PuckSession: BanyanSession {
 
     /// Mirrors one daemon summary into the shared session state.
     func apply(summary: PuckSessionSummary) {
+        let previousApproval = pendingApproval, previousQuestion = pendingQuestion
         summaryRevision += 1
         lastSummary = summary
         daemonError = nil
@@ -200,8 +202,11 @@ final class PuckSession: BanyanSession {
         // keeps what it last showed: Banyan was asked to stop watching both.
         guard status != .closed, !isSuspended else { return }
         let next = PuckSessionStatusPolicy.status(for: summary)
-        guard next != status else { return }
-        mark(status: next, tone: PuckSessionStatusPolicy.tone(for: next))
+        if next != status {
+            mark(status: next, tone: PuckSessionStatusPolicy.tone(for: next))
+        } else if previousApproval != pendingApproval || previousQuestion != pendingQuestion {
+            onPendingChangedWithoutStatusTransition?()
+        }
     }
 
     private func reconcileAdmissionFromSummary() {

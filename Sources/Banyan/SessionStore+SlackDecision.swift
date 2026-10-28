@@ -40,6 +40,7 @@ extension SessionStore {
         let observed = try slackDecisionJournal.observe(sessionID: id, identity: identity, principal: request.principal,
             slackThread: root, paneID: fresh.paneID, rootPID: fresh.rootPID, footprint: prompt?.footprint)
         guard let prompt, let observed else { return ["status": "resolved", "requestID": NSNull(), "options": []] }
+        noteSlackObservedPrompt(sessionID: id, footprint: prompt.footprint)
         return ["status": observed.status, "requestID": observed.id, "question": prompt.question,
                 "context": prompt.context, "options": prompt.options.map { ["index": $0.index, "label": $0.label] },
                 "recentContext": context["messages"] ?? [], "answerable": observed.status == "pending"]
