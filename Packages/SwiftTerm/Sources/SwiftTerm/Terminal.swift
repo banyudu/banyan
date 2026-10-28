@@ -6097,12 +6097,13 @@ open class Terminal {
 
     /// Cheap prefilter before paying for the Ghostty ICU regex. The full pattern
     /// matches scheme URLs, paths (with or without a dot, e.g. `/usr/bin/foo`),
-    /// and bare `#123` references; anything without `://`, a `#digit` sequence,
-    /// a `/`, or a scheme-like `letters:` (e.g. `mailto:`, `tel:`) cannot match.
+    /// bare `#123` references, and Linear issue IDs; anything without `://`, a
+    /// `#digit` sequence, a `/`, a scheme-like `letters:`, or an issue-shaped
+    /// `PROJ-123` token cannot match.
     /// This skips status/spinner rows (`Thought · 2.2s`, `12:34`, box-drawing
     /// borders) that contain a bare colon but no link shape.
     private static func lineMapMayContainLink(_ text: String) -> Bool {
-        if text.contains("://") || text.contains("/") {
+        if text.contains("://") || text.contains("/") || containsLinearIssueIdentifier(text) {
             return true
         }
         var index = text.startIndex
@@ -6128,6 +6129,74 @@ open class Terminal {
             index = text.index(after: index)
         }
         return false
+    }
+
+    /// Detects the same bounded `PROJ-123` shape as the implicit-link regex without
+    /// running another regex over every rendered row. Prefixes are limited to two
+    /// through five ASCII letters, matching Banyan's Linear issue reference parser.
+    private static func containsLinearIssueIdentifier(_ text: String) -> Bool {
+        let scalars = text.unicodeScalars
+        var index = scalars.startIndex
+
+        while index < scalars.endIndex {
+            let scalar = scalars[index].value
+            guard isASCIILetter(scalar) else {
+                index = scalars.index(after: index)
+                continue
+            }
+
+            if index > scalars.startIndex {
+                let previous = scalars[scalars.index(before: index)].value
+                guard !isASCIIAlphaNumeric(previous) else {
+                    index = scalars.index(after: index)
+                    continue
+                }
+            }
+
+            let prefixStart = index
+            var prefixLength = 0
+            while index < scalars.endIndex,
+                  isASCIILetter(scalars[index].value),
+                  prefixLength < 6
+            {
+                prefixLength += 1
+                index = scalars.index(after: index)
+            }
+            guard (2...5).contains(prefixLength),
+                  index < scalars.endIndex,
+                  scalars[index].value == 45
+            else {
+                continue
+            }
+
+            var suffix = scalars.index(after: index)
+            guard suffix < scalars.endIndex, isASCIIDigit(scalars[suffix].value) else {
+                continue
+            }
+            while suffix < scalars.endIndex, isASCIIDigit(scalars[suffix].value) {
+                suffix = scalars.index(after: suffix)
+            }
+            if suffix == scalars.endIndex || !isASCIIAlphaNumeric(scalars[suffix].value) {
+                return true
+            }
+
+            // Keep scanning from just after the prefix so a later token on this
+            // row can still make the prefilter succeed.
+            index = scalars.index(after: prefixStart)
+        }
+        return false
+    }
+
+    private static func isASCIILetter(_ value: UInt32) -> Bool {
+        (65...90).contains(value) || (97...122).contains(value)
+    }
+
+    private static func isASCIIDigit(_ value: UInt32) -> Bool {
+        (48...57).contains(value)
+    }
+
+    private static func isASCIIAlphaNumeric(_ value: UInt32) -> Bool {
+        isASCIILetter(value) || isASCIIDigit(value)
     }
 
     /// Returns the column ranges on the display buffer's `row` that are covered by
@@ -6218,10 +6287,11 @@ open class Terminal {
     }
 
     /// Cheap rejection for the common case. Every scheme the implicit matcher knows
-    /// about contains a colon, and the bare `#123` reference branch needs a `#`
-    /// followed by a digit — or a `#` that ends the visual row and may continue on
-    /// a wrapped row. Anything else cannot produce a match, so it is skipped before
-    /// paying for the line map and the regex.
+    /// about contains a colon, the bare `#123` reference branch needs a `#`
+    /// followed by a digit, and a Linear issue ID needs a hyphen — or a link marker
+    /// that ends the visual row and may continue on a wrapped row. Anything else
+    /// cannot produce a match, so it is skipped before paying for the line map and
+    /// the regex.
     private func rowMayContainImplicitLink(_ row: Int, in buffer: Buffer) -> Bool
     {
         for candidate in (row - 1)...(row + 1) {
@@ -6246,6 +6316,9 @@ open class Terminal {
                     if line[next].code >= 48 && line[next].code <= 57 {
                         return true
                     }
+                }
+                if code == 45 {
+                    return true
                 }
             }
         }
@@ -6383,7 +6456,12 @@ open class Terminal {
         // left alone.
         let referenceNumberBranch = #"(?<![\w$&/#.@=:%-])#\d+(?![\w/-])"#
 
-        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch + "|" + referenceNumberBranch
+        // Bare Linear issue IDs are implicit links too. Keep the boundaries
+        // aligned with `LinearIssueReference.issueID(in:)` so an ID embedded in a
+        // larger alphanumeric token is left alone.
+        let linearIssueBranch = #"(?<![A-Za-z0-9])[A-Za-z]{2,5}-[0-9]+(?![A-Za-z0-9])"#
+
+        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch + "|" + referenceNumberBranch + "|" + linearIssueBranch
         return try? NSRegularExpression(pattern: regex, options: [])
     }()
 
