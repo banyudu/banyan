@@ -414,7 +414,7 @@ private struct WorkflowStoreFixture {
     let persistence: SessionPersistence
     let backend = WorkflowTestBackend()
     init(sessionIDs: [String] = ["managed", "legacy", "busy"]) throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("banyan-workflow-\(UUID().uuidString)")
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("banyan_workflow_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
         // This fixture exercises sidebar presentation, not a live tracker or
@@ -878,6 +878,8 @@ extension SessionWorkflowStoreTests {
         try await waitForPuckState { FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("linear-invoked").path) }
         try await waitForPuckState { if case .failed = store.linearIssueListLoadState { return true }; return false }
         #expect(try String(contentsOf: fixture.root.appendingPathComponent("linear-invoked"), encoding: .utf8) == "fixture")
+        let log = fixture.root.appendingPathComponent("Banyan/linear-debug.log")
+        #expect(try String(contentsOf: log, encoding: .utf8).contains("command start"))
     }
 
     @Test func hideKeepsWorkflowAndBackingWorkAndRestoresAfterRestart() throws {

@@ -1769,7 +1769,7 @@ final class SessionStore: ObservableObject {
     func refreshLinearIssueList() {
         loadCachedLinearIssuesIfNeeded()
         guard linearIssueListTask == nil else {
-            linearDebugLog("list refresh ignored because refresh is already running")
+            linearDebugLog("list refresh ignored because refresh is already running", environment: self.environment, homeDirectory: self.homeDirectory)
             return
         }
         let hasStaleIssues = !linearIssues.isEmpty
@@ -1779,7 +1779,7 @@ final class SessionStore: ObservableObject {
         let deadline = Date().addingTimeInterval(Self.linearIssueListLoadTimeout)
         let requestID = UUID()
         linearIssueListRequestID = requestID
-        linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]")
+        linearDebugLog("list refresh start cwd=\(cwd) staleCount=\(linearIssues.count) staleStates=[\(linearIssueStateCountSummary(linearIssues))]", environment: self.environment, homeDirectory: self.homeDirectory)
         let environment = self.environment
         let homeDirectory = self.homeDirectory
         linearIssueListTask = Task.detached(priority: .utility) { [environment, homeDirectory] in
@@ -1791,7 +1791,7 @@ final class SessionStore: ObservableObject {
                 do {
                     workflowStates = try await workflowStatesRequest
                 } catch {
-                    linearDebugLog("workflow states refresh failed error=\(error.localizedDescription)")
+                    linearDebugLog("workflow states refresh failed error=\(error.localizedDescription)", environment: environment, homeDirectory: homeDirectory)
                     workflowStates = nil
                 }
                 await MainActor.run { [weak self] in
@@ -1803,7 +1803,7 @@ final class SessionStore: ObservableObject {
                     self.linearIssues = issues
                     let workflowStateSource = workflowStates ?? self.linearIssueWorkflowStates
                     self.linearIssueWorkflowStates = LinearIssuePolicy.mergedWorkflowStates(workflowStateSource, issues: issues)
-                    linearDebugLog("list refresh applied issueCount=\(issues.count) issueStates=[\(linearIssueStateCountSummary(issues))] workflowStateCount=\(self.linearIssueWorkflowStates.count) workflowStates=[\(linearWorkflowStateSummary(self.linearIssueWorkflowStates))]")
+                    linearDebugLog("list refresh applied issueCount=\(issues.count) issueStates=[\(linearIssueStateCountSummary(issues))] workflowStateCount=\(self.linearIssueWorkflowStates.count) workflowStates=[\(linearWorkflowStateSummary(self.linearIssueWorkflowStates))]", environment: environment, homeDirectory: homeDirectory)
                     if let selectedLinearListIssueID = self.selectedLinearListIssueID,
                        !issues.contains(where: { $0.identifier == selectedLinearListIssueID }) {
                         self.selectedLinearListIssueID = issues.first?.identifier
@@ -1821,7 +1821,7 @@ final class SessionStore: ObservableObject {
                     self.linearIssueListLoadState = .loaded
                 }
             } catch {
-                linearDebugLog("list refresh failed error=\(error.localizedDescription)")
+                linearDebugLog("list refresh failed error=\(error.localizedDescription)", environment: environment, homeDirectory: homeDirectory)
                 await MainActor.run { [weak self] in
                     guard let self, self.linearIssueListRequestID == requestID else { return }
                     self.linearIssueListWatchdogTask?.cancel()
@@ -1856,7 +1856,7 @@ final class SessionStore: ObservableObject {
             self.linearIssueListTask = nil
             self.isLinearIssueListRefreshing = false
             self.linearIssueListLoadState = .failed("Linear refresh timed out. Click refresh to try again.")
-            linearDebugLog("list refresh watchdog expired")
+            linearDebugLog("list refresh watchdog expired", environment: self.environment, homeDirectory: self.homeDirectory)
         }
     }
 
@@ -1886,7 +1886,7 @@ final class SessionStore: ObservableObject {
 
         linearIssues = cache.issues
         linearIssueWorkflowStates = LinearIssuePolicy.mergedWorkflowStates(cache.workflowStates ?? [], issues: cache.issues)
-        linearDebugLog("list cache loaded issueCount=\(cache.issues.count) issueStates=[\(linearIssueStateCountSummary(cache.issues))] workflowStateCount=\(linearIssueWorkflowStates.count) selectedIssueID=\(cache.selectedIssueID ?? "nil") updatedAt=\(cache.updatedAt)")
+        linearDebugLog("list cache loaded issueCount=\(cache.issues.count) issueStates=[\(linearIssueStateCountSummary(cache.issues))] workflowStateCount=\(linearIssueWorkflowStates.count) selectedIssueID=\(cache.selectedIssueID ?? "nil") updatedAt=\(cache.updatedAt)", environment: self.environment, homeDirectory: self.homeDirectory)
         let cachedIssueIDs = Set(cache.issues.map(\.identifier))
         if let selectedLinearListIssueID, cachedIssueIDs.contains(selectedLinearListIssueID) {
             linearIssueListLoadState = .loaded

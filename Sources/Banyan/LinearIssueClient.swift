@@ -124,13 +124,14 @@ func linearWorkflowStateSummary(_ states: [LinearWorkflowState]) -> String {
         .joined(separator: ", ")
 }
 
-func linearDebugLog(_ message: String) {
+func linearDebugLog(_ message: String, environment: [String: String], homeDirectory: String) {
     let timestamp = ISO8601DateFormatter().string(from: Date())
     let line = "\(timestamp) [pid:\(ProcessInfo.processInfo.processIdentifier)] \(message)\n"
     if let data = line.data(using: .utf8) {
-        let directory = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Banyan", isDirectory: true)
+        let directory = BanyanDataDirectory.fixtureDataHome(environment: environment)?
+            .appendingPathComponent("Banyan", isDirectory: true)
+            ?? URL(fileURLWithPath: homeDirectory, isDirectory: true)
+                .appendingPathComponent("Library/Application Support/Banyan", isDirectory: true)
         let fileURL = directory.appendingPathComponent("linear-debug.log")
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -230,7 +231,7 @@ enum LinearIssueClient {
             }
             let pageResult = try decodeIssueListPageResponse(output)
             issues.append(contentsOf: pageResult.issues)
-            linearDebugLog("issue list page decoded page=\(page) pageCount=\(pageResult.issues.count) totalCount=\(issues.count) hasNext=\(pageResult.hasNextPage) states=[\(linearIssueStateCountSummary(pageResult.issues))]")
+            linearDebugLog("issue list page decoded page=\(page) pageCount=\(pageResult.issues.count) totalCount=\(issues.count) hasNext=\(pageResult.hasNextPage) states=[\(linearIssueStateCountSummary(pageResult.issues))]", environment: environment, homeDirectory: homeDirectory)
 
             if limit > 0, issues.count >= limit {
                 return Array(issues.prefix(limit))
@@ -242,7 +243,7 @@ enum LinearIssueClient {
             }
         } while after != nil
 
-        linearDebugLog("issue list decoded count=\(issues.count) states=[\(linearIssueStateCountSummary(issues))]")
+        linearDebugLog("issue list decoded count=\(issues.count) states=[\(linearIssueStateCountSummary(issues))]", environment: environment, homeDirectory: homeDirectory)
         return issues
     }
 
@@ -272,7 +273,9 @@ enum LinearIssueClient {
                 statusCode: 200,
                 durationMS: PerformanceTelemetry.elapsedMS(since: start)
             )
-            return try decodeWorkflowStatesResponse(output)
+            let states = try decodeWorkflowStatesResponse(output)
+            linearDebugLog("workflow states decoded count=\(states.count) states=[\(linearWorkflowStateSummary(states))]", environment: environment, homeDirectory: homeDirectory)
+            return states
         } catch {
             axiomExporter?.sendHTTPRequest(
                 service: "linear",
@@ -640,7 +643,6 @@ enum LinearIssueClient {
             team.states?.nodes ?? []
         } ?? []
         let sortedStates = sortedWorkflowStates(states)
-        linearDebugLog("workflow states decoded count=\(sortedStates.count) states=[\(linearWorkflowStateSummary(sortedStates))]")
         return sortedStates
     }
 
@@ -670,7 +672,7 @@ enum LinearIssueClient {
         // those workers under concurrency and wedged GCD's 80-thread soft limit,
         // freezing the app.
         let startedAt = Date()
-        linearDebugLog("command start cwd=\(cwd) timeout=\(timeout)s command=\(arguments.joined(separator: " "))")
+        linearDebugLog("command start cwd=\(cwd) timeout=\(timeout)s command=\(arguments.joined(separator: " "))", environment: environment, homeDirectory: homeDirectory)
 
         let output: SubprocessRunner.Output
         do {
@@ -685,11 +687,11 @@ enum LinearIssueClient {
                 timeout: timeout
             )
         } catch SubprocessRunner.RunError.launchFailed(_) {
-            linearDebugLog("command unavailable command=\(arguments.joined(separator: " "))")
+            linearDebugLog("command unavailable command=\(arguments.joined(separator: " "))", environment: environment, homeDirectory: homeDirectory)
             throw LinearIssueClientError.commandUnavailable
         } catch {
             let elapsed = Date().timeIntervalSince(startedAt)
-            linearDebugLog("command timeout elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))")
+            linearDebugLog("command timeout elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))", environment: environment, homeDirectory: homeDirectory)
             throw LinearIssueClientError.requestFailed
         }
 
@@ -697,17 +699,17 @@ enum LinearIssueClient {
         guard output.terminationStatus == 0 else {
             let stderrOutput = CommandOutputText.strippingANSIEscapes(String(decoding: output.standardError, as: UTF8.self))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            linearDebugLog("command failed status=\(output.terminationStatus) elapsed=\(String(format: "%.2f", elapsed))s stderr=\(stderrOutput) command=\(arguments.joined(separator: " "))")
+            linearDebugLog("command failed status=\(output.terminationStatus) elapsed=\(String(format: "%.2f", elapsed))s stderr=\(stderrOutput) command=\(arguments.joined(separator: " "))", environment: environment, homeDirectory: homeDirectory)
             throw LinearIssueClientError.requestFailed
         }
 
         let text = CommandOutputText.strippingANSIEscapes(String(decoding: output.standardOutput, as: UTF8.self))
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
-            linearDebugLog("command empty output elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))")
+            linearDebugLog("command empty output elapsed=\(String(format: "%.2f", elapsed))s command=\(arguments.joined(separator: " "))", environment: environment, homeDirectory: homeDirectory)
             throw LinearIssueClientError.requestFailed
         }
-        linearDebugLog("command success elapsed=\(String(format: "%.2f", elapsed))s outputBytes=\(output.standardOutput.count) command=\(arguments.joined(separator: " "))")
+        linearDebugLog("command success elapsed=\(String(format: "%.2f", elapsed))s outputBytes=\(output.standardOutput.count) command=\(arguments.joined(separator: " "))", environment: environment, homeDirectory: homeDirectory)
         return text
     }
 
