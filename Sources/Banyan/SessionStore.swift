@@ -4047,7 +4047,7 @@ final class SessionStore: ObservableObject {
     /// A parked/frozen row can no longer accept an old remote decision. Fence
     /// any off-main send first, then wake the card-maintenance stream.
     func noteSlackSessionAvailability(_ session: BanyanSession) {
-        guard codexRemote.policy.enabled,
+        guard sessions.contains(where: { $0 === session }), codexRemote.policy.enabled,
               slackDecisionJournal.observedSessionIDs(allowed: codexRemote.policy.allowed).contains(session.id) else { return }
         if session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended {
             slackDecisionJournal.invalidateSession(session.id)

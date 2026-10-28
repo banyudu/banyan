@@ -191,6 +191,17 @@ struct SlackDecisionAPITests {
         #expect((events["events"] as? [[String: Any]])?.contains { $0["sessionID"] as? String == "row" } == true)
     }
 
+    @Test func aReplacedRowCannotFenceTheCurrentSessionsDecision() async throws {
+        let (fixture, store, _) = try fixture()
+        defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
+        let decision = try await store.slackBrowser(request("decision"))
+        let requestID = try #require(decision["requestID"] as? String)
+        let oldRow = PuckSession(id: "row", binding: .init(provider: "codex"), title: "Old row", cwd: fixture.project.path,
+            isSuspended: true, daemon: FakePuckDaemon(), telemetry: store.telemetry, host: store.host)
+        store.noteSlackSessionAvailability(oldRow)
+        #expect(store.slackDecisionJournal.fence.contains(requestID))
+    }
+
     @Test func awaySnapshotIncludesTransitionsDuringCaptureAndDoesNotOfferResolvedDecision() async throws {
         let (fixture, store, backend) = try fixture()
         defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
