@@ -291,7 +291,7 @@ struct SlackDecisionAPITests {
         #expect(backend.literal.count == 1)
     }
 
-    @Test func longTranscriptSupportsExactDecisionAndFollowup() async throws {
+    @Test func longTranscriptRefusesUnprovenDecisionAndFollowup() async throws {
         let (fixture, store, backend) = try fixture()
         defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
         let transcript = fixture.root.appendingPathComponent("rollout-fixture.jsonl")
@@ -312,18 +312,15 @@ struct SlackDecisionAPITests {
         }
         let opened = try await store.slackBrowser(browser("open"))
         let identity = try #require(opened["binding"] as? [String: Any])
-        #expect(identity["kind"] as? String == "terminalCodex")
+        #expect(identity["kind"] as? String == "terminalPane")
         _ = try await store.slackBrowser(browser("bind", identity: identity))
-        let decision = try await store.slackBrowser(browser("decision", identity: identity))
-        let requestID = try #require(decision["requestID"] as? String)
-        let answer = try await store.slackBrowser(browser("answer", identity: identity,
-            extra: ["requestID": requestID, "operationID": "answer-long", "option": 2]))
-        #expect(answer["status"] as? String == "submitted" && backend.sent == [[.down, .enter]])
+        await #expect(throws: (any Error).self) { try await store.slackBrowser(browser("decision", identity: identity)) }
         backend.text = "Finished.\n› Ask Codex to do anything\nGPT-6.1-Sol · Context 50%\n? for shortcuts"
-        let reply = try await store.slackBrowser(browser("followup", identity: identity,
-            extra: ["operationID": "reply-long", "text": "continue"]))
-        #expect(reply["status"] as? String == "submitted")
-        #expect(backend.literal == ["continue"])
+        await #expect(throws: (any Error).self) {
+            try await store.slackBrowser(browser("followup", identity: identity,
+                extra: ["operationID": "reply-long", "text": "continue"]))
+        }
+        #expect(backend.literal.isEmpty && backend.sent.isEmpty)
     }
 
     @Test func busyPickerAndDisabledInspectionRejectFollowupWithoutInput() async throws {

@@ -19,7 +19,7 @@ public protocol ConversationGenerationTracking: Sendable {
 /// Useful for isolated readers. The app injects a durable tracker instead.
 public actor TransientConversationGenerationTracker: ConversationGenerationTracking {
     private struct Key: Hashable { let sessionID: String; let conversationID: String }
-    private struct Record { let checkpoint: ConversationHistoryReader.GenerationCheckpoint; let generation: String }
+    private struct Record { let proof: ConversationHistoryReader.Proof; let generation: String }
     private var records: [Key: Record] = [:]
     private var order: [Key] = []
 
@@ -27,11 +27,12 @@ public actor TransientConversationGenerationTracker: ConversationGenerationTrack
     public func identity(sessionID: String, conversationID: String, proof: ConversationHistoryReader.Proof) async throws -> SlackConversationIdentity {
         let key = Key(sessionID: sessionID, conversationID: conversationID)
         let prior = records[key]
-        let same = try prior.map { try ConversationHistoryReader.extends($0.checkpoint, with: proof) } ?? false
+        let same = prior.map { old in
+            old.proof.deviceNumber == proof.deviceNumber && old.proof.fileNumber == proof.fileNumber &&
+            old.proof.resetCount == proof.resetCount && proof.bytes.starts(with: old.proof.bytes)
+        } ?? false
         let generation = same ? prior!.generation : UUID().uuidString
-        records[key] = Record(checkpoint: .init(deviceNumber: proof.deviceNumber, fileNumber: proof.fileNumber,
-            startOffset: proof.startOffset, byteCount: proof.bytes.count, digest: ConversationWindowDigest.hex(proof.bytes),
-            resetCount: proof.resetCount, headerDigest: proof.header.map(ConversationWindowDigest.hex)), generation: generation)
+        records[key] = Record(proof: proof, generation: generation)
         order.removeAll { $0 == key }; order.append(key)
         while order.count > 8 { records.removeValue(forKey: order.removeFirst()) }
         return SlackConversationIdentity(kind: "terminalCodex", conversationID: conversationID, generation: generation)

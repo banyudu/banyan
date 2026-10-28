@@ -68,9 +68,9 @@ Browsing does not send input or resume a conversation. Transcript pages identify
 their source and any truncation or staleness. When an exact terminal conversation
 cannot be verified, retained pane output is read-only; it is not matched by
 working-directory similarity. The bounded transcript window is at most 4 MiB,
-with individual messages limited to 8,000 characters. For larger transcripts,
-Banyan verifies a bounded prior checkpoint before retaining the conversation
-binding; an unrecoverable gap creates a new generation. A read-only pane binding is retired after its
+with individual messages limited to 8,000 characters. A larger transcript
+remains readable but cannot currently establish a full generation proof for
+replies or decision controls. A read-only pane binding is retired after its
 captured output or transcript window changes, an observed conversation reset,
 or an app restart. Large or replaced files can invalidate a cursor;
 reopen Latest. Puck history comes from bounded daemon events and can omit user
@@ -81,6 +81,8 @@ subsequent notifications. Turning Away off stops proactive delivery while
 on-demand browsing remains available. Terminal decisions are actionable only
 when Banyan identifies the exact current Codex prompt and conversation; a reply
 is accepted only at a verified empty composer and must be one printable line.
+Claude and OpenCode terminal sessions currently provide read-only retained
+output; their remote decision and reply adapters are not yet available.
 Puck replies use the existing Puck session and admission controller. Puck
 approvals and questions, including multiple selections and custom answers, can
 be answered from their bound thread when they fit Slack's form limits. Oversized

@@ -45,21 +45,11 @@ public actor ConversationHistoryReader {
         public let deviceNumber: UInt64
         public let fileNumber: UInt64
         public let resetCount: Int
-        public let startOffset: UInt64
-        public let transcriptURL: URL?
-        public let header: Data?
-
-        public init(bytes: Data, deviceNumber: UInt64, fileNumber: UInt64, resetCount: Int,
-                    startOffset: UInt64 = 0, transcriptURL: URL? = nil, header: Data? = nil) {
-            self.bytes = bytes; self.deviceNumber = deviceNumber; self.fileNumber = fileNumber
-            self.resetCount = resetCount; self.startOffset = startOffset; self.transcriptURL = transcriptURL; self.header = header
-        }
     }
 
     public struct Page: Sendable {
         public let snapshotID: UUID
-        /// Present for a complete bounded window; prior checkpoints are verified
-        /// separately when the window has moved.
+        /// Present only when the entire completed transcript fits the read bound.
         public let proof: Proof?
         public let messages: [Message]
         public let earlier: String?
@@ -77,68 +67,15 @@ public actor ConversationHistoryReader {
         case unavailable, unsupported, identityMismatch, changed, invalidCursor
     }
 
-    public struct GenerationCheckpoint: Sendable {
-        public let deviceNumber: UInt64
-        public let fileNumber: UInt64
-        public let startOffset: UInt64
-        public let byteCount: Int
-        public let digest: String
-        public let resetCount: Int
-        public let headerDigest: String?
-
-        public init(deviceNumber: UInt64, fileNumber: UInt64, startOffset: UInt64, byteCount: Int,
-                    digest: String, resetCount: Int, headerDigest: String?) {
-            self.deviceNumber = deviceNumber; self.fileNumber = fileNumber; self.startOffset = startOffset
-            self.byteCount = byteCount; self.digest = digest; self.resetCount = resetCount; self.headerDigest = headerDigest
-        }
-    }
-
-    /// Verify the previous bounded window, even after it slides out of the
-    /// current tail. At most one prior window is read; a larger gap or a new
-    /// reset/compaction gets a new generation instead of guessing continuity.
-    public nonisolated static func extends(_ old: GenerationCheckpoint, with proof: Proof) throws -> Bool {
-        guard old.byteCount >= 0, old.deviceNumber == proof.deviceNumber, old.fileNumber == proof.fileNumber,
-              old.startOffset <= UInt64.max - UInt64(old.byteCount),
-              proof.startOffset <= UInt64.max - UInt64(proof.bytes.count) else { return false }
-        let oldEnd = old.startOffset + UInt64(old.byteCount)
-        let newEnd = proof.startOffset + UInt64(proof.bytes.count)
-        guard oldEnd <= newEnd, proof.startOffset <= oldEnd else { return false }
-        if let expected = old.headerDigest {
-            guard let header = proof.header, ConversationWindowDigest.hex(header) == expected else { return false }
-        }
-        let previous: Data
-        if old.startOffset >= proof.startOffset, oldEnd <= newEnd {
-            let start = Int(old.startOffset - proof.startOffset)
-            previous = proof.bytes.subdata(in: start..<(start + old.byteCount))
-        } else {
-            guard let url = proof.transcriptURL else { throw ReadError.unavailable }
-            let before = try FileManager.default.attributesOfItem(atPath: url.path)
-            guard (before[.systemNumber] as? NSNumber)?.uint64Value == proof.deviceNumber,
-                  (before[.systemFileNumber] as? NSNumber)?.uint64Value == proof.fileNumber,
-                  ((before[.size] as? NSNumber)?.uint64Value ?? 0) >= newEnd else { throw ReadError.changed }
-            let handle = try FileHandle(forReadingFrom: url)
-            defer { try? handle.close() }
-            try handle.seek(toOffset: old.startOffset)
-            previous = try handle.read(upToCount: old.byteCount) ?? Data()
-            let after = try FileManager.default.attributesOfItem(atPath: url.path)
-            guard (after[.systemNumber] as? NSNumber)?.uint64Value == proof.deviceNumber,
-                  (after[.systemFileNumber] as? NSNumber)?.uint64Value == proof.fileNumber,
-                  (after[.size] as? NSNumber)?.uint64Value == (before[.size] as? NSNumber)?.uint64Value,
-                  (after[.modificationDate] as? Date) == (before[.modificationDate] as? Date) else { throw ReadError.changed }
-        }
-        guard previous.count == old.byteCount, ConversationWindowDigest.hex(previous) == old.digest else { return false }
-        if old.startOffset == 0 && proof.startOffset == 0 { return old.resetCount == proof.resetCount }
-        let appendedStart = Int(oldEnd - proof.startOffset)
-        return !containsBoundary(proof.bytes.suffix(from: appendedStart), provider: .codex)
-    }
-
-    private nonisolated static func containsBoundary<D: DataProtocol>(_ data: D, provider: CodingAgentProvider) -> Bool {
+    private nonisolated static func containsBoundary<D: DataProtocol>(_ data: D, provider: CodingAgentProvider,
+                                                                        conversationID: String) -> Bool {
         let bytes = Data(data)
         guard !bytes.isEmpty else { return false }
         guard bytes.last == 10 else { return true }
         for line in bytes.split(separator: 10, omittingEmptySubsequences: true) {
             guard let row = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else { return true }
             if provider == .claude {
+                if let id = row["sessionId"] as? String, id != conversationID { return true }
                 if row["type"] as? String == "user", let message = row["message"] as? [String: Any],
                    let value = text(message["content"]), isReset(value) { return true }
                 continue
@@ -209,11 +146,9 @@ public actor ConversationHistoryReader {
             end = snapshot.messages.count
         }
         let start = max(0, end - pageSize)
-        let header: Data? = snapshot.start > 0 ? snapshot.header : snapshot.bytes.firstIndex(of: 10).map { Data(snapshot.bytes.prefix(through: $0)) }
-        let proof = !snapshot.incompleteTail
+        let proof = snapshot.start == 0 && !snapshot.incompleteTail
             ? Proof(bytes: snapshot.bytes, deviceNumber: snapshot.deviceNumber.uint64Value,
-                    fileNumber: snapshot.fileNumber.uint64Value, resetCount: snapshot.resetCount,
-                    startOffset: snapshot.start, transcriptURL: snapshot.identity.transcriptURL, header: header) : nil
+                    fileNumber: snapshot.fileNumber.uint64Value, resetCount: snapshot.resetCount) : nil
         return Page(snapshotID: id, proof: proof, messages: Array(snapshot.messages[start..<end]),
                     earlier: start > 0 ? "\(id.uuidString):\(start)" : nil,
                     incompleteTail: snapshot.incompleteTail, resetCount: snapshot.resetCount,
@@ -262,7 +197,8 @@ public actor ConversationHistoryReader {
         let current = try readRange(url, start: snapshot.start, count: snapshot.bytes.count)
         let appended = try readRange(url, start: originalEnd, count: Int(size - originalEnd))
         guard header == snapshot.header, current == snapshot.bytes, appended.count == size - originalEnd,
-              !Self.containsBoundary(appended, provider: snapshot.identity.provider) else {
+              !Self.containsBoundary(appended, provider: snapshot.identity.provider,
+                                     conversationID: snapshot.identity.conversationID) else {
             throw ReadError.changed
         }
         let (afterInode, afterDevice, afterSize) = try attributes(url)
@@ -347,6 +283,12 @@ public actor ConversationHistoryReader {
                             messages.append(Self.message(role: role, text: body))
                         }
                     }
+                    continue
+                }
+                if row["type"] as? String == "event_msg", let payload = row["payload"] as? [String: Any],
+                   ["compacted", "context_compacted"].contains(payload["type"] as? String ?? "") {
+                    resetCount += 1
+                    previousCodex = nil
                     continue
                 }
                 if row["type"] as? String == "event_msg",

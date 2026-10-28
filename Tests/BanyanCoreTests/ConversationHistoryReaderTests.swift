@@ -63,6 +63,22 @@ private func codexMessage(_ role: String, _ text: String) -> String {
     await #expect(throws: ConversationHistoryReader.ReadError.identityMismatch) { try await reader.page(identity: identity) }
 }
 
+@Test func conversationHistoryRejectsAnAppendedDifferentClaudeSession() async throws {
+    let first = #"{"type":"user","sessionId":"a","message":{"content":"first"}}"# + "\n"
+    let second = #"{"type":"assistant","sessionId":"a","message":{"content":"second"}}"# + "\n"
+    let url = try historyFile(first + second)
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let reader = ConversationHistoryReader()
+    let identity = ConversationHistoryReader.Identity(provider: .claude, conversationID: "a", transcriptURL: url)
+    let page = try await reader.page(identity: identity, limit: 1)
+    let cursor = try #require(page.earlier)
+    let handle = try FileHandle(forWritingTo: url)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data((#"{"type":"user","sessionId":"b","message":{"content":"other"}}"# + "\n").utf8))
+    try handle.close()
+    await #expect(throws: ConversationHistoryReader.ReadError.changed) { try await reader.page(identity: identity, earlier: cursor) }
+}
+
 @Test func conversationHistoryBoundsReadSize() async throws {
     let content = #"{"type":"session_meta","payload":{"id":"a"}}"# + "\n" +
         (0..<30).map { codexMessage("user", "message-\($0)") }.joined()
@@ -105,6 +121,22 @@ private func codexMessage(_ role: String, _ text: String) -> String {
     try Data((header + codexMessage("user", "original") + compacted + codexMessage("assistant", "later")).utf8).write(to: url)
     let retained = try await reader.page(identity: identity)
     #expect(retained.messages.map(\.text) == ["original", "later"])
+}
+
+@Test func conversationHistoryInvalidatesCursorAfterCompactionEvent() async throws {
+    let header = #"{"type":"session_meta","payload":{"id":"a"}}"# + "\n"
+    let url = try historyFile(header + codexMessage("user", "first") + codexMessage("assistant", "second"))
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let reader = ConversationHistoryReader()
+    let identity = ConversationHistoryReader.Identity(provider: .codex, conversationID: "a", transcriptURL: url)
+    let page = try await reader.page(identity: identity, limit: 1)
+    let cursor = try #require(page.earlier)
+    let handle = try FileHandle(forWritingTo: url)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data((#"{"type":"event_msg","payload":{"type":"context_compacted"}}"# + "\n").utf8))
+    try handle.close()
+    await #expect(throws: ConversationHistoryReader.ReadError.changed) { try await reader.page(identity: identity, earlier: cursor) }
+    #expect(try await reader.page(identity: identity).resetCount == 1)
 }
 
 @Test func conversationHistoryIncludesBoundedToolOutput() async throws {
