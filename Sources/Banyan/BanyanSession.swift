@@ -117,7 +117,11 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var isDeepTerminating = false
     @Published var parentSessionID: String? {
         didSet {
-            if parentSessionID != oldValue { coordinationRecoveryError = nil }
+            if parentSessionID != oldValue {
+                coordinationRecoveryError = nil
+                coordinationFailureID = nil
+                coordinationRecoveryInspection = nil
+            }
             onHistoryRelevantChange?()
         }
     }
@@ -129,6 +133,8 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var workflow: SessionWorkflow? { didSet { onHistoryRelevantChange?() } }
     @Published var workflowRecoveryError: String? { didSet { onHistoryRelevantChange?() } }
     @Published var coordinationRecoveryError: String? { didSet { onHistoryRelevantChange?() } }
+    var coordinationFailureID: String?
+    var coordinationRecoveryInspection: CoordinationRecoveryInspection?
     @Published var codexRetryStatus: CodexRetryStatus?
     var autoRetryCodexFailures = true {
         didSet { if !autoRetryCodexFailures { codexAutoRetry.cancel() } }

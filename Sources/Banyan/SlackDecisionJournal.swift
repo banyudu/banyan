@@ -16,7 +16,7 @@ final class SlackDecisionFence: @unchecked Sendable {
 /// text, or credentials are persisted here.
 @MainActor
 final class SlackDecisionJournal {
-    struct Request: Codable, Equatable {
+    struct Request: Codable, Equatable, Sendable {
         let id: String
         let sessionID: String
         let identity: SlackConversationIdentity
@@ -28,7 +28,7 @@ final class SlackDecisionJournal {
         let footprint: String
         var status: String
     }
-    struct Receipt: Codable, Equatable {
+    struct Receipt: Codable, Equatable, Sendable {
         let operationID: String
         let principal: CodexRemotePrincipal
         let requestID: String

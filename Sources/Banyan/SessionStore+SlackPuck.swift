@@ -27,7 +27,7 @@ extension SessionStore {
         let outcome: [String: Any]
         do {
             let daemon = session.daemon
-            let summary = try await Task.detached(priority: .userInitiated) { try daemon.get(id) }.value
+            let summary = try await PuckBackgroundIO.run { try daemon.get(id) }
             try authorizeSlackBrowser(request.principal)
             guard codexRemote.policyGeneration == generation, sessions.contains(where: { $0 === session }),
                   session.status != .closed, !session.isSuspended, session.binding == originalBinding, session.cwd == cwd,
@@ -63,7 +63,14 @@ extension SessionStore {
             outcome = ["status": "submitted"]
         } catch {
             if sending {
-                if case .rejected = error as? PuckDaemonError {
+                let definitelyRejected: Bool
+                if let daemonError = error as? PuckDaemonError {
+                    switch daemonError {
+                    case .rejected, .notSubmitted: definitelyRejected = true
+                    default: definitelyRejected = false
+                    }
+                } else { definitelyRejected = error is CancellationError }
+                if definitelyRejected {
                     try? slackFollowUpJournal.rejectBeforeSend(receipt, reason: "daemon_rejected")
                     outcome = ["status": "rejected", "reason": "daemon_rejected"]
                 } else {

@@ -5,7 +5,7 @@ import Foundation
 
 /// An in-memory `puckd`: serves the sessions a test puts in it and records
 /// what Banyan asked of it.
-final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
+final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchecked Sendable {
     struct Creation: Equatable {
         let id: String
         let provider: String
@@ -22,9 +22,12 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
     private let lock = NSLock()
     private var summaries: [String: PuckSessionSummary] = [:]
     private var transcripts: [String: [PuckSessionEvent]] = [:]
+    private var historyPages: [String: PuckHistoryPage] = [:]
     private var followers: [String: AsyncThrowingStream<PuckSessionUpdate, Error>.Continuation] = [:]
     private var recordedCreations: [Creation] = []
     private var recordedTurns: [Turn] = []
+    private var recordedTurnAttempts = 0
+    private var _turnError: PuckDaemonError?
     private var recordedDecisions: [String] = []
     private var recordedAnswers: [[PuckQuestionSelection]] = []
     private var reachable = true
@@ -54,6 +57,11 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
 
     var creations: [Creation] { locked { recordedCreations } }
     var turns: [Turn] { locked { recordedTurns } }
+    var turnAttempts: Int { locked { recordedTurnAttempts } }
+    var turnError: PuckDaemonError? {
+        get { locked { _turnError } }
+        set { locked { _turnError = newValue } }
+    }
     var decisions: [String] { locked { recordedDecisions } }
     var answers: [[PuckQuestionSelection]] { locked { recordedAnswers } }
 
@@ -89,6 +97,10 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
             summaries[summary.id] = summary
             transcripts[summary.id] = transcript
         }
+    }
+
+    func putHistoryPage(_ page: PuckHistoryPage, cursor: String? = nil) {
+        locked { historyPages[page.session + "\u{0}" + (cursor ?? "")] = page }
     }
 
     func forget(_ id: String) {
@@ -146,6 +158,16 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         }
     }
 
+    func history(_ id: String, cursor: String?, limit: Int) throws -> PuckHistoryPage {
+        try locked {
+            try checkReachable()
+            guard let page = historyPages[id + "\u{0}" + (cursor ?? "")] else {
+                throw PuckDaemonError.rejected("no paged fixture history")
+            }
+            return page
+        }
+    }
+
     func create(id: String, provider: String, account: String?, model: String?, workspace: String) throws -> PuckSessionSummary {
         let (summary, gate) = try locked {
             try checkReachable()
@@ -169,6 +191,8 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         let gate = try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
+            recordedTurnAttempts += 1
+            if let error = _turnError { throw error }
             recordedTurns.append(Turn(id: id, prompt: prompt))
             summaries[id] = summary.with(position: "running", historyItems: summary.historyItems + 1)
             return turnGate

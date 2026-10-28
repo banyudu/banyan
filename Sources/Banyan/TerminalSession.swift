@@ -397,6 +397,14 @@ final class TerminalSession: BanyanSession {
     }
 
     func openTerminalLink(_ link: String) {
+        if let issueID = Self.linearIssueID(in: link) {
+            let issueURL = LinearIssueReference.issueURL(for: issueID, environment: environment)
+            if let url = Self.terminalLinkURL(issueURL) {
+                _ = NSWorkspace.shared.open(url)
+            }
+            return
+        }
+
         if let number = Self.referenceNumber(in: link) {
             openGitHubReference(number: number)
             return
@@ -409,6 +417,18 @@ final class TerminalSession: BanyanSession {
             return
         }
         _ = NSWorkspace.shared.open(url)
+    }
+
+    /// A bare Linear issue ID printed in terminal output. Explicit URLs remain on
+    /// the normal URL path so their workspace and issue destination are preserved.
+    nonisolated static func linearIssueID(in link: String) -> String? {
+        let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let issueID = LinearIssueReference.issueID(in: trimmed),
+              trimmed.caseInsensitiveCompare(issueID) == .orderedSame
+        else {
+            return nil
+        }
+        return issueID
     }
 
     /// A bare `#123` printed by an agent: resolve it as a pull request first,

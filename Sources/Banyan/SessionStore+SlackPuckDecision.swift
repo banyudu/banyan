@@ -120,7 +120,7 @@ extension SessionStore {
         let generation = codexRemote.policyGeneration, binding = session.binding, cwd = session.cwd, daemon = session.daemon
         var bound = request; bound.action = "boundContext"; bound.cursor = nil; bound.terminalOutput = false
         let context = try await slackBrowser(bound)
-        let summary = try await Task.detached(priority: .userInitiated) { try daemon.get(id) }.value
+        let summary = try await PuckBackgroundIO.run { try daemon.get(id) }
         try requireSlackAuthorization(request.principal, generation: generation)
         guard sessions.contains(where: { $0 === session }), session.status != .closed, !session.isSuspended,
               session.binding == binding, session.cwd == cwd, summary.id == id, summary.cwd == cwd,
@@ -180,7 +180,8 @@ extension SessionStore {
         catch { try? slackDecisionJournal.reject(receipt, reason: "request_changed"); throw error }
         let policyFence = codexRemote.policyFence, requestFence = slackDecisionJournal.fence
         let selections = request.selections
-        let dispatched = await Task.detached(priority: .userInitiated) { () -> PuckSlackDispatch in
+        let dispatched: PuckSlackDispatch
+        do { dispatched = try await PuckBackgroundIO.run { () -> PuckSlackDispatch in
             guard policyFence.matches(generation), requestFence.contains(requestID),
                   let summary = try? daemon.get(id), summary.id == id, summary.cwd == cwd, PuckSessionBinding(summary: summary) == binding,
                   let decision = PuckSlackDecision(summary), decision.footprint == oldRequest.footprint,
@@ -189,7 +190,11 @@ extension SessionStore {
             do { try decision.submit(to: daemon, sessionID: id, option: option, selections: selections); return .sent }
             catch PuckDaemonError.rejected(_) { return .refused }
             catch { return .uncertain }
-        }.value
+        } } catch {
+            if error is CancellationError { dispatched = .refused }
+            else if case .notSubmitted = error as? PuckDaemonError { dispatched = .refused }
+            else { dispatched = .uncertain }
+        }
         let outcome: [String: Any]
         switch dispatched {
         case .sent:

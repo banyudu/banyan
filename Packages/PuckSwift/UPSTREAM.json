@@ -1,0 +1,14 @@
+{
+  "upstream": "https://github.com/banyudu/puck",
+  "source_directory": "packages/PuckSwift",
+  "sha256": {
+    "Package.swift": "795ebc208f4bf0708b1f841046f41de03cadae014c43bc1aa701bb415422961a",
+    "README.md": "d92a024549e70607ce5b857452858f59e0ce472e4c3cc4a1a59e125e33941068",
+    "Sources/PuckSwift/BackgroundIO.swift": "e67edd8ff4d61859c8792c1be73f236a5c1e3f4382008e538e3c57f97f63c41a",
+    "Sources/PuckSwift/Client.swift": "13f8a4d1247e196a99ce2ff114cdb9ea4162275aa5326fce120d2ba3f6fca349",
+    "Sources/PuckSwift/History.swift": "fe81135a065cca1e45f3faebc06e66e36f597f795957b3643c1aa7cd4d2cf5df",
+    "Sources/PuckSwift/Observation.swift": "567d6bd3841e56290e10d30d82c6e8ba7d5a35aa9296141e0743e342738eff11",
+    "Sources/PuckSwiftExample/main.swift": "79bb2c701e9c9e168f5334af84df5d62dfd916e950e03e157bc315a5034a4f1b",
+    "Tests/PuckSwiftTests/SDKContractTests.swift": "0d97e62d09929080f6e9f1c78249ffb26fde6ed948eafae14224c0003362236c"
+  }
+}

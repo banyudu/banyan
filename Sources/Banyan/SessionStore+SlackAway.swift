@@ -72,14 +72,16 @@ extension SessionStore {
             pending = native.state.pendingRequests.contains { codexThreads.requestIsAnswerable(sessionID: id, requestID: $0.id) }
         } else if let puck = session as? PuckSession {
             let daemon = puck.daemon, binding = puck.binding
-            let summary = await Task.detached(priority: .userInitiated) { try? daemon.get(id) }.value
+            let summary = try await PuckBackgroundIO.run { try daemon.get(id) }
             try authorizeSlackBrowser(request.principal)
             guard codexRemote.policyGeneration == policy, slackAwayJournal.state.revision == away.revision,
                   sessions.contains(where: { $0 === puck }), puck.binding == binding else {
                 throw CodexRemoteError.invalid("Away scope or session changed")
             }
-            if let summary, summary.id == id, summary.cwd == puck.cwd, PuckSessionBinding(summary: summary) == binding,
-               let decision = PuckSlackDecision(summary), decision.isUnexpired {
+            guard summary.id == id, summary.cwd == puck.cwd, PuckSessionBinding(summary: summary) == binding else {
+                throw CodexRemoteError.invalid("Puck session changed during Away reconciliation")
+            }
+            if let decision = PuckSlackDecision(summary), decision.isUnexpired {
                 pending = true; question = decision.question
             }
         }
@@ -131,14 +133,16 @@ extension SessionStore {
                 }
             } else if let puck = session as? PuckSession {
                 let daemon = puck.daemon, id = puck.id, binding = puck.binding
-                let summary = await Task.detached(priority: .userInitiated) { try? daemon.get(id) }.value
+                let summary = try await PuckBackgroundIO.run { try daemon.get(id) }
                 try authorizeSlackBrowser(request.principal)
                 guard codexRemote.policyGeneration == policyGeneration, slackAwayJournal.state.revision == away.revision,
                       sessions.contains(where: { $0 === puck }), puck.binding == binding else {
                     throw CodexRemoteError.invalid("Away scope or session changed during catch-up")
                 }
-                if let summary, summary.id == id, summary.cwd == puck.cwd, PuckSessionBinding(summary: summary) == binding,
-                   let decision = PuckSlackDecision(summary), decision.isUnexpired {
+                guard summary.id == id, summary.cwd == puck.cwd, PuckSessionBinding(summary: summary) == binding else {
+                    throw CodexRemoteError.invalid("Puck session changed during catch-up")
+                }
+                if let decision = PuckSlackDecision(summary), decision.isUnexpired {
                     decisions.append(["sessionID": id, "question": decision.question,
                                       "options": decision.options.map { ["index": $0.index, "label": $0.label] }])
                 }

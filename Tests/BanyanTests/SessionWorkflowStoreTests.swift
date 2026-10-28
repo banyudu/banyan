@@ -1035,6 +1035,133 @@ extension SessionWorkflowStoreTests {
         #expect(child.status == .closed)
     }
 
+    @Test func explicitCoordinationRecoveryRequiresCurrentInspectionAndRecordsAcknowledgment() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        try store.setWorkflow(id: child.id, workflow: .init(owner: "workit", jobID: "child-job", revision: 2, state: .verified))
+        let binding = store.coordinationJournal.bindings.directory.appendingPathComponent("legacy.json")
+        let original = try Data(contentsOf: binding)
+        let scope: [String: Any] = ["parent": "legacy"]
+        try Data("{".utf8).write(to: binding)
+        child.onUserSubmittedInput?("Potentially lost input")
+        let unavailable = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        #expect(unavailable["recoverable"] as? Bool == false)
+        #expect((unavailable["nextAction"] as? String)?.contains("coordination journal") == true)
+        try original.write(to: binding)
+        child.onUserSubmittedInput?("Later input")
+        let inspection = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        let token = try #require(inspection["inspectionID"] as? String)
+        #expect(inspection["recoverable"] as? Bool == true)
+        let recovery = scope.merging(["inspectionID": token, "detail": "Inspected the conversation and accounted for the missing input."]) { _, new in new }
+        child.onUserSubmittedInput?("Changed after inspection")
+        await #expect(throws: (any Error).self) { try await store.controlCoordination(payload("recover", id: child.id, extra: recovery)) }
+        #expect(child.coordinationRecoveryError != nil)
+        let next = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        let nextToken = try #require(next["inspectionID"] as? String)
+        try Data("{".utf8).write(to: binding)
+        child.onUserSubmittedInput?("A newer failure")
+        try original.write(to: binding)
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("recover", id: child.id, extra: scope.merging(["inspectionID": nextToken, "detail": "Inspected"]) { _, new in new }))
+        }
+        let final = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        let finalToken = try #require(final["inspectionID"] as? String)
+        let workflowFile = store.workflowJournal.directory.appendingPathComponent("managed.json")
+        let workflowData = try Data(contentsOf: workflowFile)
+        try Data("{".utf8).write(to: workflowFile)
+        let corrupt = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        #expect(corrupt["recoverable"] as? Bool == false)
+        #expect((corrupt["nextAction"] as? String)?.contains("workflow journal") == true)
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("recover", id: child.id, extra: scope.merging(["inspectionID": finalToken, "detail": "Inspected"]) { _, new in new }))
+        }
+        try workflowData.write(to: workflowFile)
+        let current = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        let currentToken = try #require(current["inspectionID"] as? String)
+        let accepted = scope.merging(["inspectionID": currentToken, "detail": "Inspected the conversation and accounted for missing input."]) { _, new in new }
+        await #expect(throws: (any Error).self) { try await store.controlCoordination(payload("recover", id: child.id, group: "other", extra: accepted)) }
+        _ = try await store.controlCoordination(payload("recover", id: child.id, extra: accepted))
+        #expect(child.parentSessionID == "legacy")
+        #expect(child.coordinationRecoveryError == nil)
+        #expect(child.workflow?.state == .verified)
+        #expect(fixture.backend.sent.isEmpty)
+        let observed = try await store.controlCoordination(payload("observe", id: child.id, extra: scope))
+        let entries = try #require((observed["session"] as? [String: Any])?["coordinationInterventions"] as? [[String: String]])
+        #expect(entries.last?["text"]?.contains("accounted for missing input") == true)
+        let lastID = try #require(entries.last?["id"])
+        _ = try await store.controlCoordination(payload("retire", id: child.id, extra: ["parent": "legacy", "jobID": "child-job", "revision": 2, "interventionID": lastID]))
+        #expect(child.status == .closed)
+    }
+
+    @Test func coordinationRecoveryRetainsFailureWhenAcknowledgmentCannotBeWritten() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        let binding = store.coordinationJournal.bindings.directory.appendingPathComponent("legacy.json")
+        let original = try Data(contentsOf: binding)
+        try Data("{".utf8).write(to: binding)
+        child.onUserSubmittedInput?("Potentially lost input")
+        try original.write(to: binding)
+        child.onUserSubmittedInput?("Later input")
+        let inputs = store.coordinationJournal.directory.appendingPathComponent("inputs")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: inputs.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: inputs.path) }
+        let scope: [String: Any] = ["parent": "legacy"]
+        let inspection = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        #expect((inspection["nextAction"] as? String)?.contains("successful coordination journal write") == true)
+        let token = try #require(inspection["inspectionID"] as? String)
+        do {
+            _ = try await store.controlCoordination(payload("recover", id: child.id,
+                extra: ["parent": "legacy", "inspectionID": token, "detail": "Inspected the original conversation"]))
+            Issue.record("Expected acknowledgment write to fail")
+        } catch {
+            #expect(error.localizedDescription.contains("coordination acknowledgment could not be written"))
+            #expect(error.localizedDescription.contains("coordination error remains"))
+        }
+        #expect(child.coordinationRecoveryError != nil)
+        #expect(try store.coordinationJournal.interventions(id: child.id).map(\.text) == ["Later input"])
+        #expect(fixture.backend.sent.isEmpty)
+    }
+
+    @Test func coordinationRecoveryPreservesWorkflowHoldAndUnresolvedReceipt() async throws {
+        let fixture = try WorkflowStoreFixture(); defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = try await setup(fixture); defer { store.flushPendingSessionSaves() }
+        let child = try #require(store.sessions.first { $0.id == "managed" })
+        let held = SessionWorkflow(owner: "workit", jobID: "child-job", revision: 2, state: .needsYou,
+                                   wake: .init(id: "wake", status: .uncertain))
+        try store.workflowJournal.save(held, id: child.id)
+        child.workflow = held
+        let file = store.coordinationJournal.bindings.directory.appendingPathComponent("legacy.json")
+        let original = try Data(contentsOf: file)
+        try Data("{".utf8).write(to: file)
+        child.onUserSubmittedInput?("Input")
+        try original.write(to: file)
+        child.workflowRecoveryError = "Actual workflow journal failure"
+        let scope: [String: Any] = ["parent": "legacy"]
+        let blocked = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        #expect(blocked["recoverable"] as? Bool == false)
+        #expect((blocked["nextAction"] as? String)?.contains("workflow journal recovery error") == true)
+        #expect(child.workflowRecoveryError != nil)
+        child.workflowRecoveryError = nil
+        let inspection = try await store.controlCoordination(payload("inspect-recovery", id: child.id, extra: scope))
+        let token = try #require(inspection["inspectionID"] as? String)
+        _ = try await store.controlCoordination(payload("recover", id: child.id, extra: ["parent": "legacy", "inspectionID": token, "detail": "Inspected original input"]))
+        #expect(child.workflow == held)
+        #expect(try store.workflowJournal.load(id: child.id) == held)
+        #expect(throws: (any Error).self) { try store.close(id: child.id) }
+        #expect(!store.verifiedWorkflowSessionIDs.contains(child.id))
+        let verified = SessionWorkflow(owner: "workit", jobID: "child-job", revision: 3, state: .verified,
+                                       wake: .init(id: "wake", status: .uncertain))
+        try store.workflowJournal.save(verified, id: child.id)
+        child.workflow = verified
+        #expect(!store.verifiedWorkflowSessionIDs.contains(child.id))
+        let latest = try #require(try store.coordinationJournal.interventions(id: child.id).last)
+        await #expect(throws: (any Error).self) {
+            try await store.controlCoordination(payload("retire", id: child.id, extra: ["parent": "legacy", "jobID": "child-job", "revision": 3, "interventionID": latest.id]))
+        }
+    }
+
     @Test func changingParentClearsOnlyTheCoordinationHoldAndKeepsWorkflowCloseGuards() async throws {
         let fixture = try WorkflowStoreFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

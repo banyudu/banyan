@@ -34,6 +34,11 @@ struct SlackBrowserRequest: Decodable {
     var awayRevision: UInt64?
 }
 
+private enum SlackPuckHistory: Sendable {
+    case paged(PuckHistoryPage)
+    case recent(PuckRecentHistory)
+}
+
 extension SessionStore {
     /// The Slack transport supplies a tuple, never a filesystem path. The same
     /// authoritative policy that protects the native connector gates every read.
@@ -332,12 +337,25 @@ extension SessionStore {
     private func slackPuckHistory(_ request: SlackBrowserRequest, session: PuckSession) async throws -> [String: Any] {
         guard session.status != .closed else { throw CodexRemoteError.invalid("Puck session is unavailable") }
         let generation = codexRemote.policyGeneration, id = session.id, binding = session.binding, daemon = session.daemon
-        let result = try await Task.detached(priority: .userInitiated) { () -> (PuckSessionSummary, PuckRecentHistory, PuckSessionSummary) in
+        let cursor = request.cursor, limit = min(max(request.limit ?? 20, 1), 100)
+        let result = try await PuckBackgroundIO.run { () -> (PuckSessionSummary, SlackPuckHistory, PuckSessionSummary) in
             let before = try daemon.get(id)
-            let history = try daemon.recentEvents(id, maximum: 100)
+            let history: SlackPuckHistory
+            if let cursor, cursor.hasPrefix("puck-history:") {
+                history = .paged(try daemon.history(id, cursor: String(cursor.dropFirst("puck-history:".count)), limit: limit))
+            } else if cursor != nil {
+                guard let legacy = daemon as? any PuckRecentHistoryReading else { throw CodexRemoteError.invalid("Puck history cursor expired") }
+                history = .recent(try legacy.recentEvents(id, maximum: 100))
+            } else {
+                do { history = .paged(try daemon.history(id, cursor: nil, limit: limit)) }
+                catch {
+                    guard let legacy = daemon as? any PuckRecentHistoryReading else { throw error }
+                    history = .recent(try legacy.recentEvents(id, maximum: 100))
+                }
+            }
             let after = try daemon.get(id)
             return (before, history, after)
-        }.value
+        }
         try authorizeSlackBrowser(request.principal)
         let before = result.0, history = result.1, after = result.2
         guard codexRemote.policyGeneration == generation, sessions.contains(where: { $0 === session }),
@@ -347,15 +365,30 @@ extension SessionStore {
               before.workspace == after.workspace, before.cwd == after.cwd else {
             throw CodexRemoteError.invalid("Puck session or authorization changed while reading")
         }
-        let page = try slackStructuredHistory.page(sessionID: id, threadID: "puck:" + id,
-            entries: SlackStructuredHistory.entries(history), truncated: history.truncated || history.incomplete,
-            cursor: request.cursor, limit: request.limit ?? 20)
         let identity = SlackConversationIdentity(kind: "puck", conversationID: id, generation: "puck")
-        return ["source": "puckEvents", "conversationID": id, "binding": slackIdentityObject(identity),
-                "messages": page.entries.map { ["role": $0.role, "text": $0.text, "truncated": $0.truncated] },
-                "earlier": page.earlier as Any? ?? NSNull(), "output": NSNull(),
-                "limitation": "Puck event history may omit user prompts; older events can be truncated.",
-                "truncated": page.truncated, "mayBeStale": history.incomplete]
+        switch history {
+        case .paged(let page):
+            guard page.session == id, ["asc", "desc"].contains(page.order), page.items.count <= limit,
+                  page.nextCursor.map({ !$0.isEmpty && $0.utf8.count <= 8192 }) ?? true else {
+                throw CodexRemoteError.invalid("Puck history response is invalid")
+            }
+            let items = page.order == "desc" ? Array(page.items.reversed()) : page.items
+            return ["source": "puckHistory", "conversationID": id, "binding": slackIdentityObject(identity),
+                    "messages": items.map { ["role": $0.kind, "text": String($0.text.prefix(8_000)),
+                                             "truncated": $0.truncated || $0.text.count > 8_000] },
+                    "earlier": page.nextCursor.map { "puck-history:" + $0 } as Any? ?? NSNull(), "output": NSNull(),
+                    "limitation": page.source == "legacy_projection" ? "Puck legacy history may omit earlier conversation content." : NSNull(),
+                    "truncated": items.contains { $0.truncated || $0.text.count > 8_000 }, "mayBeStale": false]
+        case .recent(let history):
+            let page = try slackStructuredHistory.page(sessionID: id, threadID: "puck:" + id,
+                entries: SlackStructuredHistory.entries(history), truncated: history.truncated || history.incomplete,
+                cursor: cursor, limit: limit)
+            return ["source": "puckEvents", "conversationID": id, "binding": slackIdentityObject(identity),
+                    "messages": page.entries.map { ["role": $0.role, "text": $0.text, "truncated": $0.truncated] },
+                    "earlier": page.earlier as Any? ?? NSNull(), "output": NSNull(),
+                    "limitation": "Puck event history may omit user prompts; older events can be truncated.",
+                    "truncated": page.truncated, "mayBeStale": history.incomplete]
+        }
     }
 
     private func slackIdentity(from value: Any?) -> SlackConversationIdentity? {

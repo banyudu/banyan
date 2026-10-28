@@ -2,6 +2,12 @@ import BanyanCore
 import Foundation
 
 /// Where this client stands with a puck session's event stream.
+struct PuckSessionRow: Identifiable {
+    let id: String
+    let kind: String
+    let text: String
+}
+
 enum PuckFollowState: Equatable {
     /// Not on screen, so not connected.
     case stopped
@@ -32,6 +38,18 @@ final class PuckSession: BanyanSession {
     @Published private(set) var questionPlan: String?
     /// The replayed and live transcript, held only while the session is followed.
     @Published private(set) var events: [PuckSessionEvent] = []
+    @Published private(set) var historyItems: [PuckHistoryItem] = []
+    @Published private(set) var nextHistoryCursor: String?
+    @Published private(set) var historyLoading = false
+    private var historyWindow = PuckHistoryWindow()
+    private var viewingOlderHistory = false
+    private static var historyOwners: [String: WeakHistoryOwner] = [:]
+    private static let globalHistoryBytes = 4 * 1_048_576
+    private final class WeakHistoryOwner {
+        weak var value: PuckSession?
+        var used = Date()
+        init(_ value: PuckSession) { self.value = value }
+    }
     @Published private(set) var followState: PuckFollowState = .stopped
     /// The last daemon failure: unreachable, or a rejected request.
     @Published private(set) var daemonError: String?
@@ -41,6 +59,7 @@ final class PuckSession: BanyanSession {
     /// the status it describes without waiting for the next listing.
     private var lastSummary: PuckSessionSummary?
     private var followTask: Task<Void, Never>?
+    private var historyTask: Task<Void, Never>?
     private var followGeneration = 0
     @Published private(set) var admissionTurnInFlight = false
     @Published var draft = ""
@@ -48,9 +67,60 @@ final class PuckSession: BanyanSession {
     var onPendingChangedWithoutStatusTransition: (() -> Void)?
     private var summaryRevision = 0
 
-    deinit { followTask?.cancel() }
+    deinit { followTask?.cancel(); historyTask?.cancel() }
 
-    var renderedEvents: [PuckRenderedEvent] { PuckTranscript.render(events) }
+    var renderedEvents: [PuckSessionRow] {
+        historyItems.map { PuckSessionRow(id: "history-\($0.id)", kind: $0.kind, text: $0.text + ($0.truncated ? "\n[Preview truncated]" : "")) }
+        + PuckTranscript.render(events).map { PuckSessionRow(id: "event-\($0.id)", kind: $0.kind, text: $0.text) }
+    }
+
+    private var cachedBytes: Int {
+        historyWindow.byteCount + events.reduce(0) { $0 + $1.retainedByteCount }
+    }
+    private func enforceHistoryBudget() {
+        while events.count > 200 || cachedBytes > 2 * 1_048_576 {
+            guard !events.isEmpty else { break }; events.removeFirst()
+        }
+        Self.historyOwners = Self.historyOwners.filter { $0.value.value != nil }
+        if Self.historyOwners[id]?.value !== self { Self.historyOwners[id] = WeakHistoryOwner(self) }
+        Self.historyOwners[id]?.used = Date()
+        while Self.historyOwners.values.compactMap(\.value).reduce(0, { $0 + $1.cachedBytes }) > Self.globalHistoryBytes {
+            guard let victim = Self.historyOwners.filter({ $0.key != id }).min(by: { $0.value.used < $1.value.used }) else { break }
+            victim.value.value?.clearHistoryCache()
+            Self.historyOwners.removeValue(forKey: victim.key)
+        }
+    }
+    private func clearHistoryCache() {
+        events = []; historyWindow.clear(); historyItems = []; nextHistoryCursor = nil
+    }
+    func loadOlderHistory() {
+        guard let cursor = nextHistoryCursor, !historyLoading, followState != .stopped else { return }
+        historyLoading = true; viewingOlderHistory = true
+        let daemon = self.daemon; let id = self.id; let generation = followGeneration
+        historyTask = Task {
+            defer { if followGeneration == generation { historyLoading = false; historyTask = nil } }
+            do {
+                let page = try await PuckBackgroundIO.run { try daemon.history(id, cursor: cursor, limit: 50) }
+                guard followGeneration == generation, followState != .stopped, !Task.isCancelled else { return }
+                historyWindow.merge(page, older: true); historyItems = historyWindow.items
+                nextHistoryCursor = page.nextCursor; enforceHistoryBudget()
+            } catch { daemonError = error.localizedDescription }
+        }
+    }
+    func loadLatestHistory() {
+        guard !historyLoading, followState != .stopped else { return }
+        historyLoading = true; viewingOlderHistory = false
+        let daemon = self.daemon; let id = self.id; let generation = followGeneration
+        historyTask = Task {
+            defer { if followGeneration == generation { historyLoading = false; historyTask = nil } }
+            do {
+                let page = try await PuckBackgroundIO.run { try daemon.history(id, cursor: nil, limit: 50) }
+                guard followGeneration == generation, followState != .stopped, !Task.isCancelled else { return }
+                historyWindow.replace(with: page); historyItems = historyWindow.items
+                nextHistoryCursor = page.nextCursor; events = []; enforceHistoryBudget()
+            } catch { daemonError = error.localizedDescription }
+        }
+    }
 
     /// Why the daemon would refuse a new turn now, or `nil` when it takes one.
     /// Mirrors `puckd`'s own preconditions, so the UI can say so up front.
@@ -187,7 +257,7 @@ final class PuckSession: BanyanSession {
                 let id = self.id
                 Task { [weak self] in
                     do {
-                        let plan = try await Task.detached(priority: .utility) { try daemon.plan(id) }.value
+                        let plan = try await PuckBackgroundIO.run { try daemon.plan(id) }
                         guard let self, self.pendingQuestion?.callID == callID else { return }
                         self.questionPlan = plan
                     } catch {
@@ -241,7 +311,8 @@ final class PuckSession: BanyanSession {
         guard followTask == nil else { return }
         followGeneration += 1
         let generation = followGeneration
-        events = []
+        clearHistoryCache()
+        viewingOlderHistory = false
         daemonError = nil
         followState = .connecting
         let daemon = self.daemon
@@ -277,8 +348,10 @@ final class PuckSession: BanyanSession {
         followGeneration += 1
         followTask?.cancel()
         followTask = nil
+        historyTask?.cancel(); historyTask = nil; historyLoading = false
         followState = .stopped
-        events = []
+        clearHistoryCache()
+        Self.historyOwners.removeValue(forKey: id)
     }
 
     private func receive(_ update: PuckSessionUpdate) {
@@ -291,10 +364,16 @@ final class PuckSession: BanyanSession {
             // The daemon cursor is authoritative. Replayed and live events meet
             // at this boundary without duplicate rows.
             let last = events.last?.cursor ?? 0
-            events.append(contentsOf: next.filter { $0.cursor > last })
+            events.append(contentsOf: next.filter { $0.transient || $0.cursor > last })
+        case .history(let page):
+            if !viewingOlderHistory {
+                historyWindow.replace(with: page); historyItems = historyWindow.items
+                nextHistoryCursor = page.nextCursor; events = []
+            }
         case .summary(let summary):
             apply(summary: summary)
         }
+        enforceHistoryBudget()
     }
 
     // MARK: - Input
@@ -342,12 +421,18 @@ final class PuckSession: BanyanSession {
         let id = self.id
         sent = true
         do {
-            try await Task.detached(priority: .userInitiated) {
+            try await PuckBackgroundIO.run {
                 guard mayDispatch() else { throw PuckDaemonError.rejected("Remote authorization changed before dispatch") }
                 try daemon.turn(id, prompt: text)
-            }.value
+            }
         } catch {
-            if case .rejected = error as? PuckDaemonError { definiteRejection = true }
+            if error is CancellationError { definiteRejection = true }
+            if let daemonError = error as? PuckDaemonError {
+                switch daemonError {
+                case .rejected, .server, .notSubmitted: definiteRejection = true
+                default: break
+                }
+            }
             throw error
         }
         accepted = true
@@ -355,7 +440,7 @@ final class PuckSession: BanyanSession {
         // keeping its slot during the query and respecting a newer watch update.
         let revision = summaryRevision
         do {
-            let summary = try await Task.detached(priority: .utility) { try daemon.get(id) }.value
+            let summary = try await PuckBackgroundIO.run { try daemon.get(id) }
             if summaryRevision == revision { apply(summary: summary) }
             reconciledAfterResponse = true
         } catch {
@@ -376,10 +461,10 @@ final class PuckSession: BanyanSession {
         let id = self.id
         Task { [weak self] in
             do {
-                let summary = try await Task.detached(priority: .userInitiated) {
+                let summary = try await PuckBackgroundIO.run {
                     try daemon.decide(id, callID: pending.callID, decision: decision)
                     return try daemon.get(id)
-                }.value
+                }
                 self?.apply(summary: summary)
             } catch {
                 self?.daemonError = error.localizedDescription
@@ -393,10 +478,10 @@ final class PuckSession: BanyanSession {
         let id = self.id
         Task { [weak self] in
             do {
-                let summary = try await Task.detached(priority: .userInitiated) {
+                let summary = try await PuckBackgroundIO.run {
                     try daemon.answer(id, callID: pending.callID, selections: selections)
                     return try daemon.get(id)
-                }.value
+                }
                 self?.apply(summary: summary)
             } catch {
                 self?.daemonError = error.localizedDescription

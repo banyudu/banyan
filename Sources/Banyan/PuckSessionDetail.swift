@@ -110,6 +110,14 @@ struct PuckSessionDetail: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
+                    if session.nextHistoryCursor != nil {
+                        Button("Load older messages") { session.loadOlderHistory() }
+                            .disabled(session.historyLoading)
+                    }
+                    if !session.historyItems.isEmpty {
+                        Button("Latest messages") { session.loadLatestHistory() }
+                            .disabled(session.historyLoading)
+                    }
                     ForEach(rendered) { event in
                         VStack(alignment: .leading, spacing: 2) {
                             Text(event.kind.replacingOccurrences(of: "_", with: " "))

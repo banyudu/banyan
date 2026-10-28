@@ -73,8 +73,8 @@ shows a recent page but cannot currently establish a full generation proof for
 earlier pages, replies, or decision controls. A read-only pane binding is retired after its
 captured output or transcript window changes, an observed conversation reset,
 or an app restart. Large or replaced files can invalidate a cursor;
-reopen Latest. Puck history comes from bounded daemon events and can omit user
-prompts or older events.
+reopen Latest. Puck history uses the daemon's paged history where available;
+older daemons fall back to bounded events that can omit user prompts or older events.
 
 Follow sessions or projects in App Home and turn on **Away** for catch-up and
 subsequent notifications. Turning Away off stops proactive delivery while

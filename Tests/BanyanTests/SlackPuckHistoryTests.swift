@@ -46,6 +46,36 @@ func slackPuckHistoryReadsBoundedDaemonEventsWithoutStartingOrFollowing() async 
 }
 
 @Test @MainActor
+func slackPuckHistoryUsesDaemonPagesWithoutStartingOrFollowing() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let summary = puckSummary(id: "puck-fixture", cwd: fixture.project.path, historyItems: 3)
+    daemon.put(summary)
+    daemon.putHistoryPage(.init(session: summary.id, source: "native", items: [
+        .init(id: "3", kind: "assistant", text: "answer"), .init(id: "2", kind: "user", text: "before away")], nextCursor: "older"))
+    daemon.putHistoryPage(.init(session: summary.id, source: "native", items: [
+        .init(id: "1", kind: "user", text: "earliest")], nextCursor: nil), cursor: "older")
+    let store = fixture.makeStore()
+    defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
+    store.applyPuckSummaries([summary])
+    let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
+    try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
+    func request(_ cursor: String? = nil) throws -> SlackBrowserRequest {
+        var object: [String: Any] = ["action": "context", "principal": ["workspace": "T_TEST", "channel": "C_TEST", "user": "U_TEST"],
+                                     "sessionID": summary.id, "limit": 2]
+        if let cursor { object["cursor"] = cursor }
+        return try JSONDecoder().decode(SlackBrowserRequest.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+    let latest = try await store.slackBrowser(request())
+    #expect(latest["source"] as? String == "puckHistory")
+    #expect((latest["messages"] as? [[String: Any]])?.compactMap { $0["text"] as? String } == ["before away", "answer"])
+    let earlier = try await store.slackBrowser(request(try #require(latest["earlier"] as? String)))
+    #expect((earlier["messages"] as? [[String: Any]])?.compactMap { $0["text"] as? String } == ["earliest"])
+    #expect(daemon.turns.isEmpty && daemon.creations.isEmpty && !daemon.isFollowed(summary.id))
+}
+
+@Test @MainActor
 func slackPuckFollowupUsesDaemonAdmissionAndNeverRepeatsAfterDisable() async throws {
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
@@ -120,6 +150,30 @@ func slackPuckFollowupRejectsAChangedDaemonBinding() async throws {
     let request = try JSONDecoder().decode(SlackBrowserRequest.self, from: JSONSerialization.data(withJSONObject: body))
     await #expect(throws: (any Error).self) { try await store.slackBrowser(request) }
     #expect(daemon.turns.isEmpty)
+}
+
+@Test @MainActor
+func slackPuckFollowupDoesNotRetryAnUncertainDaemonError() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let summary = puckSummary(id: "puck-fixture", cwd: fixture.project.path)
+    daemon.put(summary)
+    daemon.turnError = .server(.init(code: "fixture", message: "uncertain daemon outcome"))
+    let store = fixture.makeStore()
+    defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
+    store.applyPuckSummaries([summary])
+    let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
+    let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
+    try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
+    _ = try store.slackThreadJournal.bind(sessionID: summary.id, identity: identity, principal: principal, slackThread: "100.1")
+    let body: [String: Any] = ["action": "followup", "principal": ["workspace": "T_TEST", "channel": "C_TEST", "user": "U_TEST"],
+        "sessionID": summary.id, "slackThread": "100.1", "identity": ["kind": "puck", "conversationID": summary.id, "generation": "puck"],
+        "operationID": "uncertain-reply", "text": "Continue"]
+    let request = try JSONDecoder().decode(SlackBrowserRequest.self, from: JSONSerialization.data(withJSONObject: body))
+    #expect(try await store.slackBrowser(request)["status"] as? String == "uncertain")
+    #expect(try await store.slackBrowser(request)["status"] as? String == "uncertain")
+    #expect(daemon.turnAttempts == 1 && daemon.turns.isEmpty)
 }
 
 @Test(arguments: ["park", "close"]) @MainActor

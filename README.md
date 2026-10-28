@@ -812,6 +812,18 @@ inspection. Selected, busy, changed or uncertain children remain open; transcrip
 and worktrees are retained. This transport adds no scheduler or default sidebar.
 Use `banyanctl coordination --help` for the versioned control interface.
 
+If coordination input could not be journaled, repair the coordination storage
+and run `banyanctl coordination inspect-recovery --id CHILD --parent OWNER
+--group-id GROUP`. Inspect the original conversation and the returned interventions
+for potentially lost input. If the response says recovery is possible, run
+`banyanctl coordination recover --id CHILD --parent OWNER --group-id GROUP
+--inspection-id ID --detail 'What was inspected and how missing input was handled'`.
+The inspection ID is valid only while the failure, relationship and journals remain
+unchanged. The acknowledgment is recorded as an intervention; no input is replayed.
+Workflow journal errors require separate repair, and workflow holds and delivery
+receipts remain in force. Observe the child again before acknowledging its latest
+intervention for retirement.
+
 ### Managed issue workflows
 
 The native close confirmation can **Pause and Close** unfinished Workit-owned

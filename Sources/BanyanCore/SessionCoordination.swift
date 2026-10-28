@@ -15,6 +15,7 @@ public struct CoordinationControlPayload: Decodable {
     public let outcome: String?
     public let detail: String?
     public let interventionID: String?
+    public let inspectionID: String?
 }
 
 public struct CoordinationIntervention: Codable, Equatable, Sendable {
