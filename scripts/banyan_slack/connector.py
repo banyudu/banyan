@@ -588,7 +588,7 @@ class Connector:
             self.journal.commit(lambda d: d["incoming"][key].update(status="uncertain"))
             raise
 
-    async def open_browser_session(self, principal, body, away_guard=None):
+    async def open_browser_session(self, principal, body, away_guard=None, observe_native=False):
         await self.check_away(principal, away_guard)
         session_id = body["sessionID"]
         opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
@@ -626,11 +626,45 @@ class Connector:
         if identity.get("kind") == "nativeCodex":
             existing = next((s for s in self.sessions.values() if s["sessionID"] == session_id and
                 s["threadID"] == identity["conversationID"] and s["attachment"]["slackThread"] == root), None)
+            if not existing and observe_native:
+                existing = await self.attach_native_for_away(principal, thread, away_guard)
             if existing:
                 await self.render(existing, principal, away_guard=away_guard)
         await self.post_browser_page(principal, {"action": "browser_page", "sessionID": session_id,
             "identity": identity, "slackThread": root, "cursor": None}, away_guard=away_guard)
         return "Opened in the configured control channel."
+
+    async def attach_native_for_away(self, principal, binding, away_guard):
+        # Following a pending native session is explicit Away behavior. Ordinary
+        # history opens never attach or resume it. A lost attach reply is read
+        # back through the authoritative mapping and snapshot, never resubmitted.
+        await self.check_away(principal, away_guard)
+        await self.check_browser(principal, binding)
+        native = {"action": "attach", "principal": principal, "sessionID": binding["sessionID"],
+                  "threadID": binding["identity"]["conversationID"], "slackThread": binding["slackThread"]}
+        key = "browser-native-attach-" + stable_id(principal["workspace"], principal["channel"],
+            binding["sessionID"], binding["identity"], binding["slackThread"])
+        try:
+            result = await self.mutate(key, native)
+        except Denied:
+            raise
+        except Unavailable:
+            result = {}
+        if not result.get("attachment"):
+            opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": binding["sessionID"]})
+            attachment = opened.get("attachment") or {}
+            if opened.get("binding") != binding["identity"] or attachment.get("slackThread") != binding["slackThread"]:
+                return None
+            try:
+                result = await self.call_api({"action": "snapshot", "principal": principal,
+                    "sessionID": binding["sessionID"], "threadID": binding["identity"]["conversationID"],
+                    "attachmentID": attachment["id"], "slackThread": binding["slackThread"]})
+            except Unavailable:
+                return None
+        await self.check_away(principal, away_guard)
+        await self.check_browser(principal, binding)
+        self.sessions[result["attachment"]["id"]] = result
+        return result
 
     async def attach_native_for_reply(self, principal, binding, event_key):
         # An explicit reply may attach the existing native thread; merely
@@ -1247,7 +1281,7 @@ class Connector:
                 current = await self.call_browser({"action": "awaySession", "principal": principal, "sessionID": row["sessionID"]})
                 if not current.get("pending"):
                     continue
-                await self.open_browser_session(principal, current, away_guard=session_guard)
+                await self.open_browser_session(principal, current, away_guard=session_guard, observe_native=True)
                 await self.mark_away_decision_seen(principal, guard, row["sessionID"])
             except (StaleAway, StaleBrowser):
                 # Resolution or scope changes retire the candidate, never expose controls.
@@ -1282,15 +1316,17 @@ class Connector:
         completed = set()
         for event in events:
             latest[event["sessionID"]] = event
-            if event.get("status") == "needInput" and event.get("previousStatus") in ("running", "executing", "longRunningShell", "subagents"):
+            if event.get("status") == "need-input" and event.get("previousStatus") in ("running", "executing", "long-running-shell", "subagents"):
                 completed.add(event["sessionID"])
         for session_id, event in latest.items():
             session_guard = {**guard, "sessionID": session_id}
             try:
                 await self.check_away(principal, session_guard)
                 current = await self.call_browser({"action": "awaySession", "principal": principal, "sessionID": session_id})
-                if current.get("backend") == "codex":
-                    continue  # Native has its own stream.
+                if current.get("backend") == "codex" and not current.get("pending") and any(
+                        session.get("sessionID") == session_id and session.get("attachment", {}).get("workspace") == principal["workspace"]
+                        and session.get("attachment", {}).get("channel") == principal["channel"] for session in self.sessions.values()):
+                    continue  # Attached native sessions already have their own event stream.
                 if current.get("pending"):
                     pending_guard = {**session_guard, "requirePending": True}
                     opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
@@ -1298,7 +1334,10 @@ class Connector:
                     old_binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment.get("slackThread")}
                     old_key = "browser-decision-" + stable_id(principal["workspace"], principal["channel"], old_binding)
                     had_card = bool(self.journal.data["posts"].get(old_key, {}).get("ts"))
-                    await self.open_browser_session(principal, current, away_guard=pending_guard)
+                    await self.open_browser_session(principal, current, away_guard=pending_guard, observe_native=True)
+                    if current.get("backend") == "codex":
+                        await self.mark_away_decision_seen(principal, guard, session_id)
+                        continue  # Subsequent native events use the existing stream.
                     opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
                     identity, attachment = opened.get("binding"), opened.get("attachment") or {}
                     if not identity or not attachment.get("slackThread") or identity.get("kind") not in ("terminalCodex", "puck"):
@@ -1316,14 +1355,14 @@ class Connector:
                                 browser_binding={**binding, "requestID": request_id}, away_guard=pending_guard)
                         self.journal.commit(lambda d: d["awaySeen"].__setitem__(seen, True))
                 elif (current.get("status") in ("failed", "completed") or
-                      (current.get("status") == "needInput" and session_id in completed)) and current.get("status") == event.get("status"):
+                      (current.get("status") == "need-input" and session_id in completed)) and current.get("status") == event.get("status"):
                     await self.open_browser_session(principal, current, away_guard=session_guard)
                     opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
                     identity, attachment = opened.get("binding"), opened.get("attachment") or {}
                     if identity and attachment.get("slackThread"):
                         binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment["slackThread"]}
                         await self.post_once("away-event-" + stable_id(epoch, event["cursor"]), principal, binding["slackThread"],
-                            f"{current['title']}: {'completed' if current['status'] == 'needInput' else current['status']}",
+                            f"{current['title']}: {'completed' if current['status'] == 'need-input' else current['status']}",
                             browser_binding=binding, away_guard=session_guard)
                 else:
                     # Refresh an existing card to remove controls after desktop resolution.

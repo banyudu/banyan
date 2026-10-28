@@ -17,6 +17,37 @@ import urllib.request
 from .connector import Connector, Denied, RateLimited, StaleAttachment, StaleBrowser, Unavailable
 
 
+def schedule_socket_envelope(client, request, connector, loop, pending, pending_lock, response_type, limit=256):
+    """Only acknowledge an enabled event after it has a bounded work slot."""
+    envelope = {"type": request.type, "payload": request.payload, "envelope_id": request.envelope_id}
+
+    async def acknowledged(_):
+        pass
+
+    with pending_lock:
+        if not connector.enabled:
+            client.send_socket_mode_response(response_type(envelope_id=request.envelope_id))
+            return False
+        if len(pending) >= limit:
+            # Slack can retry an unacknowledged envelope; acknowledging it here
+            # would silently discard a reply or action before it is journaled.
+            return False
+        work = connector.envelope(envelope, acknowledged)
+        try:
+            future = asyncio.run_coroutine_threadsafe(work, loop)
+        except RuntimeError:
+            work.close()
+            return False
+        pending.add(future)
+
+    def completed(done):
+        with pending_lock:
+            pending.discard(done)
+    future.add_done_callback(completed)
+    client.send_socket_mode_response(response_type(envelope_id=request.envelope_id))
+    return True
+
+
 class LocalAPI:
     def __init__(self, url, token_file):
         parsed = urllib.parse.urlsplit(url)
@@ -205,20 +236,9 @@ async def run(args, stopped=None):
             logger=quiet, transport_lost=disconnected, on_message_listeners=[raw_message])
 
         def receive(client, request):
-            # The SDK invokes listeners from worker threads. ACK synchronously,
-            # before scheduling any authorization, journal, HTTP or Codex work.
-            client.send_socket_mode_response(SocketModeResponse(envelope_id=request.envelope_id))
-            envelope = {"type": request.type, "payload": request.payload, "envelope_id": request.envelope_id}
-            async def acknowledged(_):
-                pass
-            with pending_lock:
-                if connector.enabled and len(pending) < 256:
-                    future = asyncio.run_coroutine_threadsafe(connector.envelope(envelope, acknowledged), loop)
-                    pending.add(future)
-                    def completed(done):
-                        with pending_lock:
-                            pending.discard(done)
-                    future.add_done_callback(completed)
+            # SDK listeners run on worker threads. A saturated queue is left
+            # unacknowledged, rather than silently dropping accepted input.
+            schedule_socket_envelope(client, request, connector, loop, pending, pending_lock, SocketModeResponse)
         socket.socket_mode_request_listeners.append(receive)
         # SDK handles disconnect/refresh_requested by apps.connections.open with
         # a fresh URL. No cached or persisted WebSocket URL/credential is reused.

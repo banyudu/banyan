@@ -83,6 +83,15 @@ private struct DecisionProcesses: ProcessTableProvider {
     }
 }
 
+private struct DecisionTranscriptInspector: CodexTUIProcessInspecting {
+    let path: String
+    func tree(rootPID: Int32) throws -> [CodexTUIProcess] {
+        [.init(identity: .init(pid: 100, startSeconds: 1, startMicroseconds: 0), isCodex: false, openRollouts: []),
+         .init(identity: .init(pid: 101, startSeconds: 2, startMicroseconds: 0), isCodex: true, openRollouts: [path])]
+    }
+    func hasExited(_ identity: AgentProcessIdentity) throws -> Bool { false }
+}
+
 @Suite(.serialized)
 @MainActor
 struct SlackDecisionAPITests {
@@ -116,6 +125,9 @@ struct SlackDecisionAPITests {
     @Test func awayCatchupIncludesCurrentDecisionWithoutTreatingAnIdleComposerAsOne() async throws {
         let (fixture, store, backend) = try fixture()
         defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
+        // The supervisor has not yet observed the question: catch-up must use
+        // the current pane, not the cached executing status.
+        try #require(store.sessions.first).status = .executing
         _ = try await store.slackBrowser(request("awayConfigure", extra: ["followSessionID": "row", "follow": true]))
         let enabled = try await store.slackBrowser(request("awayConfigure", extra: ["awayEnabled": true]))
         let checkpoint = try #require(enabled["checkpointCursor"] as? Int)
@@ -202,6 +214,22 @@ struct SlackDecisionAPITests {
         #expect(store.slackDecisionJournal.fence.contains(requestID))
     }
 
+    @Test func lateCloseFromAReplacedRowCannotFenceTheNewOwner() throws {
+        let (fixture, store, _) = try fixture()
+        defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
+        let oldRow = try #require(store.sessions.first)
+        try store.remove(id: oldRow.id)
+        store.applyPuckSummaries([puckSummary(id: "row", cwd: fixture.project.path)])
+        #expect(store.sessions.contains { $0.id == "row" && $0 !== oldRow })
+        let identity = SlackConversationIdentity(kind: "puck", conversationID: "row", generation: "puck")
+        let current = try #require(try store.slackDecisionJournal.observe(sessionID: "row", identity: identity,
+            principal: principal, slackThread: "200.1", paneID: "puck:row", rootPID: 0, footprint: "new-request"))
+        let cursor = store.sessionEvents(since: nil).cursor
+        oldRow.onStatusSignal?(.closed)
+        #expect(store.slackDecisionJournal.fence.contains(current.id))
+        #expect(store.sessionEvents(since: cursor).events.isEmpty)
+    }
+
     @Test func awaySnapshotIncludesTransitionsDuringCaptureAndDoesNotOfferResolvedDecision() async throws {
         let (fixture, store, backend) = try fixture()
         defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
@@ -263,6 +291,41 @@ struct SlackDecisionAPITests {
         #expect(backend.literal.count == 1)
     }
 
+    @Test func longTranscriptSupportsExactDecisionAndFollowup() async throws {
+        let (fixture, store, backend) = try fixture()
+        defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
+        let transcript = fixture.root.appendingPathComponent("rollout-fixture.jsonl")
+        let header = #"{"type":"session_meta","payload":{"id":"thread"}}"# + "\n"
+        let messages = (0..<30).map { index in
+            #"{"type":"event_msg","payload":{"type":"user_message","message":"message-\#(index)"}}"# + "\n"
+        }.joined()
+        try Data((header + messages).utf8).write(to: transcript)
+        store.slackTerminalContext = TerminalConversationContextReader(backend: backend,
+            inspector: DecisionTranscriptInspector(path: transcript.path), history: ConversationHistoryReader(maxBytes: 500),
+            generations: SlackConversationGenerationTracker(file: fixture.root.appendingPathComponent("generation.json")))
+        func browser(_ action: String, identity: [String: Any]? = nil, extra: [String: Any] = [:]) throws -> SlackBrowserRequest {
+            var body: [String: Any] = ["action": action, "principal": ["workspace": "T_TEST", "channel": "C_TEST", "user": "U_TEST"],
+                "sessionID": "row", "slackThread": "200.1"]
+            if let identity { body["identity"] = identity }
+            body.merge(extra) { _, new in new }
+            return try JSONDecoder().decode(SlackBrowserRequest.self, from: JSONSerialization.data(withJSONObject: body))
+        }
+        let opened = try await store.slackBrowser(browser("open"))
+        let identity = try #require(opened["binding"] as? [String: Any])
+        #expect(identity["kind"] as? String == "terminalCodex")
+        _ = try await store.slackBrowser(browser("bind", identity: identity))
+        let decision = try await store.slackBrowser(browser("decision", identity: identity))
+        let requestID = try #require(decision["requestID"] as? String)
+        let answer = try await store.slackBrowser(browser("answer", identity: identity,
+            extra: ["requestID": requestID, "operationID": "answer-long", "option": 2]))
+        #expect(answer["status"] as? String == "submitted" && backend.sent == [[.down, .enter]])
+        backend.text = "Finished.\n› Ask Codex to do anything\nGPT-6.1-Sol · Context 50%\n? for shortcuts"
+        let reply = try await store.slackBrowser(browser("followup", identity: identity,
+            extra: ["operationID": "reply-long", "text": "continue"]))
+        #expect(reply["status"] as? String == "submitted")
+        #expect(backend.literal == ["continue"])
+    }
+
     @Test func busyPickerAndDisabledInspectionRejectFollowupWithoutInput() async throws {
         let (fixture, store, backend) = try fixture()
         defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
@@ -278,6 +341,28 @@ struct SlackDecisionAPITests {
         try store.codexRemote.configure(.init(enabled: false, allowed: [principal]))
         gate.signal()
         await #expect(throws: (any Error).self) { try await task.value }
+        #expect(backend.literal.isEmpty && backend.sent.isEmpty)
+    }
+
+    @Test(arguments: ["park", "close"]) func availabilityChangeAfterClaimFencesTerminalFollowupBeforeSend(action: String) async throws {
+        let (fixture, store, backend) = try fixture()
+        defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
+        backend.text = "Finished.\n› Ask Codex to do anything\nGPT-6.1-Sol · Context 50%\n? for shortcuts"
+        let context = DecisionContextFixture(identity: identity)
+        store.slackTerminalContext = context
+        await context.hold(afterReads: 1)
+        let reply = try request("followup", extra: ["operationID": "parked-reply", "text": "continue"])
+        let task = Task { try await store.slackBrowser(reply) }
+        await context.waitUntilHeld()
+        if action == "park" { try store.suspend(id: "row") }
+        else { try store.close(id: "row") }
+        await context.release()
+        #expect(try await task.value["status"] as? String == "rejected")
+        #expect(backend.literal.isEmpty && backend.sent.isEmpty)
+        if action == "park" {
+            try store.resume(id: "row")
+            #expect(try await store.slackBrowser(reply)["status"] as? String == "rejected")
+        }
         #expect(backend.literal.isEmpty && backend.sent.isEmpty)
     }
 

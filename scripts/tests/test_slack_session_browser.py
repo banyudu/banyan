@@ -540,11 +540,11 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.api.rows[0]["backend"] = "puck"
         self.api.identity = lambda session_id: {"kind": "puck", "conversationID": session_id, "generation": "puck"}
         self.api.away = {"enabled": True, "sessionIDs": ["row-0"], "projectIDs": [], "activationID": "activation-a", "revision": 1}
-        self.api.rows[0]["status"] = "needInput"
+        self.api.rows[0]["status"] = "need-input"
         await self.connector.refresh_away(PRINCIPAL)
         self.assertFalse(any(fields["text"].endswith(": completed") for method, fields in self.slack.calls if method == "chat.postMessage"))
         self.api.away_cursor = 1
-        self.api.away_events = [{"cursor": 1, "sessionID": "row-0", "status": "needInput", "previousStatus": "executing"}]
+        self.api.away_events = [{"cursor": 1, "sessionID": "row-0", "status": "need-input", "previousStatus": "executing"}]
         await self.connector.refresh_away(PRINCIPAL)
         await self.connector.refresh_away(PRINCIPAL)
         posts = [fields for method, fields in self.slack.calls if method == "chat.postMessage" and fields["text"].endswith(": completed")]
@@ -659,6 +659,44 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.connector.envelope(interaction("banyan_home", self.home_open_button()["value"], view=self.last_home()), self.ack)
         self.assertFalse(any(call["action"] in ("attach", "queue", "steer", "respond") for call in self.api.calls))
         self.assertEqual(len(self.api.mappings), 1)
+
+    async def test_away_catchup_attaches_an_unattached_native_pending_request(self):
+        self.api.rows[0]["backend"] = "codex"
+        self.api.identity = lambda session_id: {"kind": "nativeCodex", "conversationID": "thread-" + session_id, "generation": "native"}
+        self.api.session.update(sessionID="row-0", threadID="thread-row-0", needsAttention=True, turnID="active")
+        self.api.session["attachment"].update(sessionID="row-0", threadID="thread-row-0")
+        self.api.session["requests"] = [{"id": 42, "turnID": "active", "title": "Approval", "detail": "fixture",
+                                         "decisions": ["accept", "decline"], "questions": [], "answerable": True}]
+        self.api.pending = True
+        self.api.away = {"enabled": True, "sessionIDs": ["row-0"], "projectIDs": [], "activationID": "activation-a", "revision": 1}
+        await self.connector.refresh_away(PRINCIPAL)
+        await self.connector.refresh_away(PRINCIPAL)
+        self.assertEqual(len([call for call in self.api.calls if call["action"] == "attach"]), 1)
+        posts = [fields for method, fields in self.slack.calls if method == "chat.postMessage"]
+        panels = [post for post in posts if post.get("metadata", {}).get("event_payload", {}).get("delivery_id") == "status-attachment"]
+        self.assertEqual(len(panels), 1)
+        self.assertTrue(any(block.get("type") == "actions" for block in panels[0]["blocks"]))
+
+    async def test_away_attaches_native_when_a_new_request_arrives(self):
+        self.api.rows[0]["backend"] = "codex"
+        self.api.identity = lambda session_id: {"kind": "nativeCodex", "conversationID": "thread-" + session_id, "generation": "native"}
+        self.api.session.update(sessionID="row-0", threadID="thread-row-0")
+        self.api.session["attachment"].update(sessionID="row-0", threadID="thread-row-0")
+        self.api.away = {"enabled": True, "sessionIDs": ["row-0"], "projectIDs": [], "activationID": "activation-a", "revision": 1}
+        await self.connector.refresh_away(PRINCIPAL)
+        self.assertFalse(any(call["action"] == "attach" for call in self.api.calls))
+        self.api.pending = True
+        self.api.session.update(needsAttention=True, turnID="active")
+        self.api.session["requests"] = [{"id": 42, "turnID": "active", "title": "Approval", "detail": "fixture",
+                                         "decisions": ["accept", "decline"], "questions": [], "answerable": True}]
+        self.api.away_cursor = 1
+        self.api.away_events = [{"cursor": 1, "sessionID": "row-0", "status": "asking", "previousStatus": "executing"}]
+        await self.connector.refresh_away(PRINCIPAL)
+        await self.connector.refresh_away(PRINCIPAL)
+        self.assertEqual(len([call for call in self.api.calls if call["action"] == "attach"]), 1)
+        panels = [fields for method, fields in self.slack.calls if method == "chat.postMessage" and
+                  fields.get("metadata", {}).get("event_payload", {}).get("delivery_id") == "status-attachment"]
+        self.assertEqual(len(panels), 1)
 
     async def test_native_history_open_does_not_resume_but_explicit_reply_attaches_once(self):
         self.api.rows[0]["sessionID"] = "native"

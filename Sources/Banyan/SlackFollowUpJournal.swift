@@ -80,6 +80,13 @@ final class SlackFollowUpJournal {
         try available()
         return state.receipts.first { $0.operationID == operationID && $0.principal == principal }
     }
+    /// A parked, closed or frozen row cannot accept a follow-up that was
+    /// claimed before the state change. Retire it at the send boundary.
+    func invalidateSession(_ sessionID: String) {
+        for receipt in state.receipts where receipt.sessionID == sessionID && ["preparing", "sending"].contains(receipt.status) {
+            fence.invalidate(Self.key(receipt))
+        }
+    }
     /// Local administration only, after inspecting the desktop conversation.
     /// Retains the receipt as a tombstone and never resubmits the text.
     func acknowledgeUncertain(operationID: String, workspace: String) throws {

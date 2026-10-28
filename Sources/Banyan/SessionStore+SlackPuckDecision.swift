@@ -117,13 +117,14 @@ extension SessionStore {
               identity.conversationID == id, let root = request.slackThread,
               let session = sessions.first(where: { $0.id == id }) as? PuckSession,
               session.status != .closed, !session.isSuspended else { throw CodexRemoteError.invalid("Puck binding is unavailable") }
-        let generation = codexRemote.policyGeneration, binding = session.binding, daemon = session.daemon
+        let generation = codexRemote.policyGeneration, binding = session.binding, cwd = session.cwd, daemon = session.daemon
         var bound = request; bound.action = "boundContext"; bound.cursor = nil; bound.terminalOutput = false
         let context = try await slackBrowser(bound)
         let summary = try await Task.detached(priority: .userInitiated) { try daemon.get(id) }.value
         try requireSlackAuthorization(request.principal, generation: generation)
         guard sessions.contains(where: { $0 === session }), session.status != .closed, !session.isSuspended,
-              session.binding == binding, summary.id == id, PuckSessionBinding(summary: summary) == binding else {
+              session.binding == binding, session.cwd == cwd, summary.id == id, summary.cwd == cwd,
+              PuckSessionBinding(summary: summary) == binding else {
             throw CodexRemoteError.invalid("Puck session changed while reading")
         }
         if summary.pendingApproval != nil && summary.pendingQuestion != nil {
@@ -165,12 +166,12 @@ extension SessionStore {
             guard old.requestID == requestID, old.option == option, old.payloadDigest == digest else { throw CodexRemoteError.invalid("Operation ID reused for different input") }
             return slackDecisionReceiptObject(old)
         }
-        let generation = codexRemote.policyGeneration, binding = session.binding, daemon = session.daemon
+        let generation = codexRemote.policyGeneration, binding = session.binding, cwd = session.cwd, daemon = session.daemon
         var current = request; current.action = "decision"
         let card = try await slackPuckDecision(current)
         try requireSlackAuthorization(request.principal, generation: generation)
         guard card["requestID"] as? String == requestID, card["answerable"] as? Bool == true,
-              sessions.contains(where: { $0 === session }), session.binding == binding,
+              sessions.contains(where: { $0 === session }), session.binding == binding, session.cwd == cwd,
               session.status != .closed, !session.isSuspended else { throw CodexRemoteError.invalid("Puck request changed") }
         let (receipt, claimed) = try slackDecisionJournal.claim(operationID: operationID, principal: request.principal,
             request: oldRequest, option: option, payloadDigest: digest)
@@ -181,7 +182,7 @@ extension SessionStore {
         let selections = request.selections
         let dispatched = await Task.detached(priority: .userInitiated) { () -> PuckSlackDispatch in
             guard policyFence.matches(generation), requestFence.contains(requestID),
-                  let summary = try? daemon.get(id), summary.id == id, PuckSessionBinding(summary: summary) == binding,
+                  let summary = try? daemon.get(id), summary.id == id, summary.cwd == cwd, PuckSessionBinding(summary: summary) == binding,
                   let decision = PuckSlackDecision(summary), decision.footprint == oldRequest.footprint,
                   decision.valid(option: option, selections: selections),
                   policyFence.matches(generation), requestFence.contains(requestID) else { return .refused }

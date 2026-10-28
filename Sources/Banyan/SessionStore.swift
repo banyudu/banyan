@@ -483,6 +483,7 @@ final class SessionStore: ObservableObject {
     let codexRemote: CodexRemoteControl
     var slackTerminalContext: any TerminalConversationContextReading
     let slackStructuredHistory = SlackStructuredHistory()
+    let slackNativeTranscriptHistory = SlackNativeTranscriptHistory()
     let slackThreadJournal: SlackThreadJournal
     let slackDecisionJournal: SlackDecisionJournal
     let slackFollowUpJournal: SlackFollowUpJournal
@@ -3496,6 +3497,7 @@ final class SessionStore: ObservableObject {
            native.state.runtime.type == "active" || native.state.activeTurnID != nil || native.state.needsAttention {
             throw ControlError.badRequest("Finish the active Codex turn and pending requests before parking this session")
         }
+        fenceSlackInput(for: session)
         session.suspend()
         // Its backoff state describes a session nothing is observing any more.
         supervisorObservationStates.removeValue(forKey: id)
@@ -4044,16 +4046,23 @@ final class SessionStore: ObservableObject {
         awayPromptFootprints[sessionID] = footprint
     }
 
-    /// A parked/frozen row can no longer accept an old remote decision. Fence
-    /// any off-main send first, then wake the card-maintenance stream.
+    /// A parked/frozen row can no longer accept remote input. Fence any
+    /// off-main send first, then wake the card-maintenance stream if needed.
     func noteSlackSessionAvailability(_ session: BanyanSession) {
-        guard sessions.contains(where: { $0 === session }), codexRemote.policy.enabled,
-              slackDecisionJournal.observedSessionIDs(allowed: codexRemote.policy.allowed).contains(session.id) else { return }
+        guard sessions.contains(where: { $0 === session }) else { return }
         if session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended {
-            slackDecisionJournal.invalidateSession(session.id)
+            fenceSlackInput(for: session)
         }
+        guard codexRemote.policy.enabled,
+              slackDecisionJournal.observedSessionIDs(allowed: codexRemote.policy.allowed).contains(session.id) else { return }
         let event = sessionEventLog.append(sessionID: session.id, status: session.status, previousStatus: session.status)
         onSessionEvent?(event)
+    }
+
+    private func fenceSlackInput(for session: BanyanSession) {
+        guard sessions.contains(where: { $0 === session }) else { return }
+        slackDecisionJournal.invalidateSession(session.id)
+        slackFollowUpJournal.invalidateSession(session.id)
     }
 
     private func recordStatusEvent(id: String, status: SessionStatus) {
@@ -4535,6 +4544,7 @@ final class SessionStore: ObservableObject {
             ? preferredSelectionAfterClosing(id: id)
             : nil
         let promotedChildIDs = detachChildren(of: id, to: session.parentSessionID)
+        fenceSlackInput(for: session)
         if session.isImportedHistory {
             session.terminate(markClosed: true)
         } else {
@@ -4568,6 +4578,7 @@ final class SessionStore: ObservableObject {
         let replacementID = selectedSessionID == id
             ? preferredSelectionAfterClosing(id: id)
             : nil
+        fenceSlackInput(for: sessions[index])
         if sessions[index].isImportedHistory {
             sessions[index].status = .closed
             if selectedSessionID == id {
@@ -5399,12 +5410,12 @@ final class SessionStore: ObservableObject {
             }
             self.noteSidebarHistoryChange(for: session)
         }
-        var wasUnavailable = session.isSuspended || session.isFrozen || session.isDeepSuspended
+        var wasUnavailable = session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended
         session.onDidChange = { [weak self, weak session] in
             if let session { EnergyTrace.count("session.didChange", sessionID: session.id) }
             if let self, let session {
                 self.noteSidebarHistoryChange(for: session)
-                let unavailable = session.isSuspended || session.isFrozen || session.isDeepSuspended
+                let unavailable = session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended
                 if unavailable != wasUnavailable {
                     wasUnavailable = unavailable
                     self.noteSlackSessionAvailability(session)
@@ -5451,8 +5462,10 @@ final class SessionStore: ObservableObject {
             }
         }
         session.onStatusSignal = { [weak self, weak session] status in
-            guard let self, let session else { return }
-            if status == .closed { self.slackDecisionJournal.invalidateSession(session.id) }
+            guard let self, let session, self.sessions.contains(where: { $0 === session }) else { return }
+            if status == .closed {
+                self.fenceSlackInput(for: session)
+            }
             EnergyTrace.count("session.statusSignal", sessionID: session.id)
             self.resetSupervisorObservationBackoff(for: session.id)
             self.recordStatusEvent(id: session.id, status: status)

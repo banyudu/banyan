@@ -33,4 +33,22 @@ struct SlackFollowUpJournalTests {
             identity: identity, slackThread: "100.1", text: "another")
         #expect(next)
     }
+
+    @Test func parkingRetiresOnlyTheAffectedInFlightReply() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("followup_park_\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = SlackFollowUpJournal(file: directory.appendingPathComponent("journal.json"))
+        let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
+        let identity = SlackConversationIdentity(kind: "puck", conversationID: "row", generation: "puck")
+        let (reply, _) = try journal.claim(operationID: "reply", principal: principal, sessionID: "row",
+            identity: identity, slackThread: "100.1", text: "continue")
+        try journal.markSending(reply)
+        journal.invalidateSession("row")
+        let (other, _) = try journal.claim(operationID: "other", principal: principal, sessionID: "other",
+            identity: identity, slackThread: "100.2", text: "continue")
+        #expect(!journal.fence.contains(SlackFollowUpJournal.key(reply)))
+        #expect(journal.fence.contains(SlackFollowUpJournal.key(other)))
+        try journal.rejectBeforeSend(reply, reason: "session_changed")
+        #expect(try journal.receipt(operationID: "reply", principal: principal)?.status == "rejected")
+    }
 }

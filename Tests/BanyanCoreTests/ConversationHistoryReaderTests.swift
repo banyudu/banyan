@@ -92,6 +92,21 @@ private func codexMessage(_ role: String, _ text: String) -> String {
     #expect(try await reader.page(identity: identity).messages.map(\.text) == ["new"])
 }
 
+@Test func conversationHistoryReadsCompactedReplacementWithoutDuplicatingRetainedMessages() async throws {
+    let compacted = #"{"type":"compacted","payload":{"replacement_history":[{"type":"message","role":"user","content":[{"type":"input_text","text":"retained user"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"retained answer"}]}]}}"# + "\n"
+    let header = #"{"type":"session_meta","payload":{"id":"a"}}"# + "\n"
+    let url = try historyFile(header + compacted + codexMessage("assistant", "later"))
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let reader = ConversationHistoryReader()
+    let identity = ConversationHistoryReader.Identity(provider: .codex, conversationID: "a", transcriptURL: url)
+    let page = try await reader.page(identity: identity)
+    #expect(page.resetCount == 1)
+    #expect(page.messages.map(\.text) == ["retained user", "retained answer", "later"])
+    try Data((header + codexMessage("user", "original") + compacted + codexMessage("assistant", "later")).utf8).write(to: url)
+    let retained = try await reader.page(identity: identity)
+    #expect(retained.messages.map(\.text) == ["original", "later"])
+}
+
 @Test func conversationHistoryIncludesBoundedToolOutput() async throws {
     let content = #"{"type":"session_meta","payload":{"id":"a"}}"# + "\n" +
         #"{"type":"response_item","payload":{"type":"function_call_output","output":"tool result"}}"# + "\n"
@@ -118,6 +133,12 @@ private func codexMessage(_ role: String, _ text: String) -> String {
     let page = try await reader.page(identity: identity, limit: 1)
     let cursor = try #require(page.earlier)
     await #expect(throws: ConversationHistoryReader.ReadError.invalidCursor) { try await reader.page(identity: otherIdentity, earlier: cursor) }
+    let native = ConversationHistoryReader.Identity(provider: .codex, conversationID: "thread", transcriptURL: url, ownerSessionID: "first")
+    let otherNative = ConversationHistoryReader.Identity(provider: .codex, conversationID: "thread", transcriptURL: url, ownerSessionID: "second")
+    let nativePage = try await reader.page(identity: native, limit: 1)
+    await #expect(throws: ConversationHistoryReader.ReadError.invalidCursor) {
+        try await reader.page(identity: otherNative, earlier: try #require(nativePage.earlier))
+    }
 }
 
 @Test func conversationHistoryReadsLegacyEventsAndCoalescesMirroredRecords() async throws {

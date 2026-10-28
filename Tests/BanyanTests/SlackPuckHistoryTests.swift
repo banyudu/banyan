@@ -3,6 +3,15 @@ import Testing
 @testable import Banyan
 @testable import BanyanCore
 
+private final class HeldFollowUpDispatch: @unchecked Sendable {
+    private let lock = NSLock()
+    private let gate = DispatchSemaphore(value: 0)
+    private var entered = false
+    var isEntered: Bool { lock.lock(); defer { lock.unlock() }; return entered }
+    func wait() { lock.lock(); entered = true; lock.unlock(); _ = gate.wait(timeout: .now() + 5) }
+    func release() { gate.signal() }
+}
+
 @Test @MainActor
 func slackPuckHistoryReadsBoundedDaemonEventsWithoutStartingOrFollowing() async throws {
     let daemon = FakePuckDaemon()
@@ -66,6 +75,84 @@ func slackPuckFollowupUsesDaemonAdmissionAndNeverRepeatsAfterDisable() async thr
     let replay = try await store.slackBrowser(request)
     #expect(replay["status"] as? String == "submitted")
     #expect(daemon.turns.count == 1 && daemon.creations.isEmpty)
+}
+
+@Test(arguments: ["hibernated", "interrupted"]) @MainActor
+func slackPuckFollowupAcceptsKnownInactiveDaemonStates(position: String) async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let summary = puckSummary(id: "puck-fixture", cwd: fixture.project.path, position: position)
+    daemon.put(summary)
+    let store = fixture.makeStore()
+    defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
+    store.applyPuckSummaries([summary])
+    let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
+    let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
+    try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
+    _ = try store.slackThreadJournal.bind(sessionID: summary.id, identity: identity, principal: principal, slackThread: "100.1")
+    let body: [String: Any] = ["action": "followup", "principal": ["workspace": "T_TEST", "channel": "C_TEST", "user": "U_TEST"],
+        "sessionID": summary.id, "slackThread": "100.1", "identity": ["kind": "puck", "conversationID": summary.id, "generation": "puck"],
+        "operationID": "reply", "text": "Continue"]
+    let request = try JSONDecoder().decode(SlackBrowserRequest.self, from: JSONSerialization.data(withJSONObject: body))
+    #expect(try await store.slackBrowser(request)["status"] as? String == "submitted")
+    #expect(daemon.turns == [.init(id: summary.id, prompt: "Continue")])
+}
+
+@Test @MainActor
+func slackPuckFollowupRejectsAChangedDaemonBinding() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let original = puckSummary(id: "puck-fixture", cwd: fixture.project.path)
+    daemon.put(original)
+    let store = fixture.makeStore()
+    defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
+    store.applyPuckSummaries([original])
+    let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
+    let identity = SlackConversationIdentity(kind: "puck", conversationID: original.id, generation: "puck")
+    try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
+    _ = try store.slackThreadJournal.bind(sessionID: original.id, identity: identity, principal: principal, slackThread: "100.1")
+    daemon.put(puckSummary(id: original.id, provider: "anthropic", account: "other", model: "other", cwd: fixture.project.path))
+    let body: [String: Any] = ["action": "followup", "principal": ["workspace": "T_TEST", "channel": "C_TEST", "user": "U_TEST"],
+        "sessionID": original.id, "slackThread": "100.1", "identity": ["kind": "puck", "conversationID": original.id, "generation": "puck"],
+        "operationID": "reply", "text": "Continue"]
+    let request = try JSONDecoder().decode(SlackBrowserRequest.self, from: JSONSerialization.data(withJSONObject: body))
+    await #expect(throws: (any Error).self) { try await store.slackBrowser(request) }
+    #expect(daemon.turns.isEmpty)
+}
+
+@Test(arguments: ["park", "close"]) @MainActor
+func availabilityChangeAfterClaimFencesPuckFollowupBeforeDaemonDispatch(action: String) async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    defer { try? FileManager.default.removeItem(at: fixture.root) }
+    let summary = puckSummary(id: "puck-fixture", cwd: fixture.project.path)
+    daemon.put(summary)
+    let store = fixture.makeStore()
+    defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
+    store.applyPuckSummaries([summary])
+    let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
+    let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
+    try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
+    let (receipt, _) = try store.slackFollowUpJournal.claim(operationID: "parked-reply", principal: principal,
+        sessionID: summary.id, identity: identity, slackThread: "100.1", text: "continue")
+    let fence = store.slackFollowUpJournal.fence, key = SlackFollowUpJournal.key(receipt)
+    let held = HeldFollowUpDispatch()
+    defer { held.release() }
+    let task = Task {
+        try await store.startPuckTurnImmediately(id: summary.id, prompt: "continue", expiresAt: Date().addingTimeInterval(10),
+            willSubmit: { try store.slackFollowUpJournal.markSending(receipt) },
+            mayDispatch: { held.wait(); return fence.contains(key) })
+    }
+    try await waitForPuckState { held.isEntered }
+    if action == "park" { try store.suspend(id: summary.id) }
+    else { try store.close(id: summary.id) }
+    held.release()
+    await #expect(throws: (any Error).self) { try await task.value }
+    #expect(daemon.turns.isEmpty)
+    try store.slackFollowUpJournal.rejectBeforeSend(receipt, reason: "session_changed")
+    #expect(try store.slackFollowUpJournal.receipt(operationID: "parked-reply", principal: principal)?.status == "rejected")
 }
 
 @Test @MainActor

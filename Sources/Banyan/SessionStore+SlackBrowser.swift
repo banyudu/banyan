@@ -261,8 +261,52 @@ extension SessionStore {
             throw CodexRemoteError.invalid("Native conversation is unavailable")
         }
         let generation = codexRemote.policyGeneration
+        let home = session.state.binding.codexHome
+        let fileCursor = request.cursor?.hasPrefix("rollout:") == true
+        if request.cursor == nil || fileCursor {
+            let cursor = fileCursor ? String(request.cursor!.dropFirst("rollout:".count)) : nil
+            let page: ConversationHistoryReader.Page?
+            do {
+                page = try await slackNativeTranscriptHistory.page(sessionID: session.id, threadID: threadID,
+                    home: home, earlier: cursor, limit: request.limit ?? 20)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if fileCursor { throw CodexRemoteError.invalid("Native history changed; open latest") }
+                page = nil
+            }
+            try requireSlackAuthorization(request.principal, generation: generation)
+            guard sessions.contains(where: { $0 === session }), session.status != .closed,
+                  session.state.binding.threadID == threadID, session.state.binding.codexHome == home else {
+                throw CodexRemoteError.invalid("Conversation changed while reading")
+            }
+            if let page {
+                let identity = SlackConversationIdentity(kind: "nativeCodex", conversationID: threadID, generation: "native")
+                return ["source": "providerTranscript", "conversationID": threadID, "binding": slackIdentityObject(identity),
+                        "messages": page.messages.map { ["role": $0.role, "text": $0.text, "truncated": $0.truncated] },
+                        "earlier": page.earlier.map { "rollout:" + $0 } as Any? ?? NSNull(), "output": NSNull(),
+                        "limitation": page.incompleteTail ? "The final transcript record is still being written." : NSNull(),
+                        "truncated": page.truncatedBefore || page.messages.contains(where: \.truncated), "mayBeStale": page.incompleteTail]
+            }
+            if fileCursor { throw CodexRemoteError.invalid("Native history changed; open latest") }
+        }
         // thread/read is subscription-free and cannot start or resume a turn.
-        let result = try await codexThreads.read(sessionID: session.id)
+        let result: CodexJSONValue
+        do { result = try await codexThreads.read(sessionID: session.id) }
+        catch is CancellationError { throw CancellationError() }
+        catch {
+            guard request.cursor == nil else { throw CodexRemoteError.invalid("Native history changed; open latest") }
+            try requireSlackAuthorization(request.principal, generation: generation)
+            guard sessions.contains(where: { $0 === session }), session.status != .closed,
+                  session.state.binding.threadID == threadID else {
+                throw CodexRemoteError.invalid("Conversation changed while reading")
+            }
+            let identity = SlackConversationIdentity(kind: "nativeCodex", conversationID: threadID, generation: "native")
+            return ["source": "unavailable", "conversationID": threadID, "binding": slackIdentityObject(identity),
+                    "messages": [], "earlier": NSNull(), "output": NSNull(),
+                    "limitation": "Native history is unavailable. Reopen it on the Mac or retry when the native service is available.",
+                    "truncated": false, "mayBeStale": true]
+        }
         try authorizeSlackBrowser(request.principal)
         guard codexRemote.policyGeneration == generation, sessions.contains(where: { $0 === session }),
               session.status != .closed, session.state.binding.threadID == threadID,
@@ -296,6 +340,7 @@ extension SessionStore {
         let before = result.0, history = result.1, after = result.2
         guard codexRemote.policyGeneration == generation, sessions.contains(where: { $0 === session }),
               session.status != .closed, session.binding == binding, before.id == id, after.id == id,
+              before.cwd == session.cwd, PuckSessionBinding(summary: before) == binding,
               before.engine == after.engine, before.provider == after.provider, before.account == after.account,
               before.workspace == after.workspace, before.cwd == after.cwd else {
             throw CodexRemoteError.invalid("Puck session or authorization changed while reading")

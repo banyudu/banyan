@@ -92,6 +92,54 @@ class ChannelPolicyTests(unittest.TestCase):
                 validate_control_channel({**valid, **changed}, "C_TEST")
 
 
+class SocketAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_saturated_socket_queue_does_not_ack_an_unscheduled_event(self):
+        from banyan_slack.runtime import schedule_socket_envelope
+        gate = asyncio.Event()
+        seen, acknowledgements, pending = [], [], set()
+        lock = threading.RLock()
+        loop = asyncio.get_running_loop()
+
+        class Connector:
+            enabled = True
+            async def envelope(self, envelope, acknowledge):
+                await gate.wait()
+                seen.append(envelope["envelope_id"])
+
+        class Client:
+            def send_socket_mode_response(self, response):
+                acknowledgements.append(response.envelope_id)
+
+        connector, client = Connector(), Client()
+        def request(identifier):
+            return SimpleNamespace(type="events_api", payload={}, envelope_id=identifier)
+        response = lambda **kwargs: SimpleNamespace(**kwargs)
+        first = await asyncio.to_thread(schedule_socket_envelope, client, request("first"), connector,
+                                        loop, pending, lock, response, 1)
+        overflow = await asyncio.to_thread(schedule_socket_envelope, client, request("overflow"), connector,
+                                           loop, pending, lock, response, 1)
+        self.assertTrue(first)
+        self.assertFalse(overflow)
+        self.assertEqual(acknowledgements, ["first"])
+        gate.set()
+        async def wait_for_empty():
+            while pending:
+                await asyncio.sleep(0.01)
+        await asyncio.wait_for(wait_for_empty(), 2)
+        retried = await asyncio.to_thread(schedule_socket_envelope, client, request("overflow"), connector,
+                                          loop, pending, lock, response, 1)
+        self.assertTrue(retried)
+        await asyncio.wait_for(wait_for_empty(), 2)
+        self.assertEqual(acknowledgements, ["first", "overflow"])
+        self.assertEqual(seen, ["first", "overflow"])
+        connector.enabled = False
+        disabled = await asyncio.to_thread(schedule_socket_envelope, client, request("disabled"), connector,
+                                           loop, pending, lock, response, 1)
+        self.assertFalse(disabled)
+        self.assertEqual(acknowledgements, ["first", "overflow", "disabled"])
+        self.assertEqual(seen, ["first", "overflow"])
+
+
 class AdapterTests(unittest.TestCase):
     def test_clean_close_fences_before_held_reconnect_and_stale_close_does_not_fence_fresh_hello(self):
         lost = []

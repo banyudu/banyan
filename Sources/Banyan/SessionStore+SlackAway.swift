@@ -57,7 +57,7 @@ extension SessionStore {
         let policy = codexRemote.policyGeneration
         var pending = false
         var question: String?
-        if session.status.isAwaitingHumanAnswer, let terminal = session as? TerminalSession {
+        if let terminal = session as? TerminalSession {
             let reset = terminal.lastConversationResetAt, agentID = terminal.agentSessionID
             let reading = try? await readPaneOutput(id: id, lines: nil)
             try authorizeSlackBrowser(request.principal)
@@ -70,7 +70,7 @@ extension SessionStore {
                let prompt = reading.prompt { pending = true; question = prompt.question }
         } else if let native = session as? CodexSession {
             pending = native.state.pendingRequests.contains { codexThreads.requestIsAnswerable(sessionID: id, requestID: $0.id) }
-        } else if session.status.isAwaitingHumanAnswer, let puck = session as? PuckSession {
+        } else if let puck = session as? PuckSession {
             let daemon = puck.daemon, binding = puck.binding
             let summary = await Task.detached(priority: .userInitiated) { try? daemon.get(id) }.value
             try authorizeSlackBrowser(request.principal)
@@ -78,7 +78,7 @@ extension SessionStore {
                   sessions.contains(where: { $0 === puck }), puck.binding == binding else {
                 throw CodexRemoteError.invalid("Away scope or session changed")
             }
-            if let summary, summary.id == id, PuckSessionBinding(summary: summary) == binding,
+            if let summary, summary.id == id, summary.cwd == puck.cwd, PuckSessionBinding(summary: summary) == binding,
                let decision = PuckSlackDecision(summary), decision.isUnexpired {
                 pending = true; question = decision.question
             }
@@ -107,7 +107,6 @@ extension SessionStore {
             slackAwayJournal.includes(sessionID: $0.id, projectID: $0.projectGroupID, principal: request.principal) }
         var decisions: [[String: Any]] = []
         for session in initial {
-            guard session.status.isAwaitingHumanAnswer else { continue }
             if let terminal = session as? TerminalSession {
                 let reset = terminal.lastConversationResetAt, agentID = terminal.agentSessionID
                 let reading = try? await readPaneOutput(id: terminal.id, lines: nil)
@@ -124,7 +123,12 @@ extension SessionStore {
                 }
             } else if let native = session as? CodexSession {
                 let pending = native.state.pendingRequests.filter { codexThreads.requestIsAnswerable(sessionID: native.id, requestID: $0.id) }
-                if !pending.isEmpty { decisions.append(["sessionID": native.id, "count": pending.count]) }
+                if let first = pending.first {
+                    let request = CodexConversationRequest(first)
+                    let visibleQuestions = request.questions.filter { !$0.isSecret }.map(\.question)
+                    let question = visibleQuestions.isEmpty ? request.title : visibleQuestions.joined(separator: "\n\n")
+                    decisions.append(["sessionID": native.id, "question": question, "count": pending.count])
+                }
             } else if let puck = session as? PuckSession {
                 let daemon = puck.daemon, id = puck.id, binding = puck.binding
                 let summary = await Task.detached(priority: .userInitiated) { try? daemon.get(id) }.value
@@ -133,7 +137,7 @@ extension SessionStore {
                       sessions.contains(where: { $0 === puck }), puck.binding == binding else {
                     throw CodexRemoteError.invalid("Away scope or session changed during catch-up")
                 }
-                if let summary, summary.id == id, PuckSessionBinding(summary: summary) == binding,
+                if let summary, summary.id == id, summary.cwd == puck.cwd, PuckSessionBinding(summary: summary) == binding,
                    let decision = PuckSlackDecision(summary), decision.isUnexpired {
                     decisions.append(["sessionID": id, "question": decision.question,
                                       "options": decision.options.map { ["index": $0.index, "label": $0.label] }])

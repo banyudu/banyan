@@ -328,6 +328,31 @@ struct SlackBrowserAPITests {
         #expect((off["events"] as? [[String: Any]])?.isEmpty == true)
     }
 
+    @Test func awayEventsUseWireStatusValuesForCompletion() async throws {
+        let (_, store, server) = try fixture()
+        defer { server.stop(); store.stopPuckObservation(); store.flushPendingSessionSaves() }
+        try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
+        try await waitForPuckState { server.listeningPort != nil }
+        let session = try #require(store.sessions.first)
+        session.mark(status: .executing)
+        _ = try await post(body: ["action": "awayConfigure", "principal": principalBody,
+            "followSessionID": session.id, "follow": true], store: store, server: server)
+        let (_, response) = try await post(body: ["action": "awayConfigure", "principal": principalBody,
+            "awayEnabled": true], store: store, server: server)
+        let enabled = try #require(response["data"] as? [String: Any])
+        session.mark(status: .needInput)
+        session.mark(status: .longRunningShell)
+        session.mark(status: .needInput)
+        let (_, batchResponse) = try await post(body: ["action": "awayEvents", "principal": principalBody,
+            "eventEpoch": try #require(enabled["checkpointEpoch"] as? String),
+            "eventCursor": try #require(enabled["checkpointCursor"] as? Int),
+            "awayActivationID": try #require(enabled["activationID"] as? String),
+            "awayRevision": try #require(enabled["revision"] as? Int)], store: store, server: server)
+        let events = try #require((batchResponse["data"] as? [String: Any])?["events"] as? [[String: Any]])
+        #expect(events.contains { $0["status"] as? String == "need-input" && $0["previousStatus"] as? String == "executing" })
+        #expect(events.contains { $0["status"] as? String == "need-input" && $0["previousStatus"] as? String == "long-running-shell" })
+    }
+
     @Test func awayEventsReportEpochAndExpiredCursorGaps() async throws {
         let (_, store, server) = try fixture()
         defer { server.stop(); store.stopPuckObservation(); store.flushPendingSessionSaves() }

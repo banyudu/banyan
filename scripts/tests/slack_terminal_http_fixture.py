@@ -38,7 +38,7 @@ async def drive(config):
         "type": "app_home_opened", "tab": "home", "user": "U_TEST"}}}
     await connector.envelope(home, ack)
     view = next(fields["view"] for method, fields in reversed(slack.calls) if method == "views.publish")
-    if config.get("mode") in ("away", "puck_away"):
+    if config.get("mode") in ("away", "puck_away", "native_away"):
         follow = next(element for block in view["blocks"] if block.get("type") == "actions"
                       for element in block["elements"] if element["text"]["text"] == "Follow")
         await connector.envelope({"envelope_id": "follow", "type": "interactive", "payload": {
@@ -52,7 +52,7 @@ async def drive(config):
             "view": view, "actions": [{**toggle, "action_ts": "300.2"}]}}, ack)
         await connector.refresh_away(PRINCIPAL)
         digests = [fields for method, fields in slack.calls if method == "chat.postMessage" and fields["text"].startswith("Away catch-up")]
-        expected = "Approval needed: shell" if config.get("mode") == "puck_away" else "Do you want to proceed?"
+        expected = {"puck_away": "Approval needed: shell", "native_away": "Command approval requested"}.get(config.get("mode"), "Do you want to proceed?")
         assert len(digests) == 1 and expected in digests[0]["text"]
     else:
         button = next(block["accessory"] for block in view["blocks"] if "accessory" in block)
@@ -70,6 +70,22 @@ async def drive(config):
         assert len(receipts) == 1 and receipts[0]["result"]["status"] == "submitted"
         assert len(acked) == 4
         print(json.dumps({"ok": True, "replyReceipts": len(receipts)}))
+        return
+    if config.get("mode") == "native_away":
+        panel = next(fields for method, fields in slack.calls if method == "chat.postMessage" and
+                     fields.get("metadata", {}).get("event_payload", {}).get("delivery_id", "").startswith("status-"))
+        assert any("Command approval requested" in block.get("text", {}).get("text", "") for block in panel["blocks"])
+        choice = next(element for block in panel["blocks"] if block.get("type") == "actions"
+                      for element in block["elements"] if element["text"]["text"] == "Deny")
+        answer = {"envelope_id": "answer", "type": "interactive", "payload": {
+            "type": "block_actions", "team": {"id": "T_TEST"}, "channel": {"id": "C_TEST"},
+            "user": {"id": "U_TEST"}, "container": {"message_ts": "200.3"},
+            "actions": [{**choice, "action_ts": "300.2"}]}}
+        await connector.envelope(answer, ack)
+        await connector.envelope({**answer, "envelope_id": "answer-redelivery"}, ack)
+        receipts = [entry for entry in connector.journal.data["incoming"].values() if entry.get("body", {}).get("action") == "respond"]
+        assert len(receipts) == 1 and receipts[0]["result"]["status"] == "submitted"
+        print(json.dumps({"ok": True, "answerReceipts": len(receipts)}))
         return
     puck = config.get("mode") in ("puck", "puck_away", "puck_question")
     card = next(fields for method, fields in slack.calls if method == "chat.postMessage" and fields["text"] == ("Puck decision" if puck else "Terminal decision"))

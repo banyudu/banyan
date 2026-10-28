@@ -119,7 +119,7 @@ private func conversationRollout() throws -> URL {
     #expect(missing.mayBeStale && missing.truncated)
 }
 
-@Test func truncatedTranscriptRemainsReadableWithAReadOnlyPaneBinding() async throws {
+@Test func truncatedTranscriptRetainsExactBindingAcrossVerifiedAppends() async throws {
     let url = try conversationRollout()
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     let file = try FileHandle(forWritingTo: url)
@@ -133,8 +133,7 @@ private func conversationRollout() throws -> URL {
         history: ConversationHistoryReader(maxBytes: 500))
     let page = try await context.read(sessionID: "row", sessionName: "fixture", provider: .codex, limit: 1)
     #expect(page.source == .providerTranscript && page.messages.last?.text == "message-29")
-    #expect(page.binding?.kind == "terminalPane" && page.truncated)
-    #expect(page.limitation?.contains("replies are disabled") == true)
+    #expect(page.binding?.kind == "terminalCodex" && page.truncated)
     let earlier = try await context.read(sessionID: "row", sessionName: "fixture", provider: .codex,
                                          earlier: try #require(page.earlier), limit: 1)
     #expect(earlier.binding == page.binding && earlier.messages.last?.text == "message-28")
@@ -143,7 +142,7 @@ private func conversationRollout() throws -> URL {
     try appended.write(contentsOf: Data((#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"new"}]}}"# + "\n").utf8))
     try appended.close()
     let latest = try await context.read(sessionID: "row", sessionName: "fixture", provider: .codex, limit: 1)
-    #expect(latest.messages.last?.text == "new" && latest.binding != page.binding)
+    #expect(latest.messages.last?.text == "new" && latest.binding == page.binding)
 }
 
 @Test func terminalContextRefusesCursorAfterOwnershipChanges() async throws {
