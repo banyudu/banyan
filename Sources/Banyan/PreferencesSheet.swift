@@ -162,6 +162,8 @@ struct PreferencesSheet: View {
                     .foregroundStyle(.secondary)
             }
 
+            SlackIntegrationPreferences(controller: store.slackIntegration)
+
             if let diagnostic = store.sessionLaunchConfigurationDiagnostic {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Session launch profiles")

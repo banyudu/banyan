@@ -522,11 +522,22 @@ public enum PuckSessionUpdate: Sendable {
     case summary(PuckSessionSummary)
 }
 
+public struct PuckRecentHistory: Sendable {
+    public let events: [PuckSessionEvent]
+    public let cursor: UInt64
+    public let truncated: Bool
+    public let incomplete: Bool
+    public init(events: [PuckSessionEvent], cursor: UInt64, truncated: Bool, incomplete: Bool) {
+        self.events = events; self.cursor = cursor; self.truncated = truncated; self.incomplete = incomplete
+    }
+}
+
 /// The daemon operations Banyan's frontends use. `PuckDaemonClient` talks to
 /// the real socket; tests substitute an in-memory daemon.
 public protocol PuckDaemonService: Sendable {
     func list() throws -> [PuckSessionSummary]
     func get(_ id: String) throws -> PuckSessionSummary
+    func recentEvents(_ id: String, maximum: Int) throws -> PuckRecentHistory
     func create(id: String, provider: String, account: String?, model: String?,
                 workspace: String) throws -> PuckSessionSummary
     func turn(_ id: String, prompt: String) throws
@@ -538,6 +549,12 @@ public protocol PuckDaemonService: Sendable {
     /// Replays the session, then follows it live until the stream is cancelled.
     /// Cancelling detaches only this client; a running turn continues.
     func follow(_ id: String) -> AsyncThrowingStream<PuckSessionUpdate, Error>
+}
+
+public extension PuckDaemonService {
+    func recentEvents(_ id: String, maximum: Int) throws -> PuckRecentHistory {
+        throw PuckDaemonError.unavailable("This daemon adapter does not provide bounded history")
+    }
 }
 
 public struct PuckDaemonClient: Sendable {
@@ -623,6 +640,30 @@ public struct PuckDaemonClient: Sendable {
         let value = try PuckDaemonConnection(socketPath: socketPath).request("session.events", params: params)
         guard let object = value as? [String: Any] else { throw PuckDaemonError.invalidResponse("events") }
         return try PuckEventBatch(object)
+    }
+
+    /// Read at most a small recent cursor window. The initial request obtains
+    /// the authoritative high-water mark; subsequent bounded pages do not
+    /// attach, resume, or start a turn.
+    public func recentEvents(_ id: String, maximum: Int) throws -> PuckRecentHistory {
+        let limit = min(max(maximum, 1), 200)
+        let first = try events(id, after: 0)
+        let target = first.cursor
+        let start = target > UInt64(limit) ? target - UInt64(limit) : 0
+        var page = start == 0 ? first : try events(id, after: start)
+        var cursor = start
+        var collected: [PuckSessionEvent] = []
+        var pages = 0
+        while pages < 4 {
+            pages += 1
+            let fresh = page.events.filter { $0.cursor > cursor && $0.cursor <= target }
+            if let last = fresh.last { collected.append(contentsOf: fresh); cursor = last.cursor }
+            if cursor >= target || fresh.isEmpty || collected.count >= limit { break }
+            page = try events(id, after: cursor)
+        }
+        let bounded = Array(collected.prefix(limit))
+        return PuckRecentHistory(events: bounded, cursor: target, truncated: start > 0,
+                                 incomplete: cursor < target || collected.count > limit)
     }
 
     /// `attach` and `events` return bounded replay pages. Catch up to the

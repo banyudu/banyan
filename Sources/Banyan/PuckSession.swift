@@ -307,7 +307,9 @@ final class PuckSession: BanyanSession {
         }
     }
 
-    func startTurn(_ prompt: String) async throws {
+    func startTurn(_ prompt: String, authorization: (() throws -> Void)? = nil,
+                   willSubmit: (() throws -> Void)? = nil,
+                   mayDispatch: @escaping @Sendable () -> Bool = { true }) async throws {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard !admissionTurnInFlight else { throw ControlError.badRequest("A turn is already starting for this session") }
@@ -327,13 +329,16 @@ final class PuckSession: BanyanSession {
         onAdmissionTurnStarting?()
         try await agentAdmission?.acquire(id)
         try Task.checkCancellation()
+        try authorization?()
         guard turnUnavailableReason == nil else { throw ControlError.badRequest(turnUnavailableReason!) }
+        try willSubmit?()
         markSubmittedPromptTitle(text)
         let daemon = self.daemon
         let id = self.id
         sent = true
         do {
             try await Task.detached(priority: .userInitiated) {
+                guard mayDispatch() else { throw PuckDaemonError.rejected("Remote authorization changed before dispatch") }
                 try daemon.turn(id, prompt: text)
             }.value
         } catch {

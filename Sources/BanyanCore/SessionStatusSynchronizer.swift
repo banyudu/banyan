@@ -41,6 +41,10 @@ public struct SessionStatusObservation: Sendable, Equatable {
     public let currentPath: String?
     public let liveProcessIDs: Set<Int32>
     public let codexRetryCandidate: CodexTerminalRetryCandidate?
+    /// A scoped Away observer may track prompt identity without retaining text.
+    public let promptObserved: Bool
+    public let promptFootprint: String?
+    public let promptActivationID: String?
 
     public init(
         id: String,
@@ -51,7 +55,8 @@ public struct SessionStatusObservation: Sendable, Equatable {
         modelIDIsExact: Bool = false,
         currentPath: String?,
         liveProcessIDs: Set<Int32> = [],
-        codexRetryCandidate: CodexTerminalRetryCandidate? = nil
+        codexRetryCandidate: CodexTerminalRetryCandidate? = nil,
+        promptObserved: Bool = false, promptFootprint: String? = nil, promptActivationID: String? = nil
     ) {
         self.id = id
         self.status = status
@@ -62,6 +67,7 @@ public struct SessionStatusObservation: Sendable, Equatable {
         self.currentPath = currentPath
         self.liveProcessIDs = liveProcessIDs
         self.codexRetryCandidate = codexRetryCandidate
+        self.promptObserved = promptObserved; self.promptFootprint = promptFootprint; self.promptActivationID = promptActivationID
     }
 }
 
@@ -90,6 +96,7 @@ public struct SessionStatusSynchronizer: Sendable {
     public func observe(
         _ inputs: [SessionStatusObservationInput],
         paneSnapshots suppliedPaneSnapshots: [String: TmuxPaneSnapshot]? = nil,
+        promptSessionIDs: Set<String> = [], promptActivationID: String? = nil,
         onSessionObserved: @Sendable (String, Double) -> Void = { _, _ in }
     ) -> [SessionStatusObservation] {
         guard !inputs.isEmpty else { return [] }
@@ -135,7 +142,11 @@ public struct SessionStatusSynchronizer: Sendable {
                 modelIDIsExact: result.modelIDIsExact,
                 currentPath: result.currentPath,
                 liveProcessIDs: result.liveProcessIDs,
-                codexRetryCandidate: result.codexRetryCandidate
+                codexRetryCandidate: result.codexRetryCandidate,
+                promptObserved: promptSessionIDs.contains(input.id) && result.visibleText != nil,
+                promptFootprint: promptSessionIDs.contains(input.id)
+                    ? AgentPromptGate.prompt(status: result.status, classifiedText: result.visibleText)?.footprint : nil,
+                promptActivationID: promptSessionIDs.contains(input.id) ? promptActivationID : nil
             ))
         }
         return collector.drain()

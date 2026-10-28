@@ -1076,7 +1076,7 @@ struct BanyanCtl {
           banyanctl workflow resolve --id ID --job-id JOB --revision N --wake-id WAKE --outcome delivered|not-delivered --detail TEXT
           banyanctl workflow close-verified
           banyanctl codex-remote configure --path policy.json
-          banyanctl codex-remote resolve --workspace ID --operationID ID
+          banyanctl codex-remote resolve --workspace ID --operationID ID [--kind native|terminalFollowup]
           banyanctl codex-handoff --id ID [--detail prepare|check]
           banyanctl session current
           banyanctl session list [--all] [--id ID] [--query TEXT]

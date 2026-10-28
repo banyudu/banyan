@@ -481,6 +481,14 @@ final class SessionStore: ObservableObject {
 
     let codexThreads: CodexThreadCoordinator
     let codexRemote: CodexRemoteControl
+    var slackTerminalContext: any TerminalConversationContextReading
+    let slackStructuredHistory = SlackStructuredHistory()
+    let slackThreadJournal: SlackThreadJournal
+    let slackDecisionJournal: SlackDecisionJournal
+    let slackFollowUpJournal: SlackFollowUpJournal
+    let slackAwayJournal: SlackAwayJournal
+    lazy var slackIntegration = SlackIntegrationController.live(remote: codexRemote, host: host)
+    let slackSessionEventEpoch = UUID().uuidString
     @Published var codexSessionError: String?
     var pendingCodexTUIHandoffs: Set<String> = []
     @Published var codexTUIOwnership: [String: CodexTUIOwnershipObservation] = [:]
@@ -512,6 +520,8 @@ final class SessionStore: ObservableObject {
     private var answerLedger = AgentAnswerLedger()
     /// Status transitions a `/events` long-poll has not read yet.
     private var sessionEventLog = SessionEventLog()
+    private var awayPromptActivationID: String?
+    private var awayPromptFootprints: [String: String] = [:]
     /// Last status written to the event log per session, so a transition can name
     /// what it came from.
     private var lastRecordedEventStatuses: [String: SessionStatus] = [:]
@@ -682,6 +692,14 @@ final class SessionStore: ObservableObject {
         self.codexRemote = CodexRemoteControl(coordinator: codexThreads,
             file: BanyanDataDirectory.url(for: "Banyan/remote/slack.json",
                 environment: host.environment, homeDirectory: host.homeDirectory))
+        self.slackThreadJournal = SlackThreadJournal(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-threads.json",
+            environment: host.environment, homeDirectory: host.homeDirectory))
+        self.slackDecisionJournal = SlackDecisionJournal(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-decisions.json",
+            environment: host.environment, homeDirectory: host.homeDirectory))
+        self.slackFollowUpJournal = SlackFollowUpJournal(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-followups.json",
+            environment: host.environment, homeDirectory: host.homeDirectory))
+        self.slackAwayJournal = SlackAwayJournal(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-away.json",
+            environment: host.environment, homeDirectory: host.homeDirectory))
         self.puckDaemon = puckDaemon ?? PuckDaemonClient(
             environment: host.environment,
             homeDirectory: host.homeDirectory.path
@@ -689,6 +707,9 @@ final class SessionStore: ObservableObject {
         self.persistence = persistence
         self.githubReferenceCache = GitHubReferenceCache(persistence: persistence)
         self.tmuxBackend = tmuxBackend
+        self.slackTerminalContext = TerminalConversationContextReader(backend: tmuxBackend, inspector: CodexTUIProcessInspector(),
+            generations: SlackConversationGenerationTracker(file: BanyanDataDirectory.url(for: "Banyan/remote/slack-generations.json",
+                environment: host.environment, homeDirectory: host.homeDirectory)))
         self.sessionBackend = sessionBackend
         self.processTable = processTable
         self.historyBackend = historyBackend
@@ -726,11 +747,18 @@ final class SessionStore: ObservableObject {
             guard let session = self?.sessions.first(where: { $0.id == id }) as? CodexSession else { return nil }
             return (session.displayTitle, session.cwd)
         }
+        codexRemote.externalThreadAvailable = { [weak self] sessionID, threadID, principal, slackThread in
+            guard let self else { return false }
+            return (try? self.slackThreadJournal.permitsNativeAttachment(sessionID: sessionID, threadID: threadID,
+                principal: principal, slackThread: slackThread)) == true
+        }
         codexRemote.recentConversation = { [weak self] id in
             (self?.sessions.first(where: { $0.id == id }) as? CodexSession)?.conversation
         }
         codexRemote.onChange = { [weak self] in
             guard let self else { return }
+            try? self.slackAwayJournal.resetIfChannelRemoved(allowed: self.codexRemote.policy.allowed)
+            self.slackIntegration.policyChanged()
             for case let session as CodexSession in self.sessions {
                 session.remoteStatus = self.codexRemote.desktopStatus(sessionID: session.id)
             }
@@ -3685,7 +3713,10 @@ final class SessionStore: ObservableObject {
 
     /// Synchronous CLI/TUI delivery never leaves a prompt waiting behind a
     /// transport that can time out. UI sends keep their cancellable FIFO queue.
-    func startPuckTurnImmediately(id: String, prompt: String, expiresAt: Date) async throws -> PuckSession {
+    func startPuckTurnImmediately(id: String, prompt: String, expiresAt: Date,
+                                  authorization: (() throws -> Void)? = nil,
+                                  willSubmit: (() throws -> Void)? = nil,
+                                  mayDispatch: @escaping @Sendable () -> Bool = { true }) async throws -> PuckSession {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ControlError.badRequest("Turn prompt must not be empty; nothing was queued")
         }
@@ -3697,6 +3728,7 @@ final class SessionStore: ObservableObject {
             }
         }
         try validateOwnership()
+        try authorization?()
         let session: PuckSession
         if let existing = admissionPuckSessions[id] { session = existing }
         else {
@@ -3705,6 +3737,7 @@ final class SessionStore: ObservableObject {
             try validateOwnership()
             session = adoptPuckSession(summary)
         }
+        try authorization?()
         guard Date() < expiresAt else { throw ControlError.conflict(code: "request_expired", message: "Turn request expired; nothing was queued") }
         guard !session.admissionTurnInFlight, session.turnUnavailableReason == nil else {
             throw ControlError.conflict(code: "turn_busy", message: session.turnUnavailableReason ?? "A turn is already starting")
@@ -3720,7 +3753,7 @@ final class SessionStore: ObservableObject {
         session.reopen()
         // No suspension point lies between reservation and startTurn entering
         // its in-flight guard. Errors release only a definitively unused slot.
-        try await session.startTurn(prompt)
+        try await session.startTurn(prompt, authorization: authorization, willSubmit: willSubmit, mayDispatch: mayDispatch)
         return session
     }
 
@@ -5760,6 +5793,12 @@ final class SessionStore: ObservableObject {
 
         let backend = tmuxBackend
         let processTableProvider = processTable
+        let awayState = slackAwayJournal.state
+        let awayActive = slackAwayJournal.storageError == nil && awayState.enabled && codexRemote.policy.enabled &&
+            codexRemote.policy.allowed.contains { $0.workspace == awayState.workspace && $0.channel == awayState.channel }
+        let promptSessionIDs = Set(sessions.filter { session in awayActive &&
+            (awayState.sessionIDs.contains(session.id) || awayState.projectIDs.contains(session.projectGroupID)) }.map(\.id))
+        let promptActivation = awayActive ? awayState.activationID : nil
         let inspectionCache = supervisorInspectionCache
         let states = supervisorObservationStates
         let cadence = force || sessionID != nil ? supervisorInterval : supervisorScheduledInterval
@@ -5779,7 +5818,8 @@ final class SessionStore: ObservableObject {
                     processTable: processTableProvider.snapshot(),
                     cache: inspectionCache
                 )
-                results = synchronizer.observe(inputs, paneSnapshots: panes) { sessionID, durationMS in
+                results = synchronizer.observe(inputs, paneSnapshots: panes, promptSessionIDs: promptSessionIDs,
+                                               promptActivationID: promptActivation) { sessionID, durationMS in
                     telemetry.recordDurationIfSlow(
                         "supervisor.session",
                         durationMS: durationMS,
@@ -6136,6 +6176,23 @@ final class SessionStore: ObservableObject {
             guard let session = sessions.first(where: { $0.id == result.id }) as? TerminalSession,
                   !session.isFrozen, !session.isDeepSuspended else { continue }
             observeCodexRetry(session, observation: result)
+            let away = slackAwayJournal.state
+            if awayPromptActivationID != away.activationID {
+                awayPromptActivationID = away.activationID
+                awayPromptFootprints.removeAll()
+            }
+            if away.enabled, result.promptObserved, result.promptActivationID == away.activationID,
+               away.sessionIDs.contains(session.id) || away.projectIDs.contains(session.projectGroupID) {
+                let previous = awayPromptFootprints[session.id]
+                if let footprint = result.promptFootprint { awayPromptFootprints[session.id] = footprint }
+                else { awayPromptFootprints.removeValue(forKey: session.id) }
+                // Status transitions already generate an event. Emit a second
+                // kind only when the prompt changed while the status did not.
+                if previous != result.promptFootprint, session.status == result.status {
+                    let event = sessionEventLog.append(sessionID: session.id, status: result.status, previousStatus: session.status)
+                    onSessionEvent?(event)
+                }
+            }
             if result.status == .closed, session.workflow?.state.permitsClose == false {
                 // Missing process ≠ closed issue. Keep managed rows visible and
                 // their worktrees owned while the supervisor recovers the thread.

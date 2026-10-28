@@ -1,71 +1,55 @@
-# Native Codex control from Slack
+# Supervising Banyan sessions from Slack
 
 Banyan owns the App Server, session ID, thread ID, settings and pending requests.
-Slack is an additional interface to an existing native session. The connector
+Slack is an additional interface to existing sessions. The connector
 runs on the Mac and uses outbound Socket Mode; no public endpoint is needed.
-The Mac, Banyan and connector must remain running and awake. Terminal sessions,
-new-session creation, DMs and other providers are outside this MVP.
+The Mac, Banyan and connector must remain running and awake. This interface
+supervises existing sessions; it does not create sessions or support DMs.
 
 ## Design and ownership
 
-The missing capability was independent observation and structured remote input,
-not a missing Codex runtime. Terminal parsing cannot bind structured approvals
-or turns reliably, and a connector-owned App Server would split conversation
-ownership. `CodexRemoteControl` therefore wraps Banyan's existing coordinator.
+The connector uses Banyan's authenticated loopback API. Banyan owns runtime
+identity, history and input; Slack transport does not launch an agent.
+`CodexRemoteControl` wraps Banyan's existing native coordinator.
 Its observer registry preserves desktop callbacks. Attachment generations hold
 idle subscriptions without holding idle agent-admission slots. Every connect and
 turn still uses Banyan's admission controller and CLI ownership fences.
 
-The Python connector contains Slack transport and credentials. It calls only the
-local authenticated native API. Disabling or detaching fences actions again at
+The Python connector contains Slack transport. It calls only the local
+authenticated API. Disabling or detaching fences actions again at
 the coordinator send boundary, including actions waiting for admission or locks.
 Queues, attachments, operation receipts and connector delivery receipts persist
 in private local journals. No token or conversation is written to connector logs.
 
 ## Setup on the Mac
 
-1. Create a Slack app from [the reusable manifest](../integrations/slack/manifest.json).
-   Install it into the intended workspace and invite the bot to the intended
-   public or private channel. All participants in that channel can see posted
-   conversation context; choose the channel membership accordingly.
-2. Under Basic Information, generate an **app-level token** with
-   `connections:write`. Keep it local as `SLACK_APP_TOKEN`. Keep the installation's
-   **bot token** local as `SLACK_BOT_TOKEN`. Pass them through your local secret
-   manager or environment; do not put them into the policy, source tree, launch
-   arguments or logs. The manifest's bot scopes are `app_mentions:read`,
-   `channels:history`, `groups:history`, and `chat:write`; its subscriptions are
-   `app_mention`, `message.channels`, and `message.groups`. DMs are not subscribed.
-3. Create a local policy file, for example `~/.config/banyan/slack-policy.json`:
-
-   ```json
-   {
-     "enabled": true,
-     "allowed": [
-       { "workspace": "T_EXAMPLE", "channel": "C_EXAMPLE", "user": "U_EXAMPLE" }
-     ]
-   }
-   ```
-
-   Replace placeholders with exact Slack IDs. Each entry grants one tuple;
-   separate workspace/channel/user lists do not create cross grants. An empty
-   list or a disabled policy denies **all** remote reads and actions. Remote
-   control defaults off. Additional users need explicit tuple entries.
-4. With the intended Banyan channel running, apply the policy locally:
+1. Create a Slack app from [the reusable manifest](../integrations/slack/manifest.json),
+   install it in the intended workspace, and invite the bot to one private
+   control channel. Everyone in that channel can read posted conversation
+   content. The connector verifies channel privacy and membership at startup.
+   Generate an app-level token with `connections:write` under Basic Information.
+   The manifest requests `app_mentions:read`, `channels:history`,
+   `groups:history`, `groups:read`, and `chat:write`; it subscribes to mentions,
+   channel messages, private-channel messages and App Home openings.
+2. In a checkout, prepare Python 3.10 or newer with the pinned Slack SDK:
 
    ```sh
-   banyanctl codex-remote configure --path ~/.config/banyan/slack-policy.json
    python3 -m venv ~/.local/share/banyan-slack/venv
    ~/.local/share/banyan-slack/venv/bin/pip install -r scripts/banyan_slack/requirements.txt
-   ~/.local/share/banyan-slack/venv/bin/python scripts/slack-connector.py start \
-     --config ~/.config/banyan/slack-policy.json
    ```
 
-   Run from the Banyan checkout, with Python 3.10 or newer and the two local Slack
-   environment variables available. SDK 3.45.0 is pinned. Startup checks bot
-   workspace identity and the authoritative local policy before opening Socket
-   Mode. Startup remains offline until a fresh Slack `hello` and successful
-   authoritative synchronization; an SDK connection attempt alone does not
-   claim connectivity. The foreground process prints content-free status notices.
+3. In the explicitly selected Banyan installation, open Preferences and find
+   **Slack integration**. Save the bot token and app-level Socket Mode token in
+   Keychain, then add the exact workspace, private channel and allowed user IDs.
+   Each entry grants one tuple; an empty allowlist denies all remote access. Set
+   the Python interpreter path if it differs from the default and select
+   **Enable and connect**. The credentials are kept in the macOS login Keychain,
+   namespaced for that app installation; they are not written to the policy file,
+   connector arguments or logs.
+4. Preferences reports starting, connecting, connected, offline/reconnecting,
+   stopped or failed. Connected requires a Slack `hello` and a successful local
+   synchronization. **Reconnect** replaces the connector; **Disable** fences
+   remote access and stops it. Disable before changing the allowlist or tokens.
 
 The local token stays in `~/Library/Application Support/Banyan/control-token`;
 it is sent only to loopback. The connector does not copy it into Slack or its
@@ -75,8 +59,37 @@ redirects and proxy use disabled. Never reuse fixture tokens against the live ap
 
 ## Phone and desktop use
 
-- In the allowed channel, send `@Banyan list` to see native session IDs, titles,
-  projects, state and attention flags. Choose an already existing native row.
+Open Banyan's App Home to search sessions, filter by Needs you, Working,
+Recent or All, and page through projects. `@Banyan list` and
+`@Banyan list SEARCH` also list matches in the control channel. Open a row to
+create or reuse its session-bound thread. **Earlier messages**, **Latest**, and
+where applicable **Terminal output** read context on demand; Away is not needed.
+Browsing does not send input or resume a conversation. Transcript pages identify
+their source and any truncation or staleness. When an exact terminal conversation
+cannot be verified, retained pane output is read-only; it is not matched by
+working-directory similarity. The bounded transcript window is at most 4 MiB,
+with individual messages limited to 8,000 characters. A transcript larger
+than this window remains readable but cannot currently establish a full
+generation proof for replies. A read-only pane binding is retired after its
+captured output or transcript window changes, an observed conversation reset,
+or an app restart. Large or replaced files can invalidate a cursor;
+reopen Latest. Puck history comes from bounded daemon events and can omit user
+prompts or older events.
+
+Follow sessions or projects in App Home and turn on **Away** for catch-up and
+subsequent notifications. Turning Away off stops proactive delivery while
+on-demand browsing remains available. Terminal decisions are actionable only
+when Banyan identifies the exact current Codex prompt and conversation; a reply
+is accepted only at a verified empty composer and must be one printable line.
+Puck replies use the existing Puck session and admission controller. Puck pending
+decisions currently appear in the catch-up count but require desktop action;
+subsequent Puck notifications are not yet delivered by this connector.
+When input or a Slack post has an uncertain outcome, inspect the session and
+receipt before acknowledging it locally; the connector does not retry it blindly.
+
+The existing native Codex attachment controls remain available:
+
+- Use `@Banyan list` in the allowed channel to find an existing native row.
 - Send `@Banyan attach SESSION_ID`. That user message becomes the explicit thread
   root. One session maps to one Slack thread, and one Slack thread maps to one
   session. Retrying or reconnecting restores that mapping and exact Codex ID.
@@ -131,6 +144,10 @@ on desktop, then explicitly acknowledge the outcome locally:
 ```sh
 banyanctl codex-remote resolve --workspace T_EXAMPLE --operationID OPERATION_ID
 ```
+
+For an uncertain terminal or Puck thread reply, after inspecting its outcome use
+the same command with `--kind terminalFollowup`. This acknowledges the receipt;
+it never resubmits input.
 
 This retains a replay tombstone and unblocks later queued messages. It **never**
 resubmits the uncertain message. Definite pre-send denial/cancellation and
@@ -211,6 +228,7 @@ the Slack connector does not expose them as Slack commands.
 ```sh
 swift test --no-parallel --filter 'CodexRemoteControlTests|codexRemoteAuthenticatedHTTP'
 python3 scripts/tests/test_slack_connector.py
+python3 scripts/tests/test_slack_session_browser.py
 python3 scripts/tests/test_slack_socket_adapter.py
 # Also run adapter/runtime checks against the pinned SDK in the setup venv:
 ~/.local/share/banyan-slack/venv/bin/python scripts/tests/test_slack_socket_adapter.py
@@ -227,8 +245,9 @@ The fixture writes disposable evidence to its printed private artifact directory
 and reaps only its own children. No real Slack installation, credentials, live
 Banyan settings, app restart or tmux environment is used.
 
-- [ ] **Physical phone round trip**: continue an opted-in native session, answer
-  a pending request and inspect desktop. Record Banyan/Codex/Slack/iOS versions
+- [ ] **Physical phone round trip**: browse an existing terminal session, read
+  context predating Away, answer a pending request and inspect the same session
+  on desktop. Record Banyan/Codex/Slack/phone OS versions
   and pass/fail without credentials or private conversation content. This remains
   unverified until a real Slack installation and physical-phone evidence exist.
 

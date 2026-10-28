@@ -300,6 +300,7 @@ public enum ControlRoute: Equatable {
     case codexHandoff
     case codexRemote
     case codexRemoteConfigure
+    case slackBrowser
     case codexRemoteResolve
     case deepSuspend
     case deepResume
@@ -349,6 +350,7 @@ public enum ControlRoute: Equatable {
         case ("POST", "/codex-handoff"): return .codexHandoff
         case ("POST", "/codex-remote"): return .codexRemote
         case ("POST", "/codex-remote-configure"): return .codexRemoteConfigure
+        case ("POST", "/slack-browser"): return .slackBrowser
         case ("POST", "/codex-remote-resolve"): return .codexRemoteResolve
         case ("POST", "/agent-suspend"): return .deepSuspend
         case ("POST", "/agent-resume"): return .deepResume
@@ -390,7 +392,7 @@ public enum ControlRoute: Equatable {
         case .select, .reparent, .mark, .sessionTitle, .close, .respawn, .restart, .remove, .suspend, .resume, .freeze, .unfreeze, .codexHandoff, .deepSuspend, .deepResume,
              .output, .input, .answer, .coordination, .workflowSet, .workflowWake, .workflowResolve: return true
         case .list, .spawn, .screenshot, .windowState, .tick, .events, .suggest,
-             .prune, .agentQueue, .agentLimit, .puckTurn, .codexRemote, .codexRemoteConfigure, .codexRemoteResolve, .workflowCloseVerified: return false
+             .prune, .agentQueue, .agentLimit, .puckTurn, .codexRemote, .codexRemoteConfigure, .codexRemoteResolve, .slackBrowser, .workflowCloseVerified: return false
         }
     }
 

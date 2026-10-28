@@ -16,6 +16,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from banyan_slack.socket_adapter import fenced_socket_client
+from banyan_slack.runtime import validate_control_channel
+from banyan_slack.connector import Unavailable
 
 
 class Connection:
@@ -77,6 +79,17 @@ class PinnedSDKShape:
         pass
     def _on_message(self, raw):
         self.messages.append(json.loads(raw))
+
+
+class ChannelPolicyTests(unittest.TestCase):
+    def test_only_the_requested_writable_private_channel_is_accepted(self):
+        valid = {"id": "C_TEST", "is_private": True, "is_im": False, "is_mpim": False}
+        validate_control_channel(valid, "C_TEST")
+        for changed in ({"is_private": False}, {"is_im": True}, {"is_mpim": True},
+                        {"is_archived": True}, {"is_frozen": True}, {"is_read_only": True}, {"is_thread_only": True},
+                        {"is_non_threadable": True}, {"is_member": False}, {"id": "C_OTHER"}):
+            with self.subTest(changed=changed), self.assertRaises(Unavailable):
+                validate_control_channel({**valid, **changed}, "C_TEST")
 
 
 class AdapterTests(unittest.TestCase):
@@ -207,6 +220,10 @@ class RuntimeStartupTests(unittest.IsolatedAsyncioTestCase):
         class API:
             def __init__(self, *args):
                 pass
+            async def browser(self, body):
+                if body["action"] == "awayEvents":
+                    await events.wait()
+                return {"enabled": False, "sessionIDs": [], "projectIDs": [], "activationID": None, "revision": 0}
             async def call(self, body):
                 calls.append(body["action"])
                 if body["action"] == "sync":
@@ -222,6 +239,8 @@ class RuntimeStartupTests(unittest.IsolatedAsyncioTestCase):
                 pass
             def auth_test(self):
                 return {"user_id": "FIXTURE_BOT", "team_id": "FIXTURE_WORKSPACE"}
+            def conversations_info(self, channel):
+                return {"channel": {"id": channel, "is_private": True, "is_im": False, "is_mpim": False}}
         class InitialFailure(Connection):
             attempts = 0
             def connect(self):

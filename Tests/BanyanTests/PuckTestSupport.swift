@@ -119,6 +119,17 @@ final class FakePuckDaemon: PuckDaemonService, @unchecked Sendable {
         }
     }
 
+    func recentEvents(_ id: String, maximum: Int) throws -> PuckRecentHistory {
+        try locked {
+            try checkReachable()
+            guard summaries[id] != nil else { throw PuckDaemonError.rejected("unknown fixture session") }
+            let all = transcripts[id] ?? []
+            let limit = min(max(maximum, 1), 200)
+            return PuckRecentHistory(events: Array(all.suffix(limit)), cursor: all.last?.cursor ?? 0,
+                                     truncated: all.count > limit, incomplete: false)
+        }
+    }
+
     func create(id: String, provider: String, account: String?, model: String?, workspace: String) throws -> PuckSessionSummary {
         let (summary, gate) = try locked {
             try checkReachable()
@@ -296,7 +307,7 @@ struct PuckStoreFixture {
 
     init(daemon: any PuckDaemonService) throws {
         root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("banyan-puck-\(UUID().uuidString)")
+            .appendingPathComponent("banyan_puck_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))")
         home = root.appendingPathComponent("home")
         project = root.appendingPathComponent("project")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -310,10 +321,10 @@ struct PuckStoreFixture {
 
     func makeStore(codexService: (any CodexThreadService)? = nil,
                    historyBackend: (any SessionHistoryBackend)? = nil,
-                   tmuxBackend: TmuxBackend? = nil,
+                   tmuxBackend: (any TmuxSessionStoreBackend)? = nil,
                    sessionBackend: (any TmuxClientBackend)? = nil,
                    processTable: (any ProcessTableProvider)? = nil,
-                   freezePreferences: UserDefaults = .standard,
+                   freezePreferences: UserDefaults? = nil,
                    makeControlServer: @escaping (SessionStore, HostRuntimeContext) -> ControlServer = {
                        ControlServer(store: $0, host: $1)
                    }) -> SessionStore {
@@ -324,7 +335,7 @@ struct PuckStoreFixture {
         return SessionStore(
             persistence: persistence,
             tmuxBackend: tmux,
-            sessionBackend: sessionBackend ?? tmux,
+            sessionBackend: sessionBackend ?? (tmux as? any TmuxClientBackend) ?? banyanTestTmuxBackend,
             processTable: processTable ?? EmptyPuckTestProcessTable(),
             historyBackend: historyBackend ?? EmptyPuckTestHistoryBackend(),
             detector: AgentStateDetector(rules: []),
@@ -342,7 +353,9 @@ struct PuckStoreFixture {
             attentionNotifier: AttentionNotifier(),
             puckDaemon: daemon,
             codexService: codexService,
-            freezePreferences: freezePreferences,
+            // Keep admission and freeze preferences private to this fixture;
+            // the test host's standard defaults can retain another run's limit.
+            freezePreferences: freezePreferences ?? UserDefaults(suiteName: "banyan-fixture-\(root.lastPathComponent)")!,
             makeControlServer: makeControlServer
         )
     }

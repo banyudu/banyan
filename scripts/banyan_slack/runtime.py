@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .connector import Connector, Denied, RateLimited, StaleAttachment, Unavailable
+from .connector import Connector, Denied, RateLimited, StaleAttachment, StaleBrowser, Unavailable
 
 
 class LocalAPI:
@@ -27,6 +27,9 @@ class LocalAPI:
 
     async def call(self, body):
         return await asyncio.to_thread(self._call, "/codex-remote", body)
+
+    async def browser(self, body):
+        return await asyncio.to_thread(self._call, "/slack-browser", body)
 
     def _call(self, path, body):
         token = self.token_file.read_text().strip()
@@ -49,6 +52,8 @@ class LocalAPI:
                 raise Denied("Banyan control authorization refused") from None
             if error.code == 409 and body.get("action") == "snapshot":
                 raise StaleAttachment("Attachment no longer current") from None
+            if error.code == 409 and path == "/slack-browser" and body.get("action") == "boundContext":
+                raise StaleBrowser("Browser binding is unavailable or changed") from None
             raise Unavailable("Banyan control API unavailable") from None
         except Denied:
             raise
@@ -92,6 +97,13 @@ class ProcessLock:
         os.close(self.descriptor)
 
 
+def validate_control_channel(channel, expected_id):
+    if (channel.get("id") != expected_id or not channel.get("is_private") or channel.get("is_im") or
+            channel.get("is_mpim") or channel.get("is_archived") or channel.get("is_frozen") or channel.get("is_read_only") or
+            channel.get("is_thread_only") or channel.get("is_non_threadable") or channel.get("is_member") is False):
+        raise Unavailable("The configured control channel must be a writable private channel")
+
+
 async def run(args, stopped=None):
     # No SDK debug logs: its HTTP diagnostics can contain tokens or content.
     quiet = logging.getLogger("banyan.slack.transport")
@@ -106,8 +118,12 @@ async def run(args, stopped=None):
     from slack_sdk.socket_mode.response import SocketModeResponse
 
     config = json.loads(Path(args.config).read_text())
-    if not config.get("enabled") or not config.get("allowed"):
-        raise Unavailable("Connector requires enabled=true and a nonempty tuple allowlist")
+    allowed = config.get("allowed") or []
+    channels = {(entry.get("workspace", ""), entry.get("channel", "")) for entry in allowed}
+    if not config.get("enabled") or not allowed or len(channels) != 1 or any(
+        not entry.get("workspace") or not entry.get("channel") or not entry.get("user") for entry in allowed
+    ):
+        raise Unavailable("Connector requires one explicitly allowed workspace/channel and nonempty users")
     app_token = os.environ.get("SLACK_APP_TOKEN", "")
     bot_token = os.environ.get("SLACK_BOT_TOKEN", "")
     if not app_token or not bot_token:
@@ -125,6 +141,8 @@ async def run(args, stopped=None):
         principals = connector.principals()
         if any(p["workspace"] != bot["team_id"] for p in principals):
             raise Unavailable("Bot installation and configured workspace must match")
+        info = await asyncio.to_thread(web.conversations_info, channel=principals[0]["channel"])
+        validate_control_channel(info.get("channel") or {}, principals[0]["channel"])
         # A returned SDK connect() is not proof of a live socket. Verify local
         # policy without acquiring an online lease or posting until fresh hello.
         connector.socket_closed()
@@ -134,6 +152,7 @@ async def run(args, stopped=None):
         pending = set()
         pending_lock = threading.RLock()
         socket_ready = asyncio.Event()
+        native_ready = asyncio.Event()
         refresh_tasks = set()
 
         async def lost_connection(generation):
@@ -156,7 +175,9 @@ async def run(args, stopped=None):
             def mark():
                 if connector.enabled:
                     connector.socket_closed()
+                    print("BANYAN_SLACK_STATUS=offline", flush=True)
                     socket_ready.clear()
+                    native_ready.clear()
                     for task in list(refresh_tasks):
                         task.cancel()
                     asyncio.create_task(lost_connection(connector.connection_generation))
@@ -172,6 +193,8 @@ async def run(args, stopped=None):
             elif kind == "hello":
                 def connected():
                     connector.socket_hello()
+                    print("BANYAN_SLACK_STATUS=connecting", flush=True)
+                    native_ready.clear()
                     for task in list(refresh_tasks):
                         task.cancel()
                     socket_ready.set()
@@ -220,6 +243,9 @@ async def run(args, stopped=None):
                         await refresh
                     finally:
                         refresh_tasks.discard(refresh)
+                    if connector.socket_synchronized and connector.online and not native_ready.is_set():
+                        native_ready.set()
+                        print("BANYAN_SLACK_STATUS=connected", flush=True)
                     if connector.socket_synchronized and connector.online and not announced:
                         announced = True
                         print("Banyan Slack connector synchronized", flush=True)
@@ -231,10 +257,14 @@ async def run(args, stopped=None):
                 except Denied:
                     connector.authorization_denied = True
                     connector.online = False
+                    native_ready.clear()
+                    print("BANYAN_SLACK_STATUS=offline", flush=True)
                     await asyncio.sleep(5)
                     first = True
                 except Exception:
                     connector.online = False
+                    native_ready.clear()
+                    print("BANYAN_SLACK_STATUS=offline", flush=True)
                     async with connector.lock:
                         for session in list(connector.sessions.values()):
                             a = session["attachment"]
@@ -246,7 +276,32 @@ async def run(args, stopped=None):
                     # Backoff only for network recovery, not state polling.
                     await asyncio.sleep(delay)
                     delay, first = min(delay * 2, 30), True
+        async def observe_away(principal):
+            delay = 1
+            while connector.enabled:
+                try:
+                    await socket_ready.wait()
+                    await native_ready.wait()
+                    refresh = asyncio.create_task(connector.refresh_away(principal))
+                    refresh_tasks.add(refresh)
+                    try:
+                        await refresh
+                    finally:
+                        refresh_tasks.discard(refresh)
+                    delay = 1
+                except asyncio.CancelledError:
+                    if not connector.enabled:
+                        raise
+                except Denied:
+                    connector.authorization_denied = True
+                    await asyncio.sleep(5)
+                except Exception:
+                    # Backoff only on recovery failures; healthy waits are
+                    # parked by Banyan and wake on events or scope changes.
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 30)
         tasks = [asyncio.create_task(observe(p)) for p in principals]
+        tasks += [asyncio.create_task(observe_away(p)) for p in principals]
         await stopped.wait()
         await connector.stop()
         for future in list(pending):
@@ -285,7 +340,7 @@ def main():
             try:
                 journal = Journal(args.state)
                 if args.command == "status":
-                    print(json.dumps({group: {key: {k: v for k, v in value.items() if k in ("status", "channel", "root", "ts")}
+                    print(json.dumps({group: {key: {k: v for k, v in value.items() if k in ("status", "channel", "root", "ts", "sessionID")}
                         for key, value in journal.data[group].items() if value.get("status") in ("uncertain", "sending", "retryable") or value.get("result", {}).get("status") == "uncertain"}
                         for group in ("incoming", "posts")}, indent=2))
                 else:

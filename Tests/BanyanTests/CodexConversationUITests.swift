@@ -116,6 +116,8 @@ struct CodexConversationUITests {
         let server = ConversationServer()
         let store = fixture.makeStore(codexService: server)
         store.enableNativeCodex = true
+        // This test keeps two native turns active; do not depend on persisted user limits.
+        store.agentAdmission.setLimit(2)
         let first = try await store.createCodexSession(settings: .init(approvalPolicy: "untrusted", sandbox: "read-only"), cwd: fixture.project.path, id: "first")
         first.draft = "Implement a feature"
         await first.sendDraft()

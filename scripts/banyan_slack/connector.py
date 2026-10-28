@@ -9,6 +9,7 @@ import re
 import tempfile
 import time
 import uuid
+import unicodedata
 
 
 class Unavailable(Exception):
@@ -21,6 +22,18 @@ class Denied(Unavailable):
 
 class StaleAttachment(Unavailable):
     """Authoritative snapshot refused an obsolete attachment binding."""
+
+
+class StaleBrowser(Unavailable):
+    """The session-to-thread binding is no longer authoritative."""
+
+
+class StaleNativeState(Unavailable):
+    """The native turn or pending requests changed before delivery."""
+
+
+class StaleAway(Unavailable):
+    """Away is off, its scope changed, or the event is obsolete."""
 
 
 class RateLimited(Unavailable):
@@ -42,6 +55,9 @@ class Journal:
                 raise Unavailable("Unsupported connector journal")
         else:
             self.data = {"version": 1, "incoming": {}, "posts": {}, "controls": {}, "modals": {}, "cursors": {}}
+        # Older native-only journals have no session-browser mappings.
+        self.data.setdefault("browserThreads", {})
+        self.data.setdefault("awaySeen", {})
         # A process crash does not prove that an HTTP or Slack submission failed.
         for group in ("incoming", "posts"):
             for value in self.data[group].values():
@@ -107,6 +123,7 @@ class Connector:
         self.generation = 0
         self.last_progress = {}
         self.last_post = {}
+        self.away_ready = {}
         self.post_interval = post_interval
 
     def permitted(self, principal):
@@ -122,6 +139,83 @@ class Connector:
             self.authorization_denied = True
             self.online = False
             raise
+
+    async def call_browser(self, body):
+        try:
+            return await self.api.browser(body)
+        except Denied:
+            principal = body.get("principal", {})
+            self.denied_principals.add(tuple(principal.get(k, "") for k in ("workspace", "channel", "user")))
+            self.authorization_denied = True
+            self.online = False
+            raise
+
+    async def check_browser(self, principal, binding):
+        if not binding:
+            return
+        await self.check(principal)
+        current = await self.call_browser({"action": "open", "principal": principal, "sessionID": binding["sessionID"]})
+        attachment = current.get("attachment") or {}
+        if current.get("binding") != binding["identity"]:
+            raise StaleBrowser("Conversation changed")
+        if binding.get("slackThread") is None:
+            if attachment:
+                raise StaleBrowser("Conversation already has a thread")
+        elif attachment.get("slackThread") != binding["slackThread"]:
+            raise StaleBrowser("Thread binding changed")
+        if binding.get("requestID"):
+            current_request = await self.call_browser({"action": "decision", "principal": principal,
+                "sessionID": binding["sessionID"], "identity": binding["identity"], "slackThread": binding["slackThread"]})
+            if current_request.get("requestID") != binding["requestID"] or not current_request.get("answerable"):
+                raise StaleBrowser("Decision is no longer pending")
+        if not self.permitted(principal) or not self.socket_synchronized:
+            raise Unavailable("Control disabled")
+
+    @staticmethod
+    def native_control_signature(session):
+        return stable_id(session.get("available"), session.get("turnID"), session.get("needsAttention"), session.get("requests", []))
+
+    async def check_native_state(self, principal, binding, signature):
+        if signature is None:
+            return
+        await self.check(principal, binding=binding)
+        current = await self.call_api({"action": "snapshot", "principal": principal, **binding})
+        if self.binding(current) != binding or self.native_control_signature(current) != signature:
+            raise StaleNativeState("Native request or turn changed")
+
+    @staticmethod
+    def away_digest(snapshot):
+        rows = sorted(snapshot.get("sessions", []), key=lambda item: item["sessionID"])
+        decisions = sorted(snapshot.get("decisions", []), key=lambda item: item["sessionID"])
+        names = {row["sessionID"]: f"{row['project']} · {row['title']}" for row in rows}
+        lines = ["Away catch-up"]
+        lines.extend(f"{names[row['sessionID']]}: {row['status']}" for row in rows)
+        for decision in decisions:
+            label = names.get(decision["sessionID"], decision["sessionID"])
+            question = decision.get("question") or "Decision needs attention"
+            lines.append(f"Needs you — {label}: {question}")
+        text = "\n".join(lines)
+        return text if len(text) <= 2600 else text[:2570] + "\n[Catch-up truncated]"
+
+    async def check_away(self, principal, guard):
+        if not guard:
+            return
+        body = {"action": "awayCheck", "principal": principal}
+        if guard.get("sessionID"):
+            body["sessionID"] = guard["sessionID"]
+        state = await self.call_browser(body)
+        if not state.get("allowed") or state.get("activationID") != guard.get("activationID") or state.get("revision") != guard.get("revision"):
+            raise StaleAway("Away or its scope changed")
+        if guard.get("requirePending"):
+            current = await self.call_browser({"action": "awaySession", "principal": principal, "sessionID": guard["sessionID"]})
+            if not current.get("pending") or current.get("activationID") != guard.get("activationID") or current.get("revision") != guard.get("revision"):
+                raise StaleAway("Decision is no longer pending")
+        if guard.get("snapshotFingerprint"):
+            snapshot = await self.call_browser({"action": "awaySnapshot", "principal": principal})
+            if stable_id(self.away_digest(snapshot)) != guard["snapshotFingerprint"]:
+                raise StaleAway("Catch-up changed before delivery")
+        if not self.permitted(principal) or not self.socket_synchronized:
+            raise Unavailable("Control disabled")
 
     async def check(self, principal, synchronizing=False, binding=None):
         if not self.permitted(principal) or (not synchronizing and not self.socket_synchronized):
@@ -170,8 +264,16 @@ class Connector:
         return {"type": "button", "action_id": "banyan_control", "text": plain(label),
                 "value": self.control(body, principal)}
 
-    async def post_once(self, key, principal, root, text, blocks=None, binding=None):
+    async def post_once(self, key, principal, root, text, blocks=None, binding=None, browser_binding=None, away_guard=None, native_guard=None):
         await self.check(principal, binding=binding)
+        try:
+            await self.check_browser(principal, browser_binding)
+            await self.check_native_state(principal, binding, native_guard)
+            await self.check_away(principal, away_guard)
+        except (StaleBrowser, StaleAway):
+            if self.journal.data["posts"].get(key, {}).get("status") == "retryable":
+                self.journal.commit(lambda d: d["posts"][key].update(status="cancelled"))
+            raise
         old = self.journal.data["posts"].get(key)
         if old and old["status"] != "retryable":
             return old.get("ts")  # Unknown deliveries are NEVER posted again.
@@ -184,11 +286,24 @@ class Connector:
             if delay > 0:
                 await asyncio.sleep(delay)  # Never block an SDK worker or disable.
             await self.check(principal, binding=binding)  # Fresh policy AND attachment fence after wait.
+            try:
+                await self.check_browser(principal, browser_binding)
+                await self.check_native_state(principal, binding, native_guard)
+                await self.check_away(principal, away_guard)
+            except (StaleBrowser, StaleAway):
+                if self.journal.data["posts"].get(key, {}).get("status") == "retryable":
+                    self.journal.commit(lambda d: d["posts"][key].update(status="cancelled"))
+                raise
             self.journal.commit(lambda d: d["posts"].__setitem__(key, {
-                "status": "sending", "channel": principal["channel"], "root": root, "binding": binding}))
+                "status": "sending", "channel": principal["channel"], "root": root, "binding": binding,
+                "sessionID": browser_binding.get("sessionID") if browser_binding else None,
+                "browser_binding": browser_binding, "away_guard": away_guard, "native_guard": native_guard}))
             try:
                 self.last_post[principal["channel"]] = time.monotonic()
-                result = await self.slack.call("chat.postMessage", channel=principal["channel"], thread_ts=root,
+                fields = {"channel": principal["channel"]}
+                if root is not None:
+                    fields["thread_ts"] = root
+                result = await self.slack.call("chat.postMessage", **fields,
                     text=str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")[:3000],
                     blocks=blocks or [section(text)], parse="none", unfurl_links=False, unfurl_media=False,
                     metadata={"event_type": "banyan_remote", "event_payload": {"delivery_id": key}})
@@ -197,7 +312,8 @@ class Connector:
                 return ts
             except RateLimited as error:
                 self.journal.commit(lambda d: d["posts"][key].update(status="retryable", retryAt=time.time() + error.retry_after,
-                    retry={"principal": principal, "root": root, "text": text, "blocks": blocks, "binding": binding}))
+                    retry={"principal": principal, "root": root, "text": text, "blocks": blocks, "binding": binding,
+                           "browser_binding": browser_binding, "away_guard": away_guard, "native_guard": native_guard}))
                 if error.retry_after > 30:
                     return None
             except (Exception, asyncio.CancelledError) as error:
@@ -246,6 +362,11 @@ class Connector:
         payload = envelope.get("payload", {})
         if envelope.get("type") == "events_api":
             event = payload.get("event", {})
+            if event.get("type") == "app_home_opened" and event.get("tab", "home") == "home":
+                principal = self.home_principal(payload.get("team_id", ""), event.get("user", ""))
+                if principal:
+                    await self.show_home(principal)
+                return
             if event.get("type") not in ("app_mention", "message") or event.get("bot_id") or event.get("subtype"):
                 return
             principal = {"workspace": payload.get("team_id", ""), "channel": event.get("channel", ""), "user": event.get("user", "")}
@@ -259,11 +380,15 @@ class Connector:
             root = event.get("thread_ts") or event.get("ts")
             if text.startswith(mention):
                 command = text[len(mention):].strip()
-                if command == "list":
-                    result = await self.call_api({"action": "list", "principal": principal})
-                    rows = [f"{s['sessionID']} · {s['title']} · {s['project']} · {s['state']}" +
-                            (" · input needed" if s["needsAttention"] else "") for s in result["sessions"]]
-                    await self.post_once(key, principal, root, "Native Codex sessions\n" + "\n".join(rows)[:2500])
+                if command == "list" or command.startswith("list "):
+                    query = command[4:].strip()
+                    result = await self.call_browser({"action": "list", "principal": principal, "query": query, "limit": 10})
+                    blocks = [section("Banyan sessions" + (f" · search: {query}" if query else ""))]
+                    for item in result["sessions"]:
+                        blocks.append(self.browser_row(item, principal, owner=None))
+                    if result.get("nextOffset") is not None:
+                        blocks.append(section("More sessions are available in App Home."))
+                    await self.post_once(key, principal, root, "Banyan sessions", blocks)
                     return
                 if command.startswith("attach "):
                     listing = await self.call_api({"action": "list", "principal": principal})
@@ -280,7 +405,18 @@ class Connector:
                     return
             session = next((s for s in self.sessions.values() if s["attachment"]["workspace"] == principal["workspace"]
                 and s["attachment"]["channel"] == principal["channel"] and s["attachment"]["slackThread"] == root), None)
-            if not session or event.get("ts") == root or not text.strip():
+            if not session:
+                stored = self.journal.data["browserThreads"].get(stable_id(principal["workspace"], principal["channel"], root))
+                if not stored or event.get("ts") == root or not text.strip():
+                    return
+                if stored.get("identity", {}).get("kind") == "nativeCodex":
+                    session = await self.attach_native_for_reply(principal, stored, key)
+                    if not session:
+                        return
+                else:
+                    await self.browser_followup(principal, stored, key, text)
+                    return
+            if event.get("ts") == root or not text.strip():
                 return
             session = await self.call_api({"action": "snapshot", "principal": principal, **self.binding(session)})
             if text.strip() == f"<@{self.bot_user}> reconcile":
@@ -298,9 +434,455 @@ class Connector:
         elif envelope.get("type") == "interactive":
             await self.interaction(payload)
 
+    def home_principal(self, workspace, user):
+        matches = [(w, c, u) for w, c, u in self.allowed if w == workspace and u == user]
+        # App Home has no control-channel ID. Do not guess when multiple tuples match.
+        if len(matches) != 1:
+            return None
+        w, c, u = matches[0]
+        principal = {"workspace": w, "channel": c, "user": u}
+        return principal if self.permitted(principal) else None
+
+    def browser_button(self, label, body, principal, *, home=False):
+        return {"type": "button", "action_id": "banyan_home" if home else "banyan_browser",
+                "text": plain(label), "value": self.control(body, principal)}
+
+    def browser_row(self, item, principal, owner):
+        body = {"action": "browser_open", "sessionID": item["sessionID"],
+                "title": item["title"], "project": item["project"], "owner": owner}
+        return {"type": "section", "text": plain(f"{item['title']} · {item['status']}" +
+                    (" · Needs you" if item.get("needsAttention") else "")),
+                "accessory": self.browser_button("Open", body, principal, home=owner is not None)}
+
+    async def show_home(self, principal, *, query="", filter_name="all", offset=0, notice=None):
+        await self.check(principal)
+        # Slack input can contain multibyte characters; the local API caps bytes.
+        query = str(query).encode("utf-8")[:256].decode("utf-8", "ignore")
+        result = await self.call_browser({"action": "list", "principal": principal, "query": query,
+                                          "filter": filter_name, "offset": max(0, offset), "limit": 10})
+        away = await self.call_browser({"action": "awayStatus", "principal": principal})
+        state = {"action": "home", "owner": principal["user"], "query": query, "filter": filter_name, "offset": offset}
+        token = self.control(state, principal)
+        search = {"type": "plain_text_input", "action_id": "banyan_home_search", "max_length": 256,
+                  "dispatch_action_config": {"trigger_actions_on": ["on_enter_pressed"]}}
+        if query:
+            search["initial_value"] = query
+        blocks = [section("Banyan sessions"),
+                  {"type": "input", "dispatch_action": True, "label": plain("Search sessions"), "element": search}]
+        if notice:
+            blocks.append(section(notice))
+        blocks.append(section("Away is on" if away.get("enabled") else "Away is off"))
+        blocks.append({"type": "actions", "elements": [self.browser_button(
+            "Turn Away off" if away.get("enabled") else "Turn Away on",
+            {**state, "action": "away_toggle", "enabled": not away.get("enabled")}, principal, home=True)]})
+        filters = []
+        for label, value in (("Needs you", "needs"), ("Working", "working"), ("Recent", "recent"), ("All", "all")):
+            filters.append(self.browser_button(label, {**state, "filter": value, "offset": 0}, principal, home=True))
+        blocks.append({"type": "actions", "elements": filters})
+        project = None
+        for item in result["sessions"]:
+            if item["project"] != project:
+                project = item["project"]
+                blocks.append(section(project))
+            blocks.append(self.browser_row(item, principal, owner=principal["user"]))
+            following = item["sessionID"] in away.get("sessionIDs", [])
+            project_followed = item.get("projectID") in away.get("projectIDs", [])
+            follow_actions = [self.browser_button("Unfollow" if following else "Follow", {**state, "action": "away_follow",
+                "sessionID": item["sessionID"], "follow": not following}, principal, home=True)]
+            if item.get("projectID"):
+                follow_actions.append(self.browser_button("Unfollow project" if project_followed else "Follow project",
+                    {**state, "action": "away_follow_project", "projectID": item["projectID"], "follow": not project_followed}, principal, home=True))
+            blocks.append({"type": "actions", "elements": follow_actions})
+        if not result["sessions"]:
+            blocks.append(section("No matching sessions."))
+        navigation = []
+        if offset > 0:
+            navigation.append(self.browser_button("Previous", {**state, "offset": max(0, offset - 10)}, principal, home=True))
+        if result.get("nextOffset") is not None:
+            navigation.append(self.browser_button("Next", {**state, "offset": result["nextOffset"]}, principal, home=True))
+        if navigation:
+            blocks.append({"type": "actions", "elements": navigation})
+        await self.check(principal)
+        await self.slack.call("views.publish", user_id=principal["user"], view={"type": "home", "private_metadata": token, "blocks": blocks})
+
+    async def browser_interaction(self, payload, workspace, user, action):
+        action_id = action.get("action_id")
+        if action_id in ("banyan_home", "banyan_home_search"):
+            token = (payload.get("view") or {}).get("private_metadata") if action_id == "banyan_home_search" else action.get("value")
+            descriptor = self.journal.data["controls"].get(token)
+            if not descriptor or descriptor["workspace"] != workspace or descriptor["body"].get("owner") != user:
+                return
+            principal = {"workspace": workspace, "channel": descriptor["channel"], "user": user}
+        else:
+            channel = (payload.get("channel") or {}).get("id", "")
+            principal = {"workspace": workspace, "channel": channel, "user": user}
+            descriptor = self.journal.data["controls"].get(action.get("value"))
+            if not descriptor or descriptor["workspace"] != workspace or descriptor["channel"] != channel:
+                return
+        if not self.permitted(principal):
+            return
+        await self.check(principal)
+        body = descriptor["body"]
+        if action_id == "banyan_home_search":
+            await self.show_home(principal, query=action.get("value") or "", filter_name=body.get("filter", "all"))
+        elif body.get("action") == "home":
+            await self.show_home(principal, query=body.get("query", ""), filter_name=body.get("filter", "all"), offset=body.get("offset", 0))
+        elif body.get("action") in ("away_toggle", "away_follow", "away_follow_project"):
+            update = {"action": "awayConfigure", "principal": principal}
+            if body["action"] == "away_toggle":
+                if body.get("enabled"):
+                    current = await self.call_browser({"action": "awayStatus", "principal": principal})
+                    if not current.get("sessionIDs") and not current.get("projectIDs"):
+                        await self.show_home(principal, query=body.get("query", ""), filter_name=body.get("filter", "all"),
+                                             offset=body.get("offset", 0), notice="Follow a session or project before turning Away on.")
+                        return
+                update["awayEnabled"] = body.get("enabled", False)
+            elif body["action"] == "away_follow":
+                update.update(followSessionID=body["sessionID"], follow=body["follow"])
+            else:
+                update.update(followProjectID=body["projectID"], follow=body["follow"])
+            await self.call_browser(update)
+            await self.show_home(principal, query=body.get("query", ""), filter_name=body.get("filter", "all"), offset=body.get("offset", 0))
+        elif body.get("action") == "browser_open":
+            notice = await self.open_browser_session(principal, body)
+            if action_id == "banyan_home":
+                await self.show_home(principal, notice=notice)
+        elif body.get("action") == "browser_page":
+            await self.post_browser_page(principal, body)
+        elif body.get("action") == "browser_answer":
+            operation = stable_id(workspace, principal["channel"], user,
+                (payload.get("container") or {}).get("message_ts"), action.get("action_id"), action.get("action_ts"))
+            result = await self.answer_browser(principal, body, operation)
+            guard = {"sessionID": body["sessionID"], "identity": body["identity"], "slackThread": body["slackThread"]}
+            await self.post_once("browser-answer-receipt-" + operation, principal, body["slackThread"],
+                                 "Answer: " + result.get("status", "uncertain"), browser_binding=guard)
+            await self.render_terminal_decision(principal, guard)
+
+    async def bind_browser(self, key, body):
+        old = self.journal.data["incoming"].get(key)
+        if old:
+            if old.get("body") != body:
+                raise Unavailable("Duplicate binding changed payload")
+            if old.get("status") == "done":
+                return old.get("result")
+            # An uncertain local bind is reconciled by readback, never replayed.
+            current = await self.call_browser({"action": "open", "principal": body["principal"], "sessionID": body["sessionID"]})
+            attachment = current.get("attachment") or {}
+            if current.get("binding") == body["identity"] and attachment.get("slackThread") == body["slackThread"]:
+                result = {"attachment": attachment}
+                self.journal.commit(lambda d: d["incoming"][key].update(status="done", result=result))
+                return result
+            return None
+        self.journal.commit(lambda d: d["incoming"].__setitem__(key, {"status": "sending", "body": body}))
+        try:
+            result = await self.call_browser(body)
+            receipt = {"attachment": result.get("attachment")}
+            self.journal.commit(lambda d: d["incoming"][key].update(status="done", result=receipt))
+            return receipt
+        except (Exception, asyncio.CancelledError):
+            self.journal.commit(lambda d: d["incoming"][key].update(status="uncertain"))
+            raise
+
+    async def open_browser_session(self, principal, body, away_guard=None):
+        await self.check_away(principal, away_guard)
+        session_id = body["sessionID"]
+        opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
+        identity = opened.get("binding")
+        if not identity:
+            return "The current conversation could not be bound safely. Read it on the Mac."
+        attachment = opened.get("attachment") or {}
+        root = attachment.get("slackThread")
+        guard = {"sessionID": session_id, "identity": identity, "slackThread": None}
+        if not root:
+            key = "browser-root-" + stable_id(principal["workspace"], principal["channel"], session_id, identity)
+            root = await self.post_once(key, principal, None,
+                f"{body['project']} · {body['title']}\nSession: {session_id}", browser_binding=guard, away_guard=away_guard)
+            if not root:
+                return "Thread creation is uncertain. Inspect the control channel before reconciling."
+            bind = {"action": "bind", "principal": principal, "sessionID": session_id, "identity": identity, "slackThread": root}
+            await self.check_away(principal, away_guard)
+            receipt = await self.bind_browser("browser-bind-" + stable_id(principal["workspace"], principal["channel"], session_id, identity, root), bind)
+            if not receipt or not receipt.get("attachment"):
+                return "Thread binding is uncertain. Reconcile before retrying."
+            attachment = receipt["attachment"]
+        else:
+            # A prior bind response may have been lost after Banyan committed.
+            # Fresh readback proves the mapping and closes that receipt without
+            # resubmitting the bind or creating another Slack root.
+            bind_key = "browser-bind-" + stable_id(principal["workspace"], principal["channel"], session_id, identity, root)
+            old = self.journal.data["incoming"].get(bind_key)
+            if old and old.get("status") == "uncertain":
+                self.journal.commit(lambda d: d["incoming"][bind_key].update(status="done", result={"attachment": attachment}))
+        thread_key = stable_id(principal["workspace"], principal["channel"], root)
+        thread = {"sessionID": session_id, "identity": identity, "slackThread": root}
+        self.journal.commit(lambda d: d["browserThreads"].__setitem__(thread_key, thread))
+        # Browsing must not subscribe to or resume a native thread. Existing
+        # native attachments keep their own runtime-owned control path.
+        if identity.get("kind") == "nativeCodex":
+            existing = next((s for s in self.sessions.values() if s["sessionID"] == session_id and
+                s["threadID"] == identity["conversationID"] and s["attachment"]["slackThread"] == root), None)
+            if existing:
+                await self.render(existing, principal, away_guard=away_guard)
+        await self.post_browser_page(principal, {"action": "browser_page", "sessionID": session_id,
+            "identity": identity, "slackThread": root, "cursor": None}, away_guard=away_guard)
+        return "Opened in the configured control channel."
+
+    async def attach_native_for_reply(self, principal, binding, event_key):
+        # An explicit reply may attach the existing native thread; merely
+        # opening history never does. An unknown attach outcome fences this
+        # specific reply rather than silently queuing it on a later replay.
+        barrier = "browser-native-reply-" + event_key
+        if barrier in self.journal.data["incoming"]:
+            await self.post_once("browser-native-reply-uncertain-" + event_key, principal, binding["slackThread"],
+                "Reply not sent: native attachment needs reconciliation.", browser_binding=binding)
+            return None
+        await self.check_browser(principal, binding)
+        native = {"action": "attach", "principal": principal, "sessionID": binding["sessionID"],
+                  "threadID": binding["identity"]["conversationID"], "slackThread": binding["slackThread"]}
+        key = "browser-native-attach-" + stable_id(principal["workspace"], principal["channel"],
+            binding["sessionID"], binding["identity"], binding["slackThread"])
+        try:
+            result = await self.mutate(key, native)
+        except Denied:
+            # The incoming Slack event has already been acknowledged. A later
+            # re-enable must not turn a denied reply into fresh input.
+            self.journal.commit(lambda d: d["incoming"].__setitem__(barrier, {
+                "status": "uncertain", "body": {"sessionID": binding["sessionID"]}, "result": {"status": "uncertain"}}))
+            raise
+        except Exception:
+            result = {"status": "uncertain"}
+        if not result.get("attachment"):
+            self.journal.commit(lambda d: d["incoming"].__setitem__(barrier, {
+                "status": "uncertain", "body": {"sessionID": binding["sessionID"]}, "result": {"status": "uncertain"}}))
+            await self.post_once("browser-native-reply-uncertain-" + event_key, principal, binding["slackThread"],
+                "Reply not sent: native attachment needs reconciliation.", browser_binding=binding)
+            return None
+        self.sessions[result["attachment"]["id"]] = result
+        return result
+
+    async def browser_followup(self, principal, binding, event_key, text):
+        # Raw newlines or control characters can be interpreted by a terminal
+        # picker; require one printable line until bracketed paste is verified.
+        if binding.get("identity", {}).get("kind") == "terminalPane":
+            result = {"status": "rejected", "reason": "identity_unverified"}
+        elif not text.strip() or len(text.encode("utf-8")) > 16384 or any(
+                unicodedata.category(c) in ("Cc", "Cf") and not (binding.get("identity", {}).get("kind") == "puck" and c in "\n\t") for c in text):
+            result = {"status": "rejected", "reason": "unsupported_text"}
+        else:
+            result = await self.submit_browser_followup(principal, binding, event_key, text)
+        status = result.get("status", "uncertain")
+        reason = result.get("reason")
+        if status == "submitted":
+            message = "Reply submitted to this session."
+        elif status == "rejected" and reason == "identity_unverified":
+            message = "Reply not sent: the exact conversation identity is unavailable. Continue on the Mac."
+        elif status == "rejected" and reason == "unsupported_text":
+            message = "Reply not sent: use one printable line without control characters."
+        elif status == "rejected":
+            message = "Reply not sent: the pane is busy, unavailable, or changed."
+        elif status == "acknowledged":
+            message = "This reply was reconciled locally and was not sent again."
+        else:
+            message = "Reply outcome is uncertain. Inspect the desktop session before reconciling; it will not be retried."
+        try:
+            ts = await self.post_once("browser-followup-receipt-" + event_key, principal, binding["slackThread"], message,
+                                      browser_binding=binding)
+            if ts:
+                await self.check_browser(principal, binding)
+                await self.slack.call("chat.update", channel=principal["channel"], ts=ts,
+                                      text=message, blocks=[section(message)], parse="none")
+        except StaleBrowser:
+            await self.post_once("browser-followup-stale-" + event_key, principal, binding["slackThread"],
+                                 "This session binding changed or is unavailable. Reopen it from App Home.")
+
+    def record_browser_receipt(self, key, receipt):
+        status = receipt.get("status")
+        if status in ("submitted", "rejected", "acknowledged"):
+            self.journal.commit(lambda d: d["incoming"][key].update(status="done", result=receipt))
+            return receipt
+        # Keep an unknown or in-flight result open for read-only reconciliation.
+        self.journal.commit(lambda d: d["incoming"][key].update(status="uncertain", result=receipt))
+        return receipt if status == "uncertain" else {"status": "uncertain"}
+
+    async def submit_browser_followup(self, principal, binding, operation, text):
+        await self.check(principal)
+        body = {"action": "followup", "principal": principal, **binding, "operationID": operation, "text": text}
+        key = "browser-followup-" + operation
+        old = self.journal.data["incoming"].get(key)
+        if old:
+            if old.get("body") != body:
+                raise Unavailable("Duplicate reply changed payload")
+            if old.get("status") == "done":
+                return old.get("result") or {"status": "uncertain"}
+            receipt = await self.call_browser({"action": "followupReceipt", "principal": principal, "operationID": operation})
+            return self.record_browser_receipt(key, receipt)
+        self.journal.commit(lambda d: d["incoming"].__setitem__(key, {"status": "sending", "body": body}))
+        try:
+            result = await self.call_browser(body)
+            return self.record_browser_receipt(key, result)
+        except Denied:
+            self.journal.commit(lambda d: d["incoming"][key].update(status="uncertain"))
+            raise
+        except (Exception, asyncio.CancelledError) as error:
+            self.journal.commit(lambda d: d["incoming"][key].update(status="uncertain"))
+            if isinstance(error, asyncio.CancelledError):
+                raise
+            receipt = await self.call_browser({"action": "followupReceipt", "principal": principal, "operationID": operation})
+            return self.record_browser_receipt(key, receipt)
+
+    async def post_browser_page(self, principal, body, away_guard=None):
+        await self.check_away(principal, away_guard)
+        request = {"action": "boundContext", "principal": principal, "sessionID": body["sessionID"],
+                   "identity": body["identity"], "slackThread": body["slackThread"], "limit": 3}
+        if body.get("cursor"):
+            request["cursor"] = body["cursor"]
+        if body.get("terminalOutput"):
+            request["terminalOutput"] = True
+        context = await self.call_browser(request)
+        pieces = []
+        for message in context.get("messages", []):
+            body_text = message["text"]
+            # Swift's character limit counts grapheme clusters, while Slack's
+            # limit counts code points. Pathological clusters can therefore
+            # exceed the presentation bound even after the reader's cap.
+            if len(body_text) > 8000:
+                body_text = body_text[:8000] + "\n[Message truncated in Slack]"
+            pieces.append(f"{message['role'].capitalize()}: {body_text}")
+        if context.get("output"):
+            pieces.append(context["output"])
+        text = "\n\n".join(pieces) or "No readable messages in this page."
+        # The local reader caps each message at 8,000 characters. Three
+        # messages fit comfortably within Slack's 50-block limit even when
+        # each section is split at Slack's text limit. Never advance a history
+        # cursor past messages hidden by presentation truncation.
+        if body.get("terminalOutput") and len(text) > 100_000:
+            text = text[-100_000:]
+            text = "[Older terminal output truncated in Slack]\n" + text
+        label = f"Source: {context.get('source', 'unavailable')}"
+        if context.get("truncated"):
+            label += " · history truncated"
+        if context.get("mayBeStale"):
+            label += " · may be stale"
+        if context.get("limitation"):
+            label += "\n" + context["limitation"]
+        blocks = [section(label)] + [section(text[i:i + 2900]) for i in range(0, len(text), 2900)]
+        controls = []
+        if context.get("earlier"):
+            controls.append(self.browser_button("Earlier messages", {**body, "cursor": context["earlier"], "terminalOutput": False}, principal))
+        controls.append(self.browser_button("Latest", {**body, "cursor": None, "terminalOutput": False}, principal))
+        if body["identity"].get("kind") in ("terminalCodex", "terminalPane"):
+            controls.append(self.browser_button("Terminal output", {**body, "cursor": None, "terminalOutput": True}, principal))
+        blocks.append({"type": "actions", "elements": controls})
+        guard = {"sessionID": body["sessionID"], "identity": body["identity"], "slackThread": body["slackThread"]}
+        key = "browser-page-" + stable_id(principal["workspace"], principal["channel"], guard, body.get("cursor"), body.get("terminalOutput"), context)
+        await self.post_once(key, principal, body["slackThread"], label + "\n" + text[:2400], blocks,
+                             browser_binding=guard, away_guard=away_guard)
+        if body["identity"].get("kind") == "terminalCodex" and not body.get("cursor") and not body.get("terminalOutput"):
+            await self.render_terminal_decision(principal, guard, away_guard=away_guard)
+
+    async def answer_browser(self, principal, body, operation):
+        await self.check(principal)
+        request = {"action": "answer", "principal": principal, "sessionID": body["sessionID"],
+                   "identity": body["identity"], "slackThread": body["slackThread"],
+                   "requestID": body["requestID"], "option": body["option"], "operationID": operation}
+        key = "browser-answer-" + operation
+        old = self.journal.data["incoming"].get(key)
+        if old:
+            if old.get("body") != request:
+                raise Unavailable("Duplicate answer changed payload")
+            if old.get("status") == "done":
+                return old.get("result") or {"status": "uncertain"}
+            receipt = await self.call_browser({"action": "decisionReceipt", "principal": principal, "operationID": operation})
+            return self.record_browser_receipt(key, receipt)
+        self.journal.commit(lambda d: d["incoming"].__setitem__(key, {"status": "sending", "body": request}))
+        try:
+            result = await self.call_browser(request)
+            return self.record_browser_receipt(key, result)
+        except Denied:
+            self.journal.commit(lambda d: d["incoming"][key].update(status="uncertain"))
+            raise
+        except (Exception, asyncio.CancelledError) as error:
+            self.journal.commit(lambda d: d["incoming"][key].update(status="uncertain"))
+            if isinstance(error, asyncio.CancelledError):
+                raise
+            receipt = await self.call_browser({"action": "decisionReceipt", "principal": principal, "operationID": operation})
+            return self.record_browser_receipt(key, receipt)
+
+    def terminal_decision_blocks(self, principal, binding, decision):
+        if not decision.get("answerable") or decision.get("status") != "pending":
+            return [section("Decision resolved or unavailable. No answer controls are active.")]
+        question, options = decision.get("question", ""), decision.get("options", [])
+        if not question or len(question) > 2800 or not options or len(options) > 24 or any(len(str(o.get("label", ""))) > 2800 for o in options):
+            return [section("This decision is too large to display safely in Slack. Answer it on the Mac.")]
+        blocks = [section(question)]
+        preceding = "\n".join(str(v) for v in decision.get("context", []))
+        recent = "\n".join(f"{m.get('role', 'message')}: {m.get('text', '')}" for m in decision.get("recentContext", [])[-3:])
+        context = "\n".join(v for v in (preceding, recent) if v)
+        if context:
+            if len(context) > 2600:
+                context = context[-2600:] + "\n[Context truncated]"
+            blocks.append(section("Recent context\n" + context))
+        buttons = []
+        for option in options:
+            index, label = option.get("index"), option.get("label", "")
+            if not isinstance(index, int) or index <= 0 or not label:
+                return [section("This decision cannot be displayed safely. Answer it on the Mac.")]
+            blocks.append(section(f"{index}. {label}"))
+            buttons.append(self.browser_button(str(index), {"action": "browser_answer", **binding,
+                "requestID": decision["requestID"], "option": index}, principal))
+        buttons.append(self.browser_button("Read more", {"action": "browser_page", **binding,
+            "cursor": None, "terminalOutput": False}, principal))
+        blocks.append({"type": "actions", "elements": buttons})
+        return blocks
+
+    async def render_terminal_decision(self, principal, binding, away_guard=None):
+        await self.check_away(principal, away_guard)
+        request = {"action": "decision", "principal": principal, **binding}
+        decision = await self.call_browser(request)
+        key = "browser-decision-" + stable_id(principal["workspace"], principal["channel"], binding)
+        existing = self.journal.data["posts"].get(key, {})
+        active = decision.get("status") == "pending" and decision.get("answerable")
+        if not active and not existing.get("ts"):
+            return
+        blocks = self.terminal_decision_blocks(principal, binding, decision)
+        if active:
+            guard = {**binding, "requestID": decision["requestID"]}
+            try:
+                ts = await self.post_once(key, principal, binding["slackThread"], "Terminal decision", blocks,
+                                          browser_binding=guard, away_guard=away_guard)
+            except StaleBrowser:
+                decision = await self.call_browser(request)
+                blocks = self.terminal_decision_blocks(principal, binding, decision)
+                ts = existing.get("ts")
+        else:
+            ts = existing.get("ts")
+        if not ts:
+            return
+        # Refresh once more immediately before publishing controls. If the Mac
+        # resolved the question, remove them instead of posting stale choices.
+        latest = await self.call_browser(request)
+        if latest.get("requestID") != decision.get("requestID") or latest.get("status") != decision.get("status"):
+            decision = latest
+            blocks = self.terminal_decision_blocks(principal, binding, decision)
+        guard = dict(binding)
+        if decision.get("status") == "pending" and decision.get("answerable"):
+            guard["requestID"] = decision["requestID"]
+        try:
+            await self.check_browser(principal, guard)
+        except StaleBrowser:
+            await self.check_browser(principal, binding)
+            blocks = [section("Decision resolved or unavailable. No answer controls are active.")]
+        await self.check_away(principal, away_guard)
+        await self.slack.call("chat.update", channel=principal["channel"], ts=ts,
+                              text="Terminal decision", blocks=blocks[:50], parse="none")
+
     async def interaction(self, payload):
         workspace = payload.get("team", {}).get("id", "")
         user = payload.get("user", {}).get("id", "")
+        actions = payload.get("actions", [])
+        if payload.get("type") == "block_actions" and len(actions) == 1 and actions[0].get("action_id") in ("banyan_home", "banyan_home_search", "banyan_browser"):
+            await self.browser_interaction(payload, workspace, user, actions[0])
+            return
         if payload.get("type") == "view_submission":
             token = payload.get("view", {}).get("private_metadata", "")
             modal = self.journal.data["modals"].get(token)
@@ -374,9 +956,14 @@ class Connector:
         await self.slack.call("views.open", trigger_id=trigger, view={"type": "modal", "callback_id": "banyan_answer",
             "private_metadata": token, "title": plain("Answer Codex"), "submit": plain("Send"), "blocks": blocks})
 
-    async def render(self, session, principal, notify=None):
+    async def render(self, session, principal, notify=None, away_guard=None):
         binding = self.binding(session)
         await self.check(principal, binding=binding)
+        await self.check_away(principal, away_guard)
+        session = await self.call_api({"action": "snapshot", "principal": principal, **binding})
+        if self.binding(session) != binding:
+            raise StaleAttachment("Attachment changed")
+        signature = self.native_control_signature(session)
         attachment = session["attachment"]
         self.sessions[attachment["id"]] = session
         heading = f"{session['title']} · {session['project']}"
@@ -414,15 +1001,27 @@ class Connector:
                 controls.insert(0, self.button("Stop turn", {**binding, "action": "stop", "turnID": session["turnID"]}, principal))
             blocks.append({"type": "actions", "elements": controls})
         key = "status-" + attachment["id"]
-        ts = await self.post_once(key, principal, attachment["slackThread"], heading + ": " + state, blocks[:50], binding=binding)
-        if ts:
-            await self.check(principal, binding=binding)
-            await self.slack.call("chat.update", channel=principal["channel"], ts=ts,
-                text=heading.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + ": " + state, blocks=blocks[:50], parse="none")
-        if notify:
-            # Lifecycle notification is separate from the replaceable status panel.
-            await self.post_once("notice-" + stable_id(attachment["id"], notify), principal,
-                attachment["slackThread"], heading + ": " + state, binding=binding)
+        try:
+            ts = await self.post_once(key, principal, attachment["slackThread"], heading + ": " + state, blocks[:50],
+                                      binding=binding, away_guard=away_guard, native_guard=signature)
+            if ts:
+                await self.check_native_state(principal, binding, signature)
+                await self.check_away(principal, away_guard)
+                await self.slack.call("chat.update", channel=principal["channel"], ts=ts,
+                    text=heading.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + ": " + state, blocks=blocks[:50], parse="none")
+            if notify:
+                await self.post_once("notice-" + stable_id(attachment["id"], notify), principal,
+                    attachment["slackThread"], heading + ": " + state, binding=binding, away_guard=away_guard, native_guard=signature)
+        except StaleNativeState:
+            # If an old panel exists, remove its controls; do not publish the
+            # stale snapshot or automatically post a replacement.
+            ts = self.journal.data["posts"].get(key, {}).get("ts")
+            if ts:
+                await self.check(principal, binding=binding)
+                await self.check_away(principal, away_guard)
+                await self.slack.call("chat.update", channel=principal["channel"], ts=ts,
+                    text="Native session changed. Refresh to continue.",
+                    blocks=[section("Native session changed. Controls are paused until refreshed.")], parse="none")
 
     async def offline_message(self, attachment_id, principal):
         self.online = False
@@ -447,6 +1046,147 @@ class Connector:
         self.socket_connected = True
         self.socket_synchronized = False
         self.needs_refresh = True
+
+    async def refresh_away(self, principal):
+        cursor_key = "away-" + stable_id(principal["workspace"], principal["channel"])
+        async with self.lock:
+            if not self.permitted(principal) or not self.socket_synchronized:
+                return
+            connection = self.connection_generation
+            saved = self.journal.data["cursors"].get(cursor_key, {})
+        # This request is parked by Banyan until a status or scope change.
+        response = await self.call_browser({"action": "awayEvents", "principal": principal, **saved})
+        async with self.lock:
+            if not self.permitted(principal) or not self.socket_synchronized or connection != self.connection_generation:
+                return
+            await self.check(principal)
+            channel_key = (principal["workspace"], principal["channel"])
+            if not response.get("enabled"):
+                self.away_ready.pop(channel_key, None)
+                self.save_away_cursor(cursor_key, response)
+                return
+            guard = {"activationID": response["activationID"], "revision": response["revision"]}
+            if response.get("refresh") or self.away_ready.get(channel_key) != guard["activationID"]:
+                snapshot = await self.call_browser({"action": "awaySnapshot", "principal": principal})
+                if snapshot.get("activationID") != guard["activationID"] or snapshot.get("revision") != guard["revision"]:
+                    raise StaleAway("Away changed during catch-up")
+                self.away_ready.pop(channel_key, None)
+                await self.deliver_away_catchup(principal, guard, snapshot)
+                await self.process_away_events(principal, guard, snapshot.get("events", []), snapshot["epoch"])
+                self.away_ready[channel_key] = guard["activationID"]
+                self.save_away_cursor(cursor_key, {**snapshot, "enabled": True})
+            else:
+                await self.process_away_events(principal, guard, response.get("events", []), response["epoch"])
+                self.save_away_cursor(cursor_key, response)
+
+    def save_away_cursor(self, key, response):
+        value = {"eventEpoch": response["epoch"], "eventCursor": response["cursor"],
+                 "awayActivationID": response.get("activationID"), "awayRevision": response["revision"]}
+        self.journal.commit(lambda d: d["cursors"].__setitem__(key, value))
+
+    async def deliver_away_catchup(self, principal, guard, snapshot):
+        text = self.away_digest(snapshot)
+        digest_guard = {**guard, "snapshotFingerprint": stable_id(text)}
+        key = "away-digest-" + stable_id(principal["workspace"], principal["channel"], guard["activationID"])
+        await self.post_once(key, principal, None, text, away_guard=digest_guard)
+        if snapshot.get("gap"):
+            gap_key = "away-gap-" + stable_id(principal["workspace"], principal["channel"], guard["activationID"], snapshot["epoch"])
+            await self.post_once(gap_key, principal, None,
+                "Some activity could not be recovered. Current session state was refreshed.", away_guard=guard)
+        rows = {row["sessionID"]: row for row in snapshot.get("sessions", [])}
+        for candidate in snapshot.get("decisions", []):
+            row = rows.get(candidate.get("sessionID"))
+            if not row:
+                continue
+            if row.get("backend") == "puck":
+                # Puck activity is represented in the digest; its actionable
+                # adapter is not yet available, so do not create controls.
+                continue
+            session_guard = {**guard, "sessionID": row["sessionID"], "requirePending": True}
+            try:
+                current = await self.call_browser({"action": "awaySession", "principal": principal, "sessionID": row["sessionID"]})
+                if not current.get("pending"):
+                    continue
+                await self.open_browser_session(principal, current, away_guard=session_guard)
+                await self.mark_away_decision_seen(principal, guard, row["sessionID"])
+            except (StaleAway, StaleBrowser):
+                # Resolution or scope changes retire the candidate, never expose controls.
+                continue
+
+    async def mark_away_decision_seen(self, principal, guard, session_id):
+        opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
+        identity, attachment = opened.get("binding"), opened.get("attachment") or {}
+        if not identity or not attachment.get("slackThread"):
+            return
+        if identity.get("kind") == "nativeCodex":
+            native = next((s for s in self.sessions.values() if s["sessionID"] == session_id and
+                s["threadID"] == identity["conversationID"] and s["attachment"]["slackThread"] == attachment["slackThread"]), None)
+            if native:
+                native = await self.call_api({"action": "snapshot", "principal": principal, **self.binding(native)})
+                keys = [stable_id("native", guard["activationID"], session_id, item["id"], item.get("turnID"))
+                        for item in native.get("requests", []) if item.get("answerable", True)]
+                if keys:
+                    self.journal.commit(lambda d: d["awaySeen"].update({key: True for key in keys}))
+            return
+        if identity.get("kind") != "terminalCodex":
+            return
+        binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment["slackThread"]}
+        decision = await self.call_browser({"action": "decision", "principal": principal, **binding})
+        if decision.get("answerable") and decision.get("requestID"):
+            key = stable_id(guard["activationID"], session_id, decision["requestID"])
+            self.journal.commit(lambda d: d["awaySeen"].__setitem__(key, True))
+
+    async def process_away_events(self, principal, guard, events, epoch):
+        # Current state wins over transient status bursts; no progress stream is posted.
+        latest = {}
+        for event in events:
+            latest[event["sessionID"]] = event
+        for session_id, event in latest.items():
+            session_guard = {**guard, "sessionID": session_id}
+            try:
+                await self.check_away(principal, session_guard)
+                current = await self.call_browser({"action": "awaySession", "principal": principal, "sessionID": session_id})
+                if current.get("backend") in ("codex", "puck"):
+                    continue  # Native has its own stream; Puck actions need its runtime adapter.
+                if current.get("pending"):
+                    pending_guard = {**session_guard, "requirePending": True}
+                    opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
+                    identity, attachment = opened.get("binding"), opened.get("attachment") or {}
+                    old_binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment.get("slackThread")}
+                    old_key = "browser-decision-" + stable_id(principal["workspace"], principal["channel"], old_binding)
+                    had_card = bool(self.journal.data["posts"].get(old_key, {}).get("ts"))
+                    await self.open_browser_session(principal, current, away_guard=pending_guard)
+                    opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
+                    identity, attachment = opened.get("binding"), opened.get("attachment") or {}
+                    if not identity or not attachment.get("slackThread") or identity.get("kind") != "terminalCodex":
+                        continue
+                    binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment["slackThread"]}
+                    decision = await self.call_browser({"action": "decision", "principal": principal, **binding})
+                    request_id = decision.get("requestID") if decision.get("answerable") else None
+                    if not request_id:
+                        continue
+                    seen = stable_id(guard["activationID"], session_id, request_id)
+                    if seen not in self.journal.data["awaySeen"]:
+                        if had_card:
+                            await self.post_once("away-decision-" + seen, principal, binding["slackThread"],
+                                "A new decision needs your attention.",
+                                browser_binding={**binding, "requestID": request_id}, away_guard=pending_guard)
+                        self.journal.commit(lambda d: d["awaySeen"].__setitem__(seen, True))
+                elif current.get("status") in ("failed", "completed") and current.get("status") == event.get("status"):
+                    await self.open_browser_session(principal, current, away_guard=session_guard)
+                    opened = await self.call_browser({"action": "open", "principal": principal, "sessionID": session_id})
+                    identity, attachment = opened.get("binding"), opened.get("attachment") or {}
+                    if identity and attachment.get("slackThread"):
+                        binding = {"sessionID": session_id, "identity": identity, "slackThread": attachment["slackThread"]}
+                        await self.post_once("away-event-" + stable_id(epoch, event["cursor"]), principal, binding["slackThread"],
+                            f"{current['title']}: {current['status']}", browser_binding=binding, away_guard=session_guard)
+                else:
+                    # Refresh an existing card to remove controls after desktop resolution.
+                    for key, binding in list(self.journal.data["browserThreads"].items()):
+                        if binding.get("sessionID") == session_id and key == stable_id(principal["workspace"], principal["channel"], binding.get("slackThread")) and binding.get("identity", {}).get("kind") == "terminalCodex":
+                            await self.render_terminal_decision(principal, binding, away_guard=session_guard)
+            except (StaleAway, StaleBrowser):
+                continue
 
     async def refresh(self, principal, first=False):
         async with self.lock:
@@ -480,26 +1220,54 @@ class Connector:
                 and post["binding"]["attachmentID"] not in current}
             for binding in obsolete.values():
                 self.cancel_attachment(binding)
+            away = await self.call_browser({"action": "awayStatus", "principal": principal})
+            channel_key = (principal["workspace"], principal["channel"])
+            ready = away.get("enabled") and self.away_ready.get(channel_key) == away.get("activationID")
             for session in current.values():
                 relevant = [e for e in response["events"] if e["attachment"]["id"] == session["attachment"]["id"]]
-                # Progress replaces one panel at most every 2 seconds. Attention
-                # and completion bypass coalescing, deltas never reach this API.
                 urgent = [e for e in relevant if e["kind"] in ("attention", "turn/completed", "error")]
                 aid = session["attachment"]["id"]
-                if first or response["refresh"] or urgent or (relevant and time.monotonic() - self.last_progress.get(aid, 0) >= 2):
-                    await self.render(session, principal)
-                    self.last_progress[aid] = time.monotonic()
                 self.sessions[aid] = session
-                for event in urgent:
-                    await self.post_once("event-" + stable_id(response["epoch"], event["cursor"]), principal,
-                        session["attachment"]["slackThread"], f"{session['title']} · {session['project']}: " +
-                        ("input needed" if event["kind"] == "attention" else session.get("lastTurnStatus") or event["kind"]), binding=self.binding(session))
+                if not ready:
+                    continue
+                guard = {"activationID": away["activationID"], "revision": away["revision"], "sessionID": session["sessionID"]}
+                try:
+                    await self.check_away(principal, guard)
+                    if relevant:
+                        session = await self.call_api({"action": "snapshot", "principal": principal, **self.binding(session)})
+                        self.sessions[aid] = session
+                    if urgent or (relevant and time.monotonic() - self.last_progress.get(aid, 0) >= 2):
+                        await self.render(session, principal, away_guard=guard)
+                        self.last_progress[aid] = time.monotonic()
+                    signature = self.native_control_signature(session)
+                    for event in urgent:
+                        seen_keys = []
+                        event_guard = guard
+                        if event["kind"] == "attention":
+                            pending = [item for item in session.get("requests", []) if item.get("answerable", True)]
+                            seen_keys = [stable_id("native", guard["activationID"], session["sessionID"], item["id"], item.get("turnID")) for item in pending]
+                            if not seen_keys or all(key in self.journal.data["awaySeen"] for key in seen_keys):
+                                continue
+                            event_guard = {**guard, "requirePending": True}
+                        elif event["kind"] == "turn/completed" and (session.get("turnID") or session.get("lastTurnStatus") != "completed"):
+                            continue
+                        elif event["kind"] == "error" and session.get("lastTurnStatus") not in ("failed", "interrupted") and session.get("state") not in ("failed", "systemError"):
+                            continue
+                        await self.post_once("event-" + stable_id(response["epoch"], event["cursor"]), principal,
+                            session["attachment"]["slackThread"], f"{session['title']} · {session['project']}: " +
+                            ("input needed" if event["kind"] == "attention" else session.get("lastTurnStatus") or event["kind"]),
+                            binding=self.binding(session), away_guard=event_guard, native_guard=signature)
+                        if seen_keys:
+                            self.journal.commit(lambda d: d["awaySeen"].update({key: True for key in seen_keys}))
+                except (StaleAway, StaleNativeState):
+                    continue
             for key, post in list(self.journal.data["posts"].items()):
                 if post["status"] == "retryable" and post.get("retryAt", 0) <= time.time() and post.get("retry", {}).get("principal") == principal:
                     retry = post["retry"]
                     try:
-                        await self.post_once(key, principal, retry["root"], retry["text"], retry["blocks"], binding=retry.get("binding"))
-                    except StaleAttachment:
+                        await self.post_once(key, principal, retry["root"], retry["text"], retry["blocks"], binding=retry.get("binding"),
+                                             browser_binding=retry.get("browser_binding"), away_guard=retry.get("away_guard"), native_guard=retry.get("native_guard"))
+                    except (StaleAttachment, StaleBrowser, StaleAway, StaleNativeState):
                         pass  # Known obsolete delivery has been durably cancelled.
             self.journal.commit(lambda d: d["cursors"].__setitem__(cursor_key, {"cursor": response["cursor"], "epoch": response["epoch"]}))
 

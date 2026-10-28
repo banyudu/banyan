@@ -462,6 +462,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
+            BanyanApp.sessionStore.slackIntegration.stopForShutdown()
             await BanyanApp.codexAppServer.stop()
             sender.reply(toApplicationShouldTerminate: true)
         }

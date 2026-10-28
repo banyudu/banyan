@@ -503,3 +503,30 @@ private func writePuckLines(_ peer: Int32, _ lines: [String]) {
     #expect(lag.cursor == 0)
     #expect(lag.displayText == nil)
 }
+
+@Test func puckRecentEventsReadsOnlyABoundedTailWithoutAttaching() throws {
+    let path = FileManager.default.temporaryDirectory.appendingPathComponent("puck_tail_\(UUID().uuidString.prefix(8)).sock").path
+    let listener = try listeningPuckSocket(at: path)
+    defer { _ = close(listener); _ = unlink(path) }
+    let done = DispatchSemaphore(value: 0)
+    let capture = PuckRequestCapture()
+    DispatchQueue.global().async {
+        defer { done.signal() }
+        for (after, events) in [(0, [1]), (3, [4, 5])] {
+            let peer = accept(listener, nil, nil)
+            guard peer >= 0 else { return }
+            let request = readPuckRequest(peer)
+            if after == 3 { capture.record(request) }
+            guard request?["method"] as? String == "session.events",
+                  (request?["params"] as? [String: Any])?["after"] as? Int == after else { _ = close(peer); return }
+            let rows = events.map { #"{"cursor":\#($0),"data":{"event":"text_delta","text":"part"}}"# }.joined(separator: ",")
+            writePuckLines(peer, [#"{"jsonrpc":"2.0","id":1,"result":{"cursor":5,"events":[\#(rows)]}}"#])
+            _ = close(peer)
+        }
+    }
+    let history = try PuckDaemonClient(socketPath: path).recentEvents("fixture", maximum: 2)
+    #expect(history.events.map(\.cursor) == [4, 5])
+    #expect(history.cursor == 5 && history.truncated && !history.incomplete)
+    #expect(done.wait(timeout: .now() + 2) == .success)
+    #expect(capture.request?["method"] as? String == "session.events")
+}

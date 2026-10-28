@@ -67,6 +67,17 @@ public enum CodexRemoteError: LocalizedError {
     }
 }
 
+/// A cheap cross-thread epoch check at the remote send boundary. Once a
+/// subprocess has started, its outcome is reconciled as in-flight/uncertain.
+public final class CodexRemotePolicyFence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var revision: UInt64 = 0
+    public init() {}
+    public func current() -> UInt64 { lock.lock(); defer { lock.unlock() }; return revision }
+    @discardableResult public func advance() -> UInt64 { lock.lock(); defer { lock.unlock() }; revision &+= 1; return revision }
+    public func matches(_ expected: UInt64) -> Bool { lock.lock(); defer { lock.unlock() }; return revision == expected }
+}
+
 /// Runtime-independent persistence and authorization around the ONE native
 /// coordinator. Credentials and Slack networking never enter this layer.
 @MainActor
@@ -98,11 +109,16 @@ public final class CodexRemoteControl {
     private var drains: [String: Task<Void, Never>] = [:]
     private var lease: Task<Void, Never>?
     public private(set) var isOnline = false
+    /// Fences in-flight remote reads even if a local disable is quickly reversed.
+    public private(set) var policyGeneration: UInt64 = 0
+    public let policyFence = CodexRemotePolicyFence()
     public private(set) var storageError: String?
     public var onChange: (() -> Void)?
     /// Host supplies only native rows. No settings, credentials or raw logs.
     public var metadata: (String) -> (title: String, project: String)? = { _ in nil }
     public var recentConversation: (String) -> CodexConversation? = { _ in nil }
+    /// Host can fence collisions with other Slack session bindings.
+    public var externalThreadAvailable: (String, String, CodexRemotePrincipal, String) -> Bool = { _, _, _, _ in true }
     public var policy: CodexRemotePolicy { journal.policy }
     public var attachments: [CodexRemoteAttachment] { journal.attachments }
 
@@ -147,6 +163,7 @@ public final class CodexRemoteControl {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         } catch {
             storageError = "Remote journal write failed; Slack control is unavailable"
+            policyGeneration = policyFence.advance()
             isOnline = false
             onChange?()
             throw error
@@ -159,6 +176,9 @@ public final class CodexRemoteControl {
     /// action cannot enable itself or expand the allowlist.
     public func configure(_ policy: CodexRemotePolicy) throws {
         guard policy.allowed.count <= 256 else { throw CodexRemoteError.invalid("Too many allowlist entries") }
+        // Fence background sends before any observer is notified of the new
+        // policy. Even a failed write must not leave an old send authorized.
+        policyGeneration = policyFence.advance()
         try commit { next in
             next.policy = policy
             for index in next.receipts.indices where next.receipts[index].status == "queued"
@@ -183,6 +203,8 @@ public final class CodexRemoteControl {
         storageError == nil && journal.attachments.contains(attachment) && journal.policy.enabled
             && journal.policy.allowed.contains { $0.workspace == attachment.workspace && $0.channel == attachment.channel }
             && coordinator.states[attachment.sessionID]?.binding.threadID == attachment.threadID
+            && externalThreadAvailable(attachment.sessionID, attachment.threadID,
+                CodexRemotePrincipal(workspace: attachment.workspace, channel: attachment.channel, user: ""), attachment.slackThread)
             && metadata(attachment.sessionID) != nil
     }
 
@@ -319,6 +341,9 @@ public final class CodexRemoteControl {
                   metadata(id) != nil, coordinator.states[id]?.binding.threadID == threadID,
                   let slackThread = request.slackThread, !slackThread.isEmpty, slackThread.utf8.count <= 100 else {
                 throw CodexRemoteError.invalid("Attach requires an existing native session/thread and Slack thread timestamp")
+            }
+            guard externalThreadAvailable(id, threadID, request.principal, slackThread) else {
+                throw CodexRemoteError.invalid("Slack thread is already bound to another conversation")
             }
             if let old = journal.attachments.first(where: { $0.sessionID == id }) {
                 guard old.threadID == threadID, old.workspace == request.principal.workspace,
