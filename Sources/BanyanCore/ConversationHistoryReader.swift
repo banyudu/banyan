@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 /// A bounded snapshot of one explicitly identified provider transcript.
 /// Callers must resolve the transcript from the exact session identity; this
@@ -196,7 +195,7 @@ public actor ConversationHistoryReader {
                                 fileNumber: inode, deviceNumber: device, messages: parsed.messages,
                                 incompleteTail: !bytes.isEmpty && bytes.last != 10,
                                 resetCount: parsed.resetCount,
-                                windowDigest: SHA256.hash(data: header + bytes).map { String(format: "%02x", $0) }.joined())
+                                windowDigest: ConversationWindowDigest.hex(header + bytes))
         try validate(snapshot)
         return snapshot
     }
