@@ -62,10 +62,15 @@ import Testing
     let identity = ConversationHistoryReader.Identity(provider: .codex, conversationID: "thread", transcriptURL: transcript)
     let first = try await reader.page(identity: identity, limit: 1)
     #expect(first.truncatedBefore && first.proof.map { _ in true } == nil)
+    #expect(first.earlier == nil)
+    await #expect(throws: ConversationHistoryReader.ReadError.invalidCursor) {
+        try await reader.page(identity: identity, earlier: "\(first.snapshotID.uuidString):1")
+    }
     let offset = try #require(initial.range(of: "hello1")).lowerBound.utf16Offset(in: initial)
     let handle = try FileHandle(forWritingTo: transcript)
     try handle.seek(toOffset: UInt64(offset)); try handle.write(contentsOf: Data("/clear".utf8)); try handle.close()
     let changed = try await reader.page(identity: identity, limit: 1)
     #expect(changed.truncatedBefore && changed.proof.map { _ in true } == nil)
+    #expect(changed.earlier == nil)
     #expect(changed.windowDigest == first.windowDigest)
 }

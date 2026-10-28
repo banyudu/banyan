@@ -282,10 +282,12 @@ extension SessionStore {
             }
             if let page {
                 let identity = SlackConversationIdentity(kind: "nativeCodex", conversationID: threadID, generation: "native")
+                let limitation: String? = page.incompleteTail ? "The final record is still being written; earlier pages are unavailable." :
+                    (page.truncatedBefore ? "Earlier pages are unavailable because the transcript generation cannot be fully verified." : nil)
                 return ["source": "providerTranscript", "conversationID": threadID, "binding": slackIdentityObject(identity),
                         "messages": page.messages.map { ["role": $0.role, "text": $0.text, "truncated": $0.truncated] },
                         "earlier": page.earlier.map { "rollout:" + $0 } as Any? ?? NSNull(), "output": NSNull(),
-                        "limitation": page.incompleteTail ? "The final transcript record is still being written." : NSNull(),
+                        "limitation": limitation as Any? ?? NSNull(),
                         "truncated": page.truncatedBefore || page.messages.contains(where: \.truncated), "mayBeStale": page.incompleteTail]
             }
             if fileCursor { throw CodexRemoteError.invalid("Native history changed; open latest") }

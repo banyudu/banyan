@@ -134,10 +134,8 @@ private func conversationRollout() throws -> URL {
     let page = try await context.read(sessionID: "row", sessionName: "fixture", provider: .codex, limit: 1)
     #expect(page.source == .providerTranscript && page.messages.last?.text == "message-29")
     #expect(page.binding?.kind == "terminalPane" && page.truncated)
-    #expect(page.limitation?.contains("replies are disabled") == true)
-    let earlier = try await context.read(sessionID: "row", sessionName: "fixture", provider: .codex,
-                                         earlier: try #require(page.earlier), limit: 1)
-    #expect(earlier.binding == page.binding && earlier.messages.last?.text == "message-28")
+    #expect(page.limitation?.contains("Earlier pages and replies are disabled") == true)
+    #expect(page.earlier == nil)
     let appended = try FileHandle(forWritingTo: url)
     try appended.seekToEnd()
     try appended.write(contentsOf: Data((#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"new"}]}}"# + "\n").utf8))

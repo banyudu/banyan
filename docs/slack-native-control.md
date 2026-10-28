@@ -69,8 +69,8 @@ their source and any truncation or staleness. When an exact terminal conversatio
 cannot be verified, retained pane output is read-only; it is not matched by
 working-directory similarity. The bounded transcript window is at most 4 MiB,
 with individual messages limited to 8,000 characters. A larger transcript
-remains readable but cannot currently establish a full generation proof for
-replies or decision controls. A read-only pane binding is retired after its
+shows a recent page but cannot currently establish a full generation proof for
+earlier pages, replies, or decision controls. A read-only pane binding is retired after its
 captured output or transcript window changes, an observed conversation reset,
 or an app restart. Large or replaced files can invalidate a cursor;
 reopen Latest. Puck history comes from bounded daemon events and can omit user

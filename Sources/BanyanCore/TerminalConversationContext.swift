@@ -135,8 +135,8 @@ public actor TerminalConversationContextReader: TerminalConversationContextReadi
         do { try await history.revalidate(identity: initial.historyIdentity(sessionID: sessionID), snapshotID: page.snapshotID) }
         catch { throw ContextError.changed }
         let limitation: String?
-        if page.incompleteTail { limitation = "The transcript is still being written; the incomplete record is omitted. Replies are disabled until its identity is verified." }
-        else if binding?.kind == "terminalPane" { limitation = "The full conversation generation could not be verified. History is limited and replies are disabled." }
+        if page.incompleteTail { limitation = "The transcript is still being written; the incomplete record is omitted. Earlier pages and replies are disabled until its identity is verified." }
+        else if binding?.kind == "terminalPane" { limitation = "The full conversation generation could not be verified. Earlier pages and replies are disabled." }
         else { limitation = nil }
         return Context(source: .providerTranscript, conversationID: initial.conversationID, binding: binding, messages: page.messages,
                        earlier: page.earlier, output: nil, limitation: limitation,

@@ -128,7 +128,8 @@ public actor ConversationHistoryReader {
             let parts = cursor.split(separator: ":", omittingEmptySubsequences: false)
             guard parts.count == 2, let parsedID = UUID(uuidString: String(parts[0])),
                   let parsedEnd = Int(parts[1]), let stored = snapshots[parsedID],
-                  stored.identity == identity, (0...stored.messages.count).contains(parsedEnd) else {
+                  stored.identity == identity, stored.start == 0, !stored.incompleteTail,
+                  (0...stored.messages.count).contains(parsedEnd) else {
                 throw ReadError.invalidCursor
             }
             try validate(stored)
@@ -150,7 +151,7 @@ public actor ConversationHistoryReader {
             ? Proof(bytes: snapshot.bytes, deviceNumber: snapshot.deviceNumber.uint64Value,
                     fileNumber: snapshot.fileNumber.uint64Value, resetCount: snapshot.resetCount) : nil
         return Page(snapshotID: id, proof: proof, messages: Array(snapshot.messages[start..<end]),
-                    earlier: start > 0 ? "\(id.uuidString):\(start)" : nil,
+                    earlier: start > 0 && proof != nil ? "\(id.uuidString):\(start)" : nil,
                     incompleteTail: snapshot.incompleteTail, resetCount: snapshot.resetCount,
                     truncatedBefore: snapshot.start > 0, windowDigest: snapshot.windowDigest)
     }
