@@ -1,6 +1,22 @@
 import BanyanCore
 import Foundation
 
+struct CoordinationRecoveryInspection: Equatable {
+    let id: String
+    let failureID: String
+    let error: String
+    let parent: String
+    let group: String
+    let parentIdentity: ObjectIdentifier
+    let parentAgentSessionID: String?
+    let childAgentSessionID: String?
+    let childStatus: SessionStatus
+    let parentBinding: SessionWorkflow
+    let childBinding: SessionWorkflow?
+    let workflow: SessionWorkflow?
+    let interventions: [CoordinationIntervention]
+}
+
 extension SessionStore {
     var coordinationJournal: SessionCoordinationJournal {
         .init(directory: BanyanDataDirectory.url(for: "Banyan/coordination",
@@ -28,6 +44,8 @@ extension SessionStore {
             // Keep a lost intervention fenced even if a later input succeeds.
             // This hold belongs to the current parent, not the issue workflow.
             session.coordinationRecoveryError = "Coordination input for session '\(session.id)' under parent '\(parent)' could not be recorded: \(error.localizedDescription)"
+            session.coordinationFailureID = UUID().uuidString
+            session.coordinationRecoveryInspection = nil
         }
     }
 
@@ -35,6 +53,9 @@ extension SessionStore {
         guard !body.groupID.isEmpty, body.groupID.utf8.count <= 128,
               let session = sessions.first(where: { $0.id == body.id }), !session.isImportedHistory else {
             throw WorkflowError.refused("an original session and bounded group ID are required")
+        }
+        if body.action == "inspect-recovery" || body.action == "recover" {
+            return try controlCoordinationRecovery(body, session: session)
         }
         if body.action == "observe" {
             guard let parent = body.parent, session.parentSessionID == parent,
@@ -144,6 +165,72 @@ extension SessionStore {
         return result
     }
 
+    private func controlCoordinationRecovery(_ body: CoordinationControlPayload, session: BanyanSession) throws -> [String: Any] {
+        func snapshot(id: String) throws -> CoordinationRecoveryInspection {
+            guard let parent = body.parent, parent != session.id, session.parentSessionID == parent,
+                  session.status != .closed, let parentSession = sessions.first(where: { $0.id == parent && !$0.isImportedHistory && $0.status != .closed }),
+                  let error = session.coordinationRecoveryError, let failureID = session.coordinationFailureID else {
+                throw WorkflowError.refused("no matching live coordination failure; inspect the session and parent")
+            }
+            let parentBinding: SessionWorkflow
+            let childBinding: SessionWorkflow?
+            let interventions: [CoordinationIntervention]
+            do {
+                guard let binding = try coordinationJournal.bindings.load(id: parent),
+                      binding.owner == "workit-coordinator", binding.jobID == body.groupID else {
+                    throw WorkflowError.refused("coordinator binding does not match the parent and group")
+                }
+                parentBinding = binding
+                childBinding = try coordinationJournal.bindings.load(id: session.id)
+                interventions = try coordinationJournal.interventions(id: session.id)
+            } catch {
+                throw WorkflowError.refused("coordination journal cannot be validated: \(error.localizedDescription); repair it and inspect again")
+            }
+            guard session.workflowRecoveryError == nil else {
+                throw WorkflowError.refused("workflow journal recovery error: \(session.workflowRecoveryError!); repair the workflow separately")
+            }
+            do {
+                guard try workflowJournal.load(id: session.id) == session.workflow else {
+                    throw WorkflowError.refused("workflow journal differs from the live session")
+                }
+            } catch {
+                throw WorkflowError.refused("workflow journal cannot be validated: \(error.localizedDescription); repair the workflow separately")
+            }
+            return .init(id: id, failureID: failureID, error: error, parent: parent, group: body.groupID,
+                         parentIdentity: ObjectIdentifier(parentSession), parentAgentSessionID: parentSession.agentSessionID,
+                         childAgentSessionID: session.agentSessionID, childStatus: session.status,
+                         parentBinding: parentBinding, childBinding: childBinding, workflow: session.workflow, interventions: interventions)
+        }
+
+        if body.action == "inspect-recovery" {
+            session.coordinationRecoveryInspection = nil
+            do {
+                let inspection = try snapshot(id: UUID().uuidString)
+                session.coordinationRecoveryInspection = inspection
+                return ["ok": true, "recoverable": true, "inspectionID": inspection.id,
+                        "coordinationRecoveryError": inspection.error,
+                        "coordinationInterventions": inspection.interventions.map { ["id": $0.id, "at": $0.at, "text": $0.text] },
+                        "nextAction": "Inspect the original conversation and recorded interventions for potentially lost input, then recover with this inspection ID and an acknowledgment detail. No input will be replayed."]
+            } catch {
+                return ["ok": true, "recoverable": false, "nextAction": error.localizedDescription]
+            }
+        }
+        guard let inspection = session.coordinationRecoveryInspection, body.inspectionID == inspection.id,
+              let detail = body.detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty,
+              detail.utf8.count <= 3000 else {
+            throw WorkflowError.refused("a current inspection ID and bounded acknowledgment detail are required")
+        }
+        guard try snapshot(id: inspection.id) == inspection else {
+            throw WorkflowError.refused("recovery inspection is stale; inspect again")
+        }
+        try coordinationJournal.appendIntervention(id: session.id,
+            text: "Coordination recovery acknowledged (failure: \(inspection.error.prefix(500))): \(detail)")
+        session.coordinationRecoveryError = nil
+        session.coordinationFailureID = nil
+        session.coordinationRecoveryInspection = nil
+        return ["ok": true, "recovered": true, "nextAction": "Review the recorded acknowledgment before retirement; workflow holds and wake receipts remain unchanged."]
+    }
+
     private func retireCoordinatedSession(_ session: BanyanSession, parent: String, group: String,
                                           job: String, revision: Int, interventionID: String, workerID: String? = nil, runID: String? = nil) async throws {
         let evidenceSession: BanyanSession
@@ -165,6 +252,7 @@ extension SessionStore {
                   session.id != parent, session.parentSessionID == parent,
                   evidenceSession.workflow?.owner == "workit", evidenceSession.workflow?.jobID == job,
                   evidenceSession.workflow?.revision == revision, evidenceSession.workflow?.state == .verified,
+                  evidenceSession.workflow?.wake?.status != .pending, evidenceSession.workflow?.wake?.status != .uncertain,
                   evidenceSession.workflowRecoveryError == nil,
                   session.workflowRecoveryError == nil,
                   evidenceSession.coordinationRecoveryError == nil,

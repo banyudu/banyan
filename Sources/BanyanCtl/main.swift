@@ -301,6 +301,7 @@ struct BanyanCtl {
         if let runID = payload.removeValue(forKey: "run-id") { payload["runID"] = runID }
         if let groupID = payload.removeValue(forKey: "group-id") { payload["groupID"] = groupID }
         if let value = payload.removeValue(forKey: "intervention-id") { payload["interventionID"] = value }
+        if let value = payload.removeValue(forKey: "inspection-id") { payload["inspectionID"] = value }
         return payload
     }
 
@@ -1068,6 +1069,8 @@ struct BanyanCtl {
           banyanctl coordination bind|status|release --id OWNER --group-id GROUP
           banyanctl coordination helper|retire-helper --id HELPER --parent OWNER --group-id GROUP --worker CHILD --run-id RUN --job-id JOB [--revision N]
           banyanctl coordination observe --id CHILD --parent OWNER --group-id GROUP
+          banyanctl coordination inspect-recovery --id CHILD --parent OWNER --group-id GROUP
+          banyanctl coordination recover --id CHILD --parent OWNER --group-id GROUP --inspection-id ID --detail TEXT
           banyanctl coordination deliver --id OWNER --group-id GROUP --revision N --wake-id ID --text TEXT
           banyanctl coordination resolve --id OWNER --group-id GROUP --revision N --wake-id ID --outcome delivered|not-delivered --detail TEXT
           banyanctl coordination retire --id CHILD --parent OWNER --group-id GROUP --job-id JOB --revision N [--intervention-id ID]
