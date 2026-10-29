@@ -56,6 +56,19 @@ private final class NativeSessionServer: CodexThreadService {
 @Suite(.serialized)
 @MainActor
 struct NativeCodexSessionTests {
+    @Test func nativeCreationUsesFocusedSiblingPlacement() async throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let store = fixture.makeStore(codexService: NativeSessionServer(), sessionBackend: AdmissionTerminalBackend())
+        defer { store.flushPendingSessionSaves() }
+        store.enableNativeCodex = true
+        let first = store.spawn(id: "first", cwd: fixture.project.path, command: "", select: false)
+        let last = store.spawn(id: "last", cwd: fixture.project.path, command: "", select: false)
+        store.selectedSessionID = first.id
+        let native = try await store.createCodexSession(cwd: fixture.project.path, id: "native")
+        #expect(store.sessions.map(\.id) == [first.id, native.id, last.id])
+        #expect(store.selectedSessionID == native.id)
+    }
+
     @Test func queuedNativeCreationPreservesSettingsOnCancelAndNeverStealsLaterSelection() async throws {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         let server = NativeSessionServer()

@@ -131,7 +131,9 @@ private func date(_ value: String) -> Date {
 
 @Test func displayUsesCompactDollarAmount() {
     #expect(SessionCostDisplay(amount: Decimal(string: "1.234")!).text == "$1.2")
+    #expect(SessionCostDisplay(amount: Decimal(string: "1.25")!).text == "$1.3")
     #expect(SessionCostDisplay(amount: Decimal(string: "0.42")!).text == "$0.42")
+    #expect(SessionCostDisplay(amount: Decimal(string: "0.125")!).text == "$0.13")
     #expect(SessionCostDisplay(amount: Decimal(string: "0.0001")!).text == "<$0.01")
     #expect(SessionCostDisplay(amount: Decimal(string: "123.4")!).text == "$123")
 }

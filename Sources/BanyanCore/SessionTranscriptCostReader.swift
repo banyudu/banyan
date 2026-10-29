@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 public final class SessionCostCache: @unchecked Sendable {
@@ -12,7 +11,7 @@ public final class SessionCostCache: @unchecked Sendable {
     private struct Entry {
         let signature: Signature
         let offset: UInt64
-        let prefixDigest: Data
+        let prefixDigest: String
         let transcript: SessionCostTranscript
     }
 
@@ -106,8 +105,8 @@ public final class SessionCostCache: @unchecked Sendable {
     /// Hash the first 4 KiB of the already-consumed prefix. This detects the
     /// common in-place truncate-and-rewrite case without reading or retaining
     /// the whole transcript; it is a sampling check, not a full-content proof.
-    private func prefixDigest(at url: URL, consumedOffset: UInt64) -> Data? {
-        guard consumedOffset > 0 else { return Data(SHA256.hash(data: Data())) }
+    private func prefixDigest(at url: URL, consumedOffset: UInt64) -> String? {
+        guard consumedOffset > 0 else { return ConversationWindowDigest.hex(Data()) }
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
 
@@ -117,7 +116,7 @@ public final class SessionCostCache: @unchecked Sendable {
             guard let prefix = try handle.read(upToCount: length), prefix.count == length else {
                 return nil
             }
-            return Data(SHA256.hash(data: prefix))
+            return ConversationWindowDigest.hex(prefix)
         } catch {
             return nil
         }

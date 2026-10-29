@@ -41,7 +41,6 @@ struct ContentView: View {
     @State private var codexHandoffSession: TerminalSession?
     @State private var reparentSession: BanyanSession?
     @State private var draggingSidebarSessionID: String?
-    @State private var lastAutoScrolledSidebarSessionID: String?
 
     init(selection: SessionSelection) {
         self.selection = selection
@@ -558,33 +557,7 @@ struct ContentView: View {
                 .scrollIndicators(.hidden)
                 .hidesVerticalScroller()
                 .accessibilityIdentifier(AccessibilityID.sidebarList)
-                .onAppear {
-                    guard let id = selection.selectedSessionID,
-                          id != lastAutoScrolledSidebarSessionID,
-                          store.unifiedSidebarContains(sessionID: id)
-                    else { return }
-                    lastAutoScrolledSidebarSessionID = id
-                    // Defer one runloop so the List has laid out its rows before jumping.
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(id, anchor: .center)
-                    }
-                }
-                .onReceive(selection.$selectedSessionID) { id in
-                    guard let id,
-                          id != lastAutoScrolledSidebarSessionID,
-                          store.unifiedSidebarContains(sessionID: id)
-                    else { return }
-                    lastAutoScrolledSidebarSessionID = id
-                    var transaction = Transaction(animation: nil)
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        // Reveal offscreen selections immediately. Animating a
-                        // distant jump lays out intermediate rows and remaps
-                        // their shortcut badges on every scroll frame.
-                        // No anchor keeps already-visible rows in place.
-                        proxy.scrollTo(id)
-                    }
-                }
+                .sessionSidebarReveal(selection: selection, sessionIDs: sessionIDs, proxy: proxy)
             }
 
             Spacer(minLength: 0)

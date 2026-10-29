@@ -223,6 +223,11 @@ public struct SessionCostDisplay: Sendable, Equatable {
     }
 
     private static func format(_ value: Decimal, fractionDigits: Int) -> String {
+        // Corelibs Foundation may retain excess NSDecimalNumber precision.
+        // Round the decimal before formatting so every platform uses the same scale.
+        var source = value
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &source, fractionDigits, .plain)
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.numberStyle = .decimal
@@ -231,6 +236,6 @@ public struct SessionCostDisplay: Sendable, Equatable {
         formatter.minimumFractionDigits = fractionDigits
         formatter.maximumFractionDigits = fractionDigits
         formatter.roundingMode = .halfUp
-        return formatter.string(from: value as NSDecimalNumber) ?? "0"
+        return formatter.string(from: rounded as NSDecimalNumber) ?? "0"
     }
 }
