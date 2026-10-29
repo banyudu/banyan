@@ -136,6 +136,20 @@ private func date(_ value: String) -> Date {
     #expect(SessionCostDisplay(amount: Decimal(string: "123.4")!).text == "$123")
 }
 
+@Test func residentCostTierOnlyMarksCompleteEstimatesAtTwentyDollars() {
+    #expect(SessionCostTier(estimate: nil) == .standard)
+    #expect(SessionCostTier(estimate: .unavailable(.noUsage)) == .standard)
+    #expect(SessionCostTier(estimate: .complete(
+        amount: Decimal(string: "19.99")!,
+        tint: .codex
+    )) == .standard)
+    #expect(SessionCostTier(estimate: .complete(amount: 20, tint: .codex)) == .expensive)
+    #expect(SessionCostTier(estimate: .complete(
+        amount: Decimal(string: "20.01")!,
+        tint: .claude
+    )) == .expensive)
+}
+
 @Test func incrementalReaderResumesOnlyCompleteLines() throws {
     let url = try temporaryTranscript([
         #"{"type":"assistant","timestamp":"2026-10-01T00:00:00.000Z","message":{"id":"msg-a","model":"claude-opus-5-5","usage":{"input_tokens":100,"output_tokens":50}}}"#

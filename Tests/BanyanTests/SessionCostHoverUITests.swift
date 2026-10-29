@@ -7,7 +7,7 @@ import Testing
 
 @MainActor
 @Suite struct SessionCostHoverUITests {
-    @Test func constructionDoesNotStartReadingTheTranscript() async throws {
+    @Test func constructionDefersAndCoalescesTranscriptReads() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("banyan-cost-hover-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -99,6 +99,11 @@ import Testing
         try await Task.sleep(for: .milliseconds(150))
         hosting.layoutSubtreeIfNeeded()
         #expect(sourceCalls == 0)
+
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(sourceCalls == 1)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(sourceCalls == 1)
     }
 
     @Test func gutterOwnsOnlyTheReservedTrailingStrip() {

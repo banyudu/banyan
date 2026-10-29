@@ -172,6 +172,29 @@ public enum SessionCostEstimate: Sendable, Equatable {
     }
 }
 
+/// A coarse, non-monetary cost state for compact sidebar surfaces. Exact
+/// amounts remain hover-only; this only answers whether a complete estimate has
+/// crossed the threshold where the row should carry a persistent warning.
+public enum SessionCostTier: Sendable, Equatable {
+    case standard
+    case expensive
+
+    public static let expensiveThreshold: Decimal = 20
+
+    public init(estimate: SessionCostEstimate?) {
+        guard case let .complete(amount, _) = estimate,
+              amount >= Self.expensiveThreshold else {
+            self = .standard
+            return
+        }
+        self = .expensive
+    }
+
+    public var isExpensive: Bool {
+        self == .expensive
+    }
+}
+
 public struct SessionCostDisplay: Sendable, Equatable {
     public let amount: Decimal
 

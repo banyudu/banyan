@@ -2842,6 +2842,7 @@ struct SessionRow: View, Equatable {
     @State private var hoverTracker = SessionRowHoverTracker()
     @State private var isPointerCursorPushed = false
     @State private var selectedInRow: Bool?
+    @State private var residentCostTier: SessionCostTier = .standard
     @FocusState private var isRenameFocused: Bool
 
     private var isSelected: Bool {
@@ -2902,10 +2903,18 @@ struct SessionRow: View, Equatable {
 
             if let jumpShortcuts {
                 SessionShortcutMapObserver(shortcuts: jumpShortcuts) {
-                    JumpKeyBadge(label: jumpShortcuts.label(for: session.id), provider: brandingProvider)
+                    JumpKeyBadge(
+                        label: jumpShortcuts.label(for: session.id),
+                        provider: brandingProvider,
+                        isExpensive: residentCostTier.isExpensive
+                    )
                 }
             } else {
-                JumpKeyBadge(label: jumpKeyLabel, provider: brandingProvider)
+                JumpKeyBadge(
+                    label: jumpKeyLabel,
+                    provider: brandingProvider,
+                    isExpensive: residentCostTier.isExpensive
+                )
             }
 
             // A plain-shell profile (the built-in `zsh`) matches every session
@@ -3091,9 +3100,15 @@ struct SessionRow: View, Equatable {
                     session: session,
                     isHovered: isRowHovered,
                     source: sessionCost.source,
-                    estimate: sessionCost.estimate
+                    estimate: sessionCost.estimate,
+                    onEstimate: { estimate in
+                        residentCostTier = SessionCostTier(estimate: estimate)
+                    }
                 )
             }
+        }
+        .task(id: residentCostTierRefreshKey) {
+            await refreshResidentCostTier()
         }
         .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
         // Observing the shared object redraws every row on every selection and
@@ -3218,6 +3233,35 @@ struct SessionRow: View, Equatable {
 
     private var displayTitle: String {
         titleOverride ?? session.displayTitle
+    }
+
+    private var residentCostTierRefreshKey: String {
+        [
+            session.agentProvider?.rawValue ?? "",
+            session.agentSessionID ?? "",
+            session.historyTranscriptURL?.path ?? "",
+            session.status.rawValue
+        ].joined(separator: "|")
+    }
+
+    private func refreshResidentCostTier() async {
+        guard let sessionCost else {
+            residentCostTier = .standard
+            return
+        }
+        do {
+            try await Task.sleep(for: .milliseconds(300))
+        } catch {
+            return
+        }
+        guard !Task.isCancelled else { return }
+        guard let source = sessionCost.source() else {
+            residentCostTier = .standard
+            return
+        }
+        let estimate = await sessionCost.estimate(source)
+        guard !Task.isCancelled else { return }
+        residentCostTier = SessionCostTier(estimate: estimate)
     }
 
     private var titleFont: Font {
@@ -4007,6 +4051,7 @@ private struct SessionCostGutter: View {
     let isHovered: Bool
     let source: () -> SessionCostTranscriptSource?
     let estimate: (SessionCostTranscriptSource) async -> SessionCostEstimate?
+    let onEstimate: (SessionCostEstimate?) -> Void
 
     @State private var visibleEstimate: SessionCostEstimate?
 
@@ -4060,7 +4105,9 @@ private struct SessionCostGutter: View {
                 }
                 visibleEstimate = nil
                 let result = await estimate(source)
-                guard !Task.isCancelled, isHovered, case .complete = result else { return }
+                guard !Task.isCancelled, isHovered else { return }
+                onEstimate(result)
+                guard case .complete = result else { return }
                 visibleEstimate = result
             }
     }
@@ -4069,25 +4116,40 @@ private struct SessionCostGutter: View {
 private struct JumpKeyBadge: View {
     let label: String
     let provider: CodingAgentProvider?
+    let isExpensive: Bool
 
     private var tint: Color {
         provider?.brandTint ?? .secondary
     }
 
+    private var costTint: Color {
+        Color.linearHex("C99A3B")
+    }
+
     var body: some View {
         Text(label)
             .font(.system(size: 10, weight: .semibold, design: .monospaced))
-            .foregroundStyle(tint)
+            .foregroundStyle(isExpensive ? Color.primary : tint)
             .frame(width: Self.badgeWidth(for: label), height: 16)
             .background(
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(tint.opacity(0.14))
+                    .fill((isExpensive ? costTint : tint).opacity(isExpensive ? 0.18 : 0.14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .strokeBorder(tint.opacity(0.32), lineWidth: 0.5)
+                            .strokeBorder(
+                                (isExpensive ? costTint : tint).opacity(isExpensive ? 0.55 : 0.32),
+                                lineWidth: 0.5
+                            )
                     )
             )
             .opacity(label.isEmpty ? 0 : 1)
+            .help(isExpensive ? "High estimated API cost — hover for the amount" : "")
+            .accessibilityHidden(label.isEmpty)
+            .accessibilityLabel(
+                isExpensive
+                    ? "High estimated API cost. Session shortcut \(label)"
+                    : "Session shortcut \(label)"
+            )
     }
 
     private static func badgeWidth(for label: String) -> CGFloat {
