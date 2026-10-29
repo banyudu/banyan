@@ -4031,7 +4031,7 @@ private struct SessionCostGutter: View {
             .monospacedDigit()
             .foregroundStyle(tint)
             .lineLimit(1)
-            .frame(width: 44, alignment: .trailing)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
             .background {
