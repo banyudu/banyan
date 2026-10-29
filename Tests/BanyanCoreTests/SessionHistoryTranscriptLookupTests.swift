@@ -7,7 +7,7 @@ import Testing
         .appendingPathComponent("banyan-transcript-lookup-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let sourceID = "01a18383-333d-77d2-8976-163019138221"
+    let sourceID = "11111111-2222-4333-8444-555555555555"
     let directory = root
         .appendingPathComponent(".codex/sessions/2026/10/29")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

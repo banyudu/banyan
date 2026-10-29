@@ -139,7 +139,7 @@ import Testing
 
     @Test func storeResolvesLiveTranscriptWithoutImportingHistory() throws {
         let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
-        let sourceID = "01a18383-333d-77d2-8976-163019138221"
+        let sourceID = "11111111-2222-4333-8444-555555555555"
         let createdAt = try #require(
             ISO8601DateFormatter().date(from: "2026-10-28T17:16:13Z")
         )
