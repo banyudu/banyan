@@ -68,7 +68,13 @@ final class TerminalSession: BanyanSession {
     @Published var freezeError: String?
 
     var launchRequest: SessionLaunchRequest {
-        SessionLaunchRequest(sessionName: tmuxSessionName, cwd: cwd, command: command, banyanSessionID: id)
+        SessionLaunchRequest(
+            sessionName: tmuxSessionName,
+            cwd: cwd,
+            command: command,
+            banyanSessionID: id,
+            terminalThemeStyle: pendingTheme.tmuxDefaultStyle
+        )
     }
 
     var didRenderRestoredMessage = false

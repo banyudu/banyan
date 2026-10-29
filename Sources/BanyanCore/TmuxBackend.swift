@@ -331,21 +331,68 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         }
     }
 
+    public func ensureSession(_ request: SessionLaunchRequest) throws {
+        try ensureSession(
+            named: request.sessionName,
+            cwd: request.cwd,
+            command: request.command,
+            banyanSessionID: request.banyanSessionID,
+            terminalThemeStyle: request.terminalThemeStyle
+        )
+    }
+
     public func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String? = nil) throws {
+        try ensureSession(
+            named: name,
+            cwd: cwd,
+            command: command,
+            banyanSessionID: banyanSessionID,
+            terminalThemeStyle: nil
+        )
+    }
+
+    private func ensureSession(
+        named name: String,
+        cwd: String,
+        command: String,
+        banyanSessionID: String?,
+        terminalThemeStyle: String?
+    ) throws {
         // Most global options only need to be applied when the server starts.
         // The server lives as long as it has ≥1 session, but terminal capability
         // settings must also be migrated when the app is upgraded underneath an
         // existing server.
-        if !isServerRunning() {
+        var themeBootstrapSession: String?
+        defer {
+            if let themeBootstrapSession {
+                _ = try? run(["kill-session", "-t", themeBootstrapSession])
+            }
+        }
+        if !isServerRunning(), let terminalThemeStyle {
+            // Global options cannot start a tmux server, and a pane starts its
+            // command as soon as `new-session` creates it. Keep a quiet bootstrap
+            // pane alive long enough to configure the server, then create the
+            // real pane so startup OSC 10/11 probes already see the theme.
+            themeBootstrapSession = try startThemeBootstrapSession(cwd: cwd)
+            configureServerEnvironment()
+            configureServerOptions()
+            configureTerminalTheme(style: terminalThemeStyle, for: nil)
+        } else if !isServerRunning() {
             configureServerEnvironment()
             configureServerOptions()
         } else {
             configureServerTerminalColors()
+            if let terminalThemeStyle {
+                configureTerminalTheme(style: terminalThemeStyle, for: nil)
+            }
         }
         let identity = banyanSessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !hasSession(named: name) else {
             configureSessionOptions(named: name)
             configureSessionEnvironment(named: name, banyanSessionID: identity)
+            if let terminalThemeStyle {
+                configureTerminalTheme(style: terminalThemeStyle, for: name)
+            }
             return
         }
 
@@ -396,6 +443,15 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         }
         configureSessionOptions(named: name)
         configureSessionEnvironment(named: name, banyanSessionID: identity)
+        if let terminalThemeStyle {
+            configureTerminalTheme(style: terminalThemeStyle, for: name)
+        }
+    }
+
+    private func startThemeBootstrapSession(cwd: String) throws -> String {
+        let name = "theme-bootstrap-\(UUID().uuidString)"
+        try run(["new-session", "-d", "-s", name, "-c", cwd, "/bin/sleep 30"])
+        return name
     }
 
     /// Removes a `-e KEY=VALUE` pair previously added for the session
@@ -491,8 +547,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
     }
 
     private func configureServerFocusEvents() {
-        // Codex re-probes OSC 10/11 colors after FocusGained. This matters for
-        // sessions started in the background before Banyan attaches SwiftTerm.
+        // Forward focus changes to pane applications. Palette detection happens
+        // during startup, so window-style must already be set when a pane starts.
         _ = try? run(["set-option", "-g", "focus-events", "on"])
     }
 

@@ -319,6 +319,10 @@ extension TerminalSession {
                     await MainActor.run { [weak self] in self?.retainMissingAgentBackendForRecovery(generation: launchGeneration) }
                     return
                 }
+                if let style = request.terminalThemeStyle {
+                    backend.configureTerminalTheme(style: style, for: nil)
+                    backend.configureTerminalTheme(style: style, for: request.sessionName)
+                }
             }
             do {
                 if !requiresExistingAgentPane { try runtime.ensureBackingSession(request) }

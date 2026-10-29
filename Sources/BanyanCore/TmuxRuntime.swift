@@ -86,10 +86,23 @@ public extension TmuxSessionBackend {
 
 public protocol TmuxSessionLifecycleBackend: TmuxSessionLookupBackend {
     func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String?) throws
+    func ensureSession(_ request: SessionLaunchRequest) throws
     func killSession(named name: String)
 }
 
 public extension TmuxSessionLifecycleBackend {
+    /// Backends that do not model launch metadata directly can ignore the
+    /// additional request fields. The concrete tmux backend overrides this to
+    /// apply terminal colors before creating the pane.
+    func ensureSession(_ request: SessionLaunchRequest) throws {
+        try ensureSession(
+            named: request.sessionName,
+            cwd: request.cwd,
+            command: request.command,
+            banyanSessionID: request.banyanSessionID
+        )
+    }
+
     /// Convenience for callers (mostly tests) that do not model a Banyan identity.
     func ensureSession(named name: String, cwd: String, command: String) throws {
         try ensureSession(named: name, cwd: cwd, command: command, banyanSessionID: nil)
@@ -186,12 +199,22 @@ public struct SessionLaunchRequest: Sendable {
     /// expose it inside the pane (`BANYAN_SESSION_ID`); nil for callers that
     /// do not model a Banyan identity (mostly tests).
     public let banyanSessionID: String?
+    /// tmux `window-style` value the pane must inherit before its command starts.
+    /// Agents query the terminal palette during startup, before Banyan attaches.
+    public let terminalThemeStyle: String?
 
-    public init(sessionName: String, cwd: String, command: String, banyanSessionID: String? = nil) {
+    public init(
+        sessionName: String,
+        cwd: String,
+        command: String,
+        banyanSessionID: String? = nil,
+        terminalThemeStyle: String? = nil
+    ) {
         self.sessionName = sessionName
         self.cwd = cwd
         self.command = command
         self.banyanSessionID = banyanSessionID
+        self.terminalThemeStyle = terminalThemeStyle
     }
 }
 
@@ -211,12 +234,7 @@ public struct SessionRuntimeCoordinator: Sendable, SessionRuntimeBackend {
     }
 
     public func ensureBackingSession(_ request: SessionLaunchRequest) throws {
-        try backend.ensureSession(
-            named: request.sessionName,
-            cwd: request.cwd,
-            command: request.command,
-            banyanSessionID: request.banyanSessionID
-        )
+        try backend.ensureSession(request)
     }
 
     public func removeBackingSession(named name: String) {
@@ -225,11 +243,6 @@ public struct SessionRuntimeCoordinator: Sendable, SessionRuntimeBackend {
 
     public func restartBackingSession(_ request: SessionLaunchRequest) throws {
         backend.killSession(named: request.sessionName)
-        try backend.ensureSession(
-            named: request.sessionName,
-            cwd: request.cwd,
-            command: request.command,
-            banyanSessionID: request.banyanSessionID
-        )
+        try backend.ensureSession(request)
     }
 }

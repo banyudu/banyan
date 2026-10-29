@@ -63,6 +63,8 @@ import Testing
         try await waitForPuckState { Set(backend.launched) == Set([expectedCodex, expectedClaude]) }
         #expect(Set(backend.launchedNames) == Set(["banyan-codex-active", "banyan-claude-active"]))
         #expect(backend.launched.allSatisfy { !$0.contains("Original") })
+        #expect(backend.launchedThemeStyles.count == 2)
+        #expect(backend.launchedThemeStyles.allSatisfy { $0?.contains("fg=#") == true })
         #expect(store.autoRecoverRestoredAgentSessionsIfNeeded().isEmpty)
         #expect(backend.launched.count == 2)
     }
@@ -122,6 +124,7 @@ import Testing
 private final class StartupResumeTestBackend: TmuxSessionStoreBackend, TmuxClientBackend, @unchecked Sendable {
     var launched: [String] = []
     var launchedNames: [String] = []
+    var launchedThemeStyles: [String?] = []
     var executableURL: URL { URL(fileURLWithPath: "/usr/bin/false") }
 
     func attachArguments(for name: String) -> [String] { [] }
@@ -132,8 +135,17 @@ private final class StartupResumeTestBackend: TmuxSessionStoreBackend, TmuxClien
     func captureCurrentVisibleText(paneID: String) -> String { "" }
     func listBanyanSessions() -> [String] { [] }
     func ensureSession(named name: String, cwd: String, command: String, banyanSessionID: String?) throws {
-        launchedNames.append(name)
-        launched.append(command)
+        try ensureSession(SessionLaunchRequest(
+            sessionName: name,
+            cwd: cwd,
+            command: command,
+            banyanSessionID: banyanSessionID
+        ))
+    }
+    func ensureSession(_ request: SessionLaunchRequest) throws {
+        launchedNames.append(request.sessionName)
+        launched.append(request.command)
+        launchedThemeStyles.append(request.terminalThemeStyle)
     }
     func killSession(named name: String) {}
     func sendKeys(paneID: String, keys: [TmuxKey]) throws {}
