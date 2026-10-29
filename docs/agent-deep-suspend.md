@@ -83,7 +83,10 @@ remain in its process tree.
 Restored panes distinguish an absent journal from an unreadable, empty or
 malformed journal. Unknown recovery state blocks input and remains retryable;
 it never becomes a cached absence. Valid recovery is bound to the pane's kernel
-identity. A confirmed normal absence is cached, avoiding tmux reads on each key.
+identity. A missing tmux server or socket is also absence: a reboot has already
+removed every pane and journal that recovery could protect. Other read failures
+remain blocked. A confirmed normal absence is cached, avoiding tmux reads on
+each key.
 
 ## Owned launches and legacy panes
 

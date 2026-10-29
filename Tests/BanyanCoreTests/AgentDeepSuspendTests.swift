@@ -10,6 +10,21 @@ private func candidate(_ id: String, provider: CodingAgentProvider = .codex, cwd
     .init(provider: provider, sourceID: id, cwd: cwd, createdAt: .distantPast, updatedAt: Date())
 }
 
+@Test func missingTmuxServerMeansThereIsNoSuspendJournalToRecover() throws {
+    let executable = try #require(TmuxBackend.resolveExecutableURL(environment: ProcessInfo.processInfo.environment))
+    let backend = TmuxBackend(
+        executableURL: executable,
+        workingDirectory: FileManager.default.temporaryDirectory.path,
+        environment: ["PATH": "/usr/bin:/bin"],
+        socketName: "banyan-deep-absent-\(UUID().uuidString)"
+    )
+
+    // A computer restart removes the private server and its socket. There is no
+    // pane or journal left to protect, so restoration must take the normal
+    // missing-backend path instead of blocking input as an unknown recovery.
+    #expect(backend.readSuspendJournal(named: "banyan-rebooted") == .absent)
+}
+
 @Test func deepSuspendProviderSelectionWalksFullAncestryAndPreservesIndependentBranches() {
     func process(_ pid: Int, _ parent: Int, _ command: String, _ arguments: String) -> ProcessInfoRow {
         .init(pid: pid, parentPID: parent, state: "S", elapsed: 10, commandName: command, arguments: arguments)

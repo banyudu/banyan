@@ -142,12 +142,16 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         } catch BackendError.commandFailed(_, let message) {
             // These tmux diagnostics prove there is no server/socket. A timeout,
             // denied socket, bad executable, or failed pane parse stays unknown.
-            if message.hasPrefix("no server running on ") ||
-                (message.hasPrefix("error connecting to ") && message.hasSuffix("(No such file or directory)")) {
+            if Self.indicatesNoServer(message) {
                 return .absent
             }
             return .unknown
         } catch { return .unknown }
+    }
+
+    private static func indicatesNoServer(_ message: String) -> Bool {
+        message.hasPrefix("no server running on ") ||
+            (message.hasPrefix("error connecting to ") && message.hasSuffix("(No such file or directory)"))
     }
 
     public func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? {
@@ -429,7 +433,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
     public func readSuspendJournal(named name: String) -> AgentSuspendJournalState {
         do {
             // Listing distinguishes a missing option from an existing empty or
-            // malformed value. A server/target/read failure is never absence.
+            // malformed value. A missing server/socket means a reboot removed
+            // every pane and its journal; other read failures stay unavailable.
             let listing = try run(["show-options", "-q", "-t", name, "@banyan-deep-suspend"])
             if listing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .absent }
             let text = try run(["show-options", "-qv", "-t", name, "@banyan-deep-suspend"])
@@ -438,6 +443,8 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
                 return .unavailable("Deep-suspend recovery journal is malformed; input blocked until repaired")
             }
             return .valid(ticket)
+        } catch BackendError.commandFailed(_, let message) where Self.indicatesNoServer(message) {
+            return .absent
         } catch {
             return .unavailable("Deep-suspend recovery journal could not be read; retry Resume. \(error.localizedDescription)")
         }
