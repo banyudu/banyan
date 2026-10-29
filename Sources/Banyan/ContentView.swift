@@ -4032,6 +4032,16 @@ private struct SessionCostGutter: View {
             .foregroundStyle(tint)
             .lineLimit(1)
             .frame(width: 44, alignment: .trailing)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(.regularMaterial)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .strokeBorder(.primary.opacity(0.08), lineWidth: 0.5)
+                    }
+            }
             .opacity(amountText == nil ? 0 : 1)
             .offset(x: amountText == nil && !reduceMotion ? 5 : 0)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: amountText)
