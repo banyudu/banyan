@@ -2849,7 +2849,7 @@ struct SessionRow: View, Equatable {
     }
 
     private var isRowHovered: Bool {
-        hoverRegion == .row
+        hoverRegion != nil
     }
 
     /// Provider whose brand the row shows: the launch profile's when it
@@ -3052,14 +3052,6 @@ struct SessionRow: View, Equatable {
                 .accessibilityLabel("Close session")
                 .accessibilityIdentifier(AccessibilityID.sessionRowCloseButton(session.id))
                 .transition(.opacity)
-            } else if hoverRegion == .costGutter, sessionCost != nil,
-                      session.status != .closed, !showsHandoffButton {
-                // The close button is hidden in the cost gutter, but its slot
-                // stays reserved. Entering the gutter must not reflow the title
-                // or slide the trailing controls while the amount fades in.
-                Color.clear
-                    .frame(width: 18, height: 18)
-                    .accessibilityHidden(true)
             }
 
             if sessionCost != nil {
@@ -3097,8 +3089,7 @@ struct SessionRow: View, Equatable {
             if let sessionCost {
                 SessionCostGutter(
                     session: session,
-                    isHovered: hoverRegion == .costGutter,
-                    avoidsHandoffButton: showsHandoffButton,
+                    isHovered: isRowHovered,
                     source: sessionCost.source,
                     estimate: sessionCost.estimate
                 )
@@ -4014,7 +4005,6 @@ private struct SessionCostGutter: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: BanyanSession
     let isHovered: Bool
-    let avoidsHandoffButton: Bool
     let source: () -> SessionCostTranscriptSource?
     let estimate: (SessionCostTranscriptSource) async -> SessionCostEstimate?
 
@@ -4045,10 +4035,9 @@ private struct SessionCostGutter: View {
             .opacity(amountText == nil ? 0 : 1)
             .offset(x: amountText == nil && !reduceMotion ? 5 : 0)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: amountText)
-            // The handoff button sits immediately before the reserved gutter.
-            // Keep the amount clear of it even while the row itself is not
-            // hovered and the close button is intentionally hidden.
-            .padding(.trailing, avoidsHandoffButton ? 38 : 6)
+            // Keep the amount clear of the close/handoff button. The cost is an
+            // overlay, so reserving that control slot does not reflow the row.
+            .padding(.trailing, 38)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
             .allowsHitTesting(false)
             .accessibilityHidden(amountText == nil)
