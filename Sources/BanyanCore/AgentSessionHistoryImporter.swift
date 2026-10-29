@@ -32,6 +32,108 @@ public enum AgentSessionHistoryImporter {
         }
     }
 
+    /// Finds the exact transcript for a live provider session without importing
+    /// the rest of the provider's history. Codex rollout files live under the
+    /// local creation day; Claude names the file after the session ID.
+    public static func transcriptURL(
+        homeDirectory: URL,
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        createdAt: Date,
+        fileManager: FileManager = .default,
+        calendar: Calendar = .current
+    ) -> URL? {
+        guard !sourceID.isEmpty else { return nil }
+        switch provider {
+        case .codex:
+            return codexTranscriptURL(
+                homeDirectory: homeDirectory,
+                sourceID: sourceID,
+                createdAt: createdAt,
+                fileManager: fileManager,
+                calendar: calendar
+            )
+        case .claude:
+            return claudeTranscriptURL(
+                homeDirectory: homeDirectory,
+                sourceID: sourceID,
+                cwd: cwd,
+                fileManager: fileManager
+            )
+        default:
+            return nil
+        }
+    }
+
+    private static func codexTranscriptURL(
+        homeDirectory: URL,
+        sourceID: String,
+        createdAt: Date,
+        fileManager: FileManager,
+        calendar: Calendar
+    ) -> URL? {
+        let sessions = homeDirectory
+            .appendingPathComponent(".codex")
+            .appendingPathComponent("sessions")
+        let startOfDay = calendar.startOfDay(for: createdAt)
+
+        // The rollout directory is named in the process's local timezone while
+        // the session timestamp is UTC. Checking the adjacent days keeps the
+        // lookup exact without assuming a timezone.
+        for dayOffset in [-1, 0, 1] {
+            guard let day = calendar.date(byAdding: .day, value: dayOffset, to: startOfDay) else {
+                continue
+            }
+            let components = calendar.dateComponents([.year, .month, .day], from: day)
+            guard let year = components.year,
+                  let month = components.month,
+                  let dayOfMonth = components.day else {
+                continue
+            }
+            let directory = sessions
+                .appendingPathComponent(String(format: "%04d", year))
+                .appendingPathComponent(String(format: "%02d", month))
+                .appendingPathComponent(String(format: "%02d", dayOfMonth))
+            let files = (try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            if let match = files.first(where: {
+                $0.pathExtension == "jsonl" && codexSessionID(from: $0) == sourceID
+            }) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private static func claudeTranscriptURL(
+        homeDirectory: URL,
+        sourceID: String,
+        cwd: String,
+        fileManager: FileManager
+    ) -> URL? {
+        let projects = homeDirectory
+            .appendingPathComponent(".claude")
+            .appendingPathComponent("projects")
+        let projectNames = Set([
+            encodedClaudeProjectName(for: cwd),
+            encodedClaudeProjectName(for: PathDisplayName.canonicalPath(cwd))
+        ])
+        for projectName in projectNames {
+            let candidate = projects
+                .appendingPathComponent(projectName)
+                .appendingPathComponent(sourceID)
+                .appendingPathExtension("jsonl")
+            if fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
     /// Conversations recorded for `cwd`, found without reading transcript bodies.
     ///
     /// `load` reads up to 2 MB of head and 4 MB of tail from every transcript to
@@ -420,8 +522,7 @@ public enum AgentSessionHistoryImporter {
 
         var result: [CodexSessionFile] = []
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            let stem = url.deletingPathExtension().lastPathComponent
-            guard let id = stem.split(separator: "-").suffix(5).map(String.init).joined(separator: "-").nilIfEmpty else {
+            guard let id = codexSessionID(from: url) else {
                 continue
             }
             let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
@@ -433,6 +534,11 @@ public enum AgentSessionHistoryImporter {
             ))
         }
         return Array(result.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(maxSessions))
+    }
+
+    private static func codexSessionID(from url: URL) -> String? {
+        let stem = url.deletingPathExtension().lastPathComponent
+        return stem.split(separator: "-").suffix(5).map(String.init).joined(separator: "-").nilIfEmpty
     }
 
     private static func parseCodexMetadata(from url: URL) -> CodexTranscriptMetadata {

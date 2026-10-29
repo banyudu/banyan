@@ -136,4 +136,52 @@ import Testing
             hasSessionCost: true
         ) == nil)
     }
+
+    @Test func storeResolvesLiveTranscriptWithoutImportingHistory() throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        let sourceID = "01a18383-333d-77d2-8976-163019138221"
+        let createdAt = try #require(
+            ISO8601DateFormatter().date(from: "2026-10-28T17:16:13Z")
+        )
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day], from: createdAt)
+        let year = try #require(components.year)
+        let month = try #require(components.month)
+        let day = try #require(components.day)
+        let directory = fixture.home
+            .appendingPathComponent(".codex")
+            .appendingPathComponent("sessions")
+            .appendingPathComponent(String(format: "%04d", year))
+            .appendingPathComponent(String(format: "%02d", month))
+            .appendingPathComponent(String(format: "%02d", day))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let transcript = directory.appendingPathComponent(
+            "rollout-2026-10-29T01-16-16-\(sourceID).jsonl"
+        )
+        try "{}\n".write(to: transcript, atomically: true, encoding: .utf8)
+
+        let store = fixture.makeStore(
+            historyBackend: DefaultSessionHistoryBackend(homeDirectory: fixture.home)
+        )
+        let session = BanyanSession(
+            id: "live-cost-row",
+            title: "Live cost row",
+            cwd: fixture.project.path,
+            command: "codex",
+            status: .needInput,
+            agentSessionID: sourceID,
+            createdAt: createdAt,
+            agentProvider: .codex,
+            telemetry: banyanTestTelemetry,
+            host: banyanTestHost
+        )
+
+        let source = try #require(store.sessionCostTranscriptSource(for: session))
+        #expect(source.provider == .codex)
+        #expect(
+            source.transcriptURL.resolvingSymlinksInPath()
+                == transcript.resolvingSymlinksInPath()
+        )
+        #expect(source.sessionKey == "codex:\(sourceID)")
+    }
 }

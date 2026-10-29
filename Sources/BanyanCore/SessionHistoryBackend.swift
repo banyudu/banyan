@@ -5,6 +5,14 @@ import Foundation
 /// keeping session creation and tmux lifecycle behavior shared.
 public protocol SessionHistoryBackend: Sendable {
     func load(maxPerProvider limit: Int) -> [ImportedAgentSession]
+    /// Resolves the transcript for one already-identified provider session.
+    /// Unlike `load`, this must not import unrelated conversations.
+    func transcriptURL(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        createdAt: Date
+    ) -> URL?
     /// Conversations recorded for `cwd`, for picking a resume target. Separate
     /// from `load` because resume matching reads only provider/cwd/timestamps,
     /// which a backend can answer far more cheaply than a titled import.
@@ -34,6 +42,15 @@ public protocol SessionHistoryBackend: Sendable {
 }
 
 public extension SessionHistoryBackend {
+    func transcriptURL(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        createdAt: Date
+    ) -> URL? {
+        nil
+    }
+
     func transcriptPreview(
         from url: URL,
         provider: CodingAgentProvider,
@@ -65,6 +82,21 @@ public struct DefaultSessionHistoryBackend: Sendable, SessionHistoryBackend {
             homeDirectory: homeDirectory,
             maxPerProvider: limit,
             cache: importCache
+        )
+    }
+
+    public func transcriptURL(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        createdAt: Date
+    ) -> URL? {
+        AgentSessionHistoryImporter.transcriptURL(
+            homeDirectory: homeDirectory,
+            provider: provider,
+            sourceID: sourceID,
+            cwd: cwd,
+            createdAt: createdAt
         )
     }
 

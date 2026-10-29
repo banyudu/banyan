@@ -585,6 +585,7 @@ final class SessionStore: ObservableObject {
     /// cache is shared across rows so re-hovering a transcript reuses its
     /// signature and incremental parser state.
     private let sessionCostCache = SessionCostCache()
+    private var sessionCostTranscriptSources: [String: SessionCostTranscriptSource] = [:]
     private var lastCodexGeneratedTitles: [String: String] = [:]
     private var selectedContextTask: Task<Void, Never>?
     private var displayContextRetryTask: Task<Void, Never>?
@@ -1755,8 +1756,8 @@ final class SessionStore: ObservableObject {
     }
 
     /// Resolve the transcript for a row from identities Banyan already knows.
-    /// This intentionally performs no provider-directory discovery: the bounded
-    /// history import is the only source for rows without an attached URL.
+    /// Imported history is preferred when present; otherwise the backend looks
+    /// up the exact provider transcript without importing unrelated sessions.
     func sessionCostTranscriptSource(for session: BanyanSession) -> SessionCostTranscriptSource? {
         if let source = SessionCostTranscriptResolver.importedHistorySource(
             provider: session.agentProvider,
@@ -1764,11 +1765,39 @@ final class SessionStore: ObservableObject {
         ) {
             return source
         }
-        return SessionCostTranscriptResolver.source(
+        if let source = SessionCostTranscriptResolver.source(
             provider: session.agentProvider,
             agentSessionID: session.agentSessionID,
             importedHistory: latestImportedHistory
+        ) {
+            return source
+        }
+
+        guard let provider = session.agentProvider,
+              [.codex, .claude].contains(provider),
+              let sourceID = session.agentSessionID,
+              !sourceID.isEmpty else {
+            return nil
+        }
+        let cacheKey = "\(provider.rawValue):\(sourceID)"
+        if let cached = sessionCostTranscriptSources[cacheKey] {
+            return cached
+        }
+        guard let transcriptURL = historyBackend.transcriptURL(
+            provider: provider,
+            sourceID: sourceID,
+            cwd: session.cwd,
+            createdAt: session.createdAt
+        ) else {
+            return nil
+        }
+        let source = SessionCostTranscriptSource(
+            provider: provider == .codex ? .codex : .claude,
+            transcriptURL: transcriptURL,
+            sessionKey: cacheKey
         )
+        sessionCostTranscriptSources[cacheKey] = source
+        return source
     }
 
     func sessionCostEstimate(for source: SessionCostTranscriptSource) async -> SessionCostEstimate? {
