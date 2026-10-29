@@ -2878,7 +2878,7 @@ struct SessionRow: View, Equatable {
 
     var body: some View {
         let _ = EnergyTrace.count("session.row.body", sessionID: session.id)
-        let isExpensive = residentCostTier.isExpensive
+        let costTier = residentCostTier
         HStack(spacing: 6) {
             // All rows in a group with any nesting share a fixed leading
             // slot, so same-depth badges align whether or not a given row
@@ -2907,14 +2907,14 @@ struct SessionRow: View, Equatable {
                     JumpKeyBadge(
                         label: jumpShortcuts.label(for: session.id),
                         provider: brandingProvider,
-                        isExpensive: isExpensive
+                        costTier: costTier
                     )
                 }
             } else {
                 JumpKeyBadge(
                     label: jumpKeyLabel,
                     provider: brandingProvider,
-                    isExpensive: isExpensive
+                    costTier: costTier
                 )
             }
 
@@ -4117,40 +4117,60 @@ private struct SessionCostGutter: View {
 private struct JumpKeyBadge: View {
     let label: String
     let provider: CodingAgentProvider?
-    let isExpensive: Bool
+    let costTier: SessionCostTier
 
     private var tint: Color {
         provider?.brandTint ?? .secondary
     }
 
-    private var costTint: Color {
-        Color.linearHex("C99A3B")
+    private var badgeTint: Color {
+        switch costTier {
+        case .standard: return tint
+        case .expensive: return Color.linearHex("C99A3B")
+        case .critical: return .red
+        }
+    }
+
+    private var isWarning: Bool {
+        costTier != .standard
+    }
+
+    private var warningHelp: String {
+        switch costTier {
+        case .standard: return ""
+        case .expensive: return "High estimated API cost — hover for the amount"
+        case .critical: return "Very high estimated API cost — hover for the amount"
+        }
+    }
+
+    private var accessibilityDescription: String {
+        switch costTier {
+        case .standard: return "Session shortcut \(label)"
+        case .expensive: return "High estimated API cost. Session shortcut \(label)"
+        case .critical: return "Very high estimated API cost. Session shortcut \(label)"
+        }
     }
 
     var body: some View {
         Text(label)
             .font(.system(size: 10, weight: .semibold, design: .monospaced))
-            .foregroundStyle(isExpensive ? Color.primary : tint)
+            .foregroundStyle(isWarning ? Color.primary : tint)
             .frame(width: Self.badgeWidth(for: label), height: 16)
             .background(
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill((isExpensive ? costTint : tint).opacity(isExpensive ? 0.18 : 0.14))
+                    .fill(badgeTint.opacity(isWarning ? 0.18 : 0.14))
                     .overlay(
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
                             .strokeBorder(
-                                (isExpensive ? costTint : tint).opacity(isExpensive ? 0.55 : 0.32),
+                                badgeTint.opacity(isWarning ? 0.55 : 0.32),
                                 lineWidth: 0.5
                             )
                     )
             )
             .opacity(label.isEmpty ? 0 : 1)
-            .help(isExpensive ? "High estimated API cost — hover for the amount" : "")
+            .help(warningHelp)
             .accessibilityHidden(label.isEmpty)
-            .accessibilityLabel(
-                isExpensive
-                    ? "High estimated API cost. Session shortcut \(label)"
-                    : "Session shortcut \(label)"
-            )
+            .accessibilityLabel(accessibilityDescription)
     }
 
     private static func badgeWidth(for label: String) -> CGFloat {

@@ -69,6 +69,25 @@ import Testing
     }
 
     @Test func residentExpensiveEstimateUpdatesShortcutBadge() async throws {
+        let maxGoldBias = try await badgeChannelBias(
+            amount: Decimal(string: "71.5")!
+        ) { color in
+            color.redComponent - color.blueComponent
+        }
+        #expect(maxGoldBias > 0.05, "Expensive badge should have a gold fill, got bias \(maxGoldBias)")
+    }
+
+    @Test func criticalEstimateUsesRedShortcutBadge() async throws {
+        let maxRedBias = try await badgeChannelBias(amount: 150) { color in
+            color.redComponent - color.greenComponent
+        }
+        #expect(maxRedBias > 0.3, "Critical badge should have a red fill, got bias \(maxRedBias)")
+    }
+
+    private func badgeChannelBias(
+        amount: Decimal,
+        metric: (NSColor) -> CGFloat
+    ) async throws -> CGFloat {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("banyan-cost-tier-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -77,9 +96,10 @@ import Testing
             homeDirectory: root,
             currentDirectory: root.path
         )
+        let sessionID = "cost-row-\(UUID().uuidString)"
         let session = BanyanSession(
-            id: "expensive-cost-row",
-            title: "An expensive row",
+            id: sessionID,
+            title: "A cost row",
             cwd: root.path,
             command: "",
             status: .needInput,
@@ -96,11 +116,11 @@ import Testing
                 SessionCostTranscriptSource(
                     provider: .codex,
                     transcriptURL: root.appendingPathComponent("unused.jsonl"),
-                    sessionKey: "codex:expensive-cost-row"
+                    sessionKey: "codex:\(sessionID)"
                 )
             },
             estimate: { _ in
-                .complete(amount: Decimal(string: "71.5")!, tint: .codex)
+                .complete(amount: amount, tint: .codex)
             }
         )
         let row = makeRow(
@@ -134,16 +154,16 @@ import Testing
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
 
         let scaleX = CGFloat(bitmap.pixelsWide) / hosting.bounds.width
-        var maxGoldBias = -CGFloat.greatestFiniteMagnitude
+        var maxBias = -CGFloat.greatestFiniteMagnitude
         for x in Int(4 * scaleX)..<Int(22 * scaleX) {
             for y in 0..<bitmap.pixelsHigh {
                 guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
                     continue
                 }
-                maxGoldBias = max(maxGoldBias, color.redComponent - color.blueComponent)
+                maxBias = max(maxBias, metric(color))
             }
         }
-        #expect(maxGoldBias > 0.05, "Expensive badge should have a gold fill, got bias \(maxGoldBias)")
+        return maxBias
     }
 
     @Test func gutterOwnsOnlyTheReservedTrailingStrip() {

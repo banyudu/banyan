@@ -136,7 +136,7 @@ private func date(_ value: String) -> Date {
     #expect(SessionCostDisplay(amount: Decimal(string: "123.4")!).text == "$123")
 }
 
-@Test func residentCostTierOnlyMarksCompleteEstimatesAtTwentyDollars() {
+@Test func residentCostTierMarksExpensiveAndCriticalEstimates() {
     #expect(SessionCostTier(estimate: nil) == .standard)
     #expect(SessionCostTier(estimate: .unavailable(.noUsage)) == .standard)
     #expect(SessionCostTier(estimate: .complete(
@@ -145,9 +145,15 @@ private func date(_ value: String) -> Date {
     )) == .standard)
     #expect(SessionCostTier(estimate: .complete(amount: 20, tint: .codex)) == .expensive)
     #expect(SessionCostTier(estimate: .complete(
-        amount: Decimal(string: "20.01")!,
+        amount: Decimal(string: "99.99")!,
         tint: .claude
     )) == .expensive)
+    #expect(SessionCostTier(estimate: .complete(amount: 100, tint: .codex)) == .expensive)
+    #expect(SessionCostTier(estimate: .complete(
+        amount: Decimal(string: "100.01")!,
+        tint: .codex
+    )) == .critical)
+    #expect(SessionCostTier(estimate: .complete(amount: 150, tint: .claude)) == .critical)
 }
 
 @Test func incrementalReaderResumesOnlyCompleteLines() throws {
