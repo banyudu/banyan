@@ -2846,13 +2846,14 @@ final class SessionStore: ObservableObject {
         tone: SessionTone = .blue,
         select: Bool = true
     ) -> BanyanSession? {
+        let placementSessionID = selection.selectedSessionID
         switch launch {
         case .codex(let settings):
             Task { [weak self] in
                 guard let self else { return }
                 do {
                     try await self.createCodexSession(settings: settings, cwd: cwd, id: id, title: title,
-                        parentSessionID: parentSessionID, select: select)
+                        parentSessionID: parentSessionID, select: select, placementSessionID: placementSessionID)
                 } catch { self.codexSessionError = error.localizedDescription }
             }
             return nil
@@ -2864,7 +2865,8 @@ final class SessionStore: ObservableObject {
                 command: command,
                 parentSessionID: parentSessionID,
                 tone: tone,
-                select: select
+                select: select,
+                placementSessionID: placementSessionID
             )
         case .puck(let binding):
             Task { [weak self] in
@@ -2877,7 +2879,8 @@ final class SessionStore: ObservableObject {
                         title: title,
                         parentSessionID: parentSessionID,
                         tone: tone,
-                        select: select
+                        select: select,
+                        placementSessionID: placementSessionID
                     )
                 } catch {
                     self.puckSessionError = error.localizedDescription
@@ -2985,7 +2988,9 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func createCodexSession(settings: CodexThreadSettings = .init(), cwd: String? = nil,
                             id proposedID: String? = nil, title: String? = nil,
-                            parentSessionID: String? = nil, select: Bool = true) async throws -> CodexSession {
+                            parentSessionID: String? = nil, select: Bool = true,
+                            placementSessionID: String? = nil) async throws -> CodexSession {
+        let focusedSessionID = placementSessionID ?? selection.selectedSessionID
         let codexHome = try await codexThreads.preflight()
         let plan = SessionCreationPolicy.plan(proposedID: proposedID, proposedTitle: title,
             proposedTitleURL: nil, proposedCWD: cwd, proposedCommand: "",
@@ -3001,8 +3006,11 @@ final class SessionStore: ObservableObject {
             telemetry: telemetry, host: host, githubReferenceCache: githubReferenceCache)
         let previousSelection = selectedSessionID
         attach(session)
-        sessions.append(session)
-        if select { selectedSessionID = id }
+        insertCreatedSession(session, focusedSessionID: focusedSessionID)
+        if select {
+            expandAncestors(of: id)
+            selectedSessionID = id
+        }
         saveSessions()
         do {
             // Show queued creation immediately. A later selection outranks
@@ -3079,7 +3087,8 @@ final class SessionStore: ObservableObject {
         command proposedCommand: String? = nil,
         parentSessionID proposedParentSessionID: String? = nil,
         tone: SessionTone = .blue,
-        select: Bool = true
+        select: Bool = true,
+        placementSessionID: String? = nil
     ) -> TerminalSession {
         let command: String?
         if enableCodexAppServerMode, let proposedCommand {
@@ -3119,8 +3128,9 @@ final class SessionStore: ObservableObject {
             githubReferenceCache: githubReferenceCache
         )
         attach(session)
-        sessions.append(session)
+        insertCreatedSession(session, focusedSessionID: placementSessionID ?? selection.selectedSessionID)
         if select {
+            expandAncestors(of: session.id)
             selectedSessionID = session.id
             refreshSelectedContextInfo(force: true)
             session.startBackgroundBackendIfNeeded()
@@ -3131,6 +3141,20 @@ final class SessionStore: ObservableObject {
         }
         saveSessions()
         return session
+    }
+
+    private func insertCreatedSession(_ session: BanyanSession, focusedSessionID: String?) {
+        let candidates = visibleSessions.filter { !$0.isImportedHistory }.map {
+            SessionSidebarCandidate(id: $0.id, groupID: $0.projectGroupID,
+                groupTitle: $0.projectGroupTitle, parentSessionID: $0.parentSessionID)
+        }
+        let nextID = SessionSidebarCreationPolicy.insertionBeforeID(
+            in: candidates, groupID: session.projectGroupID,
+            parentSessionID: session.parentSessionID, focusedSessionID: focusedSessionID,
+            sortMode: sortMode
+        )
+        let index = nextID.flatMap { nextID in sessions.firstIndex { $0.id == nextID } } ?? sessions.endIndex
+        sessions.insert(session, at: index)
     }
 
     func respawn(id: String) throws {
@@ -3748,8 +3772,10 @@ final class SessionStore: ObservableObject {
         parentSessionID: String? = nil,
         tone: SessionTone = .blue,
         prompt: String? = nil,
-        select: Bool = true
+        select: Bool = true,
+        placementSessionID: String? = nil
     ) async throws -> PuckSession {
+        let focusedSessionID = placementSessionID ?? selection.selectedSessionID
         let cwd = WorkingDirectoryPolicy.resolve(
             proposedDirectory: proposedCWD,
             currentDirectory: currentDirectory,
@@ -3798,9 +3824,10 @@ final class SessionStore: ObservableObject {
         dismissedPuckSessionIDs.remove(session.id)
         attach(session)
         puckRowEpoch += 1
-        sessions.append(session)
+        insertCreatedSession(session, focusedSessionID: focusedSessionID)
         session.apply(summary: summary)
         if select {
+            expandAncestors(of: session.id)
             selectedSessionID = session.id
             refreshSelectedContextInfo(force: true)
         }
