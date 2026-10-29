@@ -91,6 +91,10 @@ enum AccessibilityID {
         "banyan.sidebar.session-row.\(id).close"
     }
 
+    static func sessionRowCost(_ id: String) -> String {
+        "banyan.sidebar.session-row.\(id).cost"
+    }
+
     static func sessionRowSuspendedBadge(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id).suspended"
     }

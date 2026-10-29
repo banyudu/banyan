@@ -581,6 +581,10 @@ final class SessionStore: ObservableObject {
     @Published private(set) var worktreeRecoveryErrors: [String: WorktreeRecovery.Failure] = [:]
     @Published private(set) var historyResumeErrors: [String: String] = [:]
     private var latestImportedHistory: [ImportedAgentSession] = []
+    /// Transcript parsing is expensive enough to keep off every redraw. The
+    /// cache is shared across rows so re-hovering a transcript reuses its
+    /// signature and incremental parser state.
+    private let sessionCostCache = SessionCostCache()
     private var lastCodexGeneratedTitles: [String: String] = [:]
     private var selectedContextTask: Task<Void, Never>?
     private var displayContextRetryTask: Task<Void, Never>?
@@ -1747,6 +1751,36 @@ final class SessionStore: ObservableObject {
                 provider: provider,
                 maxMessages: maxMessages
             )
+        }.value
+    }
+
+    /// Resolve the transcript for a row from identities Banyan already knows.
+    /// This intentionally performs no provider-directory discovery: the bounded
+    /// history import is the only source for rows without an attached URL.
+    func sessionCostTranscriptSource(for session: BanyanSession) -> SessionCostTranscriptSource? {
+        if let source = SessionCostTranscriptResolver.importedHistorySource(
+            provider: session.agentProvider,
+            transcriptURL: session.historyTranscriptURL
+        ) {
+            return source
+        }
+        return SessionCostTranscriptResolver.source(
+            provider: session.agentProvider,
+            agentSessionID: session.agentSessionID,
+            importedHistory: latestImportedHistory
+        )
+    }
+
+    func sessionCostEstimate(for source: SessionCostTranscriptSource) async -> SessionCostEstimate? {
+        let cache = sessionCostCache
+        return await Task.detached(priority: .utility) {
+            guard let transcript = cache.transcript(
+                at: source.transcriptURL,
+                provider: source.provider
+            ) else {
+                return SessionCostEstimate.unavailable(.unreadableTranscript)
+            }
+            return SessionCostCalculator.estimate(transcript: transcript)
         }.value
     }
 

@@ -1325,7 +1325,10 @@ struct ContentView: View {
         showsDisclosureGutter: Bool,
         jumpKeyLabel: String
     ) -> some View {
-        SessionRow(
+        let supportsSessionCost = item.session.agentProvider == .codex
+            || item.session.agentProvider == .claude
+
+        return SessionRow(
             session: item.session,
             selection: selection,
             launchProfile: store.sessionLaunchProfile(for: item.session),
@@ -1410,7 +1413,13 @@ struct ContentView: View {
             },
             onReopenHistory: {
                 reopenHistory(item)
-            }
+            },
+            sessionCost: supportsSessionCost
+                ? SessionCostAccess(
+                    source: { store.sessionCostTranscriptSource(for: item.session) },
+                    estimate: { source in await store.sessionCostEstimate(for: source) }
+                )
+                : nil
         )
         .equatable()
         .id(item.session.id)
@@ -2725,6 +2734,42 @@ private struct SelectionAwareTerminalSwitcher: View {
     }
 }
 
+enum SessionRowHoverRegion: Equatable {
+    case row
+    case costGutter
+
+    /// Space reserved after the row's trailing controls. Keeping this gutter in
+    /// the layout, rather than treating the last few points of a control as a
+    /// hover target, prevents the cost affordance from stealing close/handoff
+    /// clicks or making either button disappear as the pointer approaches it.
+    static let costGutterWidth: CGFloat = 10
+
+    static func region(
+        at location: CGPoint?,
+        rowWidth: CGFloat,
+        hasSessionCost: Bool
+    ) -> SessionRowHoverRegion? {
+        guard let location else { return nil }
+        guard hasSessionCost else { return .row }
+        guard rowWidth > 0 else { return nil }
+        return location.x >= rowWidth - costGutterWidth ? .costGutter : .row
+    }
+}
+
+struct SessionCostAccess {
+    let source: () -> SessionCostTranscriptSource?
+    let estimate: (SessionCostTranscriptSource) async -> SessionCostEstimate?
+}
+
+/// Latest pointer geometry for a row. This is a plain reference box, not
+/// observable state: `onContinuousHover` fires for every mouse move, and
+/// storing the location in `@State` would rebuild the whole row body on each
+/// one. Only the derived `SessionRowHoverRegion` is `@State`.
+final class SessionRowHoverTracker {
+    var location: CGPoint?
+    var rowWidth: CGFloat = 0
+}
+
 struct SessionRow: View, Equatable {
     @ObservedObject var session: BanyanSession
     let selection: SessionSelection
@@ -2768,6 +2813,7 @@ struct SessionRow: View, Equatable {
     let onSetDeepSuspended: (Bool) -> Void
     let onFocusTerminal: () -> Void
     let onReopenHistory: () -> Void
+    var sessionCost: SessionCostAccess? = nil
 
     // Actions target the same store and session for this row's lifetime; their
     // captures are recreated by ContentView on unrelated store notifications.
@@ -2783,6 +2829,7 @@ struct SessionRow: View, Equatable {
             && lhs.jumpKeyLabel == rhs.jumpKeyLabel && lhs.workState === rhs.workState
             && lhs.jumpShortcuts === rhs.jumpShortcuts
             && lhs.isHandoffAvailable == rhs.isHandoffAvailable && lhs.isHandoffPending == rhs.isHandoffPending
+            && (lhs.sessionCost != nil) == (rhs.sessionCost != nil)
             && lhs.moveOptions == rhs.moveOptions
     }
 
@@ -2791,13 +2838,18 @@ struct SessionRow: View, Equatable {
     @State private var isIssueLinkHovered = false
     @State private var workStatusBounds: CGRect = .null
     @State private var isHandoffHovered = false
-    @State private var isRowHovered = false
+    @State private var hoverRegion: SessionRowHoverRegion?
+    @State private var hoverTracker = SessionRowHoverTracker()
     @State private var isPointerCursorPushed = false
     @State private var selectedInRow: Bool?
     @FocusState private var isRenameFocused: Bool
 
     private var isSelected: Bool {
         selectedInRow ?? (selection.selectedSessionID == session.id)
+    }
+
+    private var isRowHovered: Bool {
+        hoverRegion == .row
     }
 
     /// Provider whose brand the row shows: the launch profile's when it
@@ -3000,6 +3052,20 @@ struct SessionRow: View, Equatable {
                 .accessibilityLabel("Close session")
                 .accessibilityIdentifier(AccessibilityID.sessionRowCloseButton(session.id))
                 .transition(.opacity)
+            } else if hoverRegion == .costGutter, sessionCost != nil,
+                      session.status != .closed, !showsHandoffButton {
+                // The close button is hidden in the cost gutter, but its slot
+                // stays reserved. Entering the gutter must not reflow the title
+                // or slide the trailing controls while the amount fades in.
+                Color.clear
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+            }
+
+            if sessionCost != nil {
+                Color.clear
+                    .frame(width: SessionRowHoverRegion.costGutterWidth, height: 1)
+                    .accessibilityHidden(true)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
@@ -3011,7 +3077,33 @@ struct SessionRow: View, Equatable {
         .opacity(dimsRow ? 0.55 : 1)
         .contentShape(Rectangle())
         .coordinateSpace(name: "session-work-row-\(session.id)")
-        .onHover(perform: setRowHovered)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            hoverTracker.rowWidth = width
+            updateHoverRegion()
+        }
+        .onContinuousHover { phase in
+            switch phase {
+            case let .active(location):
+                hoverTracker.location = location
+                updateHoverRegion()
+            case .ended:
+                hoverTracker.location = nil
+                setHoverRegion(nil)
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if let sessionCost {
+                SessionCostGutter(
+                    session: session,
+                    isHovered: hoverRegion == .costGutter,
+                    avoidsHandoffButton: showsHandoffButton,
+                    source: sessionCost.source,
+                    estimate: sessionCost.estimate
+                )
+            }
+        }
         .onChange(of: isRenaming) { _, _ in syncPointerCursor() }
         // Observing the shared object redraws every row on every selection and
         // rename request. Only the old/new selections need a new highlight.
@@ -3182,14 +3274,23 @@ struct SessionRow: View, Equatable {
         SessionTitleGenerator.linkedTitleRemainder(displayTitle: displayTitle, issueID: issueID)
     }
 
-    private func setRowHovered(_ isHovered: Bool) {
-        isRowHovered = isHovered
+    private func updateHoverRegion() {
+        setHoverRegion(SessionRowHoverRegion.region(
+            at: hoverTracker.location,
+            rowWidth: hoverTracker.rowWidth,
+            hasSessionCost: sessionCost != nil
+        ))
+    }
+
+    private func setHoverRegion(_ region: SessionRowHoverRegion?) {
+        guard hoverRegion != region else { return }
+        hoverRegion = region
         syncPointerCursor()
     }
 
     private func resetRowHover() {
-        isRowHovered = false
-        syncPointerCursor()
+        hoverTracker.location = nil
+        setHoverRegion(nil)
     }
 
     /// A pushed cursor outranks the text field's own I-beam cursor rect, so the
@@ -3906,6 +4007,65 @@ private struct SuspendedSessionBanner: View {
 }
 
 // MARK: - Jump overlay badge
+
+/// Visual-only cost readout for `SessionRow`'s trailing gutter. The row owns
+/// hover tracking so this view never intercepts a title or trailing control.
+private struct SessionCostGutter: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let session: BanyanSession
+    let isHovered: Bool
+    let avoidsHandoffButton: Bool
+    let source: () -> SessionCostTranscriptSource?
+    let estimate: (SessionCostTranscriptSource) async -> SessionCostEstimate?
+
+    @State private var visibleEstimate: SessionCostEstimate?
+
+    private var amountText: String? {
+        guard case let .complete(amount, _) = visibleEstimate else { return nil }
+        return SessionCostDisplay(amount: amount).text
+    }
+
+    private var tint: Color {
+        guard case let .complete(_, tint) = visibleEstimate else { return .secondary }
+        switch tint {
+        case .claude: return .orange
+        case .codex: return .cyan
+        case .deepSeek: return Color.linearHex("4d6bfe")
+        case .mixed: return .purple
+        }
+    }
+
+    var body: some View {
+        Text(amountText ?? "")
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .frame(width: 44, alignment: .trailing)
+            .opacity(amountText == nil ? 0 : 1)
+            .offset(x: amountText == nil && !reduceMotion ? 5 : 0)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: amountText)
+            // The handoff button sits immediately before the reserved gutter.
+            // Keep the amount clear of it even while the row itself is not
+            // hovered and the close button is intentionally hidden.
+            .padding(.trailing, avoidsHandoffButton ? 38 : 6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+            .allowsHitTesting(false)
+            .accessibilityHidden(amountText == nil)
+            .accessibilityLabel(amountText.map { "Estimated API cost: \($0)" } ?? "")
+            .accessibilityIdentifier(AccessibilityID.sessionRowCost(session.id))
+            .task(id: isHovered) {
+                guard isHovered, let source = source() else {
+                    visibleEstimate = nil
+                    return
+                }
+                visibleEstimate = nil
+                let result = await estimate(source)
+                guard !Task.isCancelled, isHovered, case .complete = result else { return }
+                visibleEstimate = result
+            }
+    }
+}
 
 private struct JumpKeyBadge: View {
     let label: String
