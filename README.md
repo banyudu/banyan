@@ -453,12 +453,13 @@ process that holds it. Quit that instance, or pass `--force`.
 Cmd+Q leaves the dedicated tmux server and running sessions alive. A machine
 restart stops that tmux server and its child processes, while Banyan's metadata
 remains in `state.sqlite`. On the next launch, active sessions whose tmux
-backing disappeared are automatically recovered in the background instead of
-silently waiting for one-by-one manual actions. Codex, Claude, and
-opencode-backed sessions (opencode, deepseek, hunyuan, muse-spark, qwen) use
-their saved provider session ID to resume when available; ordinary shells and
-sessions without a resumable provider session recreate their saved launch
-command. Failed recoveries remain available through the selected-session
+backing disappeared resume automatically in the background when their folder is
+already accessible. Codex, Claude, and opencode-backed sessions (opencode,
+deepseek, hunyuan, muse-spark, qwen) use their saved exact provider session ID,
+so recovery creates a fresh tmux session with `codex resume`, `claude --resume`,
+or the equivalent instead of replaying the original prompt. Sessions without a
+saved ID, parked sessions, terminal sessions, finished rows, and folders that
+need a macOS permission grant remain available through the selected-session
 **Recover** button, row context menu, or sidebar **Recover All** action.
 
 Check which build an install is: `defaults read /Applications/Banyan.app/Contents/Info CFBundleVersion`.

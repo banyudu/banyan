@@ -532,6 +532,7 @@ final class SessionStore: ObservableObject {
     private let historyBackend: any SessionHistoryBackend
     private let attentionNotifier: AttentionNotifier
     private var didLoadPersistedSessions = false
+    private var didAttemptStartupAgentRecovery = false
     private var supervisorTimer: Timer?
     private var didStartSupervisor = false
     /// Outlives individual ticks so a pane that produced no output since the last
@@ -2342,6 +2343,7 @@ final class SessionStore: ObservableObject {
         didStartRuntime = true
         startDeepSuspendPressureMonitor()
         loadPersistedSessionsIfNeeded()
+        autoRecoverRestoredAgentSessionsIfNeeded()
         spawnDefaultSessionIfEmpty()
         refreshImportedHistoryIfNeeded()
         startControlServer()
@@ -3204,6 +3206,43 @@ final class SessionStore: ObservableObject {
         for session in recoverySessions {
             try? recover(id: session.id, select: selectRecoveredSession)
         }
+    }
+
+    /// Recreates exact-ID agent sessions after a reboot without waiting for the
+    /// user to click Recover. Folder authorization is deliberately evaluated
+    /// before recovery: `recover` can present an `NSOpenPanel` for a protected
+    /// folder, and doing that during window restoration can deadlock the app.
+    /// A denied/missing folder therefore keeps its row in the manual Recover
+    /// banner instead of prompting at launch.
+    @discardableResult
+    func autoRecoverRestoredAgentSessionsIfNeeded() -> [String] {
+        guard !didAttemptStartupAgentRecovery else { return [] }
+        didAttemptStartupAgentRecovery = true
+
+        var recoveredIDs: [String] = []
+        var folderAccessByCWD: [String: ProjectFolderAccess.Result] = [:]
+        for session in terminalSessions where session.needsRecovery
+            && !session.isImportedHistory
+            && !session.isSuspended {
+            guard SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
+                status: session.status,
+                provider: session.agentProvider,
+                agentSessionID: session.agentSessionID
+            ) else { continue }
+
+            let access = folderAccessByCWD[session.cwd] ?? ProjectFolderAccess.evaluate(for: session.cwd)
+            folderAccessByCWD[session.cwd] = access
+            guard access == .available else { continue }
+
+            do {
+                try recover(id: session.id, select: false)
+                recoveredIDs.append(session.id)
+            } catch {
+                // `recover` publishes the actionable resume error next to the
+                // row. Keep this launch pass going for the other sessions.
+            }
+        }
+        return recoveredIDs
     }
 
     @discardableResult

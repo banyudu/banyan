@@ -30,6 +30,46 @@ import Testing
     ))
 }
 
+@Test func startupRecoveryRequiresAnActiveSupportedAgentWithAnExactID() {
+    #expect(SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
+        status: .needInput,
+        provider: .codex,
+        agentSessionID: "thread-saved"
+    ))
+    #expect(SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
+        status: .executing,
+        provider: .claude,
+        agentSessionID: "session-saved"
+    ))
+    #expect(SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
+        status: .running,
+        provider: .opencode,
+        agentSessionID: "ses_saved"
+    ))
+    #expect(!SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
+        status: .running,
+        provider: .codex,
+        agentSessionID: nil
+    ))
+    #expect(!SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
+        status: .running,
+        provider: .claude,
+        agentSessionID: "  "
+    ))
+    for status in [SessionStatus.closed, .completed, .failed] {
+        #expect(!SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
+            status: status,
+            provider: .codex,
+            agentSessionID: "thread-saved"
+        ))
+    }
+    #expect(!SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
+        status: .running,
+        provider: .gemini,
+        agentSessionID: "session-saved"
+    ))
+}
+
 @Test func recoveryPolicyBuildsProviderSpecificResumeCommands() {
     let history = DefaultSessionHistoryBackend(
         homeDirectory: URL(fileURLWithPath: NSHomeDirectory())

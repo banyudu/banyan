@@ -88,6 +88,14 @@ removed every pane and journal that recovery could protect. Other read failures
 remain blocked. A confirmed normal absence is cached, avoiding tmux reads on
 each key.
 
+On the next app launch, active terminal agent rows whose tmux backing disappeared
+are recreated in the background when their exact provider session ID and
+project-folder access are both available. Recovery uses the provider resume
+command, never the row's original launch prompt. Rows that need a folder grant,
+lack an exact ID, are parked, or are already completed/failed stay in the
+explicit Recover flow so startup never presents a modal permission panel or
+wakes work the user deliberately parked.
+
 ## Owned launches and legacy panes
 
 The persistent host wraps a **literal** Claude/Codex/OpenCode invocation in a
