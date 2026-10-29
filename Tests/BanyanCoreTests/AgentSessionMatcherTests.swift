@@ -94,6 +94,7 @@ private func imported(
 
 @Test func explicitResumeIdentityParsesLiteralSupportedCommands() {
     #expect(AgentSessionHistory.explicitResumeIdentity(in: "codex -p work resume -C '/tmp/project' thread-a")?.sourceID == "thread-a")
+    #expect(AgentSessionHistory.explicitResumeIdentity(in: "codex --no-daemon resume thread-a")?.sourceID == "thread-a")
     #expect(AgentSessionHistory.explicitResumeIdentity(in: "'claude' '--resume' 'thread-a'")?.provider == .claude)
     #expect(AgentSessionHistory.explicitResumeIdentity(in: "opencode --session thread-a")?.provider == .opencode)
     #expect(AgentSessionHistory.explicitResumeIdentity(in: CodexAppServerLaunch.resumeCommand(sourceID: "thread-a", cwd: "/tmp"))?.sourceID == "thread-a")

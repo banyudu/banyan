@@ -373,16 +373,44 @@ import Testing
         store.loadPersistedSessionsIfNeeded()
         let terminal = try #require(store.sessions.first { $0.id == "managed" } as? TerminalSession)
         terminal.agentSessionID = sourceID
+        terminal.command = "codex --model example 'Original implementation prompt'"
         try store.setWorkflow(id: "managed", workflow: .init(owner: "workit", jobID: "job-a", revision: 0, state: .working))
         try await store.wakeWorkflow(id: "managed", jobID: "job-a", revision: 0, wakeID: "wake-a", text: "Continue verification")
         #expect(terminal.command.contains("resume"))
         #expect(terminal.command.contains(sourceID))
         #expect(terminal.command.contains("Continue verification"))
+        #expect(terminal.command.contains("--model") && terminal.command.contains("example"))
         #expect(!terminal.command.contains("Original implementation prompt"))
         #expect(terminal.workflow?.wake?.status == .delivered)
         let command = terminal.command
         try await store.wakeWorkflow(id: "managed", jobID: "job-a", revision: 0, wakeID: "wake-a", text: "Duplicate")
         #expect(terminal.command == command)
+    }
+
+    @Test func missingPaneAppServerWakePreservesLaunchOptions() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let sourceID = "11111111-2222-3333-4444-555555555555"
+        let history = WorkflowTestHistory(candidates: [.init(provider: .codex, sourceID: sourceID,
+            cwd: fixture.root.path, createdAt: Date(), updatedAt: Date())])
+        let store = fixture.makeStore(history: history)
+        defer { store.flushPendingSessionSaves() }
+        store.enableCodexAppServerMode = true
+        store.loadPersistedSessionsIfNeeded()
+        let terminal = try #require(store.sessions.first { $0.id == "managed" } as? TerminalSession)
+        terminal.agentSessionID = sourceID
+        terminal.command = "'codex' 'remote-control' 'start' && exec 'codex' '--remote' 'unix://' '--model' 'example' 'Original implementation prompt'"
+        try store.setWorkflow(id: "managed", workflow: .init(owner: "workit", jobID: "job-a", revision: 0, state: .working))
+        try await store.wakeWorkflow(id: "managed", jobID: "job-a", revision: 0, wakeID: "wake-a", text: "Continue verification")
+
+        let prefix = "'codex' 'remote-control' 'start' && exec "
+        #expect(terminal.command.hasPrefix(prefix))
+        let invocation = String(terminal.command.dropFirst(prefix.count))
+        #expect(AgentSessionHistory.literalArguments(invocation) == [
+            "codex", "--remote", "unix://", "--model", "example", "resume", "-C", fixture.root.path,
+            sourceID, "Continue verification"
+        ])
+        #expect(!terminal.command.contains("Original implementation prompt"))
     }
 
     @Test func aReplacementPaneDuringHistoryLookupBlocksRecovery() async throws {

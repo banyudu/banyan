@@ -148,6 +148,71 @@ private func candidate(_ id: String, provider: CodingAgentProvider = .codex, cwd
     #expect(AgentSessionHistory.literalArguments(host[4]) == ["env", "OPENCODE_DISABLE_AUTOUPDATE=true", "opencode", "-m", "provider/model", "--session", "ses_example"])
 }
 
+@Test func resumePlanDropsPromptFilesFromShellWrappedCodexAndClaudeLaunches() throws {
+    let prompt = "/tmp/project with spaces/initial prompt.txt"
+    let cases: [(CodingAgentProvider, String, [String])] = [
+        (.codex, "/opt/example/bin/codex", ["/opt/example/bin/codex", "--no-daemon", "-p", "work", "-m", "example",
+            "resume", "-C", diskCWD, diskID]),
+        (.claude, "/opt/example/bin/claude", ["/opt/example/bin/claude", "--permission-mode", "plan", "--model", "example",
+            "--resume", diskID])
+    ]
+    for (provider, executable, expected) in cases {
+        let options = provider == .codex ? "--no-daemon -p work -m example" : "--permission-mode plan --model example"
+        let launch = "cd \(AgentLaunchCommand.shellQuote(diskCWD)) && \(AgentLaunchCommand.shellQuote(executable)) "
+            + options + " \"$(cat \(AgentLaunchCommand.shellQuote(prompt)))\""
+        let plan = try AgentResumeCommand.plan(provider: provider, sourceID: diskID, cwd: diskCWD, launchCommand: launch)
+        #expect(AgentSessionHistory.literalArguments(plan.command) == expected)
+        #expect(!plan.command.contains("initial prompt.txt") && !plan.command.contains("$(cat"))
+    }
+}
+
+@Test func resumePlanRefusesShellWrappersThatCannotBeReplayedSafely() {
+    let command = "cd /tmp && \(AgentLaunchCommand.shellQuote("/opt/example/bin/codex")) --no-daemon 'initial prompt'"
+    #expect(throws: AgentFreezeError.self) {
+        try AgentResumeCommand.plan(provider: .codex, sourceID: diskID, cwd: diskCWD, launchCommand: command)
+    }
+}
+
+@Test func resumePlanRefusesExpansionInRetainedLaunchOptions() {
+    for launch in [
+        "codex --model \"$MODEL\" 'initial prompt'",
+        "cd \(AgentLaunchCommand.shellQuote(diskCWD)) && claude --settings \"$CLAUDE_SETTINGS\" 'initial prompt'"
+    ] {
+        #expect(throws: AgentFreezeError.self) {
+            try AgentResumeCommand.plan(provider: launch.contains("claude") ? .claude : .codex,
+                sourceID: diskID, cwd: diskCWD, launchCommand: launch)
+        }
+    }
+}
+
+@Test func resumePlanPreservesQuotedBackslashesAndRefusesOtherRetainedExpansion() throws {
+    let plan = try AgentResumeCommand.plan(provider: .codex, sourceID: diskID, cwd: diskCWD,
+        launchCommand: "codex --model \"foo\\bar\" 'initial prompt'")
+    #expect(AgentSessionHistory.literalArguments(plan.command)
+        == ["codex", "--model", "foo\\bar", "resume", "-C", diskCWD, diskID])
+
+    for (provider, launch) in [
+        (CodingAgentProvider.codex, "codex --model foo* 'initial prompt'"),
+        (.claude, "claude --settings ~/settings.json 'initial prompt'"),
+        (.codex, "FOO=~/bin codex 'initial prompt'")
+    ] {
+        #expect(throws: AgentFreezeError.self) {
+            try AgentResumeCommand.plan(provider: provider, sourceID: diskID, cwd: diskCWD, launchCommand: launch)
+        }
+    }
+}
+
+@Test func resumePlanKeepsALiteralQuotedFollowUpPrompt() throws {
+    let base = try #require(AgentSessionHistory.resumeCommand(provider: .codex, sourceID: diskID,
+        cwd: diskCWD, prompt: "Continue with $HOME and `literal` text"))
+    let plan = try AgentResumeCommand.plan(provider: .codex, sourceID: diskID, cwd: diskCWD,
+        launchCommand: "codex --model example 'initial prompt'", baseResumeCommand: base)
+    #expect(AgentSessionHistory.literalArguments(plan.command, allowQuotedText: true) == [
+        "codex", "--model", "example", "resume", "-C", diskCWD, diskID,
+        "Continue with $HOME and `literal` text"
+    ])
+}
+
 @Test func ownedLaunchModesAreExplicitAndCustomCommandsRemainLiteral() throws {
     let ordinary = AgentLaunchCommand.command(provider: .codex)
     #expect(ordinary == "'codex'")

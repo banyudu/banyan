@@ -33,3 +33,15 @@ import Testing
     #expect(CodexAppServerLaunch.upgradedDirectCommand(direct) == "'codex' 'remote-control' 'start' && exec 'codex' '--remote' 'unix://' 'continue'")
     #expect(CodexAppServerLaunch.upgradedDirectCommand("codex --custom-wrapper") == nil)
 }
+
+@Test func appServerResumePreservesLaunchOptionsWithoutTheInitialPrompt() throws {
+    let launch = "'codex' 'remote-control' 'start' && exec 'codex' '--remote' 'unix://' '--model' 'example' 'initial prompt'"
+    let direct = try #require(CodexAppServerLaunch.directLaunchCommand(from: launch))
+    #expect(AgentSessionHistory.literalArguments(direct) == ["codex", "--model", "example", "initial prompt"])
+
+    let plan = try AgentResumeCommand.plan(provider: .codex, sourceID: "thread-123",
+        cwd: "/tmp/project", launchCommand: direct)
+    let resumed = try #require(CodexAppServerLaunch.wrappingRemoteTUI(plan.command))
+    #expect(resumed == "'codex' 'remote-control' 'start' && exec 'codex' '--remote' 'unix://' '--model' 'example' 'resume' '-C' '/tmp/project' 'thread-123'")
+    #expect(!resumed.contains("initial prompt"))
+}

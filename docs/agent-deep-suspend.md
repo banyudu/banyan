@@ -57,6 +57,13 @@ transcripts, missing disk sessions, unsupported launch options and heuristic
 Resume retains the provider executable and supported launch options, including
 Codex sandbox, approval, profile, config and model settings. Unknown options
 refuse suspension rather than risk changing permissions.
+The journal records both the same-pane host command and the direct provider
+resume command. Once suspension is confirmed, Banyan persists that direct form
+on the row, so a later reattach or restart cannot replay the initial prompt.
+Restart and recovery also rebuild the direct form from a literal launch or the
+supported `cd <session-cwd> && ...` wrapper while preserving launch settings.
+A saved conversation ID with an unresolved or unsupported provider, or a launch
+with unknown wrapper/shell syntax, is refused before teardown.
 
 A TERM timeout leaves a **terminating** recovery ticket; it does not claim RAM
 was released. A process-exit notification observes a later graceful exit, then
@@ -151,19 +158,25 @@ automatic bridge installation. Move equivalent settings to the standard global
 or project `tui.json` before using deep suspend; do not change a running agent's
 configuration. Pre-adapter panes still require exact held-transcript evidence.
 
-Existing panes created with the old host, or commands such as
-`cd ~/dev/my-project && codex …`, **do not gain a surviving shell retroactively**.
-The refusal tells the user to relaunch with a literal provider command. Keep
-the original session running, obtain its provider resume ID, and create a new
-session using the existing working-directory option:
+Existing panes created with the old host **do not gain a surviving shell
+retroactively**, so deep suspend refuses them. One-shot panes launched through
+`cd <session-cwd> && …` are likewise not converted in place; in-place deep
+suspend requires Banyan's persistent process host. Restart and recovery are
+different: before recreating a missing backing session, Banyan rewrites a
+literal launch or the supported `cd <session-cwd> && …` wrapper into a direct
+provider resume command and persists it. Unsupported wrappers and shell syntax
+are refused without teardown.
+
+If a live pane cannot be suspended in place, keep the original session running,
+obtain its provider resume ID, and create a new session using the existing
+working-directory option:
 
 ```sh
 banyanctl session new --cwd ~/dev/my-project --command 'codex --no-daemon resume YOUR_UUID'
 ```
 
 Verify that the intended conversation was restored before closing the old
-session. Banyan never rewrites a shell program or signals a legacy agent to
-perform this migration.
+session. Banyan never signals a legacy agent to perform this migration.
 
 ## Verification
 

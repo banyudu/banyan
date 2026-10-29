@@ -253,6 +253,10 @@ struct NativeCodexSessionTests {
         #expect(row.command == terminal.command)
         // Changing the legacy remote-control preference cannot rewrite fallback
         // provenance when reopening from history.
+        // The native binding is sufficient provenance even if provider inference
+        // from the persisted shell command is unavailable.
+        row.detectedAgentProvider = nil
+        row.command = "sh -c 'Initial prompt must not replay'"
         try restored.close(id: row.id)
         try restored.respawn(id: row.id)
         #expect(row.command == terminal.command)

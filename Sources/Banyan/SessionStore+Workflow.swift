@@ -173,7 +173,13 @@ extension SessionStore {
                 prompt: text, transcriptURL: nil, trimmed: false, history: deepSuspendHistory) else {
             throw WorkflowError.refused("original conversation identity is unavailable; recovery requires inspection")
         }
-        let command = AgentSessionHistory.applyingCodexProfile(fromCommand: terminal.command, to: plan.command)
+        let command: String
+        do {
+            command = try canonicalResumeCommand(provider: provider, sourceID: plan.sourceID, cwd: terminal.cwd,
+                directCommand: plan.command, previousCommand: terminal.command)
+        } catch {
+            throw WorkflowError.refused(error.localizedDescription)
+        }
         let backend = tmuxBackend
         let name = terminal.tmuxSessionName
         let currentPane = await Task.detached { backend.agentAdmissionPane(named: name) }.value

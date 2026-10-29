@@ -110,18 +110,18 @@ import Testing
     #expect(claude == "'claude' '--resume' 'session-uuid'")
 }
 
-@Test func reopenKeepsOriginalCommandWhenResumeIsNotApplicable() {
+@Test func reopenBuildsResumeWheneverAnExactTargetExists() {
     let history = DefaultSessionHistoryBackend(
         homeDirectory: URL(fileURLWithPath: NSHomeDirectory())
     )
-    // Still active — nothing to rebuild.
+    // A live row still needs a canonical command for restart and reattach.
     #expect(SessionRecoveryPolicy.resumePlan(
         status: .running,
         provider: .codex,
         agentSessionID: "abc",
         cwd: "/tmp",
         history: history
-    ) == nil)
+    )?.command == "'codex' 'resume' '-C' '/tmp' 'abc'")
 
     // No underlying agent session resolved.
     #expect(SessionRecoveryPolicy.resumePlan(

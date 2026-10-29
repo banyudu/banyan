@@ -188,7 +188,7 @@ struct AgentFreezeTests {
         }
     }
 
-    @Test func syntheticAgentFrozenRestartCleansOwnedMCPGroups() async throws {
+    @Test func syntheticAgentFrozenBackingRestartCleansOwnedMCPGroups() async throws {
         let f = try await FreezeFixture()
         defer { f.cleanup() }
         try await f.store.freezeAgent(id: f.session.id)
@@ -197,7 +197,9 @@ struct AgentFreezeTests {
         try Data().write(to: f.fixture.root.appendingPathComponent("expire"))
         try await waitForPuckState { FileManager.default.fileExists(atPath: f.fixture.root.appendingPathComponent("expired").path) }
         try FileManager.default.removeItem(at: f.fixture.root.appendingPathComponent("ready"))
-        try f.store.restart(id: f.session.id)
+        // SessionStore refuses an unresolved provider restart before teardown;
+        // this test owns the frozen backing-session cleanup it delegates to.
+        f.session.restartBackingSession()
         try await waitForPuckState { FileManager.default.fileExists(atPath: f.fixture.root.appendingPathComponent("ready").path) }
         let pane = try #require(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName))
         #expect(AgentProcessSample.read(pid: Int32(pane.rootPID))?.identity != ticket.root)
@@ -206,6 +208,23 @@ struct AgentFreezeTests {
         try await waitForPuckState {
             ticket.members.allSatisfy { AgentProcessSample.read(pid: $0.pid)?.identity != $0 }
         }
+    }
+
+    @Test func syntheticAgentRestartWithoutResolvedConversationLeavesFrozenPaneUntouched() async throws {
+        let f = try await FreezeFixture()
+        defer { f.cleanup() }
+        try await f.store.freezeAgent(id: f.session.id)
+        let ticket = try #require(f.session.frozenTicket)
+        try await waitForPuckState { f.allStopped(ticket) }
+        let command = f.session.command
+        let pane = try #require(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName))
+
+        #expect(throws: (any Error).self) { try f.store.restart(id: f.session.id) }
+
+        #expect(f.session.command == command)
+        #expect(f.session.frozenTicket == ticket)
+        #expect(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName)?.rootPID == pane.rootPID)
+        #expect(f.allStopped(ticket))
     }
 
     @Test(arguments: [false, true])

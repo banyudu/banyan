@@ -101,7 +101,7 @@ import Testing
         agentSessionID: "abc",
         cwd: "/tmp/project",
         history: history
-    ) == nil)
+    )?.command == "'codex' 'resume' '-C' '/tmp/project' 'abc'")
 }
 
 @Test func recoveryPolicyUsesInjectedHistoryBackendForResumePlans() {

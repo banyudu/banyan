@@ -31,14 +31,17 @@ public struct AgentSuspendTicket: Codable, Equatable, Sendable {
     public var phase: Phase
     public let survivors: [AgentProcessIdentity]
     public let idleTranscriptPath: String?
+    public let directResumeCommand: String?
 
     public init(root: AgentProcessIdentity, shell: AgentProcessIdentity, agent: AgentProcessIdentity,
                 paneID: String, disk: AgentDiskSession, resumeCommand: String, residentBytes: UInt64,
-                phase: Phase = .terminating, survivors: [AgentProcessIdentity] = [], idleTranscriptPath: String? = nil) {
+                phase: Phase = .terminating, survivors: [AgentProcessIdentity] = [], idleTranscriptPath: String? = nil,
+                directResumeCommand: String? = nil) {
         self.root = root; self.shell = shell; self.agent = agent; self.paneID = paneID
         self.disk = disk; self.resumeCommand = resumeCommand; self.residentBytes = residentBytes
         self.phase = phase; self.survivors = survivors
         self.idleTranscriptPath = idleTranscriptPath
+        self.directResumeCommand = directResumeCommand
     }
 }
 
@@ -264,87 +267,23 @@ public enum AgentDeepSuspend {
         return cwd
     }
 
+    public static func resumeCommands(
+        disk: AgentDiskSession,
+        launchCommand: String,
+        host: String,
+        shell: String
+    ) throws -> (direct: String, samePane: String) {
+        let plan = try AgentResumeCommand.plan(
+            provider: disk.provider,
+            sourceID: disk.id,
+            cwd: disk.cwd,
+            launchCommand: launchCommand
+        )
+        return (plan.command, AgentResumeCommand.samePaneCommand(plan, host: host, shell: shell))
+    }
+
     public static func resumeCommand(disk: AgentDiskSession, launchCommand: String, host: String, shell: String) throws -> String {
-        guard let resume = AgentSessionHistory.resumeCommand(provider: disk.provider, sourceID: disk.id, cwd: disk.cwd),
-              let invocation = launchArguments(launchCommand),
-              let launchExecutable = invocation.words.first,
-              (launchExecutable as NSString).lastPathComponent == disk.provider.defaultExecutableName,
-              let resumeWords = AgentSessionHistory.literalArguments(resume) else {
-            throw AgentFreezeError.unsafe("Could not construct exact provider resume command")
-        }
-        var words = invocation.words
-        let executable = words.removeFirst()
-        // Retain launch settings (profile/model/permissions/config), drop only
-        // the initial prompt and existing identity flags. Reject subcommands,
-        // remote attachments and fork modes whose ownership is not local.
-        let takesValue: Set<String>
-        let switches: Set<String>
-        let identityFlags: Set<String>
-        let variadicOptions: Set<String>
-        switch disk.provider {
-        case .codex:
-            takesValue = ["-p", "--profile", "-c", "--config", "-m", "--model", "-s", "--sandbox", "-a", "--ask-for-approval",
-                "--add-dir", "--enable", "--disable"]
-            switches = ["--no-daemon", "--dangerously-bypass-approvals-and-sandbox", "--full-auto", "--no-alt-screen", "--search"]
-            identityFlags = ["-C", "--cd"]
-            variadicOptions = ["--add-dir"]
-        case .claude:
-            takesValue = ["--model", "--permission-mode", "--effort", "--settings", "--mcp-config", "--add-dir",
-                "--append-system-prompt", "--system-prompt", "--allowedTools", "--disallowedTools", "--tools", "--plugin-dir"]
-            switches = ["--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--strict-mcp-config"]
-            identityFlags = ["--resume", "-r", "--session-id"]
-            variadicOptions = ["--allowedTools", "--disallowedTools", "--tools", "--add-dir", "--plugin-dir"]
-        case .opencode:
-            takesValue = ["-m", "--model", "--agent"]
-            switches = ["--pure", "--auto", "--mini"]
-            identityFlags = ["--session", "-s"]
-            variadicOptions = []
-        default:
-            throw AgentFreezeError.unsafe("Provider has no safe resume option schema")
-        }
-        var options: [String] = []
-        var index = 0
-        while index < words.count {
-            let word = words[index]
-            if disk.provider == .codex, word == "resume" { index += 1; continue }
-            if identityFlags.contains(word) {
-                if disk.provider == .claude, ["--resume", "-r"].contains(word) {
-                    // Claude's selector argument is optional. Never consume the
-                    // following permission/model option when no selector exists.
-                    index += index + 1 < words.count && !words[index + 1].hasPrefix("-") ? 2 : 1
-                } else {
-                    guard index + 1 < words.count, !words[index + 1].hasPrefix("-") else {
-                        throw AgentFreezeError.unsafe("Missing provider identity/cwd option value")
-                    }
-                    index += 2
-                }
-                continue
-            }
-            if validID(word, provider: disk.provider) { index += 1; continue }
-            if takesValue.contains(word) {
-                guard index + 1 < words.count else { throw AgentFreezeError.unsafe("Missing launch option value") }
-                if variadicOptions.contains(word), index + 2 < words.count, !words[index + 2].hasPrefix("-") {
-                    throw AgentFreezeError.unsafe("Ambiguous variadic permission/launch option; use an inline value before deep suspension")
-                }
-                options += [word, words[index + 1]]; index += 2; continue
-            }
-            if switches.contains(word) { options.append(word); index += 1; continue }
-            if word.hasPrefix("-"), let flag = word.split(separator: "=", maxSplits: 1).first,
-               takesValue.contains(String(flag)) || identityFlags.contains(String(flag)) {
-                if takesValue.contains(String(flag)) { options.append(word) }
-                index += 1; continue
-            }
-            // One positional argument is the initial prompt. Anything else is
-            // not a launch shape we can reproduce without changing semantics.
-            guard index == words.count - 1, !word.hasPrefix("-"),
-                  !["exec", "run", "attach", "serve", "web", "app-server", "--fork"].contains(word) else {
-                throw AgentFreezeError.unsafe("Launch options cannot be safely preserved on resume")
-            }
-            index += 1
-        }
-        let command = (invocation.environment + [executable] + options + resumeWords.dropFirst()).map(AgentLaunchCommand.shellQuote).joined(separator: " ")
-        return [host, AgentProcessHost.subcommand, AgentProcessHost.inheritedFlag, shell, command]
-            .map(AgentLaunchCommand.shellQuote).joined(separator: " ")
+        try resumeCommands(disk: disk, launchCommand: launchCommand, host: host, shell: shell).samePane
     }
 
     /// The only destructive operation in deep suspend. Never signal a group or

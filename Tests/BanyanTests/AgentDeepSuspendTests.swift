@@ -55,6 +55,99 @@ struct AgentDeepSuspendTests {
         #expect(f.backend.readSuspendJournal(named: f.session.tmuxSessionName) == .absent)
     }
 
+    @Test(arguments: [CodingAgentProvider.codex, .claude])
+    func shellWrappedPromptFileLaunchRestartsWithCanonicalResume(provider: CodingAgentProvider) async throws {
+        let f = try await DeepSuspendFixture(provider: provider, promptFile: true, shellWrapper: true)
+        defer { f.cleanup() }
+        f.session.markAgentSessionID(f.diskID)
+        let originalPID = f.agentPID
+        #expect(f.session.command.contains("initial-prompt.txt") && f.session.command.contains("$(cat"))
+
+        try f.store.restart(id: f.session.id)
+
+        let resumed = try #require(AgentSessionHistory.literalArguments(f.session.command))
+        let executable = try #require(resumed.first)
+        #expect((executable as NSString).lastPathComponent == provider.defaultExecutableName)
+        #expect(!f.session.command.contains("initial-prompt.txt") && !f.session.command.contains("$(cat"))
+        #expect(!resumed.contains { $0.contains("Initial prompt") })
+        if provider == .codex {
+            #expect(Array(resumed.suffix(4)) == ["resume", "-C", f.fixture.project.path, f.diskID])
+        } else {
+            #expect(Array(resumed.suffix(2)) == ["--resume", f.diskID])
+        }
+        f.store.flushPendingSessionSaves()
+        let saved = try #require(f.fixture.persistence.load().first { $0.id == f.session.id })
+        #expect(saved.command == f.session.command)
+        try await waitForPuckState(timeout: .seconds(10)) { f.currentAgentPID() != originalPID }
+        let receipt = try String(contentsOf: f.fixture.root.appendingPathComponent("resumed"), encoding: .utf8)
+        #expect(receipt.hasPrefix(f.diskID + "|"))
+    }
+
+    @Test(arguments: [CodingAgentProvider.codex, .claude])
+    func deepSuspendPersistsCanonicalResumeAcrossReattachAndRestart(provider: CodingAgentProvider) async throws {
+        let prompt = "Initial prompt that must never be replayed"
+        let f = try await DeepSuspendFixture(provider: provider, launchPrompt: prompt)
+        defer { f.cleanup() }
+        let originalPID = f.agentPID
+        try await f.store.deepSuspendAgent(id: f.session.id)
+        let ticket = try #require(f.session.suspendTicket)
+        let direct = try #require(ticket.directResumeCommand)
+        #expect(!direct.contains(prompt) && !f.session.command.contains(prompt))
+        #expect(f.session.command == direct)
+        try await waitForPuckState { ProcessTable.snapshot().descendants(of: f.pane.rootPID).count == 2 }
+
+        // A non-closed reattach while suspended must not launch the prompt-bearing row.
+        try f.store.respawn(id: f.session.id)
+        #expect(f.session.command == direct)
+        try await waitForPuckState(timeout: .seconds(10)) {
+            f.currentAgentPID() != originalPID && !f.session.isDeepSuspended
+        }
+        #expect(f.session.command == direct && !f.session.command.contains(prompt))
+        f.store.flushPendingSessionSaves()
+        let saved = try #require(f.fixture.persistence.load().first { $0.id == f.session.id })
+        #expect(saved.command == direct)
+
+        let resumedPID = try #require(f.currentAgentPID())
+        try f.store.restart(id: f.session.id)
+        #expect(!f.session.command.contains(prompt))
+        try await waitForPuckState(timeout: .seconds(10)) { f.currentAgentPID() != resumedPID }
+        let receipt = try String(contentsOf: f.fixture.root.appendingPathComponent("resumed"), encoding: .utf8)
+        #expect(receipt.hasPrefix(f.diskID + "|"))
+    }
+
+    @Test func unsafeLaunchWrapperIsRefusedWithoutTouchingThePane() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex)
+        defer { f.cleanup() }
+        let originalPID = f.agentPID
+        let originalRoot = f.pane.rootPID
+        f.session.markAgentSessionID(f.diskID)
+        f.session.command = "cd /tmp && " + f.session.command
+        let unsafeCommand = f.session.command
+
+        #expect(throws: (any Error).self) { try f.store.restart(id: f.session.id) }
+
+        #expect(f.session.command == unsafeCommand)
+        #expect(f.currentAgentPID() == originalPID)
+        #expect(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName)?.rootPID == originalRoot)
+    }
+
+    @Test func savedConversationWithUnresolvedProviderIsRefusedWithoutTouchingThePane() async throws {
+        let f = try await DeepSuspendFixture(provider: .codex)
+        defer { f.cleanup() }
+        let originalPID = f.agentPID
+        let originalRoot = f.pane.rootPID
+        f.session.markAgentSessionID(f.diskID)
+        f.session.command = "sh -c 'Initial prompt must not replay'"
+        f.session.detectedAgentProvider = nil
+        let unsafeCommand = f.session.command
+
+        #expect(throws: (any Error).self) { try f.store.restart(id: f.session.id) }
+
+        #expect(f.session.command == unsafeCommand)
+        #expect(f.currentAgentPID() == originalPID)
+        #expect(f.backend.primaryPaneSnapshot(named: f.session.tmuxSessionName)?.rootPID == originalRoot)
+    }
+
     @Test func claudeFreshQueryAllowsOnlyOwnedBridgeHelperTurnover() async throws {
         let f = try await DeepSuspendFixture(provider: .claude, mode: "helper-turnover")
         defer { f.cleanup() }
@@ -486,7 +579,8 @@ private struct DeepSuspendFixture {
     let transcript: URL
 
     init(provider: CodingAgentProvider, mode: String = "normal", shellBackground: Bool = false, legacy: Bool = false,
-         unquotedAbsoluteExecutable: Bool = false, admissionLimit: Int = 4) async throws {
+         unquotedAbsoluteExecutable: Bool = false, admissionLimit: Int = 4, launchPrompt: String? = nil,
+         promptFile: Bool = false, shellWrapper: Bool = false) async throws {
         fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
         diskID = provider == .opencode ? "ses_syntheticExactIdentity" : UUID().uuidString.lowercased()
         transcript = fixture.root.appendingPathComponent("transcript.jsonl")
@@ -526,7 +620,22 @@ private struct DeepSuspendFixture {
             processTable: DeepLiveProcessTable(), freezePreferences: preferences)
         let options = provider == .codex ? "--no-daemon resume" : provider == .claude ? "--session-id" : "--session"
         let literal = (unquotedAbsoluteExecutable ? executable.path : AgentLaunchCommand.shellQuote(executable.path)) + " " + options + " " + diskID
-        let command = legacy ? "cd . && " + literal + " '--persistent'" : literal
+        let promptPath = fixture.root.appendingPathComponent("initial-prompt.txt")
+        if promptFile {
+            try "Initial prompt that must never be replayed".write(to: promptPath, atomically: true, encoding: .utf8)
+        }
+        let prompt = promptFile
+            ? " \"$(cat \(AgentLaunchCommand.shellQuote(promptPath.path)))\""
+            : launchPrompt.map { " " + AgentLaunchCommand.shellQuote($0) } ?? ""
+        let invocation = literal + prompt
+        let command: String
+        if legacy {
+            command = "cd . && " + invocation + " '--persistent'"
+        } else if shellWrapper {
+            command = "cd \(AgentLaunchCommand.shellQuote(fixture.project.path)) && " + invocation
+        } else {
+            command = invocation
+        }
         session = store.spawn(id: "synthetic-deep", title: "Synthetic deep suspend", cwd: fixture.project.path, command: command, select: false)
         let pidFile = fixture.root.appendingPathComponent("pid")
         try await waitForPuckState { (try? String(contentsOf: pidFile, encoding: .utf8)).flatMap(Int32.init) != nil }
@@ -689,7 +798,9 @@ private struct SyntheticDeepHistory: SessionHistoryBackend {
         return [.init(provider: self.provider, sourceID: id, cwd: self.cwd, createdAt: Date(), updatedAt: Date())]
     }
     func sourceID(fromImportedSessionID id: String, provider: CodingAgentProvider) -> String? { nil }
-    func resumeCommand(provider: CodingAgentProvider, sourceID: String, cwd: String, prompt: String?) -> String? { nil }
+    func resumeCommand(provider: CodingAgentProvider, sourceID: String, cwd: String, prompt: String?) -> String? {
+        AgentSessionHistory.resumeCommand(provider: provider, sourceID: sourceID, cwd: cwd, prompt: prompt)
+    }
     func prepareTrimmedTranscript(provider: CodingAgentProvider, sourceID: String, cwd: String, transcriptURL: URL?) -> String? { nil }
 }
 

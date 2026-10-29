@@ -1,7 +1,7 @@
 import Foundation
 
-/// Shared rules for deciding whether and how a closed coding-agent session can
-/// be resumed from its imported history.
+/// Shared rules for deciding whether and how a coding-agent session can be
+/// resumed from its imported history.
 public enum SessionRecoveryPolicy {
     /// Whether a missing tmux backend can be recreated automatically with the
     /// conversation's exact provider identity.
@@ -51,8 +51,7 @@ public enum SessionRecoveryPolicy {
         cwd: String,
         history: any SessionHistoryBackend
     ) -> SessionResumePolicy.Plan? {
-        guard status == .closed,
-              let provider,
+        guard let provider,
               ( [.codex, .claude].contains(provider) || provider.isOpencodeBacked ),
               let agentSessionID,
               !agentSessionID.isEmpty else {

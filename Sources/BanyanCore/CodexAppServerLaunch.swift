@@ -44,6 +44,36 @@ public enum CodexAppServerLaunch {
         command.contains("'codex' '--remote' 'unix://'")
     }
 
+    /// The literal TUI launch carried inside Banyan's canonical app-server
+    /// command, with the daemon prelude and `--remote` transport removed. This
+    /// lets restart reuse the original model/profile/permission options without
+    /// replaying the launch prompt.
+    public static func directLaunchCommand(from command: String) -> String? {
+        let prefix = daemonStartCommand + " && exec "
+        guard command.hasPrefix(prefix) else { return nil }
+        let invocation = String(command.dropFirst(prefix.count))
+        guard let arguments = AgentSessionHistory.literalArguments(invocation, allowQuotedText: true),
+              arguments.count >= 3,
+              (arguments[0] as NSString).lastPathComponent == "codex",
+              arguments[1] == "--remote", arguments[2] == localEndpoint else { return nil }
+        return ([arguments[0]] + arguments.dropFirst(3))
+            .map(AgentLaunchCommand.shellQuote)
+            .joined(separator: " ")
+    }
+
+    /// Wraps a canonical direct Codex command back in the local daemon prelude.
+    /// Environment prefixes are refused: re-quoting an assignment turns it into
+    /// an argument rather than preserving the shell's environment semantics.
+    public static func wrappingRemoteTUI(_ directCommand: String) -> String? {
+        guard let arguments = AgentSessionHistory.literalArguments(directCommand, allowQuotedText: true),
+              let executable = arguments.first,
+              (executable as NSString).lastPathComponent == "codex",
+              !executable.contains("=") else { return nil }
+        let invocation = [executable, "--remote", localEndpoint] + arguments.dropFirst()
+        return daemonStartCommand + " && exec "
+            + invocation.map(AgentLaunchCommand.shellQuote).joined(separator: " ")
+    }
+
     /// Rewrites only Banyan's canonical direct-Codex commands. This covers
     /// `banyanctl agent run --agent codex` without taking ownership of an
     /// arbitrary custom shell command entered in the session sheet.

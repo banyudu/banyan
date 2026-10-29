@@ -45,6 +45,7 @@ extension TerminalSession {
         deepRecoveryIsUncertain = false
         deepSuspendError = nil
         suspendTicket = ticket
+        applyDirectResumeCommand(ticket)
         isDeepSuspended = true
         isDeepTerminating = ticket.phase == .terminating && deepProcessPresence(ticket.agent) != .exited
         if isDeepTerminating { watchDeepTermination(ticket) }
@@ -77,6 +78,7 @@ extension TerminalSession {
         var ticket = original
         ticket.phase = .suspended
         suspendTicket = ticket
+        applyDirectResumeCommand(ticket)
         isDeepSuspended = true
         isDeepTerminating = false
         deepSuspendError = nil
@@ -112,6 +114,7 @@ extension TerminalSession {
             throw AgentFreezeError.unsafe(deepSuspendError ?? "Recovery state is unknown; input blocked")
         }
         guard let ticket = suspendTicket else { return }
+        applyDirectResumeCommand(ticket)
         guard let pane = tmuxBackend.primaryPaneSnapshot(named: tmuxSessionName), !pane.isDead,
               pane.paneID == ticket.paneID, Int32(pane.rootPID) == ticket.root.pid,
               AgentProcessSample.read(pid: ticket.root.pid)?.identity == ticket.root else {
@@ -200,6 +203,11 @@ extension TerminalSession {
         }
         monitorDeepResume(resuming)
         touch()
+    }
+
+    private func applyDirectResumeCommand(_ ticket: AgentSuspendTicket) {
+        guard let command = ticket.directResumeCommand, self.command != command else { return }
+        self.command = command
     }
 
     private func monitorDeepResume(_ ticket: AgentSuspendTicket) {

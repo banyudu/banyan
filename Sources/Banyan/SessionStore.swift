@@ -3204,30 +3204,12 @@ final class SessionStore: ObservableObject {
             }
         }
 
-        let recoveryCommand: String? = try session.codexBinding.map(CodexCLIFallback.command) ?? session.agentProvider.flatMap { provider in
-            guard let agentSessionID = session.agentSessionID, !agentSessionID.isEmpty,
-                  ([.codex, .claude].contains(provider) || provider.isOpencodeBacked) else {
-                return nil
-            }
-            let directCommand = historyBackend.resumeCommand(
-                provider: provider,
-                sourceID: agentSessionID,
-                cwd: session.cwd,
-                prompt: nil
-            )
-            if provider == .codex,
-               CodexAppServerLaunch.isAppServerCommand(session.command) {
-                return CodexAppServerLaunch.resumeCommand(sourceID: agentSessionID, cwd: session.cwd)
-            }
-            // Recover rebuilds the command itself, so it needs the same profile
-            // hand-off as `preferredResumeCommand`: without it a recovered
-            // `-p opencode-go` session resumes, fails to resolve the provider
-            // recorded in its transcript, and exits — and the profile-less
-            // command is written back to the row, so the next attempt cannot
-            // recover it either.
-            return directCommand.map {
-                AgentSessionHistory.applyingCodexProfile(fromCommand: session.command, to: $0)
-            }
+        let recoveryCommand: String?
+        do {
+            recoveryCommand = try canonicalAgentResumeCommand(for: session)
+        } catch {
+            historyResumeErrors[id] = error.localizedDescription
+            throw error
         }
 
         guard session.agentProvider == nil || recoveryCommand?.isEmpty == false else {
@@ -3362,14 +3344,18 @@ final class SessionStore: ObservableObject {
                     try? self.respawn(id: id)
                     return
                 }
-                session.command = preferredResumeCommand(
-                    provider: provider,
-                    sourceID: plan.sourceID,
-                    cwd: cwd,
-                    prompt: nil,
-                    directCommand: plan.command,
-                    previousCommand: session.command
-                )
+                do {
+                    session.command = try self.canonicalResumeCommand(
+                        provider: provider,
+                        sourceID: plan.sourceID,
+                        cwd: cwd,
+                        directCommand: plan.command,
+                        previousCommand: session.command
+                    )
+                } catch {
+                    self.historyResumeErrors[id] = error.localizedDescription
+                    return
+                }
                 session.markAgentSessionID(plan.sourceID)
                 session.reattachTerminalClient()
                 self.selectedSessionID = id
@@ -3534,30 +3520,20 @@ final class SessionStore: ObservableObject {
         guard let session = sessions.first(where: { $0.id == id }) as? TerminalSession else {
             throw ControlError.notFound(id)
         }
-        if let binding = session.codexBinding {
-            session.command = try CodexCLIFallback.command(binding: binding)
-        } else if let resumePlan = SessionRecoveryPolicy.resumePlan(
-            status: session.status,
-            provider: session.agentProvider,
-            agentSessionID: session.agentSessionID,
-            cwd: session.cwd,
-            history: historyBackend
-        ) {
-            let command = preferredResumeCommand(
-                provider: session.agentProvider,
-                sourceID: resumePlan.sourceID,
-                cwd: session.cwd,
-                prompt: nil,
-                directCommand: resumePlan.command,
-                previousCommand: session.command
-            )
-            if session.command != command {
+        let hasLivePane: Bool
+        if case .present(let pane) = tmuxBackend.agentAdmissionPane(named: session.tmuxSessionName), !pane.isDead {
+            hasLivePane = true
+        } else {
+            hasLivePane = false
+        }
+        do {
+            if let command = try canonicalAgentResumeCommand(for: session, allowUnresolvedIdentity: hasLivePane),
+               session.command != command {
                 session.command = command
             }
-        } else if session.status == .closed, session.agentProvider != nil {
-            let message = SessionRecoveryPolicy.missingResumeMessage(provider: session.agentProvider)
-            historyResumeErrors[id] = message
-            throw ControlError.badRequest(message)
+        } catch {
+            historyResumeErrors[id] = error.localizedDescription
+            throw error
         }
         session.reattachTerminalClient()
         selectedSessionID = id
@@ -3571,6 +3547,7 @@ final class SessionStore: ObservableObject {
         guard session.canRestart, let session = session as? TerminalSession else {
             throw ControlError.badRequest("session '\(id)' has no launch command to restart")
         }
+        try prepareAgentResumeForRestart(session)
         try session.prepareFrozenAgentForTeardown()
         session.agentLaunchQueue = nil
         unparkForAttach(session)
@@ -5748,6 +5725,93 @@ final class SessionStore: ObservableObject {
 
     private var codexLaunchMode: CodexLaunchMode {
         enableCodexAppServerMode ? .appServer : .direct
+    }
+
+    private func prepareAgentResumeForRestart(_ session: TerminalSession) throws {
+        guard let command = try canonicalAgentResumeCommand(for: session), session.command != command else { return }
+        session.command = command
+    }
+
+    private func canonicalAgentResumeCommand(
+        for session: TerminalSession,
+        allowUnresolvedIdentity: Bool = false
+    ) throws -> String? {
+        if let binding = session.codexBinding {
+            return try CodexCLIFallback.command(binding: binding)
+        }
+        let agentSessionID = session.agentSessionID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let provider = session.agentProvider else {
+            if !agentSessionID.isEmpty, !allowUnresolvedIdentity {
+                throw ControlError.badRequest(
+                    "This session has a saved conversation ID but its provider is unresolved. The original command was not restarted."
+                )
+            }
+            return nil
+        }
+        guard [.codex, .claude].contains(provider) || provider.isOpencodeBacked else {
+            if !agentSessionID.isEmpty, !allowUnresolvedIdentity {
+                throw ControlError.badRequest(
+                    "\(provider.displayName) sessions cannot be resumed safely. The original command was not restarted."
+                )
+            }
+            return nil
+        }
+        guard !agentSessionID.isEmpty else {
+            if allowUnresolvedIdentity { return nil }
+            throw ControlError.badRequest(
+                "\(provider.displayName) has no resolved conversation ID. The original command was not restarted."
+            )
+        }
+        guard let resumePlan = SessionRecoveryPolicy.resumePlan(
+            status: session.status,
+            provider: provider,
+            agentSessionID: agentSessionID,
+            cwd: session.cwd,
+            history: historyBackend
+        ) else {
+            throw ControlError.badRequest(SessionRecoveryPolicy.missingResumeMessage(provider: provider))
+        }
+        do {
+            return try canonicalResumeCommand(
+                provider: provider,
+                sourceID: resumePlan.sourceID,
+                cwd: session.cwd,
+                directCommand: resumePlan.command,
+                previousCommand: session.command
+            )
+        } catch {
+            throw ControlError.badRequest(error.localizedDescription)
+        }
+    }
+
+    func canonicalResumeCommand(
+        provider: CodingAgentProvider,
+        sourceID: String,
+        cwd: String,
+        directCommand: String,
+        previousCommand: String
+    ) throws -> String {
+        if provider == .codex, CodexAppServerLaunch.isAppServerCommand(previousCommand) || enableCodexAppServerMode {
+            let launchCommand = CodexAppServerLaunch.directLaunchCommand(from: previousCommand) ?? previousCommand
+            let direct = try AgentResumeCommand.plan(
+                provider: provider,
+                sourceID: sourceID,
+                cwd: cwd,
+                launchCommand: launchCommand,
+                baseResumeCommand: directCommand
+            )
+            guard let command = CodexAppServerLaunch.wrappingRemoteTUI(direct.command) else {
+                throw AgentFreezeError.unsafe("Codex app-server launch options cannot be safely preserved; the original command was not restarted.")
+            }
+            return command
+        }
+        return try AgentResumeCommand.plan(
+            provider: provider,
+            sourceID: sourceID,
+            cwd: cwd,
+            launchCommand: previousCommand,
+            baseResumeCommand: directCommand
+        ).command
     }
 
     private func preferredResumeCommand(

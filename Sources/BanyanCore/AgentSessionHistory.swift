@@ -16,6 +16,49 @@ public enum AgentSessionHistory {
         return parsed.tokens
     }
 
+    /// The provider invocation from a literal launch or the one supported shell
+    /// wrapper (`cd <session-cwd> && ...`). Environment assignments and `exec`
+    /// prefixes are retained so callers can rebuild the command without replaying
+    /// the original prompt.
+    public static func providerLaunchWords(
+        in command: String,
+        provider: CodingAgentProvider,
+        cwd: String
+    ) -> [String]? {
+        guard let parsed = shellTokens(command, forLiteralLaunch: true) else { return nil }
+        guard !parsed.hasUnquotedExpansion else { return nil }
+        let providerSegments = parsed.segments.indices.filter { index in
+            parsed.segments[index].contains { token in
+                (token as NSString).lastPathComponent == provider.resumeExecutableName
+            }
+        }
+        guard providerSegments.count == 1, let providerIndex = providerSegments.first,
+              providerIndex == parsed.segments.count - 1 else { return nil }
+        if providerIndex == 1 {
+            guard let separator = parsed.separators.first, ["&&", ";", "\n"].contains(separator),
+                  isSessionCWDChange(parsed.segments[0], cwd: cwd) else { return nil }
+        } else if providerIndex != 0 {
+            return nil
+        }
+
+        let segment = parsed.segments[providerIndex]
+        guard let executableIndex = segment.firstIndex(where: {
+            ($0 as NSString).lastPathComponent == provider.resumeExecutableName
+        }), !segment.dropFirst(executableIndex + 1).contains(where: {
+            ($0 as NSString).lastPathComponent == provider.resumeExecutableName
+        }) else { return nil }
+
+        var prefix = Array(segment[..<executableIndex])
+        if prefix.first == "exec" { prefix.removeFirst() }
+        if prefix.first == "env" {
+            prefix.removeFirst()
+            guard !prefix.isEmpty, prefix.allSatisfy(isLiteralEnvironmentAssignment) else { return nil }
+        } else {
+            guard prefix.allSatisfy(isLiteralEnvironmentAssignment) else { return nil }
+        }
+        return segment
+    }
+
     /// Extract only unambiguous literal resume invocations. Shell pipelines and
     /// unknown options are left unbound rather than guessing at their meaning.
     public static func explicitResumeIdentity(in command: String) -> (provider: CodingAgentProvider, sourceID: String)? {
@@ -36,7 +79,7 @@ public enum AgentSessionHistory {
         guard name == "codex" else { return nil }
         var index = 1
         let valueOptions: Set<String> = ["-C", "--cd", "-p", "--profile", "-m", "--model", "-c", "--config", "-s", "--sandbox", "-a", "--ask-for-approval", "--remote"]
-        let switchOptions: Set<String> = ["--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--search", "--oss", "--all"]
+        let switchOptions: Set<String> = ["--no-daemon", "--full-auto", "--dangerously-bypass-approvals-and-sandbox", "--search", "--oss", "--all"]
         var sawResume = false
         while index < args.count {
             let arg = args[index]
@@ -167,6 +210,25 @@ public enum AgentSessionHistory {
         (token as NSString).lastPathComponent == "codex"
     }
 
+    private static func isSessionCWDChange(_ words: [String], cwd: String) -> Bool {
+        guard words.count == 2, words[0] == "cd", !words[1].contains("$"), !words[1].contains("`") else { return false }
+        let target = words[1].hasPrefix("/")
+            ? URL(fileURLWithPath: words[1])
+            : URL(fileURLWithPath: cwd).appendingPathComponent(words[1])
+        return PathDisplayName.canonicalPath(target.standardizedFileURL.path) == PathDisplayName.canonicalPath(cwd)
+    }
+
+    private static func isLiteralEnvironmentAssignment(_ word: String) -> Bool {
+        guard let equals = word.firstIndex(of: "="), equals != word.startIndex else { return false }
+        let key = word[..<equals]
+        guard key.first == "_" || key.first?.isLetter == true,
+              key.allSatisfy({ $0 == "_" || $0.isLetter || $0.isNumber }) else { return false }
+        let value = word[word.index(after: equals)...]
+        return value.rangeOfCharacter(from: shellExpansionCharacters) == nil
+    }
+
+    private static let shellExpansionCharacters = CharacterSet(charactersIn: "$`*?[]~")
+
     /// `--profile=name` and `-p=name`, the two spellings that carry the value in
     /// the same token. A bare `--profile`/`-p` is handled by the caller.
     private static func profileValue(inlineFlag token: String) -> String? {
@@ -179,6 +241,9 @@ public enum AgentSessionHistory {
     private struct TokenizedCommand {
         /// The words of the command, with shell operators treated as separators.
         var tokens: [String]
+        var segments: [[String]]
+        var separators: [String]
+        var hasUnquotedExpansion: Bool
         /// False once the command shows shell syntax of its own — `&&`, a pipe, a
         /// substitution, a redirect. Reading a flag out of such a command is fine;
         /// re-quoting one is not, because the operators would be quoted away.
@@ -191,6 +256,9 @@ public enum AgentSessionHistory {
     /// or a trailing backslash.
     private static func shellTokens(_ command: String, forLiteralLaunch: Bool = false) -> TokenizedCommand? {
         var tokens: [String] = []
+        var segments: [[String]] = [[]]
+        var separators: [String] = []
+        var hasUnquotedExpansion = false
         var current = ""
         var hasCurrent = false
         var isLossless = true
@@ -199,6 +267,7 @@ public enum AgentSessionHistory {
         func finishCurrent() {
             guard hasCurrent else { return }
             tokens.append(current)
+            segments[segments.count - 1].append(current)
             current = ""
             hasCurrent = false
         }
@@ -257,26 +326,40 @@ public enum AgentSessionHistory {
                     hasCurrent = true
                 }
                 index = command.index(after: escaped)
-            case " ", "\t", "\n":
-                if forLiteralLaunch, character == "\n" { isLossless = false }
+            case " ", "\t":
                 finishCurrent()
+                index = command.index(after: index)
+            case "\n":
+                if forLiteralLaunch { isLossless = false }
+                finishCurrent()
+                separators.append("\n")
+                segments.append([])
                 index = command.index(after: index)
             case "$":
                 let next = command.index(after: index)
                 guard next < command.endIndex, command[next] == "(" else { return nil }
                 finishCurrent()
                 isLossless = false
+                hasUnquotedExpansion = true
                 index = command.index(after: next)
                 guard skipBalanced(")", opens: 1) else { return nil }
             case "`":
                 finishCurrent()
                 isLossless = false
+                hasUnquotedExpansion = true
                 index = command.index(after: index)
                 guard skipBalanced("`", opens: 0) else { return nil }
             case "&", "|", ";", "<", ">", "(", ")", "{", "}":
                 finishCurrent()
                 isLossless = false
                 index = command.index(after: index)
+                var separator = String(character)
+                if ["&", "|", ">"].contains(character), index < command.endIndex, command[index] == character {
+                    separator.append(command[index])
+                    index = command.index(after: index)
+                }
+                separators.append(separator)
+                segments.append([])
             default:
                 if forLiteralLaunch, "*?[]~#".contains(character) { isLossless = false }
                 current.append(character)
@@ -285,6 +368,13 @@ public enum AgentSessionHistory {
             }
         }
         finishCurrent()
-        return TokenizedCommand(tokens: tokens, isLossless: isLossless)
+        return TokenizedCommand(tokens: tokens, segments: segments, separators: separators,
+            hasUnquotedExpansion: hasUnquotedExpansion, isLossless: isLossless)
+    }
+}
+
+private extension CodingAgentProvider {
+    var resumeExecutableName: String {
+        isOpencodeBacked ? "opencode" : defaultExecutableName
     }
 }

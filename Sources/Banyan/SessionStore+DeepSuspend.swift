@@ -115,7 +115,7 @@ extension SessionStore {
                 let helpers = provider == .claude ? AgentProviderIdentity.ownedWaitHelpers(samples: first,
                     rows: ProcessTable.snapshot().descendants(of: pane.rootPID), process: sample.identity, root: root, executable: host.path) : []
                 guard helpers.count <= 1 else { throw AgentFreezeError.unsafe("Provider identity helper is ambiguous") }
-                let command = try AgentDeepSuspend.resumeCommand(disk: disk, launchCommand: target.command,
+                let resume = try AgentDeepSuspend.resumeCommands(disk: disk, launchCommand: target.command,
                     host: host.path, shell: shellRow.commandName)
                 let started = ProcessInfo.processInfo.systemUptime
                 try await Task.sleep(for: .seconds(1))
@@ -168,9 +168,9 @@ extension SessionStore {
                     }
                 }
                 let ticket = AgentSuspendTicket(root: root, shell: shell, agent: sample.identity, paneID: pane.paneID,
-                    disk: disk, resumeCommand: command, residentBytes: sample.residentBytes,
+                    disk: disk, resumeCommand: resume.samePane, residentBytes: sample.residentBytes,
                     survivors: first.filter { $0.identity != root && $0.identity != shell && $0.identity != sample.identity }.map(\.identity),
-                    idleTranscriptPath: idleTranscriptPath)
+                    idleTranscriptPath: idleTranscriptPath, directResumeCommand: resume.direct)
                 return (ticket, plan, activity, first, started)
             }.value
             // Main-actor commit: focus/input invalidate the generation. There
