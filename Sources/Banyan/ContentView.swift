@@ -2878,6 +2878,7 @@ struct SessionRow: View, Equatable {
 
     var body: some View {
         let _ = EnergyTrace.count("session.row.body", sessionID: session.id)
+        let isExpensive = residentCostTier.isExpensive
         HStack(spacing: 6) {
             // All rows in a group with any nesting share a fixed leading
             // slot, so same-depth badges align whether or not a given row
@@ -2906,14 +2907,14 @@ struct SessionRow: View, Equatable {
                     JumpKeyBadge(
                         label: jumpShortcuts.label(for: session.id),
                         provider: brandingProvider,
-                        isExpensive: residentCostTier.isExpensive
+                        isExpensive: isExpensive
                     )
                 }
             } else {
                 JumpKeyBadge(
                     label: jumpKeyLabel,
                     provider: brandingProvider,
-                    isExpensive: residentCostTier.isExpensive
+                    isExpensive: isExpensive
                 )
             }
 

@@ -26,8 +26,6 @@ import Testing
             host: host
         )
         let selection = SessionSelection()
-        let workState = SessionWorkState()
-        let overviewStatus = WorkOverviewStatus()
         var sourceCalls = 0
         let access = SessionCostAccess(
             source: {
@@ -40,43 +38,7 @@ import Testing
             },
             estimate: { _ in .unavailable(.noUsage) }
         )
-        let row = SessionRow(
-            session: session,
-            selection: selection,
-            launchProfile: nil,
-            depth: 0,
-            titleOverride: nil,
-            isHistory: false,
-            isParent: false,
-            showsDisclosureGutter: false,
-            isCollapsed: false,
-            hiddenChildCount: 0,
-            jumpKeyLabel: "",
-            workState: workState,
-            overviewStatus: overviewStatus,
-            actionOwner: ObjectIdentifier(selection),
-            refreshWork: {},
-            openWorkSession: { _ in },
-            onSelect: {},
-            onToggleCollapse: {},
-            onRevealHidden: {},
-            onClose: {},
-            onRestart: {},
-            onRespawn: {},
-            onRecover: {},
-            isHandoffAvailable: false,
-            isHandoffPending: false,
-            onHandoff: {},
-            onCodexRemoteHandoff: {},
-            onRemove: {},
-            onChooseParent: {},
-            onToggleSuspended: {},
-            onSetFrozen: { _ in },
-            onSetDeepSuspended: { _ in },
-            onFocusTerminal: {},
-            onReopenHistory: {},
-            sessionCost: access
-        )
+        let row = makeRow(session: session, selection: selection, sessionCost: access)
 
         let size = NSSize(width: 420, height: 48)
         let window = NSWindow(
@@ -104,6 +66,84 @@ import Testing
         #expect(sourceCalls == 1)
         try await Task.sleep(for: .milliseconds(200))
         #expect(sourceCalls == 1)
+    }
+
+    @Test func residentExpensiveEstimateUpdatesShortcutBadge() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("banyan-cost-tier-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let host = HostRuntimeContext(
+            environment: ["PATH": "/usr/bin:/bin"],
+            homeDirectory: root,
+            currentDirectory: root.path
+        )
+        let session = BanyanSession(
+            id: "expensive-cost-row",
+            title: "An expensive row",
+            cwd: root.path,
+            command: "",
+            status: .needInput,
+            telemetry: banyanTestTelemetry,
+            host: host
+        )
+        let selection = SessionSelection()
+        let shortcuts = SessionJumpShortcuts()
+        shortcuts.setRollingEnabled(false)
+        shortcuts.updateSessionIDs([session.id])
+        #expect(!shortcuts.label(for: session.id).isEmpty)
+        let access = SessionCostAccess(
+            source: {
+                SessionCostTranscriptSource(
+                    provider: .codex,
+                    transcriptURL: root.appendingPathComponent("unused.jsonl"),
+                    sessionKey: "codex:expensive-cost-row"
+                )
+            },
+            estimate: { _ in
+                .complete(amount: Decimal(string: "71.5")!, tint: .codex)
+            }
+        )
+        let row = makeRow(
+            session: session,
+            selection: selection,
+            jumpShortcuts: shortcuts,
+            sessionCost: access
+        )
+
+        let size = NSSize(width: 420, height: 48)
+        let window = NSWindow(
+            contentRect: NSRect(origin: NSPoint(x: -2_000, y: -2_000), size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        let hosting = NSHostingView(rootView: row.equatable())
+        window.contentView = hosting
+        hosting.frame = NSRect(origin: .zero, size: size)
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+
+        try await Task.sleep(for: .milliseconds(700))
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+
+        let scaleX = CGFloat(bitmap.pixelsWide) / hosting.bounds.width
+        var maxGoldBias = -CGFloat.greatestFiniteMagnitude
+        for x in Int(4 * scaleX)..<Int(22 * scaleX) {
+            for y in 0..<bitmap.pixelsHigh {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                    continue
+                }
+                maxGoldBias = max(maxGoldBias, color.redComponent - color.blueComponent)
+            }
+        }
+        #expect(maxGoldBias > 0.05, "Expensive badge should have a gold fill, got bias \(maxGoldBias)")
     }
 
     @Test func gutterOwnsOnlyTheReservedTrailingStrip() {
@@ -188,5 +228,52 @@ import Testing
                 == transcript.resolvingSymlinksInPath()
         )
         #expect(source.sessionKey == "codex:\(sourceID)")
+    }
+
+    private func makeRow(
+        session: BanyanSession,
+        selection: SessionSelection,
+        jumpKeyLabel: String = "",
+        jumpShortcuts: SessionJumpShortcuts? = nil,
+        sessionCost: SessionCostAccess? = nil
+    ) -> SessionRow {
+        SessionRow(
+            session: session,
+            selection: selection,
+            launchProfile: nil,
+            depth: 0,
+            titleOverride: nil,
+            isHistory: false,
+            isParent: false,
+            showsDisclosureGutter: false,
+            isCollapsed: false,
+            hiddenChildCount: 0,
+            jumpKeyLabel: jumpKeyLabel,
+            jumpShortcuts: jumpShortcuts,
+            workState: SessionWorkState(),
+            overviewStatus: WorkOverviewStatus(),
+            actionOwner: ObjectIdentifier(selection),
+            refreshWork: {},
+            openWorkSession: { _ in },
+            onSelect: {},
+            onToggleCollapse: {},
+            onRevealHidden: {},
+            onClose: {},
+            onRestart: {},
+            onRespawn: {},
+            onRecover: {},
+            isHandoffAvailable: false,
+            isHandoffPending: false,
+            onHandoff: {},
+            onCodexRemoteHandoff: {},
+            onRemove: {},
+            onChooseParent: {},
+            onToggleSuspended: {},
+            onSetFrozen: { _ in },
+            onSetDeepSuspended: { _ in },
+            onFocusTerminal: {},
+            onReopenHistory: {},
+            sessionCost: sessionCost
+        )
     }
 }
