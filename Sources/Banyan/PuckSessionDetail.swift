@@ -64,20 +64,12 @@ struct PuckSessionDetail: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            if let provider = session.agentProvider {
-                AgentProviderIcon(provider: provider, helpText: session.agentRuntimeIdentityLabel)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.displayTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(runtimeSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer()
+            Text(runtimeSummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 12)
             PuckTurnStatusBadge(phase: session.turnPhase)
             if session.turnPhase.isTurnActive {
                 Button {
@@ -113,9 +105,8 @@ struct PuckSessionDetail: View {
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 11)
-        .frame(maxWidth: 960, alignment: .leading)
-        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
     }
 
@@ -164,8 +155,7 @@ struct PuckSessionDetail: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 18)
-                .frame(maxWidth: 960, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background {
                     PuckTranscriptScrollObserver { following in
                         isFollowingLatest = following
@@ -582,8 +572,7 @@ struct PuckSessionDetail: View {
         .padding(.horizontal, 24)
         .padding(.top, 12)
         .padding(.bottom, 10)
-        .frame(maxWidth: 960, alignment: .leading)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.background)
     }
 
@@ -657,8 +646,7 @@ private extension View {
     func pendingAskLayout() -> some View {
         padding(.horizontal, 24)
             .padding(.vertical, 14)
-            .frame(maxWidth: 960, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.primary.opacity(0.025))
     }
 }

@@ -71,7 +71,7 @@ struct PuckTimelineRow: View {
     }
 
     private func userRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             marker("›", emphasis: .secondary)
             Text(text)
                 .font(.body)
@@ -87,7 +87,7 @@ struct PuckTimelineRow: View {
     }
 
     private func assistantRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             marker("•", emphasis: .secondary)
             VStack(alignment: .leading, spacing: 6) {
                 MarkdownText(text)
@@ -216,8 +216,9 @@ struct PuckTimelineRow: View {
     }
 
     private func calloutRow(title: String, systemImage: String, tint: Color, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: systemImage)
+                .font(.caption)
                 .foregroundStyle(tint)
                 .frame(width: 12)
             VStack(alignment: .leading, spacing: 4) {
@@ -315,8 +316,9 @@ private struct PuckTimelineNoticeRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: systemImage)
+                .font(.caption)
                 .foregroundStyle(tint)
                 .frame(width: 12)
             VStack(alignment: .leading, spacing: 4) {

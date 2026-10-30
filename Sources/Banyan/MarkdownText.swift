@@ -31,6 +31,21 @@ struct MarkdownText: View {
         case let .paragraph(text):
             inlineText(text)
                 .font(style.paragraphFont)
+        case let .blockquote(text):
+            HStack(alignment: .top, spacing: 10) {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(Color.secondary.opacity(0.35))
+                    .frame(width: 3)
+                inlineText(text)
+                    .font(style.paragraphFont)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        case .horizontalRule:
+            Rectangle()
+                .fill(Color.secondary.opacity(0.18))
+                .frame(height: 1)
+                .padding(.vertical, 3)
         case let .list(items):
             VStack(alignment: .leading, spacing: style.listSpacing) {
                 ForEach(items) { item in
@@ -234,6 +249,8 @@ private struct MarkdownBlock: Identifiable {
 private enum MarkdownBlockContent {
     case heading(level: Int, text: String)
     case paragraph(String)
+    case blockquote(String)
+    case horizontalRule
     case list([MarkdownListItem])
     case table(MarkdownTable)
     case codeBlock(language: String?, text: String)
@@ -312,6 +329,20 @@ enum MarkdownBlockParser {
         }
     }
 
+    static func containsBlockquote(in value: String) -> Bool {
+        parse(value).contains { block in
+            if case .blockquote = block.content { return true }
+            return false
+        }
+    }
+
+    static func containsHorizontalRule(in value: String) -> Bool {
+        parse(value).contains { block in
+            if case .horizontalRule = block.content { return true }
+            return false
+        }
+    }
+
     static func codeBlocks(in value: String) -> [CodeBlock] {
         parse(value).compactMap { block in
             guard case let .codeBlock(language, text) = block.content else { return nil }
@@ -353,6 +384,19 @@ enum MarkdownBlockParser {
             if let heading = heading(in: line) {
                 append(.heading(level: heading.level, text: heading.text))
                 index += 1
+                continue
+            }
+
+            if isHorizontalRule(line) {
+                append(.horizontalRule)
+                index += 1
+                continue
+            }
+
+            if blockquoteText(in: line) != nil {
+                let parsed = parseBlockquote(lines: lines, startIndex: index)
+                append(.blockquote(parsed.text))
+                index = parsed.nextIndex
                 continue
             }
 
@@ -514,7 +558,10 @@ enum MarkdownBlockParser {
                 continue
             }
 
-            if fenceStart(in: line) != nil || heading(in: line) != nil {
+            if fenceStart(in: line) != nil
+                || heading(in: line) != nil
+                || isHorizontalRule(line)
+                || blockquoteText(in: line) != nil {
                 break
             }
 
@@ -545,6 +592,8 @@ enum MarkdownBlockParser {
             if !paragraphLines.isEmpty,
                (fenceStart(in: line) != nil
                 || heading(in: line) != nil
+                || isHorizontalRule(line)
+                || blockquoteText(in: line) != nil
                 || listItem(in: line, id: 0) != nil
                 || parseTable(lines: lines, startIndex: index) != nil) {
                 break
@@ -555,6 +604,36 @@ enum MarkdownBlockParser {
         }
 
         return (paragraphLines.joined(separator: "\n"), index)
+    }
+
+    private static func parseBlockquote(
+        lines: [String],
+        startIndex: Int
+    ) -> (text: String, nextIndex: Int) {
+        var quotedLines: [String] = []
+        var index = startIndex
+        while index < lines.count, let text = blockquoteText(in: lines[index]) {
+            quotedLines.append(text)
+            index += 1
+        }
+        return (quotedLines.joined(separator: "\n"), index)
+    }
+
+    private static func blockquoteText(in line: String) -> String? {
+        var content = line.trimmingCharacters(in: .whitespaces)
+        guard content.hasPrefix(">") else { return nil }
+        while content.hasPrefix(">") {
+            content.removeFirst()
+            if content.hasPrefix(" ") { content.removeFirst() }
+        }
+        return content
+    }
+
+    private static func isHorizontalRule(_ line: String) -> Bool {
+        let compact = line.filter { !$0.isWhitespace }
+        guard compact.count >= 3, let marker = compact.first,
+              ["-", "*", "_"].contains(marker) else { return false }
+        return compact.allSatisfy { $0 == marker }
     }
 
     private static func fenceStart(in line: String) -> (delimiter: String, language: String?)? {

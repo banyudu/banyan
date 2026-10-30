@@ -34,6 +34,17 @@ import Testing
     #expect(MarkdownBlockParser.containsTable(in: markdown))
 }
 
+@Test func markdownParserRecognizesBlockquotesAndHorizontalRules() {
+    let markdown = """
+    > Some paths are best explored slowly.
+
+    ---
+    """
+
+    #expect(MarkdownBlockParser.containsBlockquote(in: markdown))
+    #expect(MarkdownBlockParser.containsHorizontalRule(in: markdown))
+}
+
 @Test func markdownTaskTogglePreservesUnrelatedMarkdown() {
     let markdown = """
     # Acceptance criteria

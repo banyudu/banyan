@@ -93,6 +93,10 @@ struct PuckTranscriptUITests {
                 | --- | --- |
                 | Parser | Passing |
 
+                > "Some paths are best explored slowly."
+
+                ---
+
                 ```swift
                 let ok = true
                 ```
@@ -131,6 +135,10 @@ struct PuckTranscriptUITests {
         #expect(text.contains("Fixed flaky parsing"))
         #expect(text.contains("Parser"))
         #expect(text.contains("Passing"))
+        #expect(text.contains("Some paths are best explored slowly."))
+        #expect(!text.contains(">\"Some paths"))
+        #expect(!text.contains("> Some paths"))
+        #expect(!text.contains("---"))
         #expect(text.contains("let ok = true")
             || (text.contains("let") && text.contains("ok") && text.contains("true")))
         #expect(text.contains("shell"))
