@@ -10,6 +10,8 @@ struct PuckSessionDetail: View {
     @ObservedObject var session: PuckSession
     @State private var questionChoices: [Int: Set<String>] = [:]
     @State private var questionTexts: [Int: String] = [:]
+    @State private var hoveredQuestionRow: String?
+    @State private var approvalSelection: PuckApprovalChoice = .approve
     @State private var isFollowingLatest = true
     @FocusState private var isPromptFocused: Bool
 
@@ -25,29 +27,16 @@ struct PuckSessionDetail: View {
             }
             Divider()
             transcript(timeline)
-            if !timeline.notices.isEmpty {
-                Divider()
-                turnNotices(timeline.notices)
-            }
             if let pending = session.pendingApproval {
                 Divider()
                 approvalPanel(pending)
             }
             if let pending = session.pendingQuestion {
                 Divider()
-                if let plan = session.questionPlan {
-                    ScrollView {
-                        Text(plan)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .frame(maxHeight: 180)
-                    .padding(16)
-                }
-                questionPanel(pending)
+                questionPanel(pending, plan: session.questionPlan)
             }
             Divider()
-            composer
+            composer(usage: timeline.usage)
         }
         .onAppear {
             session.startFollowing()
@@ -65,6 +54,10 @@ struct PuckSessionDetail: View {
         .onChange(of: session.pendingQuestion?.callID) { _, _ in
             questionChoices = [:]
             questionTexts = [:]
+            hoveredQuestionRow = nil
+        }
+        .onChange(of: session.pendingApproval?.callID) { _, _ in
+            approvalSelection = .approve
         }
         .accessibilityIdentifier(AccessibilityID.puckSessionDetail)
     }
@@ -119,8 +112,10 @@ struct PuckSessionDetail: View {
                 EmptyView()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 11)
+        .frame(maxWidth: 960, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .background(.bar)
     }
 
@@ -136,35 +131,41 @@ struct PuckSessionDetail: View {
     private func transcript(_ timeline: PuckTimeline) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 18) {
                     if session.nextHistoryCursor != nil {
-                        Button("Load older messages") {
-                            isFollowingLatest = false
-                            session.loadOlderHistory()
-                        }
-                            .disabled(session.historyLoading)
-                            .accessibilityIdentifier(AccessibilityID.puckLoadOlderMessages)
-                    }
-                    if !session.historyItems.isEmpty {
-                        Button("Latest messages") {
-                            isFollowingLatest = true
-                            session.loadLatestHistory()
-                        }
-                            .disabled(session.historyLoading)
-                            .accessibilityIdentifier(AccessibilityID.puckLatestMessages)
-                    }
-                    if let usage = timeline.usage {
-                        Label(usageSummary(usage), systemImage: "chart.bar")
+                        HStack {
+                            Spacer()
+                            Button {
+                                isFollowingLatest = false
+                                session.loadOlderHistory()
+                            } label: {
+                                if session.historyLoading {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Label("Load earlier messages", systemImage: "clock.arrow.circlepath")
+                                }
+                            }
+                            .buttonStyle(.banyanBorderless)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(AccessibilityID.puckUsage)
+                            .disabled(session.historyLoading)
+                            .accessibilityIdentifier(AccessibilityID.puckLoadOlderMessages)
+                            Spacer()
+                        }
                     }
                     PuckTimelineRows(items: timeline.items)
+                    if !timeline.notices.isEmpty {
+                        PuckTimelineNotices(notices: timeline.notices)
+                    }
                     Color.clear
                         .frame(height: 1)
                         .id(transcriptEndID)
                 }
-                .padding(16)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
+                .frame(maxWidth: 960, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .background {
                     PuckTranscriptScrollObserver { following in
                         isFollowingLatest = following
@@ -177,6 +178,26 @@ struct PuckSessionDetail: View {
             .overlay {
                 if timeline.items.isEmpty && timeline.notices.isEmpty {
                     emptyTranscript
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if !isFollowingLatest && !timeline.items.isEmpty {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            isFollowingLatest = true
+                            proxy.scrollTo(transcriptEndID, anchor: .bottom)
+                        }
+                        if !session.historyItems.isEmpty {
+                            session.loadLatestHistory()
+                        }
+                    } label: {
+                        Label("Jump to latest", systemImage: "arrow.down")
+                    }
+                    .buttonStyle(.banyanBordered)
+                    .controlSize(.small)
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .accessibilityIdentifier(AccessibilityID.puckLatestMessages)
                 }
             }
             .onAppear {
@@ -197,15 +218,6 @@ struct PuckSessionDetail: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func turnNotices(_ notices: [PuckTimelineNotice]) -> some View {
-        ScrollView {
-            PuckTimelineNotices(notices: notices)
-                .padding(16)
-        }
-        .frame(maxHeight: 180)
-        .background(.bar)
-    }
-
     private func cancellationBanner(_ notice: String) -> some View {
         Label(notice, systemImage: "checkmark.circle.fill")
             .font(.callout)
@@ -219,8 +231,10 @@ struct PuckSessionDetail: View {
 
     private func usageSummary(_ usage: PuckUsage) -> String {
         let total = usage.total
-        let cache = total.cachedInputTokens > 0 ? " · \(total.cachedInputTokens) cached" : ""
-        return "\(total.inputTokens) input · \(total.outputTokens) output\(cache)"
+        let cache = total.cachedInputTokens > 0
+            ? " · \(total.cachedInputTokens.formatted()) cached"
+            : ""
+        return "\(total.inputTokens.formatted()) in · \(total.outputTokens.formatted()) out\(cache)"
     }
 
     @ViewBuilder
@@ -244,87 +258,273 @@ struct PuckSessionDetail: View {
     }
 
     private func approvalPanel(_ pending: PuckPendingApproval) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Approval needed: \(pending.tool)", systemImage: "hand.raised")
-                .font(.headline)
-            ScrollView {
-                Text(pending.arguments)
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Would you like to approve this action?")
+                    .font(.callout.weight(.semibold))
+                Text(pending.tool)
                     .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(.secondary)
             }
-            .frame(maxHeight: 160)
-            HStack(spacing: 8) {
-                Button("Approve") {
-                    session.decide("approve")
-                }
-                .buttonStyle(.banyanBorderedProminent)
-                Button("Approve for Session") {
-                    session.decide("session")
-                }
-                .buttonStyle(.banyanBordered)
-                Button("Deny") {
-                    session.decide("deny")
-                }
-                .buttonStyle(.banyanBordered)
+            if !pending.arguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                quietCodePreview(pending.arguments, maximumVisibleLines: 6, maximumHeight: 140)
             }
-            .controlSize(.small)
+            VStack(spacing: 2) {
+                ForEach(Array(PuckApprovalChoice.allCases.enumerated()), id: \.element) { index, choice in
+                    approvalChoiceRow(choice, number: index + 1)
+                }
+            }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
+        .pendingAskLayout()
     }
 
-    private func questionPanel(_ pending: PuckPendingQuestion) -> some View {
+    private func approvalChoiceRow(_ choice: PuckApprovalChoice, number: Int) -> some View {
+        let isSelected = approvalSelection == choice
+        return Button {
+            approvalSelection = choice
+            session.decide(choice.rawValue)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(isSelected ? "›" : " ")
+                    .font(.system(.callout, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .frame(width: 12, alignment: .leading)
+                Text("\(number).")
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(choice.label)
+                    .font(.callout.weight(isSelected ? .medium : .regular))
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(
+                isSelected ? Color.accentColor.opacity(0.08) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering { approvalSelection = choice }
+        }
+        .accessibilityLabel(choice.label)
+    }
+
+    private func questionPanel(_ pending: PuckPendingQuestion, plan: String?) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Answer needed", systemImage: "questionmark.bubble")
-                .font(.headline)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(question.header)
-                                .font(.subheadline.bold())
-                            Text(question.question)
-                            ForEach(question.options, id: \.label) { option in
-                                Button {
-                                    choose(option.label, for: index, multiple: question.multiple)
-                                } label: {
-                                    Label(
-                                        "\(option.label) — \(option.description)",
-                                        systemImage: questionChoices[index, default: []].contains(option.label)
-                                            ? "checkmark.circle.fill"
-                                            : "circle"
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            if question.custom {
-                                TextField("Other answer", text: customAnswerBinding(for: index))
-                                    .textFieldStyle(.roundedBorder)
-                            }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Answer needed")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                Text("\(pending.questions.count) \(pending.questions.count == 1 ? "question" : "questions")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let plan, !plan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                questionPlanPreview(plan)
+            }
+            if questionRowCount(pending) > 12 {
+                ScrollView {
+                    questionList(pending)
+                }
+                .frame(height: 360)
+            } else {
+                questionList(pending)
+            }
+            HStack(spacing: 12) {
+                Text(pending.questions.contains(where: \.multiple)
+                    ? "Select one or more answers per question."
+                    : "Select one answer per question.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button("Submit answer") {
+                    if let selections = selections(for: pending) {
+                        session.answer(selections)
+                    }
+                }
+                .buttonStyle(.banyanBorderedProminent)
+                .controlSize(.small)
+                .disabled(selections(for: pending) == nil)
+            }
+        }
+        .pendingAskLayout()
+    }
+
+    private func questionPlanPreview(_ plan: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Plan")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if planLineCount(plan) > 6 {
+                ScrollView {
+                    planText(plan)
+                }
+                .frame(height: 100)
+            } else {
+                planText(plan)
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func planText(_ plan: String) -> some View {
+        MarkdownText(plan, style: .comment)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func planLineCount(_ plan: String) -> Int {
+        plan.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+
+    private func questionRowCount(_ pending: PuckPendingQuestion) -> Int {
+        pending.questions.reduce(0) { total, question in
+            total + 2 + question.options.count + (question.custom ? 1 : 0)
+        }
+    }
+
+    private func questionList(_ pending: PuckPendingQuestion) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Question \(index + 1)/\(pending.questions.count) · \(question.header)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(question.question)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(spacing: 2) {
+                        ForEach(Array(question.options.enumerated()), id: \.offset) { optionIndex, option in
+                            questionChoiceRow(
+                                option,
+                                number: optionIndex + 1,
+                                questionIndex: index,
+                                multiple: question.multiple
+                            )
+                        }
+                        if question.custom {
+                            customQuestionRow(for: index, number: question.options.count + 1)
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 260)
-            Button("Answer") {
-                if let selections = selections(for: pending) {
-                    session.answer(selections)
-                }
-            }
-            .buttonStyle(.banyanBorderedProminent)
-            .controlSize(.small)
-            .disabled(selections(for: pending) == nil)
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
     }
 
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 6) {
+    @ViewBuilder
+    private func quietCodePreview(_ text: String, maximumVisibleLines: Int, maximumHeight: CGFloat) -> some View {
+        let lineCount = text.split(separator: "\n", omittingEmptySubsequences: false).count
+        let preview = Text(text)
+            .font(.system(.caption, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        Group {
+            if lineCount > maximumVisibleLines {
+                ScrollView {
+                    preview
+                }
+                .frame(height: maximumHeight)
+            } else {
+                preview
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func questionChoiceRow(
+        _ option: PuckQuestionChoice,
+        number: Int,
+        questionIndex: Int,
+        multiple: Bool
+    ) -> some View {
+        let rowID = "q\(questionIndex)-o\(number)"
+        let isSelected = questionChoices[questionIndex, default: []].contains(option.label)
+        let isHighlighted = isSelected || hoveredQuestionRow == rowID
+        return Button {
+            choose(option.label, for: questionIndex, multiple: multiple)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(isHighlighted ? "›" : " ")
+                    .font(.system(.callout, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(isHighlighted ? Color.accentColor : .secondary)
+                    .frame(width: 12, alignment: .leading)
+                Text("\(number).")
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(option.label)
+                    .font(.callout.weight(isSelected ? .medium : .regular))
+                if !option.description.isEmpty {
+                    Text(option.description)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                if multiple {
+                    Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                        .font(.caption)
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.55))
+                }
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(
+                isSelected ? Color.accentColor.opacity(0.08) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                hoveredQuestionRow = rowID
+            } else if hoveredQuestionRow == rowID {
+                hoveredQuestionRow = nil
+            }
+        }
+        .accessibilityLabel(option.description.isEmpty ? option.label : "\(option.label). \(option.description)")
+    }
+
+    private func customQuestionRow(for index: Int, number: Int) -> some View {
+        let rowID = "q\(index)-custom"
+        let hasAnswer = !(questionTexts[index] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isHighlighted = hasAnswer || hoveredQuestionRow == rowID
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(isHighlighted ? "›" : " ")
+                .font(.system(.callout, design: .monospaced).weight(.semibold))
+                .foregroundStyle(isHighlighted ? Color.accentColor : .secondary)
+                .frame(width: 12, alignment: .leading)
+            Text("\(number).")
+                .font(.system(.callout, design: .monospaced))
+                .foregroundStyle(.secondary)
+            TextField("Other answer", text: customAnswerBinding(for: index))
+                .textFieldStyle(.plain)
+                .font(.callout)
+                .accessibilityLabel("Other answer for question \(index + 1)")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isHighlighted ? Color.accentColor.opacity(0.08) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+        )
+        .onHover { hovering in
+            if hovering {
+                hoveredQuestionRow = rowID
+            } else if hoveredQuestionRow == rowID {
+                hoveredQuestionRow = nil
+            }
+        }
+    }
+
+    private func composer(usage: PuckUsage?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             if let error = session.daemonError {
                 Text(error)
                     .font(.caption)
@@ -332,10 +532,16 @@ struct PuckSessionDetail: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) {
-                TextField("Message", text: $session.draft, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...5)
+            HStack(alignment: .bottom, spacing: 10) {
+                Text("›")
+                    .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 5)
+                    .accessibilityHidden(true)
+                TextField("Ask Puck to do anything", text: $session.draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .lineLimit(1...8)
                     .focused($isPromptFocused)
                     .onSubmit(send)
                     .accessibilityIdentifier(AccessibilityID.puckSessionMessageField)
@@ -348,9 +554,37 @@ struct PuckSessionDetail: View {
                 .help(session.turnUnavailableReason ?? "Send")
                 .disabled(!canSend)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(
+                        isPromptFocused ? Color.accentColor.opacity(0.42) : Color.primary.opacity(0.07),
+                        lineWidth: 1
+                    )
+            }
+            .animation(.easeOut(duration: 0.12), value: isPromptFocused)
+
+            HStack(spacing: 12) {
+                Text(session.turnUnavailableReason ?? "Return to send")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+                if let usage {
+                    Label(usageSummary(usage), systemImage: "chart.bar")
+                        .accessibilityIdentifier(AccessibilityID.puckUsage)
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
         }
-        .padding(12)
-        .background(.bar)
+        .padding(.horizontal, 24)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .frame(maxWidth: 960, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .background(.background)
     }
 
     private var canSend: Bool {
@@ -402,5 +636,29 @@ struct PuckSessionDetail: View {
             answers.append(PuckQuestionSelection(labels: labels))
         }
         return answers.count == pending.questions.count ? answers : nil
+    }
+}
+
+private enum PuckApprovalChoice: String, CaseIterable {
+    case approve
+    case session
+    case deny
+
+    var label: String {
+        switch self {
+        case .approve: "Yes, proceed"
+        case .session: "Yes, and don't ask again for this tool in this session"
+        case .deny: "No, continue without running it"
+        }
+    }
+}
+
+private extension View {
+    func pendingAskLayout() -> some View {
+        padding(.horizontal, 24)
+            .padding(.vertical, 14)
+            .frame(maxWidth: 960, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .background(Color.primary.opacity(0.025))
     }
 }

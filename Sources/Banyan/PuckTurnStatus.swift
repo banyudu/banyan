@@ -116,14 +116,18 @@ struct PuckTurnStatusBadge: View {
     let phase: PuckTurnPhase
 
     var body: some View {
-        Label(phase.label, systemImage: phase.systemImage)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(phase.tint)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(phase.tint.opacity(0.12), in: Capsule())
-            .help(phase.help)
-            .accessibilityLabel("Session status: \(phase.label)")
-            .accessibilityIdentifier(AccessibilityID.puckTurnStatus)
+        HStack(spacing: 5) {
+            Image(systemName: phase.systemImage)
+                .font(.caption2.weight(.semibold))
+            Text(phase.label)
+                .font(.caption.weight(.medium))
+        }
+        .foregroundStyle(phase.tint)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(phase.isTurnActive ? phase.tint.opacity(0.10) : Color.clear, in: Capsule())
+        .help(phase.help)
+        .accessibilityLabel("Session status: \(phase.label)")
+        .accessibilityIdentifier(AccessibilityID.puckTurnStatus)
     }
 }

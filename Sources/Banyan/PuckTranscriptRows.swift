@@ -15,7 +15,7 @@ struct PuckTimelineRows: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 18) {
             ForEach(items) { item in
                 PuckTimelineRow(item: item, isExpanded: expansionBinding(for: item.id))
                     .id(item.id)
@@ -71,96 +71,155 @@ struct PuckTimelineRow: View {
     }
 
     private func userRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            roleIcon("person.crop.circle.fill", tint: .accentColor, label: "You")
-            VStack(alignment: .leading, spacing: 6) {
-                roleTitle("You", tint: .accentColor)
-                Text(text)
-                    .font(.body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        HStack(alignment: .top, spacing: 8) {
+            marker("›", emphasis: .secondary)
+            Text(text)
+                .font(.body)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.075), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
+        .accessibilityLabel("You")
         .accessibilityIdentifier(AccessibilityID.puckTimelineItem(item.id))
     }
 
     private func assistantRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            roleIcon("sparkles", tint: .secondary, label: "Assistant")
-            VStack(alignment: .leading, spacing: 7) {
-                roleTitle("Assistant", tint: .secondary)
+        HStack(alignment: .top, spacing: 8) {
+            marker("•", emphasis: .secondary)
+            VStack(alignment: .leading, spacing: 6) {
                 MarkdownText(text)
                 truncationNotice
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityElement(children: .contain)
+        .accessibilityLabel("Assistant")
         .accessibilityIdentifier(AccessibilityID.puckTimelineItem(item.id))
     }
 
     private func toolRow(_ tool: PuckToolActivity) -> some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                if let arguments = tool.arguments, !arguments.isEmpty {
-                    PuckToolDetailBlock(title: "Arguments", text: arguments, language: "json")
+        VStack(alignment: .leading, spacing: 5) {
+            if tool.hasDetails {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    toolHeader(tool)
                 }
-                if !tool.output.isEmpty {
-                    PuckToolDetailBlock(
-                        title: "Output",
-                        text: tool.output,
-                        language: tool.output.hasPrefix("diff --git") ? "diff" : nil
-                    )
-                } else if tool.state == .running {
-                    Text("Waiting for the tool result…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                if tool.arguments?.isEmpty != false && tool.output.isEmpty && tool.state != .running {
-                    Text("No arguments or output were captured for this call.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if item.truncated || tool.state == .truncated {
-                    Label("Output was truncated by puckd.", systemImage: "scissors")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
+                .buttonStyle(.banyanPlainLabelOnly)
+            } else {
+                toolHeader(tool)
             }
-            .padding(.top, 10)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "wrench.and.screwdriver.fill")
+            if !isExpanded, let preview = tool.preview {
+                outputPreview(preview)
+            } else if isExpanded {
+                toolDetails(tool)
+                    .padding(.leading, 20)
+                    .padding(.top, 3)
+            }
+            if item.truncated || tool.state == .truncated {
+                Label("Output was truncated by puckd.", systemImage: "scissors")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(tool.name)
-                    .font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 8)
-                PuckToolStateBadge(state: tool.state)
+                    .foregroundStyle(.orange)
+                    .padding(.leading, 20)
             }
-        }
-        .tint(.secondary)
-        .padding(10)
-        .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(.quaternary.opacity(0.8), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.puckToolDisclosure(item.id))
     }
 
+    private func toolHeader(_ tool: PuckToolActivity) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            marker("•", emphasis: .secondary)
+            Text(tool.actionLabel)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(tool.state.presentation.tint)
+            Text(tool.name)
+                .font(.system(.callout, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if tool.state == .running {
+                ProgressView()
+                    .controlSize(.mini)
+            }
+            if tool.hasDetails {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 8)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func outputPreview(_ preview: PuckToolPreview) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(preview.lines.enumerated()), id: \.offset) { index, line in
+                HStack(alignment: .top, spacing: 8) {
+                    Text(index == 0 ? "└" : " ")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 12, alignment: .leading)
+                    Text(line.isEmpty ? " " : line)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if preview.hiddenLineCount > 0 {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isExpanded = true
+                    }
+                } label: {
+                    Text("+\(preview.hiddenLineCount) lines")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.banyanBorderless)
+                .padding(.leading, 20)
+            }
+        }
+        .padding(.leading, 4)
+    }
+
+    @ViewBuilder
+    private func toolDetails(_ tool: PuckToolActivity) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let arguments = tool.arguments, !arguments.isEmpty {
+                PuckToolDetailBlock(title: "Arguments", text: arguments, language: "json")
+            }
+            if !tool.output.isEmpty {
+                PuckToolDetailBlock(
+                    title: "Output",
+                    text: tool.output,
+                    language: tool.output.hasPrefix("diff --git") ? "diff" : nil
+                )
+            } else if tool.state == .running {
+                Text("Waiting for the tool result…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            if tool.arguments?.isEmpty != false && tool.output.isEmpty && tool.state != .running {
+                Text("No arguments or output were captured for this call.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private func calloutRow(title: String, systemImage: String, tint: Color, text: String) -> some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: systemImage)
                 .foregroundStyle(tint)
-                .frame(width: 18)
+                .frame(width: 12)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.caption.weight(.bold))
@@ -172,57 +231,53 @@ struct PuckTimelineRow: View {
                 truncationNotice
             }
         }
-        .padding(10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(tint.opacity(0.28), lineWidth: 1)
-        }
+        .background(tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.puckTimelineItem(item.id))
     }
 
     private func unknownRow(kind: String, detail: String) -> some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            PuckToolDetailBlock(title: "Event details", text: detail)
-                .padding(.top, 8)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "questionmark.diamond")
-                    .foregroundStyle(.secondary)
-                Text("Unknown event · \(kind)")
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text("Details")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    marker("•", emphasis: .secondary)
+                    Image(systemName: "questionmark.diamond")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Unknown event · \(kind)")
+                        .font(.callout)
+                        .lineLimit(1)
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
             }
-        }
-        .tint(.secondary)
-        .padding(10)
-        .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(.quaternary.opacity(0.8), lineWidth: 1)
+            .buttonStyle(.banyanPlainLabelOnly)
+            if isExpanded {
+                PuckToolDetailBlock(title: "Event details", text: detail)
+                    .padding(.leading, 20)
+                    .padding(.top, 3)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.puckUnknownEvent(item.id))
     }
 
-    private func roleIcon(_ systemImage: String, tint: Color, label: String) -> some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 16, weight: .medium))
-            .foregroundStyle(tint)
-            .frame(width: 20, height: 22)
-            .accessibilityLabel(label)
-    }
-
-    private func roleTitle(_ title: String, tint: Color) -> some View {
-        Text(title)
-            .font(.caption.weight(.bold))
-            .foregroundStyle(tint)
+    private func marker(_ glyph: String, emphasis: HierarchicalShapeStyle) -> some View {
+        Text(glyph)
+            .font(.system(.body, design: .monospaced).weight(.semibold))
+            .foregroundStyle(emphasis)
+            .frame(width: 12, alignment: .leading)
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -260,10 +315,10 @@ private struct PuckTimelineNoticeRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: systemImage)
                 .foregroundStyle(tint)
-                .frame(width: 18)
+                .frame(width: 12)
             VStack(alignment: .leading, spacing: 4) {
                 Text(notice.title)
                     .font(.caption.weight(.bold))
@@ -279,13 +334,10 @@ private struct PuckTimelineNoticeRow: View {
                 }
             }
         }
-        .padding(10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(tint.opacity(0.28), lineWidth: 1)
-        }
+        .background(tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.puckTimelineNotice(notice.id))
     }
@@ -301,21 +353,47 @@ struct PuckToolDetailBlock: View {
             Text(title.uppercased())
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
-            CodeBlockView(text: text, language: language, previewHeight: 180)
+            CodeBlockView(text: text, language: language, previewHeight: previewHeight)
         }
+    }
+
+    private var previewHeight: CGFloat {
+        let lineCount = text.split(separator: "\n", omittingEmptySubsequences: false).count
+        return min(180, max(40, CGFloat(lineCount) * 18 + 16))
     }
 }
 
-private struct PuckToolStateBadge: View {
-    let state: PuckToolState
+private struct PuckToolPreview {
+    let lines: [String]
+    let hiddenLineCount: Int
+}
 
-    var body: some View {
-        Label(state.presentation.label, systemImage: state.presentation.systemImage)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(state.presentation.tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(state.presentation.tint.opacity(0.12), in: Capsule())
+private extension PuckToolActivity {
+    var actionLabel: String {
+        switch state {
+        case .running: "Running"
+        case .succeeded, .truncated: "Ran"
+        case .failed: "Failed"
+        }
+    }
+
+    var hasDetails: Bool {
+        arguments?.isEmpty == false || !output.isEmpty
+    }
+
+    var preview: PuckToolPreview? {
+        let source = output.isEmpty ? (arguments ?? "") : output
+        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return state == .running
+                ? PuckToolPreview(lines: ["Waiting for output…"], hiddenLineCount: 0)
+                : nil
+        }
+        let lines = source.components(separatedBy: .newlines)
+        let limit = 3
+        return PuckToolPreview(
+            lines: Array(lines.prefix(limit)),
+            hiddenLineCount: max(0, lines.count - limit)
+        )
     }
 }
 
