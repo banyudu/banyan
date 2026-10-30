@@ -326,3 +326,83 @@ import Testing
     store.applyPuckSummaries([summary.with(position: "parked", pendingApproval: .some(approval))])
     #expect(session.turnUnavailableReason != nil)
 }
+
+@MainActor
+@Test func puckTurnPhaseDistinguishesWaitingForAnAsk() throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let summary = puckSummary(cwd: fixture.project.path, position: "running")
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+
+    #expect(session.turnPhase == .running)
+    #expect(session.canCancelTurn)
+    #expect(session.turnUnavailableReason != nil)
+
+    let approval = PuckPendingApproval(callID: "call-1", tool: "shell", arguments: "ls", expiresAtMS: 0)
+    store.applyPuckSummaries([summary.with(position: "parked", pendingApproval: .some(approval))])
+    #expect(session.turnPhase == .waitingForApproval)
+    #expect(session.status == .asking)
+    #expect(session.canCancelTurn)
+
+    let question = try PuckPendingQuestion([
+        "call_id": "ask-1", "expires_at_ms": 0,
+        "questions": [[
+            "header": "Files", "question": "Which files?", "multiple": false,
+            "custom": false,
+            "options": [["label": "One", "description": "Use one file."]],
+        ]],
+    ])
+    store.applyPuckSummaries([summary.with(position: "parked", pendingQuestion: .some(question))])
+    #expect(session.turnPhase == .waitingForAnswer)
+    #expect(session.status == .asking)
+
+    store.applyPuckSummaries([summary.with(position: "parked", historyItems: 1)])
+    #expect(session.turnPhase == .parked)
+    store.applyPuckSummaries([summary.with(position: "idle", historyItems: 1)])
+    #expect(session.turnPhase == .idle)
+    #expect(!session.canCancelTurn)
+    #expect(session.turnUnavailableReason == nil)
+    store.applyPuckSummaries([summary.with(position: "interrupted", historyItems: 1)])
+    #expect(session.turnPhase == .interrupted)
+    store.applyPuckSummaries([summary.with(position: "hibernated", historyItems: 1)])
+    #expect(session.turnPhase == .hibernated)
+}
+
+@MainActor
+@Test func cancellingAPuckTurnUsesTheDaemonAndKeepsTheSessionAvailable() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let summary = puckSummary(cwd: fixture.project.path, position: "running", historyItems: 1)
+    daemon.put(summary, transcript: [
+        PuckSessionEvent(cursor: 1, kind: "turn_started"),
+        PuckSessionEvent(cursor: 2, kind: "assistant_message", text: "Working", itemID: "assistant-1"),
+    ])
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+    session.startFollowing()
+    try await waitForPuckState { session.followState == .following }
+    daemon.push(.history(PuckHistoryPage(
+        session: session.id,
+        source: "display",
+        items: [PuckHistoryItem(id: "assistant-1", turnID: "turn-1", kind: "assistant", text: "Durable reply")],
+        nextCursor: nil
+    )), to: session.id)
+    try await waitForPuckState { session.historyItems.count == 1 }
+
+    session.cancel()
+    try await waitForPuckState { session.position == "interrupted" && !session.cancelInFlight }
+
+    #expect(daemon.cancellations == [session.id])
+    #expect(session.status == .failed)
+    #expect(session.turnPhase == .interrupted)
+    #expect(session.followState == .following)
+    #expect(session.historyItems.map(\.id) == ["assistant-1"])
+    #expect(session.events.contains { $0.kind == "turn_error" && $0.text == "Turn cancelled by user" })
+    #expect(session.timeline.notices.map(\.text) == ["Turn cancelled by user"])
+    #expect(session.cancellationNotice == "Turn stopped. This session and its history remain available.")
+    #expect(session.turnUnavailableReason == nil)
+    #expect(session.status != .closed)
+}

@@ -120,12 +120,56 @@ public struct PuckTimelineItem: Identifiable, Equatable, Sendable {
     }
 }
 
+/// A turn-level failure or interruption. Notices stay separate from
+/// conversation items so replay, history, and live delivery collapse into one
+/// visible callout per underlying event.
+public struct PuckTimelineNotice: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let role: PuckTimelineRole
+    public let text: String
+    public let turnID: String?
+    public let callID: String?
+    public let firstCursor: UInt64?
+    public let lastCursor: UInt64?
+    public let truncated: Bool
+
+    public init(
+        id: String,
+        role: PuckTimelineRole,
+        text: String,
+        turnID: String? = nil,
+        callID: String? = nil,
+        firstCursor: UInt64? = nil,
+        lastCursor: UInt64? = nil,
+        truncated: Bool = false
+    ) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.turnID = turnID
+        self.callID = callID
+        self.firstCursor = firstCursor
+        self.lastCursor = lastCursor
+        self.truncated = truncated
+    }
+
+    public var title: String {
+        role == .interruption ? "Turn interrupted" : "Turn error"
+    }
+}
+
 public struct PuckTimeline: Equatable, Sendable {
     public let items: [PuckTimelineItem]
+    public let notices: [PuckTimelineNotice]
     public let usage: PuckUsage?
 
-    public init(items: [PuckTimelineItem], usage: PuckUsage? = nil) {
+    public init(
+        items: [PuckTimelineItem],
+        notices: [PuckTimelineNotice] = [],
+        usage: PuckUsage? = nil
+    ) {
         self.items = items
+        self.notices = notices
         self.usage = usage
     }
 }
@@ -192,6 +236,31 @@ private struct Builder {
         }
     }
 
+    private struct NoticeDraft {
+        var id: String
+        var role: PuckTimelineRole
+        var text: String
+        var turnID: String?
+        var callID: String?
+        var firstCursor: UInt64?
+        var lastCursor: UInt64?
+        var truncated: Bool
+        var stableKeys: [String]
+
+        var notice: PuckTimelineNotice {
+            PuckTimelineNotice(
+                id: id,
+                role: role,
+                text: text,
+                turnID: turnID,
+                callID: callID,
+                firstCursor: firstCursor,
+                lastCursor: lastCursor,
+                truncated: truncated
+            )
+        }
+    }
+
     private static let ignoredKinds: Set<String> = [
         "turn_started", "turn_done", "usage", "hibernated", "approval_pending",
         "approval_decided", "blocked_on_question", "question_answered", "presence_changed",
@@ -200,7 +269,9 @@ private struct Builder {
 
     private let limits: PuckTimelineLimits
     private var drafts: [Draft] = []
+    private var notices: [NoticeDraft] = []
     private var stableIndex: [String: Int] = [:]
+    private var noticeIndex: [String: Int] = [:]
     private var toolIndex: [String: Int] = [:]
     private var seenCursors: Set<UInt64> = []
     private var streamIndex: Int?
@@ -221,7 +292,11 @@ private struct Builder {
     }
 
     mutating func finish() -> PuckTimeline {
-        PuckTimeline(items: drafts.map(\.timelineItem), usage: usage)
+        PuckTimeline(
+            items: drafts.map(\.timelineItem),
+            notices: notices.map(\.notice),
+            usage: usage
+        )
     }
 
     private mutating func append(historyItem item: PuckHistoryItem) {
@@ -245,8 +320,17 @@ private struct Builder {
                 state: .succeeded
             ))
         case "error", "turn_error", "persistence_error", "audit_error":
-            role = errorRole(for: text)
-            content = role == .interruption ? .interruption(text) : .error(text)
+            appendNotice(
+                role: errorRole(for: text),
+                text: text,
+                turnID: item.turnID,
+                callID: nil,
+                cursor: nil,
+                truncated: item.truncated,
+                stableKeys: [item.id],
+                matchFallback: false
+            )
+            return
         default:
             role = .unknown
             content = .unknown(kind: item.kind, detail: text)
@@ -294,22 +378,15 @@ private struct Builder {
             appendHostedCall(event)
         case "turn_error", "persistence_error", "audit_error":
             let text = event.message ?? event.text ?? "Turn failed"
-            let role = errorRole(for: text)
-            let content: PuckTimelineContent = role == .interruption ? .interruption(text) : .error(text)
-            _ = appendDraft(Draft(
-                id: "event:\(event.cursor)",
-                role: role,
-                content: content,
+            appendNotice(
+                role: errorRole(for: text),
+                text: text,
                 turnID: event.turnID,
-                firstCursor: event.cursor,
-                lastCursor: event.cursor,
+                callID: event.callID,
+                cursor: event.cursor,
                 truncated: event.truncated,
-                stableKeys: [],
-                toolCallID: nil,
-                fromHistory: false,
-                matchedLive: false,
-                isStream: false
-            ))
+                stableKeys: stableKeys(for: event)
+            )
         default:
             guard !Self.ignoredKinds.contains(event.kind) else { return }
             appendUnknown(event)
@@ -517,6 +594,65 @@ private struct Builder {
         ))
         registerStableKeys(keys, at: index)
         toolIndex[callID] = index
+    }
+
+    private mutating func appendNotice(
+        role: PuckTimelineRole,
+        text: String,
+        turnID: String?,
+        callID: String?,
+        cursor: UInt64?,
+        truncated: Bool,
+        stableKeys: [String],
+        matchFallback: Bool = true
+    ) {
+        let keyedIndex = stableKeys.compactMap({ noticeIndex[$0] }).first
+        let fallbackIndex = matchFallback
+            ? fallbackNoticeIndex(role: role, text: text, turnID: turnID, callID: callID)
+            : nil
+        if let index = keyedIndex ?? fallbackIndex {
+            if let cursor {
+                notices[index].firstCursor = notices[index].firstCursor ?? cursor
+                notices[index].lastCursor = max(notices[index].lastCursor ?? cursor, cursor)
+            }
+            notices[index].truncated = notices[index].truncated || truncated
+            for key in stableKeys where !notices[index].stableKeys.contains(key) {
+                notices[index].stableKeys.append(key)
+                noticeIndex[key] = index
+            }
+            return
+        }
+
+        let id = stableKeys.first.map { "notice:\($0)" }
+            ?? "notice:\(turnID ?? "session"):\(callID ?? "call"):\(role.rawValue):\(text)"
+        let index = notices.count
+        notices.append(NoticeDraft(
+            id: id,
+            role: role,
+            text: text,
+            turnID: turnID,
+            callID: callID,
+            firstCursor: cursor,
+            lastCursor: cursor,
+            truncated: truncated,
+            stableKeys: stableKeys
+        ))
+        for key in stableKeys { noticeIndex[key] = index }
+    }
+
+    private func fallbackNoticeIndex(
+        role: PuckTimelineRole,
+        text: String,
+        turnID: String?,
+        callID: String?
+    ) -> Int? {
+        notices.indices.reversed().first { index in
+            let notice = notices[index]
+            guard notice.role == role, notice.text == text else { return false }
+            if let turnID, let existingTurn = notice.turnID, turnID != existingTurn { return false }
+            if callID != notice.callID { return false }
+            return true
+        }
     }
 
     private mutating func appendUnknown(_ event: PuckSessionEvent) {

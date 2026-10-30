@@ -46,6 +46,10 @@ final class PuckSession: BanyanSession {
     @Published private(set) var followState: PuckFollowState = .stopped
     /// The last daemon failure: unreachable, or a rejected request.
     @Published private(set) var daemonError: String?
+    @Published private(set) var cancelInFlight = false
+    /// Shown after an accepted cancel so the user knows the session itself was
+    /// not closed and its durable history is still available.
+    @Published private(set) var cancellationNotice: String?
 
     let daemon: any PuckDaemonService
     /// The daemon's latest word on this session, kept so a reopen can restore
@@ -117,11 +121,14 @@ final class PuckSession: BanyanSession {
     /// Why the daemon would refuse a new turn now, or `nil` when it takes one.
     /// Mirrors `puckd`'s own preconditions, so the UI can say so up front.
     var turnUnavailableReason: String? {
-        if pendingApproval != nil || pendingQuestion != nil || position == "parked" {
+        if pendingApproval != nil || pendingQuestion != nil {
             return "Answer the pending ask before sending a new message."
         }
         if position == "running" {
-            return "Wait for the running turn to finish."
+            return "Stop the running turn before sending a new message."
+        }
+        if position == "parked" {
+            return "Stop the parked turn before sending a new message."
         }
         return nil
     }
@@ -388,6 +395,7 @@ final class PuckSession: BanyanSession {
                    mayDispatch: @escaping @Sendable () -> Bool = { true }) async throws {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        cancellationNotice = nil
         guard !admissionTurnInFlight else { throw ControlError.badRequest("A turn is already starting for this session") }
         admissionTurnInFlight = true
         var accepted = false
@@ -458,6 +466,32 @@ final class PuckSession: BanyanSession {
                     return try daemon.get(id)
                 }
                 self?.apply(summary: summary)
+            } catch {
+                self?.daemonError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Stops the active turn through puckd. Cancelling a turn is not closing
+    /// the session: its transcript and history stay durable and the following
+    /// connection remains attached.
+    func cancel() {
+        guard turnPhase.isTurnActive, !cancelInFlight else { return }
+        cancelInFlight = true
+        cancellationNotice = nil
+        daemonError = nil
+        let daemon = self.daemon
+        let id = self.id
+        Task { [weak self] in
+            defer { self?.cancelInFlight = false }
+            do {
+                try await PuckBackgroundIO.run { try daemon.cancel(id) }
+                let summary = try await PuckBackgroundIO.run { try daemon.get(id) }
+                guard let self else { return }
+                self.apply(summary: summary)
+                if !self.turnPhase.isTurnActive {
+                    self.cancellationNotice = "Turn stopped. This session and its history remain available."
+                }
             } catch {
                 self?.daemonError = error.localizedDescription
             }

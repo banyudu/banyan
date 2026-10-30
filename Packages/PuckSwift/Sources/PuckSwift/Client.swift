@@ -656,6 +656,8 @@ public protocol PuckDaemonService: Sendable {
     func create(id: String, provider: String, account: String?, model: String?,
                 workspace: String) throws -> PuckSessionSummary
     func turn(_ id: String, prompt: String) throws
+    /// Stops the active turn without closing the durable session.
+    func cancel(_ id: String) throws
     func decide(_ id: String, callID: String, decision: String) throws
     func answer(_ id: String, callID: String, selections: [PuckQuestionSelection]) throws
     func plan(_ id: String) throws -> String?
@@ -665,6 +667,13 @@ public protocol PuckDaemonService: Sendable {
     /// Replays the session, then follows it live until the stream is cancelled.
     /// Cancelling detaches only this client; a running turn continues.
     func follow(_ id: String) -> AsyncThrowingStream<PuckSessionUpdate, Error>
+}
+
+public extension PuckDaemonService {
+    /// Clients that predate turn cancellation keep their existing behavior.
+    func cancel(_ id: String) throws {
+        throw PuckDaemonError.rejected("This client does not support turn cancellation")
+    }
 }
 
 public struct PuckDaemonClient: Sendable {

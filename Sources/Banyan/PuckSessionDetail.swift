@@ -16,10 +16,19 @@ struct PuckSessionDetail: View {
     private let transcriptEndID = "puck-transcript-end"
 
     var body: some View {
+        let timeline = session.timeline
         VStack(alignment: .leading, spacing: 0) {
             header
+            if let notice = session.cancellationNotice {
+                Divider()
+                cancellationBanner(notice)
+            }
             Divider()
-            transcript
+            transcript(timeline)
+            if !timeline.notices.isEmpty {
+                Divider()
+                turnNotices(timeline.notices)
+            }
             if let pending = session.pendingApproval {
                 Divider()
                 approvalPanel(pending)
@@ -76,6 +85,22 @@ struct PuckSessionDetail: View {
                     .truncationMode(.middle)
             }
             Spacer()
+            PuckTurnStatusBadge(phase: session.turnPhase)
+            if session.turnPhase.isTurnActive {
+                Button {
+                    session.cancel()
+                } label: {
+                    Label(
+                        session.cancelInFlight ? "Stopping…" : "Stop",
+                        systemImage: session.cancelInFlight ? "hourglass" : "stop.circle"
+                    )
+                }
+                .buttonStyle(.banyanBordered)
+                .controlSize(.small)
+                .disabled(!session.canCancelTurn)
+                .help("Stop this turn without closing the session or its history")
+                .accessibilityIdentifier(AccessibilityID.puckStopTurn)
+            }
             switch session.followState {
             case .connecting:
                 ProgressView()
@@ -99,18 +124,17 @@ struct PuckSessionDetail: View {
         .background(.bar)
     }
 
-    /// Who runs the session and where it stands, e.g. "Puck · codex · work · idle".
+    /// Who runs the session, e.g. "Puck · codex · gpt-5.5 · default".
     private var runtimeSummary: String {
         let binding = session.binding
-        return ["Puck", binding.provider, binding.model, binding.account, session.position]
+        return ["Puck", binding.provider, binding.model, binding.account]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
     }
 
-    private var transcript: some View {
-        let timeline = session.timeline
-        return ScrollViewReader { proxy in
+    private func transcript(_ timeline: PuckTimeline) -> some View {
+        ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if session.nextHistoryCursor != nil {
@@ -151,7 +175,7 @@ struct PuckSessionDetail: View {
             .hidesVerticalScroller()
             .accessibilityIdentifier(AccessibilityID.puckTimeline)
             .overlay {
-                if timeline.items.isEmpty {
+                if timeline.items.isEmpty && timeline.notices.isEmpty {
                     emptyTranscript
                 }
             }
@@ -171,6 +195,26 @@ struct PuckSessionDetail: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func turnNotices(_ notices: [PuckTimelineNotice]) -> some View {
+        ScrollView {
+            PuckTimelineNotices(notices: notices)
+                .padding(16)
+        }
+        .frame(maxHeight: 180)
+        .background(.bar)
+    }
+
+    private func cancellationBanner(_ notice: String) -> some View {
+        Label(notice, systemImage: "checkmark.circle.fill")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.bar)
+            .accessibilityIdentifier(AccessibilityID.puckCancellationNotice)
     }
 
     private func usageSummary(_ usage: PuckUsage) -> String {

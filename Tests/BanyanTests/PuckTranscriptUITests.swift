@@ -115,7 +115,10 @@ struct PuckTranscriptUITests {
         )
 
         let text = try await render(
-            PuckTimelineRows(items: timeline.items)
+            VStack(alignment: .leading, spacing: 14) {
+                PuckTimelineRows(items: timeline.items)
+                PuckTimelineNotices(notices: timeline.notices)
+            }
                 .padding(20)
                 .frame(width: 800, height: 1_250, alignment: .topLeading)
                 .background(Color(nsColor: .windowBackgroundColor)),
@@ -132,9 +135,9 @@ struct PuckTranscriptUITests {
         #expect(text.contains("let ok = true"))
         #expect(text.contains("shell"))
         #expect(text.contains("Succeeded"))
-        #expect(text.contains("Error"))
+        #expect(text.contains("Turn error"))
         #expect(text.contains("Provider failed"))
-        #expect(text.contains("Interrupted"))
+        #expect(text.contains("Turn interrupted"))
         #expect(text.contains("Turn cancelled by user"))
         #expect(text.contains("Unknown event"))
         #expect(text.contains("future_event"))
@@ -183,6 +186,8 @@ struct PuckTranscriptUITests {
         #expect(AccessibilityID.puckTimelineItem("call:checks") == "banyan.puck.timeline.item.call:checks")
         #expect(AccessibilityID.puckToolDisclosure("tool:checks") == "banyan.puck.timeline.tool.tool:checks")
         #expect(AccessibilityID.puckUnknownEvent("event:3") == "banyan.puck.timeline.unknown.event:3")
+        #expect(AccessibilityID.puckTimelineNotice("notice:error-1")
+            == "banyan.puck.timeline.notice.notice:error-1")
     }
 
     private func render<V: View>(_ content: V, size: NSSize, name: String) async throws -> String {
