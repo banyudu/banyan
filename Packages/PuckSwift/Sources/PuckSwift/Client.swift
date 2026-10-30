@@ -199,6 +199,64 @@ public struct PuckQuestionSelection: Equatable, Sendable {
     }
 }
 
+public struct PuckTokenUsage: Equatable, Sendable {
+    public let reportedRequests: UInt64
+    public let unreportedRequests: UInt64
+    public let inputTokens: UInt64
+    public let outputTokens: UInt64
+    public let cachedInputTokens: UInt64
+    public let cacheUnreportedRequests: UInt64
+
+    public static let zero = PuckTokenUsage()
+
+    public init(
+        reportedRequests: UInt64 = 0,
+        unreportedRequests: UInt64 = 0,
+        inputTokens: UInt64 = 0,
+        outputTokens: UInt64 = 0,
+        cachedInputTokens: UInt64 = 0,
+        cacheUnreportedRequests: UInt64 = 0
+    ) {
+        self.reportedRequests = reportedRequests
+        self.unreportedRequests = unreportedRequests
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.cacheUnreportedRequests = cacheUnreportedRequests
+    }
+
+    public init?(_ value: Any?) {
+        guard let object = value as? [String: Any] else { return nil }
+        reportedRequests = Self.integer(object["reported_requests"])
+        unreportedRequests = Self.integer(object["unreported_requests"])
+        inputTokens = Self.integer(object["input_tokens"] ?? object["inputTokens"])
+        outputTokens = Self.integer(object["output_tokens"] ?? object["outputTokens"])
+        cachedInputTokens = Self.integer(object["cached_input_tokens"] ?? object["cachedInputTokens"])
+        cacheUnreportedRequests = Self.integer(object["cache_unreported_requests"])
+    }
+
+    private static func integer(_ value: Any?) -> UInt64 {
+        (value as? NSNumber)?.uint64Value ?? 0
+    }
+}
+
+public struct PuckUsage: Equatable, Sendable {
+    public let total: PuckTokenUsage
+    public let last: PuckTokenUsage?
+
+    public init(total: PuckTokenUsage, last: PuckTokenUsage? = nil) {
+        self.total = total
+        self.last = last
+    }
+
+    public init?(_ value: Any?) {
+        guard let object = value as? [String: Any],
+              let total = PuckTokenUsage(object["usage"] ?? object["total"]) else { return nil }
+        self.total = total
+        last = PuckTokenUsage(object["last"])
+    }
+}
+
 public struct PuckSessionEvent: Sendable {
     public let cursor: UInt64
     public let kind: String
@@ -212,6 +270,15 @@ public struct PuckSessionEvent: Sendable {
     public let route: String?
     public let notify: Bool?
     public let transient: Bool
+    public let itemID: String?
+    public let historyRef: String?
+    public let turnID: String?
+    public let success: Bool?
+    public let truncated: Bool
+    public let usage: PuckUsage?
+    /// Scalar fields not modeled above, retained so a newer daemon event kind
+    /// remains inspectable to older clients.
+    public let metadata: [String: String]
 
     public init(
         cursor: UInt64,
@@ -225,7 +292,14 @@ public struct PuckSessionEvent: Sendable {
         query: String? = nil,
         route: String? = nil,
         notify: Bool? = nil,
-        transient: Bool = false
+        transient: Bool = false,
+        itemID: String? = nil,
+        historyRef: String? = nil,
+        turnID: String? = nil,
+        success: Bool? = nil,
+        truncated: Bool = false,
+        usage: PuckUsage? = nil,
+        metadata: [String: String] = [:]
     ) {
         self.cursor = cursor
         self.kind = kind
@@ -239,6 +313,13 @@ public struct PuckSessionEvent: Sendable {
         self.route = route
         self.notify = notify
         self.transient = transient
+        self.itemID = itemID
+        self.historyRef = historyRef
+        self.turnID = turnID
+        self.success = success
+        self.truncated = truncated
+        self.usage = usage
+        self.metadata = metadata
     }
 
     public init(_ object: [String: Any]) throws {
@@ -261,13 +342,29 @@ public struct PuckSessionEvent: Sendable {
         route = data["route"] as? String
         notify = data["notify"] as? Bool
         transient = data["transient"] as? Bool ?? false
+        itemID = data["item_id"] as? String
+        historyRef = data["history_ref"] as? String
+        turnID = data["turn_id"] as? String
+        success = data["success"] as? Bool
+        truncated = data["truncated"] as? Bool ?? false
+        usage = PuckUsage(data["usage"])
+        let modeled: Set<String> = [
+            "event", "text", "message", "tool", "call_id", "arguments", "output", "query",
+            "route", "notify", "transient", "item_id", "history_ref", "turn_id", "success",
+            "truncated", "usage",
+        ]
+        metadata = data.reduce(into: [:]) { result, entry in
+            guard !modeled.contains(entry.key), let value = Self.scalar(entry.value) else { return }
+            result[entry.key] = value
+        }
     }
 
     public var retainedByteCount: Int {
-        [text, message, tool, callID, arguments, output, query, route].reduce(512) { total, value in
+        let strings = [text, message, tool, callID, arguments, output, query, route, itemID, historyRef, turnID]
+        return strings.reduce(512) { total, value in
             guard let value else { return total }
             return total + max(value.utf8.count, value.utf16.count * 2)
-        }
+        } + metadata.reduce(0) { $0 + $1.key.utf8.count + $1.value.utf8.count }
     }
 
     public var displayText: String? {
@@ -286,6 +383,17 @@ public struct PuckSessionEvent: Sendable {
         case "hibernated": return "Session hibernated"
         default: return nil
         }
+    }
+
+    private static func scalar(_ value: Any) -> String? {
+        if value is NSNull { return nil }
+        if let value = value as? String { return value }
+        if let value = value as? NSNumber { return value.stringValue }
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 }
 

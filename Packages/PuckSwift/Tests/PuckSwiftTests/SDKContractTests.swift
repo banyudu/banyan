@@ -164,6 +164,42 @@ struct SDKContractTests {
         #expect(fixture.requests.count == 1)
     }
 
+    @Test func eventDecodingRetainsStableIdentityStatusAndUsage() throws {
+        let event = try PuckSessionEvent([
+            "cursor": 19,
+            "data": [
+                "event": "tool_result",
+                "tool": "fixture-tool",
+                "call_id": "call-stable",
+                "output": "fixture output",
+                "success": false,
+                "truncated": true,
+                "item_id": "item-stable",
+                "history_ref": "history-stable",
+                "turn_id": "turn-stable",
+                "usage": [
+                    "usage": [
+                        "reported_requests": 3, "unreported_requests": 1,
+                        "input_tokens": 120, "output_tokens": 30,
+                        "cached_input_tokens": 80, "cache_unreported_requests": 2,
+                    ],
+                    "last": ["inputTokens": 40, "outputTokens": 10, "cachedInputTokens": 20],
+                ],
+                "future_flag": true,
+            ],
+        ])
+
+        #expect(event.itemID == "item-stable")
+        #expect(event.historyRef == "history-stable")
+        #expect(event.turnID == "turn-stable")
+        #expect(event.success == false)
+        #expect(event.truncated)
+        #expect(event.usage?.total.inputTokens == 120)
+        #expect(event.usage?.total.reportedRequests == 3)
+        #expect(event.usage?.last?.inputTokens == 40)
+        #expect(event.metadata["future_flag"] == "1")
+    }
+
     @Test func liveGapReplaysDurablePagesAndSuppressesDuplicateNotification() throws {
         let fixture = try SDKSocketFixture { peer, request in
             switch request["method"] as? String {

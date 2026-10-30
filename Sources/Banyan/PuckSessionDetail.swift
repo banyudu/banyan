@@ -106,7 +106,7 @@ struct PuckSessionDetail: View {
     }
 
     private var transcript: some View {
-        let rendered = session.renderedEvents
+        let timeline = session.timeline
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -118,17 +118,30 @@ struct PuckSessionDetail: View {
                         Button("Latest messages") { session.loadLatestHistory() }
                             .disabled(session.historyLoading)
                     }
-                    ForEach(rendered) { event in
+                    if let usage = timeline.usage {
+                        Label(usageSummary(usage), systemImage: "chart.bar")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(timeline.items) { item in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(event.kind.replacingOccurrences(of: "_", with: " "))
+                            Text(item.title)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text(event.text)
+                            Text(item.text + (item.truncated ? "\n[Preview truncated]" : ""))
                                 .font(.system(.body, design: .monospaced))
                                 .textSelection(.enabled)
+                            if case .tool(let tool) = item.content,
+                               let arguments = tool.arguments, !arguments.isEmpty,
+                               !tool.output.isEmpty {
+                                Text(arguments)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .id(event.id)
+                        .id(item.id)
                     }
                 }
                 .padding(16)
@@ -136,16 +149,22 @@ struct PuckSessionDetail: View {
             .scrollIndicators(.hidden)
             .hidesVerticalScroller()
             .overlay {
-                if rendered.isEmpty {
+                if timeline.items.isEmpty {
                     emptyTranscript
                 }
             }
-            .onChange(of: rendered.last?.id) { _, id in
+            .onChange(of: timeline.items.last?.id) { _, id in
                 guard let id else { return }
                 proxy.scrollTo(id, anchor: .bottom)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func usageSummary(_ usage: PuckUsage) -> String {
+        let total = usage.total
+        let cache = total.cachedInputTokens > 0 ? " · \(total.cachedInputTokens) cached" : ""
+        return "\(total.inputTokens) input · \(total.outputTokens) output\(cache)"
     }
 
     @ViewBuilder

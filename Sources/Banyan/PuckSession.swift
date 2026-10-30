@@ -1,13 +1,6 @@
 import BanyanCore
 import Foundation
 
-/// Where this client stands with a puck session's event stream.
-struct PuckSessionRow: Identifiable {
-    let id: String
-    let kind: String
-    let text: String
-}
-
 enum PuckFollowState: Equatable {
     /// Not on screen, so not connected.
     case stopped
@@ -69,9 +62,8 @@ final class PuckSession: BanyanSession {
 
     deinit { followTask?.cancel(); historyTask?.cancel() }
 
-    var renderedEvents: [PuckSessionRow] {
-        historyItems.map { PuckSessionRow(id: "history-\($0.id)", kind: $0.kind, text: $0.text + ($0.truncated ? "\n[Preview truncated]" : "")) }
-        + PuckTranscript.render(events).map { PuckSessionRow(id: "event-\($0.id)", kind: $0.kind, text: $0.text) }
+    var timeline: PuckTimeline {
+        PuckTimelineProjection.project(history: historyItems, events: events)
     }
 
     private var cachedBytes: Int {
