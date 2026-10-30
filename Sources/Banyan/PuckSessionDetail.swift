@@ -10,7 +10,10 @@ struct PuckSessionDetail: View {
     @ObservedObject var session: PuckSession
     @State private var questionChoices: [Int: Set<String>] = [:]
     @State private var questionTexts: [Int: String] = [:]
+    @State private var isFollowingLatest = true
     @FocusState private var isPromptFocused: Bool
+
+    private let transcriptEndID = "puck-transcript-end"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -109,53 +112,62 @@ struct PuckSessionDetail: View {
         let timeline = session.timeline
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 14) {
                     if session.nextHistoryCursor != nil {
-                        Button("Load older messages") { session.loadOlderHistory() }
+                        Button("Load older messages") {
+                            isFollowingLatest = false
+                            session.loadOlderHistory()
+                        }
                             .disabled(session.historyLoading)
+                            .accessibilityIdentifier(AccessibilityID.puckLoadOlderMessages)
                     }
                     if !session.historyItems.isEmpty {
-                        Button("Latest messages") { session.loadLatestHistory() }
+                        Button("Latest messages") {
+                            isFollowingLatest = true
+                            session.loadLatestHistory()
+                        }
                             .disabled(session.historyLoading)
+                            .accessibilityIdentifier(AccessibilityID.puckLatestMessages)
                     }
                     if let usage = timeline.usage {
                         Label(usageSummary(usage), systemImage: "chart.bar")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(AccessibilityID.puckUsage)
                     }
-                    ForEach(timeline.items) { item in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.title)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(item.text + (item.truncated ? "\n[Preview truncated]" : ""))
-                                .font(.system(.body, design: .monospaced))
-                                .textSelection(.enabled)
-                            if case .tool(let tool) = item.content,
-                               let arguments = tool.arguments, !arguments.isEmpty,
-                               !tool.output.isEmpty {
-                                Text(arguments)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .id(item.id)
-                    }
+                    PuckTimelineRows(items: timeline.items)
+                    Color.clear
+                        .frame(height: 1)
+                        .id(transcriptEndID)
                 }
                 .padding(16)
+                .background {
+                    PuckTranscriptScrollObserver { following in
+                        isFollowingLatest = following
+                    }
+                }
             }
             .scrollIndicators(.hidden)
             .hidesVerticalScroller()
+            .accessibilityIdentifier(AccessibilityID.puckTimeline)
             .overlay {
                 if timeline.items.isEmpty {
                     emptyTranscript
                 }
             }
-            .onChange(of: timeline.items.last?.id) { _, id in
-                guard let id else { return }
-                proxy.scrollTo(id, anchor: .bottom)
+            .onAppear {
+                isFollowingLatest = true
+                DispatchQueue.main.async {
+                    proxy.scrollTo(transcriptEndID, anchor: .bottom)
+                }
+            }
+            .onChange(of: timeline) { _, next in
+                guard isFollowingLatest, !next.items.isEmpty else { return }
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        proxy.scrollTo(transcriptEndID, anchor: .bottom)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
