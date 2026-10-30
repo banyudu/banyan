@@ -131,11 +131,11 @@ struct CodexSessionDetail: View {
                             .font(.caption).foregroundStyle(.secondary)
                             ForEach(turn.items) { item in CodexTimelineItem(item: item) }
                             if let error = turn.error, error != .null {
-                                CodexCodeBlock(text: error.inspectableText).foregroundStyle(.red)
+                                CodeBlockView(text: error.inspectableText, language: "json").foregroundStyle(.red)
                             }
                             if !turn.diff.isEmpty {
                                 if turn.omittedDiffBytes > 0 { omission("Turn diff", bytes: turn.omittedDiffBytes) }
-                                DisclosureGroup("Review turn changes") { CodexCodeBlock(text: turn.diff) }
+                                DisclosureGroup("Review turn changes") { CodeBlockView(text: turn.diff, language: "diff") }
                             }
                         }
                         .accessibilityIdentifier("banyan.codex.turn.\(turn.id)")
@@ -144,7 +144,7 @@ struct CodexSessionDetail: View {
                         DisclosureGroup("Protocol details (\(session.conversation.diagnostics.count))") {
                             ForEach(session.conversation.diagnostics) { event in
                                 Text(event.method).font(.caption.bold())
-                                CodexCodeBlock(text: event.params.inspectableText)
+                                CodeBlockView(text: event.params.inspectableText, language: "json")
                                 if event.omittedBytes > 0 { Text("Event payload shortened for display.").font(.caption) }
                             }
                         }
@@ -246,11 +246,11 @@ struct CodexTimelineItem: View {
             case "reasoning":
                 DisclosureGroup("Reasoning summary") { Text(item.text).textSelection(.enabled) }
             case "commandExecution":
-                CodexCodeBlock(text: item.text)
+                CodeBlockView(text: item.text, language: "shell")
                 if let cwd = item.value.objectValue?["cwd"]?.stringValue {
                     Text(cwd).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
-                if !item.readableOutput.isEmpty { CodexCodeBlock(text: item.readableOutput) }
+                if !item.readableOutput.isEmpty { CodeBlockView(text: item.readableOutput) }
                 if let exit = item.value.objectValue?["exitCode"], exit != .null {
                     Text("Exit code: \(exit.inspectableText)").font(.caption)
                 }
@@ -261,18 +261,18 @@ struct CodexTimelineItem: View {
                     let kind = fields["kind"]?.objectValue?["type"]?.stringValue ?? fields["kind"]?.stringValue ?? "change"
                     Label("\(fields["path"]?.stringValue ?? "Unknown path") · \(kind)", systemImage: "doc.text")
                         .font(.callout).textSelection(.enabled)
-                    CodexCodeBlock(text: fields["diff"]?.stringValue ?? change.inspectableText)
+                    CodeBlockView(text: fields["diff"]?.stringValue ?? change.inspectableText, language: "diff")
                 }
-                if !item.readableOutput.isEmpty { CodexCodeBlock(text: item.readableOutput) }
+                if !item.readableOutput.isEmpty { CodeBlockView(text: item.readableOutput) }
                 details
             case "mcpToolCall", "dynamicToolCall", "collabToolCall", "collabAgentToolCall", "functionCallOutput", "webSearch":
                 Text(item.text).textSelection(.enabled)
-                if !item.toolOutput.isEmpty { CodexCodeBlock(text: item.toolOutput) }
+                if !item.toolOutput.isEmpty { CodeBlockView(text: item.toolOutput) }
                 details
             default:
                 // Unknown items are never dropped or force-decoded as a known type.
-                CodexCodeBlock(text: item.value.inspectableText)
-                if !item.readableOutput.isEmpty { CodexCodeBlock(text: item.readableOutput) }
+                CodeBlockView(text: item.value.inspectableText, language: "json")
+                if !item.readableOutput.isEmpty { CodeBlockView(text: item.readableOutput) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -292,24 +292,8 @@ struct CodexTimelineItem: View {
     }
 
     private var details: some View {
-        DisclosureGroup("Item details") { CodexCodeBlock(text: item.value.inspectableText) }
+        DisclosureGroup("Item details") { CodeBlockView(text: item.value.inspectableText, language: "json") }
             .font(.caption)
-    }
-}
-
-struct CodexCodeBlock: View {
-    let text: String
-    var body: some View {
-        ScrollView([.horizontal, .vertical]) {
-            Text(CodexConversationText.plain(text))
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
-        }
-        .frame(minHeight: 30, maxHeight: 220)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 4))
     }
 }
 
@@ -326,12 +310,14 @@ struct CodexRequestPanel: View {
             Text("Turn \(request.params.objectValue?["turnId"]?.stringValue ?? "unknown")")
                 .font(.caption).foregroundStyle(.secondary)
             if let reason = request.params.objectValue?["reason"]?.stringValue { Text(reason).textSelection(.enabled) }
-            if let command = request.params.objectValue?["command"]?.stringValue { CodexCodeBlock(text: command) }
+            if let command = request.params.objectValue?["command"]?.stringValue {
+                CodeBlockView(text: command, language: "shell")
+            }
             if let network = request.params.objectValue?["networkApprovalContext"], network != .null {
-                CodexCodeBlock(text: network.inspectableText)
+                CodeBlockView(text: network.inspectableText, language: "json")
             }
             if let item = associatedItem, item.type == "fileChange" { CodexTimelineItem(item: item) }
-            DisclosureGroup("Request details") { CodexCodeBlock(text: request.params.inspectableText) }
+            DisclosureGroup("Request details") { CodeBlockView(text: request.params.inspectableText, language: "json") }
             if submitted {
                 Text("Response sent. Waiting for Codex to resolve this request…").font(.callout)
             } else if presentation.isApproval {

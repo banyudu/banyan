@@ -1,4 +1,7 @@
 enum AccessibilityID {
+    static let codeBlock = "banyan.code-block"
+    static let codeBlockCopy = "banyan.code-block.copy"
+    static let codeBlockExpand = "banyan.code-block.expand"
     static let codexSessionDetail = "banyan.codex.detail"
     static let codexTimeline = "banyan.codex.timeline"
     static let codexMessageField = "banyan.codex.message"

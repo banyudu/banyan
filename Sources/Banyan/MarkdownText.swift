@@ -39,15 +39,8 @@ struct MarkdownText: View {
             }
         case let .table(table):
             tableView(table)
-        case let .codeBlock(_, text):
-            ScrollView(.horizontal) {
-                Text(text)
-                    .font(style.codeFont)
-                    .textSelection(.enabled)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+        case let .codeBlock(language, text):
+            CodeBlockView(text: text, language: language, font: style.codeFont)
         }
     }
 
@@ -307,10 +300,22 @@ private enum MarkdownListMarker {
 }
 
 enum MarkdownBlockParser {
+    struct CodeBlock: Equatable {
+        let language: String?
+        let text: String
+    }
+
     static func containsTable(in value: String) -> Bool {
         parse(value).contains { block in
             if case .table = block.content { return true }
             return false
+        }
+    }
+
+    static func codeBlocks(in value: String) -> [CodeBlock] {
+        parse(value).compactMap { block in
+            guard case let .codeBlock(language, text) = block.content else { return nil }
+            return CodeBlock(language: language, text: text)
         }
     }
 

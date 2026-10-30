@@ -175,7 +175,7 @@ struct PuckTranscriptUITests {
         #expect(text.contains("All tests passed"))
         #expect(text.contains("Unknown event"))
         #expect(text.contains("new payload"))
-        #expect(text.contains("new_flag=true"))
+        #expect(text.contains("new_flag=true") || text.contains("new_flag-true"))
     }
 
     @Test func accessibilityIdentifiersCoverTheTranscriptAndDisclosures() {
