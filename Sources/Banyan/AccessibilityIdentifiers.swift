@@ -29,6 +29,10 @@ enum AccessibilityID {
     static let terminalResumeButton = "banyan.terminal.suspended-banner.resume"
     static let puckSessionDetail = "banyan.puck.detail"
     static let puckSessionMessageField = "banyan.puck.detail.message"
+    static let puckTimeline = "banyan.puck.timeline"
+    static let puckLoadOlderMessages = "banyan.puck.timeline.load-older"
+    static let puckLatestMessages = "banyan.puck.timeline.latest"
+    static let puckUsage = "banyan.puck.timeline.usage"
     static let toolbarAddSession = "banyan.toolbar.add-session"
     static let toolbarPreferences = "banyan.toolbar.preferences"
     static let toolbarLogo = "banyan.toolbar.logo"
@@ -93,6 +97,18 @@ enum AccessibilityID {
 
     static func sessionRowCost(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id).cost"
+    }
+
+    static func puckTimelineItem(_ id: String) -> String {
+        "banyan.puck.timeline.item.\(id)"
+    }
+
+    static func puckToolDisclosure(_ id: String) -> String {
+        "banyan.puck.timeline.tool.\(id)"
+    }
+
+    static func puckUnknownEvent(_ id: String) -> String {
+        "banyan.puck.timeline.unknown.\(id)"
     }
 
     static func sessionRowSuspendedBadge(_ id: String) -> String {
