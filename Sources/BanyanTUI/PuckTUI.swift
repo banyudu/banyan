@@ -60,17 +60,42 @@ struct PuckTUI {
         let (connection, attached) = try client.attach(id)
         output.write("\u{1b}[2J\u{1b}[H", terminator: "")
         output.write("\(id) · \(attached.summary.provider)/\(attached.summary.model) · \(attached.summary.position)", terminator: "\n")
+        let history: [PuckHistoryItem]
+        if attached.hasPagedHistory {
+            let page = try client.history(id)
+            history = page.order == "desc" ? Array(page.items.reversed()) : page.items
+        } else {
+            history = []
+        }
         let replayed = try client.replay(id, initial: attached.batch)
-        for event in replayed { show(event) }
+        let timeline = PuckTimelineProjection.project(history: history, events: replayed)
+        for item in timeline.items { show(item) }
         if let pending = attached.summary.pendingQuestion { show(pending) }
         output.write("Type a prompt, /approve, /deny, /session, /answer, or /detach.", terminator: "\n")
         let reader = Thread {
+            var rawEvents = replayed
+            var liveTimeline = timeline
+            var streamedThisTurn = false
             do {
                 var cursor = replayed.last?.cursor ?? attached.batch.cursor
-                while let events = try client.receive(connection, session: id, after: cursor) {
-                    for event in events {
+                while let batch = try client.receive(connection, session: id, after: cursor) {
+                    for event in batch {
                         cursor = event.cursor
-                        show(event)
+                        if event.kind == "turn_started" { streamedThisTurn = false }
+                        if event.kind == "text_delta" {
+                            streamedThisTurn = true
+                            if let text = event.text { output.write(text, terminator: "") }
+                        }
+                        let previous = liveTimeline
+                        append(event, to: &rawEvents, maximum: 200)
+                        liveTimeline = PuckTimelineProjection.project(history: history, events: rawEvents)
+                        if event.kind == "assistant_message", streamedThisTurn {
+                            output.write("", terminator: "\n")
+                            streamedThisTurn = false
+                        } else if event.kind != "text_delta" {
+                            showChanges(from: previous, to: liveTimeline)
+                        }
+                        if event.kind == "turn_done" { streamedThisTurn = false }
                     }
                 }
             } catch {
@@ -108,9 +133,22 @@ struct PuckTUI {
         }
     }
 
-    private func show(_ event: PuckSessionEvent) {
-        guard let text = event.displayText else { return }
-        output.write("[\(event.cursor)] \(text)", terminator: "\n")
+    private func showChanges(from previous: PuckTimeline, to current: PuckTimeline) {
+        let prior = Dictionary(uniqueKeysWithValues: previous.items.map { ($0.id, $0) })
+        for item in current.items where prior[item.id] != item { show(item) }
+    }
+
+    private func show(_ item: PuckTimelineItem) {
+        let suffix = item.truncated ? "\n[Preview truncated]" : ""
+        output.write("[\(item.title)] \(item.text)\(suffix)", terminator: "\n")
+    }
+
+    private func append(_ event: PuckSessionEvent, to events: inout [PuckSessionEvent], maximum: Int) {
+        events.append(event)
+        while events.count > maximum || events.reduce(0, { $0 + $1.retainedByteCount }) > 2 * 1_048_576 {
+            guard !events.isEmpty else { break }
+            events.removeFirst()
+        }
     }
 
     private func show(_ pending: PuckPendingQuestion) {
