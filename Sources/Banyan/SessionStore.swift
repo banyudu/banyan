@@ -4510,7 +4510,7 @@ final class SessionStore: ObservableObject {
               selectedLinearIssueDetails?.identifier == issueID,
               selectedLinearIssueStatusTask == nil,
               selectedLinearIssueLoadState == .loaded,
-              Date() >= selectedLinearIssueStatusRetryAfter else {
+              Date().isAtOrAfter(selectedLinearIssueStatusRetryAfter) else {
             return
         }
 

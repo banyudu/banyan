@@ -156,7 +156,8 @@ extension SessionStore {
     /// The existing supervisor owns wakeups. Only eligible sessions incur libproc
     /// CPU probes, at an adaptive interval; output/focus/input cancel preparation.
     func runAutoFreezePassIfNeeded(now: Date = Date()) {
-        guard autoFreezeAgents, !isAgentFreezeShuttingDown, !isAutoFreezeRunning, now >= nextAutoFreezeProbeAt else { return }
+        guard autoFreezeAgents, !isAgentFreezeShuttingDown, !isAutoFreezeRunning,
+              now.isAtOrAfter(nextAutoFreezeProbeAt) else { return }
         let threshold = agentFreezeThreshold
         nextAutoFreezeProbeAt = now.addingTimeInterval(AgentInactivityPolicy.probeInterval(threshold: threshold))
         let ids = terminalSessions.filter {

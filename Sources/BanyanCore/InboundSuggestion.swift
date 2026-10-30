@@ -153,7 +153,7 @@ public struct SuggestionInbox: Sendable {
     /// its TTL.
     private mutating func prune(now: Date) {
         suppressedUntil = suppressedUntil.filter { $0.value > now }
-        if let pending, pending.expiresAt <= now {
+        if let pending, pending.expiresAt.isAtOrBefore(now) {
             self.pending = nil
         }
     }

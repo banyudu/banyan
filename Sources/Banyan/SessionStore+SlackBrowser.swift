@@ -61,7 +61,7 @@ extension SessionStore {
                 switch filter {
                 case "needs": guard attention else { return false }
                 case "working": guard [.running, .executing, .longRunningShell, .subagents].contains(session.status) else { return false }
-                case "recent": guard session.updatedAt >= cutoff else { return false }
+                case "recent": guard session.updatedAt.isAtOrAfter(cutoff) else { return false }
                 default: break
                 }
                 return query.isEmpty || [session.id, session.displayTitle, session.projectGroupTitle]

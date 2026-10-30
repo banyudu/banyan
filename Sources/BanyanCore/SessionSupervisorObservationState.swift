@@ -44,7 +44,7 @@ public struct SessionSupervisorObservationState: Sendable {
     /// The cheap batched pane lookup also wakes sessions whose expensive
     /// classification was deferred. Missing activity metadata cannot prove quiet.
     public func isDue(pane: TmuxPaneSnapshot?, at now: Date) -> Bool {
-        nextDueAt <= now || pane != lastPane || pane?.lastActivityAt == nil
+        nextDueAt.isAtOrBefore(now) || pane != lastPane || pane?.lastActivityAt == nil
     }
 
     public mutating func record(

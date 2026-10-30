@@ -68,7 +68,7 @@ public enum AgentSessionMatcher {
 
         if let sessionResetAt {
             return matchingCandidates
-                .filter { $0.updatedAt >= sessionResetAt.addingTimeInterval(-resetWindow) }
+                .filter { $0.updatedAt.isAtOrAfter(sessionResetAt.addingTimeInterval(-resetWindow)) }
                 .max { $0.updatedAt < $1.updatedAt }
         }
 
@@ -208,7 +208,7 @@ public enum AgentSessionMatcher {
 
         if let resetAt = session.resetAt {
             return matchingCandidates.filter {
-                $0.updatedAt >= resetAt.addingTimeInterval(-resetWindow)
+                $0.updatedAt.isAtOrAfter(resetAt.addingTimeInterval(-resetWindow))
             }
         }
 

@@ -237,7 +237,7 @@ extension SessionStore {
 
     func runDeepSuspendPass(now: Date = Date(), underPressure: Bool = false) {
         guard !isAgentFreezeShuttingDown, !isDeepSuspendPassRunning,
-              now >= nextDeepSuspendProbeAt else { return }
+              now.isAtOrAfter(nextDeepSuspendProbeAt) else { return }
         nextDeepSuspendProbeAt = now.addingTimeInterval(NSApp?.isActive == true ? 60 : 120)
         let ids = AgentDeepSuspend.leastRecentlyUsed(terminalSessions.map { session in
             let policy = session.agentProvider.map { deepSuspendPolicy(for: $0) } ?? .init()

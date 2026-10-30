@@ -342,7 +342,7 @@ public enum AgentSessionHistoryImporter {
         var result: [String: Date] = [:]
         for line in contents.split(whereSeparator: \.isNewline) {
             guard let row = parseCodexIndexLine(String(line)) else { continue }
-            if let existing = result[row.id], existing >= row.updatedAt { continue }
+            if let existing = result[row.id], existing.isAtOrAfter(row.updatedAt) { continue }
             result[row.id] = row.updatedAt
         }
         return result

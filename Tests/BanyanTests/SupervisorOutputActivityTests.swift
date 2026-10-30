@@ -24,7 +24,7 @@ import Testing
     #expect(after.revision == before.revision + 2000)
     #expect(after.resultRevision == before.resultRevision)
     #expect(after.stableObservations == 0)
-    #expect(after.nextDueAt <= start)
+    #expect(after.nextDueAt.isAtOrBefore(start))
     #expect(after.fastUntil > start)
     #expect(store.pendingSupervisorActivityIDs.contains(session.id))
     #expect(store.pendingSupervisorSignalIDs.isEmpty)

@@ -107,7 +107,7 @@ func continuousOutputRespectsVisibilityAndPower(
     // Hidden traffic used to force 150 inspections instead of at most ten.
     for chunk in 0...30_000 {
         let now = start.addingTimeInterval(Double(chunk) / 100)
-        if let deadline = scheduledFire, deadline <= now {
+        if let deadline = scheduledFire, deadline.isAtOrBefore(now) {
             let began = schedule.begin()
             #expect(began)
             #expect(schedule.replacementFire(

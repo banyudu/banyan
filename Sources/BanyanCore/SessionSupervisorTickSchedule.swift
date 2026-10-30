@@ -36,7 +36,7 @@ public struct SessionSupervisorTickSchedule: Sendable {
     ) -> Date? {
         guard !isRunning else { return nil }
         guard let dueAt = nextFire(at: now, interval: activityPending ? activityInterval() : interval()) else { return nil }
-        if let scheduledFire, scheduledFire <= dueAt { return nil }
+        if let scheduledFire, scheduledFire.isAtOrBefore(dueAt) { return nil }
         return dueAt
     }
 }

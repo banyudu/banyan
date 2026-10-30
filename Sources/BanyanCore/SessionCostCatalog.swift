@@ -93,7 +93,7 @@ public struct SessionCostCatalog: Sendable {
         return entries
             .filter { entry in
                 Self.matchesAlias(normalized, aliases: entry.aliases)
-                    && entry.effectiveFrom <= record.timestamp
+                    && entry.effectiveFrom.isAtOrBefore(record.timestamp)
                     && promptTokens >= entry.minimumPromptTokens
                     && (entry.maximumPromptTokens.map { promptTokens <= $0 } ?? true)
                     && entry.isPeakRate == isPeak

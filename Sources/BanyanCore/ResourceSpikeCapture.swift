@@ -192,7 +192,7 @@ public struct ResourceSpikeCaptureStore: Sendable {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             return try? decoder.decode(ResourceSpikeCaptureRecord.self, from: data)
-        }.filter { $0.createdAt >= since }.sorted { $0.createdAt > $1.createdAt }
+        }.filter { $0.createdAt.isAtOrAfter(since) }.sorted { $0.createdAt > $1.createdAt }
     }
 
     public func prune(now: Date = Date(), keeping: Int? = nil) throws {
