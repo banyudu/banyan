@@ -106,10 +106,14 @@ struct PuckTimelineRow: View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 10) {
                 if let arguments = tool.arguments, !arguments.isEmpty {
-                    PuckToolDetailBlock(title: "Arguments", text: arguments)
+                    PuckToolDetailBlock(title: "Arguments", text: arguments, language: "json")
                 }
                 if !tool.output.isEmpty {
-                    PuckToolDetailBlock(title: "Output", text: tool.output)
+                    PuckToolDetailBlock(
+                        title: "Output",
+                        text: tool.output,
+                        language: tool.output.hasPrefix("diff --git") ? "diff" : nil
+                    )
                 } else if tool.state == .running {
                     Text("Waiting for the tool result…")
                         .font(.caption)
@@ -234,26 +238,14 @@ struct PuckTimelineRow: View {
 struct PuckToolDetailBlock: View {
     let title: String
     let text: String
+    var language: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
-            ScrollView([.horizontal, .vertical]) {
-                Text(text)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-            }
-            .frame(minHeight: 30, maxHeight: 180)
-            .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 6))
-            .overlay {
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(.quaternary.opacity(0.8), lineWidth: 1)
-            }
+            CodeBlockView(text: text, language: language, previewHeight: 180)
         }
     }
 }
