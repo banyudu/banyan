@@ -70,6 +70,7 @@ struct PuckTUI {
         let replayed = try client.replay(id, initial: attached.batch)
         let timeline = PuckTimelineProjection.project(history: history, events: replayed)
         for item in timeline.items { show(item) }
+        for notice in timeline.notices { show(notice) }
         if let pending = attached.summary.pendingQuestion { show(pending) }
         output.write("Type a prompt, /approve, /deny, /session, /answer, or /detach.", terminator: "\n")
         let reader = Thread {
@@ -136,11 +137,18 @@ struct PuckTUI {
     private func showChanges(from previous: PuckTimeline, to current: PuckTimeline) {
         let prior = Dictionary(uniqueKeysWithValues: previous.items.map { ($0.id, $0) })
         for item in current.items where prior[item.id] != item { show(item) }
+        let priorNotices = Dictionary(uniqueKeysWithValues: previous.notices.map { ($0.id, $0) })
+        for notice in current.notices where priorNotices[notice.id] != notice { show(notice) }
     }
 
     private func show(_ item: PuckTimelineItem) {
         let suffix = item.truncated ? "\n[Preview truncated]" : ""
         output.write("[\(item.title)] \(item.text)\(suffix)", terminator: "\n")
+    }
+
+    private func show(_ notice: PuckTimelineNotice) {
+        let suffix = notice.truncated ? "\n[Preview truncated]" : ""
+        output.write("[\(notice.title)] \(notice.text)\(suffix)", terminator: "\n")
     }
 
     private func append(_ event: PuckSessionEvent, to events: inout [PuckSessionEvent], maximum: Int) {

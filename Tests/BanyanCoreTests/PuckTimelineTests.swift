@@ -136,17 +136,27 @@ struct PuckTimelineTests {
         #expect(detail.contains("count=3"))
     }
 
-    @Test func errorsAndInterruptionsAreConversationItemsButLifecycleIsNot() {
+    @Test func errorsAndInterruptionsAreDeduplicatedNoticesButLifecycleIsNot() {
+        let history = [
+            PuckHistoryItem(id: "error-1", turnID: "turn-1", kind: "turn_error", text: "provider failed"),
+        ]
         let events = [
-            puckEvent(cursor: 41, kind: "turn_error", text: "provider failed"),
-            puckEvent(cursor: 42, kind: "turn_error", text: "turn cancelled by user"),
-            puckEvent(cursor: 43, kind: "hibernated", text: "Session hibernated"),
+            puckEvent(cursor: 41, kind: "turn_error", text: "provider failed",
+                      itemID: "error-1", turnID: "turn-1"),
+            puckEvent(cursor: 42, kind: "turn_error", text: "provider failed", turnID: "turn-1"),
+            puckEvent(cursor: 43, kind: "turn_error", text: "provider failed", callID: "call-2",
+                      turnID: "turn-1"),
+            puckEvent(cursor: 44, kind: "turn_error", text: "turn cancelled by user", turnID: "turn-1"),
+            puckEvent(cursor: 45, kind: "hibernated", text: "Session hibernated"),
         ]
 
-        let timeline = PuckTimelineProjection.project(history: [], events: events)
+        let timeline = PuckTimelineProjection.project(history: history, events: events)
 
-        #expect(timeline.items.map(\.role) == [.error, .interruption])
-        #expect(timeline.items.map(\.text) == ["provider failed", "turn cancelled by user"])
+        #expect(timeline.items.isEmpty)
+        #expect(timeline.notices.map(\.role) == [PuckTimelineRole.error, .error, .interruption])
+        #expect(timeline.notices.map(\.text) == [
+            "provider failed", "provider failed", "turn cancelled by user",
+        ])
     }
 
     @Test func projectionEvictsOldestItemsWithinItemAndByteLimits() {

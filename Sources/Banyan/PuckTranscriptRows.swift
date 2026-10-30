@@ -235,6 +235,62 @@ struct PuckTimelineRow: View {
     }
 }
 
+struct PuckTimelineNotices: View {
+    let notices: [PuckTimelineNotice]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(notices) { notice in
+                PuckTimelineNoticeRow(notice: notice)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct PuckTimelineNoticeRow: View {
+    let notice: PuckTimelineNotice
+
+    private var tint: Color {
+        notice.role == .interruption ? .orange : .red
+    }
+
+    private var systemImage: String {
+        notice.role == .interruption ? "stop.circle.fill" : "exclamationmark.triangle.fill"
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(notice.title)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(tint)
+                Text(notice.text)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if notice.truncated {
+                    Label("Preview truncated by puckd.", systemImage: "scissors")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(tint.opacity(0.28), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(AccessibilityID.puckTimelineNotice(notice.id))
+    }
+}
+
 struct PuckToolDetailBlock: View {
     let title: String
     let text: String

@@ -26,6 +26,7 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
     private var followers: [String: AsyncThrowingStream<PuckSessionUpdate, Error>.Continuation] = [:]
     private var recordedCreations: [Creation] = []
     private var recordedTurns: [Turn] = []
+    private var recordedCancellations: [String] = []
     private var recordedTurnAttempts = 0
     private var _turnError: PuckDaemonError?
     private var recordedDecisions: [String] = []
@@ -57,6 +58,7 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
 
     var creations: [Creation] { locked { recordedCreations } }
     var turns: [Turn] { locked { recordedTurns } }
+    var cancellations: [String] { locked { recordedCancellations } }
     var turnAttempts: Int { locked { recordedTurnAttempts } }
     var turnError: PuckDaemonError? {
         get { locked { _turnError } }
@@ -198,6 +200,35 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
             return turnGate
         }
         gate?.wait()
+    }
+
+    func cancel(_ id: String) throws {
+        let update: ([PuckSessionEvent], PuckSessionSummary, AsyncThrowingStream<PuckSessionUpdate, Error>.Continuation?) = try locked {
+            try checkReachable()
+            guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
+            guard summary.position == "running" || summary.position == "parked"
+                    || summary.pendingApproval != nil || summary.pendingQuestion != nil else {
+                throw PuckDaemonError.rejected("session has no active turn")
+            }
+            recordedCancellations.append(id)
+            let interrupted = summary.with(
+                position: "interrupted",
+                pendingApproval: .some(nil),
+                pendingQuestion: .some(nil)
+            )
+            summaries[id] = interrupted
+            var events = transcripts[id] ?? []
+            events.append(PuckSessionEvent(
+                cursor: (events.last?.cursor ?? 0) + 1,
+                kind: "turn_error",
+                text: "Turn cancelled by user",
+                turnID: "fixture-turn"
+            ))
+            transcripts[id] = events
+            return (events, interrupted, followers[id])
+        }
+        update.2?.yield(.events(update.0))
+        update.2?.yield(.summary(update.1))
     }
 
     func decide(_ id: String, callID: String, decision: String) throws {

@@ -32,10 +32,17 @@ enum AccessibilityID {
     static let terminalResumeButton = "banyan.terminal.suspended-banner.resume"
     static let puckSessionDetail = "banyan.puck.detail"
     static let puckSessionMessageField = "banyan.puck.detail.message"
+    static let puckTurnStatus = "banyan.puck.detail.status"
+    static let puckStopTurn = "banyan.puck.detail.stop"
+    static let puckCancellationNotice = "banyan.puck.detail.cancellation-notice"
     static let puckTimeline = "banyan.puck.timeline"
     static let puckLoadOlderMessages = "banyan.puck.timeline.load-older"
     static let puckLatestMessages = "banyan.puck.timeline.latest"
     static let puckUsage = "banyan.puck.timeline.usage"
+
+    static func puckTimelineNotice(_ id: String) -> String {
+        "banyan.puck.timeline.notice.\(id)"
+    }
     static let toolbarAddSession = "banyan.toolbar.add-session"
     static let toolbarPreferences = "banyan.toolbar.preferences"
     static let toolbarLogo = "banyan.toolbar.logo"
