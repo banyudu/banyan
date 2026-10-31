@@ -44,6 +44,15 @@ private func detectedRanges(after text: String, in view: DetectingLocalProcessTe
     #expect(detectedRanges(after: "error: build failed in 12:34", in: view).isEmpty)
 }
 
+@MainActor
+@Test func detectsRelativeFilePathOnTheRow() {
+    let view = makeTerminalView()
+    view.feed(text: "docs/design/diagrams/puck-boundary.svg")
+
+    let match = view.terminal.linkMatch(at: .buffer(Position(col: 2, row: 0)), mode: .explicitAndImplicit)
+    #expect(match?.text == "docs/design/diagrams/puck-boundary.svg")
+}
+
 /// Agent status lines print bare references like `PR #9326`. They are detected on
 /// the rendered row rather than in the byte stream, so a reference split across
 /// two PTY reads is still one link — the old byte-level scan missed the split

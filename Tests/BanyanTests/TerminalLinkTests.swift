@@ -11,8 +11,31 @@ import Testing
 }
 
 @MainActor
-@Test func terminalLinkURLAcceptsWebURLsButRejectsRelativePaths() {
+@Test func terminalLinkURLResolvesRelativePathsAgainstTheTerminalDirectory() {
+    let url = TerminalSession.terminalLinkURL(
+        "docs/design/diagrams/puck-boundary.svg",
+        relativeTo: "/Users/example/project"
+    )
+
+    #expect(url == URL(fileURLWithPath: "/Users/example/project/docs/design/diagrams/puck-boundary.svg"))
+    #expect(url?.isFileURL == true)
+}
+
+@MainActor
+@Test func terminalLinkURLNormalizesRelativePathComponents() {
+    let url = TerminalSession.terminalLinkURL("../README.md", relativeTo: "/Users/example/project/docs")
+
+    #expect(url == URL(fileURLWithPath: "/Users/example/project/README.md"))
+}
+
+@MainActor
+@Test func terminalLinkURLAcceptsWebURLsWithoutUsingTheTerminalDirectory() {
     #expect(TerminalSession.terminalLinkURL("https://example.com/path")?.absoluteString == "https://example.com/path")
+    #expect(TerminalSession.terminalLinkURL("https://example.com/path", relativeTo: "/Users/example/project")?.absoluteString == "https://example.com/path")
+}
+
+@MainActor
+@Test func terminalLinkURLRejectsRelativePathsWithoutADirectoryToResolveAgainst() {
     #expect(TerminalSession.terminalLinkURL("notes/worksheet.pdf") == nil)
 }
 

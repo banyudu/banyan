@@ -416,7 +416,7 @@ final class TerminalSession: BanyanSession {
             return
         }
 
-        guard let url = Self.terminalLinkURL(link) else {
+        guard let url = Self.terminalLinkURL(link, relativeTo: cwd) else {
             return
         }
         if url.isFileURL, !FileManager.default.fileExists(atPath: url.path) {
@@ -477,7 +477,7 @@ final class TerminalSession: BanyanSession {
         return Int(digits)
     }
 
-    static func terminalLinkURL(_ link: String) -> URL? {
+    static func terminalLinkURL(_ link: String, relativeTo baseDirectory: String? = nil) -> URL? {
         let value = link.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
 
@@ -485,12 +485,21 @@ final class TerminalSession: BanyanSession {
             return URL(fileURLWithPath: value)
         }
 
-        guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else {
+        if value.hasPrefix("~/") {
+            return URL(fileURLWithPath: (value as NSString).expandingTildeInPath)
+        }
+
+        if let url = URL(string: value), let scheme = url.scheme?.lowercased() {
+            if ["http", "https"].contains(scheme), url.host != nil {
+                return url
+            }
+            return url.isFileURL ? url : nil
+        }
+
+        guard let baseDirectory, !baseDirectory.isEmpty else {
             return nil
         }
-        if ["http", "https"].contains(scheme), url.host != nil {
-            return url
-        }
-        return url.isFileURL ? url : nil
+        let baseURL = URL(fileURLWithPath: baseDirectory, isDirectory: true)
+        return URL(fileURLWithPath: value, relativeTo: baseURL).standardizedFileURL
     }
 }
