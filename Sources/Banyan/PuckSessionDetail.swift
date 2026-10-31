@@ -523,18 +523,19 @@ struct PuckSessionDetail: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(alignment: .bottom, spacing: 10) {
-                Text("›")
-                    .font(.system(size: 18, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 5)
-                    .accessibilityHidden(true)
-                TextField("Ask Puck to do anything", text: $session.draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.body)
-                    .lineLimit(1...8)
-                    .focused($isPromptFocused)
-                    .onSubmit(send)
-                    .accessibilityIdentifier(AccessibilityID.puckSessionMessageField)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("›")
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    TextField("Ask Puck to do anything", text: $session.draft, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.body)
+                        .lineLimit(1...8)
+                        .focused($isPromptFocused)
+                        .onSubmit(send)
+                        .accessibilityIdentifier(AccessibilityID.puckSessionMessageField)
+                }
 
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill")
