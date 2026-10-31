@@ -1,8 +1,9 @@
 # Pause and Close
 
-The native close confirmation offers **Pause and Close** for active,
-non-imported sessions with an unfinished `workit` workflow (`working`, `waiting`,
-or `needs-you`). Pausing leaves the issue and acceptance unfinished, stops
+Every close action in the native close confirmation stays disabled until
+Command is held. For active, non-imported sessions with an unfinished `workit`
+workflow (`working`, `waiting`, or `needs-you`), the confirmation offers
+**Pause and Close**. Pausing leaves the issue and acceptance unfinished, stops
 future automatic continuation, and then closes the terminal. Closing can kill
 the current agent. Children are promoted normally and the closed session stays
 in history. Unmanaged, verified, paused and cancelled sessions use ordinary

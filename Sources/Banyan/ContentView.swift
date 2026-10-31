@@ -167,20 +167,18 @@ struct ContentView: View {
                 Button("Pause and Close", role: .destructive) {
                     store.confirmPendingPauseAndClose()
                 }
-                .disabled(store.pendingCloseIsPausing)
-                .keyboardShortcut(.defaultAction)
+                .disabled(closeConfirmationActionsDisabled)
             }
             if store.pendingCloseNeedsForce {
                 Button(closeConfirmationAction, role: .destructive) {
                     store.confirmPendingForceClose()
                 }
-                .disabled(store.pendingCloseIsPausing || !commandModifierHeld)
+                .disabled(closeConfirmationActionsDisabled)
             } else if !store.pendingCloseCanPause {
                 Button(closeConfirmationAction, role: .destructive) {
                     store.confirmPendingClose()
                 }
-                .disabled(store.pendingCloseIsPausing)
-                .keyboardShortcut(.defaultAction)
+                .disabled(closeConfirmationActionsDisabled)
             }
         } message: {
             Text(store.pendingCloseMessage)
@@ -1476,6 +1474,10 @@ struct ContentView: View {
             return store.pendingCloseSession?.closeEndsAgentWork == false ? "Force Close" : "Force Close and Kill"
         }
         return store.pendingCloseSession?.closeEndsAgentWork == false ? "Close" : "Close and Kill"
+    }
+
+    private var closeConfirmationActionsDisabled: Bool {
+        store.pendingCloseIsPausing || !commandModifierHeld
     }
 
     private var puckSessionErrorBinding: Binding<Bool> {

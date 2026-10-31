@@ -829,7 +829,8 @@ intervention for retirement.
 
 The native close confirmation can **Pause and Close** unfinished Workit-owned
 sessions after Workit acknowledges the exact job/session and Banyan confirms
-its matching paused projection. The issue stays unfinished. See
+its matching paused projection. Hold Command while clicking **Pause and Close**
+to enable the action. The issue stays unfinished. See
 [configuration, CLI requirements and recovery](docs/pause-and-close.md).
 
 An external supervisor such as [workit](https://github.com/banyudu/workit/issues/6)
