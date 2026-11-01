@@ -76,6 +76,46 @@ struct PuckTranscriptUITests {
         #expect(!text.contains("Which inputs should be supported?"))
     }
 
+    @Test func arrowKeysWalkThePuckPromptHistory() async throws {
+        let daemon = FakePuckDaemon()
+        let fixture = try PuckStoreFixture(daemon: daemon)
+        let store = fixture.makeStore()
+        let summary = puckSummary(cwd: fixture.project.path, position: "idle", historyItems: 2)
+        daemon.put(summary, transcript: [
+            PuckSessionEvent(cursor: 1, kind: "user_message", text: "First request"),
+            PuckSessionEvent(cursor: 2, kind: "user_message", text: "Newest request"),
+        ])
+        store.applyPuckSummaries([summary])
+        let session = try #require(store.sessions.first as? PuckSession)
+
+        _ = NSApplication.shared
+        let window = NSWindow(
+            contentRect: NSRect(origin: NSPoint(x: -2_000, y: -2_000), size: NSSize(width: 960, height: 640)),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let host = NSHostingView(rootView: PuckSessionDetail(session: session)
+            .environmentObject(store)
+            .background(Color(nsColor: .windowBackgroundColor)))
+        window.contentView = host
+        host.frame = NSRect(x: 0, y: 0, width: 960, height: 640)
+        window.makeKeyAndOrderFront(nil)
+        try await waitForPuckState { session.events.count == 2 }
+        try await Task.sleep(for: .milliseconds(200))
+
+        try sendKey(NSUpArrowFunctionKey, keyCode: 126, to: window)
+        try await waitForPuckState { session.draft == "Newest request" }
+        try sendKey(NSUpArrowFunctionKey, keyCode: 126, to: window)
+        try await waitForPuckState { session.draft == "First request" }
+        try sendKey(NSDownArrowFunctionKey, keyCode: 125, to: window)
+        try await waitForPuckState { session.draft == "Newest request" }
+        try sendKey(NSDownArrowFunctionKey, keyCode: 125, to: window)
+        try await waitForPuckState { session.draft.isEmpty }
+    }
+
     @Test func scrollObserverTracksTheLiveEndAndAUserScroll() async throws {
         let probe = TranscriptFollowProbe()
         let content = ScrollView {
@@ -276,6 +316,24 @@ struct PuckTranscriptUITests {
         if let scrollView = view as? NSScrollView { return scrollView }
         return view.subviews.lazy.compactMap { firstScrollView(in: $0) }.first
     }
+}
+
+@MainActor
+private func sendKey(_ functionKey: Int, keyCode: UInt16, to window: NSWindow) throws {
+    let characters = String(UnicodeScalar(functionKey)!)
+    let event = try #require(NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: window.windowNumber,
+        context: nil,
+        characters: characters,
+        charactersIgnoringModifiers: characters,
+        isARepeat: false,
+        keyCode: keyCode
+    ))
+    window.sendEvent(event)
 }
 
 @MainActor

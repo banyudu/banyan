@@ -14,6 +14,7 @@ struct PuckSessionDetail: View {
     @State private var isQuestionPlanExpanded = false
     @State private var hoveredQuestionRow: String?
     @State private var approvalSelection: PuckApprovalChoice = .approve
+    @State private var promptHistory = PuckPromptHistory()
     @State private var isFollowingLatest = true
     @FocusState private var isPromptFocused: Bool
 
@@ -580,12 +581,24 @@ struct PuckSessionDetail: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 12)
                         .accessibilityHidden(true)
-                    TextField("Ask Puck to do anything", text: $session.draft, axis: .vertical)
+                    TextField("Ask Puck to do anything", text: promptBinding, axis: .vertical)
                         .textFieldStyle(.plain)
                         .font(.body)
                         .lineLimit(1...8)
                         .focused($isPromptFocused)
                         .onSubmit(send)
+                        .onKeyPress(phases: .down) { press in
+                            guard !press.modifiers.contains(.command),
+                                  !press.modifiers.contains(.option),
+                                  !press.modifiers.contains(.control),
+                                  !press.modifiers.contains(.shift) else { return .ignored }
+                            switch press.key {
+                            case .upArrow: return recallPreviousPrompt()
+                            case .downArrow: return recallNextPrompt()
+                            default: return .ignored
+                            }
+                        }
+                        .help("Use ↑ and ↓ to recall sent messages")
                         .accessibilityIdentifier(AccessibilityID.puckSessionMessageField)
                 }
 
@@ -634,9 +647,43 @@ struct PuckSessionDetail: View {
             && session.turnUnavailableReason == nil && !session.admissionTurnInFlight
     }
 
+    private var promptBinding: Binding<String> {
+        Binding(
+            get: { session.draft },
+            set: { value in
+                promptHistory.reset()
+                session.draft = value
+            }
+        )
+    }
+
+    private var promptHistoryEntries: [String] {
+        session.timeline.items.reversed().compactMap { item in
+            guard item.role == .user, case .user(let text) = item.content else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+    }
+
+    private func recallPreviousPrompt() -> KeyPress.Result {
+        guard promptHistory.isBrowsing
+                || session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let prompt = promptHistory.previous(currentDraft: session.draft, prompts: promptHistoryEntries)
+        else { return .ignored }
+        session.draft = prompt
+        return .handled
+    }
+
+    private func recallNextPrompt() -> KeyPress.Result {
+        guard let prompt = promptHistory.next() else { return .ignored }
+        session.draft = prompt
+        return .handled
+    }
+
     private func send() {
         guard canSend else { return }
         session.send(session.draft)
+        promptHistory.reset()
     }
 
     private func choose(_ label: String, for index: Int, multiple: Bool) {
