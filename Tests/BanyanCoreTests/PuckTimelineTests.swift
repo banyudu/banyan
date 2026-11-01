@@ -114,6 +114,29 @@ struct PuckTimelineTests {
         } == ["false", "query", "file"])
     }
 
+    @Test func approvalArgumentsAttachToTheRunningToolCall() {
+        let events = [
+            puckEvent(cursor: 30, kind: "tool_start", tool: "exec_command", callID: "command-1"),
+            puckEvent(
+                cursor: 31,
+                kind: "approval_pending",
+                tool: "exec_command",
+                callID: "command-1",
+                arguments: #"{"cmd":"swift test","workdir":"/tmp/project"}"#
+            ),
+        ]
+
+        let timeline = PuckTimelineProjection.project(history: [], events: events)
+
+        #expect(timeline.items.count == 1)
+        guard case .tool(let tool) = timeline.items[0].content else {
+            Issue.record("Approval arguments did not update the tool call")
+            return
+        }
+        #expect(tool.arguments == #"{"cmd":"swift test","workdir":"/tmp/project"}"#)
+        #expect(tool.state == .running)
+    }
+
     @Test func unknownEventKindsRemainInspectable() {
         let event = puckEvent(
             cursor: 31,

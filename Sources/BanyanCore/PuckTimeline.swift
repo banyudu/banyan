@@ -372,6 +372,8 @@ private struct Builder {
             appendMessage(role: .user, event: event, text: event.text ?? "")
         case "tool_start":
             appendToolStart(event)
+        case "approval_pending":
+            appendToolApproval(event)
         case "tool_result":
             appendToolResult(event)
         case "hosted_call":
@@ -517,6 +519,27 @@ private struct Builder {
             matchedLive: false,
             isStream: false
         ))
+        registerStableKeys(keys, at: index)
+        toolIndex[callID] = index
+    }
+
+    private mutating func appendToolApproval(_ event: PuckSessionEvent) {
+        guard let arguments = event.arguments, !arguments.isEmpty else { return }
+        let keys = stableKeys(for: event)
+        let callID = event.callID ?? keys.first
+        guard let callID,
+              let index = toolIndex[callID] ?? keys.compactMap({ stableIndex[$0] }).first else {
+            return
+        }
+        updateTool(at: index) { tool in
+            PuckToolActivity(
+                callID: callID,
+                name: tool.name == "tool" ? (event.tool ?? tool.name) : tool.name,
+                arguments: arguments,
+                output: tool.output,
+                state: tool.state
+            )
+        }
         registerStableKeys(keys, at: index)
         toolIndex[callID] = index
     }
