@@ -17,6 +17,24 @@ always-loaded for Claude Code; other agents read the path above.
 
 @.agents/context.md
 
+## Reference checkouts
+
+Puck session UI work often benefits from the upstream implementations. When
+present, use these local clones as read-only references, not dependencies:
+
+- Codex: `codex/` beside the main checkout
+- OpenCode: `opencode/` beside the main checkout
+
+From the main checkout they are `../codex` and `../opencode`. In a linked
+worktree, resolve them from the main checkout rather than the worktree:
+
+```sh
+main_root="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+```
+
+If either checkout is absent, continue with Banyan's code and tests. Do not add
+them as package dependencies or modify them while working here.
+
 ## Shareable content only
 
 This repository is shared beyond its original author. Never commit personal or
