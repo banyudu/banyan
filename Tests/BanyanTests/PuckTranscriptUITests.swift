@@ -14,6 +14,93 @@ struct PuckTranscriptUITests {
         #expect(Set(states.map(\.presentation.systemImage)).count == 4)
     }
 
+    @Test func adjacentToolCallsShareOneTranscriptRow() {
+        let tool = { (index: Int) in
+            PuckTimelineItem(
+                id: "tool-\(index)",
+                role: .tool,
+                content: .tool(PuckToolActivity(
+                    callID: "call-\(index)",
+                    name: "exec_command",
+                    output: "result \(index)",
+                    state: .succeeded
+                )),
+                turnID: "turn-1"
+            )
+        }
+        let items = [
+            PuckTimelineItem(id: "user-1", role: .user, content: .user("Inspect"), turnID: "turn-1"),
+            tool(1),
+            tool(2),
+            tool(3),
+            PuckTimelineItem(id: "assistant-1", role: .assistant, content: .assistant("Done"), turnID: "turn-1"),
+        ]
+
+        let entries = PuckTranscriptLayout.entries(for: items)
+
+        #expect(entries.count == 3)
+        guard case .toolGroup(let grouped) = entries[1] else {
+            Issue.record("Adjacent tool calls were not grouped")
+            return
+        }
+        #expect(grouped.map(\.id) == ["tool-1", "tool-2", "tool-3"])
+        let summary = PuckToolGroupSummary(items: grouped)
+        #expect(summary.title == "Ran 3 commands")
+        #expect(summary.detail == nil)
+    }
+
+    @Test func collapsedToolHistoryShowsOnlyTheGroupSummary() async throws {
+        let timeline = PuckTimelineProjection.project(
+            history: [],
+            events: [
+                puckTranscriptEvent(cursor: 1, kind: "user_message", text: "Inspect the parser"),
+                puckTranscriptEvent(cursor: 2, kind: "tool_start", tool: "exec_command", callID: "first",
+                                    arguments: #"{"cmd":"swift test"}"#),
+                puckTranscriptEvent(cursor: 3, kind: "tool_result", tool: "exec_command", callID: "first",
+                                    output: "exit code: 0\n--- stdout ---\nfirst result", success: true),
+                puckTranscriptEvent(cursor: 4, kind: "tool_start", tool: "exec_command", callID: "second",
+                                    arguments: #"{"cmd":"swift build"}"#),
+                puckTranscriptEvent(cursor: 5, kind: "tool_result", tool: "exec_command", callID: "second",
+                                    output: "exit code: 0\n--- stdout ---\nsecond result", success: true),
+                puckTranscriptEvent(cursor: 6, kind: "tool_start", tool: "exec_command", callID: "third",
+                                    arguments: #"{"cmd":"git status"}"#),
+                puckTranscriptEvent(cursor: 7, kind: "tool_result", tool: "exec_command", callID: "third",
+                                    output: "exit code: 0\n--- stdout ---\nthird result", success: true),
+            ]
+        )
+
+        let collapsed = try await render(
+            PuckTimelineRows(items: timeline.items)
+                .padding(20)
+                .frame(width: 800, height: 500, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: NSSize(width: 800, height: 500),
+            name: "tool-history-collapsed"
+        )
+
+        #expect(collapsed.contains("Ran 3 commands"))
+        #expect(!collapsed.contains("swift test"))
+        #expect(!collapsed.contains("first result"))
+        #expect(!collapsed.contains("stdout"))
+
+        let expanded = try await render(
+            PuckTimelineRows(
+                items: timeline.items,
+                initiallyExpandedItemIDs: Set(timeline.items.map(\.id))
+            )
+                .padding(20)
+                .frame(width: 800, height: 1_200, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: NSSize(width: 800, height: 1_200),
+            name: "tool-history-expanded"
+        )
+
+        #expect(expanded.contains("swift test"))
+        #expect(expanded.contains("first result"))
+        #expect(!expanded.contains("exit code"))
+        #expect(!expanded.contains("--- stdout ---"))
+    }
+
     @Test func followLogicKeepsStreamingAtTheEndButRespectsAUserScroll() {
         #expect(PuckTranscriptFollowLogic.shouldFollow(
             previousAtBottom: true,
@@ -222,8 +309,8 @@ struct PuckTranscriptUITests {
         #expect(!text.contains("---"))
         #expect(text.contains("let ok = true")
             || (text.contains("let") && text.contains("ok") && text.contains("true")))
-        #expect(text.contains("shell"))
         #expect(text.contains("Ran"))
+        #expect(text.contains("swift test"))
         #expect(text.contains("All tests passed"))
         #expect(text.contains("Turn error"))
         #expect(text.contains("Provider failed"))
@@ -231,7 +318,6 @@ struct PuckTranscriptUITests {
         #expect(text.contains("Turn cancelled by user"))
         #expect(text.contains("Unknown event"))
         #expect(text.contains("future_event"))
-        #expect(!text.contains("swift test"))
         #expect(!text.contains("new payload"))
         #expect(!text.contains("turn_started"))
         #expect(!text.contains("turn_done"))
@@ -262,7 +348,6 @@ struct PuckTranscriptUITests {
             name: "semantic-expanded"
         )
 
-        #expect(text.contains("shell"))
         #expect(text.contains("swift test"))
         #expect(text.contains("All tests passed"))
         #expect(text.contains("Unknown event"))
@@ -274,6 +359,8 @@ struct PuckTranscriptUITests {
         #expect(AccessibilityID.puckTimeline == "banyan.puck.timeline")
         #expect(AccessibilityID.puckTimelineItem("call:checks") == "banyan.puck.timeline.item.call:checks")
         #expect(AccessibilityID.puckToolDisclosure("tool:checks") == "banyan.puck.timeline.tool.tool:checks")
+        #expect(AccessibilityID.puckToolGroup("tool:checks")
+            == "banyan.puck.timeline.tool-group.tool:checks")
         #expect(AccessibilityID.puckUnknownEvent("event:3") == "banyan.puck.timeline.unknown.event:3")
         #expect(AccessibilityID.puckTimelineNotice("notice:error-1")
             == "banyan.puck.timeline.notice.notice:error-1")

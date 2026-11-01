@@ -117,6 +117,10 @@ enum AccessibilityID {
         "banyan.puck.timeline.tool.\(id)"
     }
 
+    static func puckToolGroup(_ id: String) -> String {
+        "banyan.puck.timeline.tool-group.\(id)"
+    }
+
     static func puckUnknownEvent(_ id: String) -> String {
         "banyan.puck.timeline.unknown.\(id)"
     }

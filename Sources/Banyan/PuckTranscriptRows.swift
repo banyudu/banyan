@@ -1,5 +1,6 @@
 import AppKit
 import BanyanCore
+import Foundation
 import SwiftUI
 
 /// Stable rows for the normalized Puck conversation. Expansion is keyed by
@@ -7,21 +8,181 @@ import SwiftUI
 /// disclosure the reader opened.
 struct PuckTimelineRows: View {
     let items: [PuckTimelineItem]
+    private let initiallyExpandedItemIDs: Set<String>
+    private let entries: [PuckTranscriptLayout.Entry]
     @State private var expandedItemIDs: Set<String>
+    @State private var expandedToolGroupIDs: Set<String>
 
     init(items: [PuckTimelineItem], initiallyExpandedItemIDs: Set<String> = []) {
+        let entries = PuckTranscriptLayout.entries(for: items)
         self.items = items
+        self.initiallyExpandedItemIDs = initiallyExpandedItemIDs
+        self.entries = entries
         _expandedItemIDs = State(initialValue: initiallyExpandedItemIDs)
+        _expandedToolGroupIDs = State(initialValue: Set(entries.compactMap { entry in
+            guard case .toolGroup(let items) = entry,
+                  items.contains(where: { initiallyExpandedItemIDs.contains($0.id) }) else {
+                return nil
+            }
+            return entry.id
+        }))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            ForEach(items) { item in
-                PuckTimelineRow(item: item, isExpanded: expansionBinding(for: item.id))
-                    .id(item.id)
+            ForEach(entries) { entry in
+                switch entry {
+                case .item(let item):
+                    PuckTimelineRow(item: item, isExpanded: expansionBinding(for: item.id))
+                        .id(entry.id)
+                case .toolGroup(let items):
+                    PuckToolGroupRow(
+                        items: items,
+                        isExpanded: toolGroupExpansionBinding(for: entry.id),
+                        initiallyExpandedItemIDs: initiallyExpandedItemIDs
+                    )
+                    .id(entry.id)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func expansionBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedItemIDs.contains(id) },
+            set: { expanded in
+                if expanded {
+                    expandedItemIDs.insert(id)
+                } else {
+                    expandedItemIDs.remove(id)
+                }
+            }
+        )
+    }
+
+    private func toolGroupExpansionBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedToolGroupIDs.contains(id) },
+            set: { expanded in
+                if expanded {
+                    expandedToolGroupIDs.insert(id)
+                } else {
+                    expandedToolGroupIDs.remove(id)
+                }
+            }
+        )
+    }
+}
+
+enum PuckTranscriptLayout {
+    enum Entry: Identifiable, Equatable {
+        case item(PuckTimelineItem)
+        case toolGroup([PuckTimelineItem])
+
+        var id: String {
+            switch self {
+            case .item(let item):
+                return item.id
+            case .toolGroup(let items):
+                return "tool-group:\(items.first?.id ?? "empty")"
+            }
+        }
+    }
+
+    static func entries(for items: [PuckTimelineItem]) -> [Entry] {
+        var result: [Entry] = []
+        var pendingTools: [PuckTimelineItem] = []
+
+        func flushTools() {
+            guard !pendingTools.isEmpty else { return }
+            result.append(pendingTools.count == 1 ? .item(pendingTools[0]) : .toolGroup(pendingTools))
+            pendingTools.removeAll(keepingCapacity: true)
+        }
+
+        for item in items {
+            if case .tool = item.content {
+                if let turnID = item.turnID,
+                   let pendingTurnID = pendingTools.last?.turnID,
+                   turnID != pendingTurnID {
+                    flushTools()
+                }
+                pendingTools.append(item)
+            } else {
+                flushTools()
+                result.append(.item(item))
+            }
+        }
+        flushTools()
+        return result
+    }
+}
+
+private struct PuckToolGroupRow: View {
+    let items: [PuckTimelineItem]
+    @Binding var isExpanded: Bool
+    @State private var expandedItemIDs: Set<String>
+
+    init(items: [PuckTimelineItem], isExpanded: Binding<Bool>, initiallyExpandedItemIDs: Set<String> = []) {
+        self.items = items
+        _isExpanded = isExpanded
+        _expandedItemIDs = State(initialValue: initiallyExpandedItemIDs)
+    }
+
+    private var summary: PuckToolGroupSummary {
+        PuckToolGroupSummary(items: items)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("•")
+                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12, alignment: .leading)
+                        .accessibilityHidden(true)
+                    Text(summary.title)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(summary.tint)
+                    if let detail = summary.detail {
+                        Text(detail)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    if summary.isRunning {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.banyanPlainLabelOnly)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(items) { item in
+                        PuckTimelineRow(item: item, isExpanded: expansionBinding(for: item.id))
+                            .id(item.id)
+                    }
+                }
+                .padding(.leading, 20)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(summary.accessibilityLabel)
+        .accessibilityIdentifier(AccessibilityID.puckToolGroup(summary.id))
     }
 
     private func expansionBinding(for id: String) -> Binding<Bool> {
@@ -138,8 +299,8 @@ struct PuckTimelineRow: View {
             Text(tool.actionLabel)
                 .font(.callout.weight(.semibold))
                 .foregroundStyle(tool.state.presentation.tint)
-            Text(tool.name)
-                .font(.system(.callout, design: .monospaced))
+            Text(tool.displayTitle)
+                .font(tool.displayTitleIsCommand ? .system(.callout, design: .monospaced) : .callout)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if tool.state == .running {
@@ -191,15 +352,16 @@ struct PuckTimelineRow: View {
 
     @ViewBuilder
     private func toolDetails(_ tool: PuckToolActivity) -> some View {
+        let output = tool.displayOutput
         VStack(alignment: .leading, spacing: 10) {
             if let arguments = tool.arguments, !arguments.isEmpty {
                 PuckToolDetailBlock(title: "Arguments", text: arguments, language: "json")
             }
-            if !tool.output.isEmpty {
+            if !output.isEmpty {
                 PuckToolDetailBlock(
                     title: "Output",
-                    text: tool.output,
-                    language: tool.output.hasPrefix("diff --git") ? "diff" : nil
+                    text: output,
+                    language: output.hasPrefix("diff --git") ? "diff" : nil
                 )
             } else if tool.state == .running {
                 Text("Waiting for the tool result…")
@@ -207,7 +369,7 @@ struct PuckTimelineRow: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
-            if tool.arguments?.isEmpty != false && tool.output.isEmpty && tool.state != .running {
+            if tool.arguments?.isEmpty != false && output.isEmpty && tool.state != .running {
                 Text("No arguments or output were captured for this call.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -370,6 +532,65 @@ private struct PuckToolPreview {
     let hiddenLineCount: Int
 }
 
+struct PuckToolGroupSummary {
+    let items: [PuckTimelineItem]
+
+    private var tools: [PuckToolActivity] {
+        items.compactMap { item in
+            guard case .tool(let tool) = item.content else { return nil }
+            return tool
+        }
+    }
+
+    var id: String { items.first?.id ?? "empty" }
+    var isRunning: Bool { tools.contains { $0.state == .running } }
+    private var failedCount: Int { tools.filter { $0.state == .failed }.count }
+    private var isTruncated: Bool { tools.contains { $0.state == .truncated } }
+    private var isCommandGroup: Bool { tools.allSatisfy(\.isCommand) }
+
+    var title: String {
+        let count = tools.count
+        let noun = isCommandGroup
+            ? (count == 1 ? "command" : "commands")
+            : (count == 1 ? "tool" : "tools")
+        if isRunning {
+            return "Running \(count) \(noun)"
+        }
+        let action = isCommandGroup ? "Ran" : "Used"
+        if failedCount > 0 {
+            return "\(action) \(count) \(noun) · \(failedCount) failed"
+        }
+        if isTruncated {
+            return "\(action) \(count) \(noun) · truncated"
+        }
+        return "\(action) \(count) \(noun)"
+    }
+
+    var detail: String? {
+        var names: [String] = []
+        for tool in tools where !names.contains(tool.displayName) {
+            names.append(tool.displayName)
+        }
+        if isCommandGroup && names.count <= 1 { return nil }
+        guard !names.isEmpty else { return nil }
+        if names.count > 3 {
+            return names.prefix(3).joined(separator: ", ") + " +\(names.count - 3) more"
+        }
+        return names.joined(separator: ", ")
+    }
+
+    var tint: Color {
+        if isRunning { return .blue }
+        if failedCount > 0 { return .red }
+        if isTruncated { return .orange }
+        return .green
+    }
+
+    var accessibilityLabel: String {
+        [title, detail].compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
 private extension PuckToolActivity {
     var actionLabel: String {
         switch state {
@@ -380,18 +601,123 @@ private extension PuckToolActivity {
     }
 
     var hasDetails: Bool {
-        arguments?.isEmpty == false || !output.isEmpty
+        arguments?.isEmpty == false || !displayOutput.isEmpty
+    }
+
+    var displayTitle: String {
+        commandText ?? displayName
+    }
+
+    var displayTitleIsCommand: Bool {
+        commandText != nil
+    }
+
+    var displayName: String {
+        let normalized = name.lowercased().replacingOccurrences(of: "-", with: "_")
+        switch normalized {
+        case "exec_command", "shell", "bash", "run_command", "terminal":
+            return "Command"
+        case "update_plan", "plan":
+            return "Plan"
+        case "request_user_input", "question", "ask":
+            return "Question"
+        case "apply_patch", "patch", "edit":
+            return "Patch"
+        case "read_file", "read":
+            return "Read"
+        case "search", "grep", "glob":
+            return "Search"
+        case "list_files", "list_directory", "ls":
+            return "List"
+        case "webfetch", "fetch":
+            return "Fetch"
+        case "write_file", "write":
+            return "Write"
+        case "view_image":
+            return "Image"
+        case "spawn_agent", "agent":
+            return "Agent"
+        case "tool":
+            return "Tool"
+        default:
+            let words = normalized.split(separator: "_")
+            guard let first = words.first else { return "Tool" }
+            return ([first.capitalized] + words.dropFirst().map(String.init)).joined(separator: " ")
+        }
+    }
+
+    var isCommand: Bool {
+        switch name.lowercased().replacingOccurrences(of: "-", with: "_") {
+        case "exec_command", "shell", "bash", "run_command", "terminal":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var commandText: String? {
+        guard let arguments,
+              let data = arguments.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let value = ["cmd", "command", "script"]
+            .compactMap { object[$0] }
+            .first { $0 is String || $0 is [String] }
+        let command: String?
+        if let string = value as? String {
+            command = string
+        } else if let words = value as? [String] {
+            command = words.joined(separator: " ")
+        } else {
+            command = nil
+        }
+        guard let command else { return nil }
+        let singleLine = command.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !singleLine.isEmpty else { return nil }
+        return String(singleLine.prefix(400))
+    }
+
+    var displayOutput: String {
+        displayOutputLines.joined(separator: "\n")
+    }
+
+    private var displayOutputLines: [String] {
+        var lines: [String] = []
+        for rawLine in CommandOutputText.strippingANSIEscapes(output).components(separatedBy: .newlines) {
+            let line = rawLine.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let lower = trimmed.lowercased()
+            if lower.hasPrefix("exit code:"),
+               Int(trimmed.dropFirst("exit code:".count).trimmingCharacters(in: .whitespaces)) != nil {
+                continue
+            }
+            if ["--- stdout ---", "--- stderr ---", "--- output ---"].contains(lower) {
+                continue
+            }
+            lines.append(line)
+        }
+        while lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+            lines.removeFirst()
+        }
+        while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+            lines.removeLast()
+        }
+        var compacted: [String] = []
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty,
+               compacted.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+                continue
+            }
+            compacted.append(line)
+        }
+        return compacted
     }
 
     var preview: PuckToolPreview? {
-        let source = output.isEmpty ? (arguments ?? "") : output
-        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return state == .running
-                ? PuckToolPreview(lines: ["Waiting for output…"], hiddenLineCount: 0)
-                : nil
-        }
-        let lines = source.components(separatedBy: .newlines)
-        let limit = 3
+        let lines = displayOutputLines
+        guard !lines.isEmpty else { return nil }
+        let limit = 2
         return PuckToolPreview(
             lines: Array(lines.prefix(limit)),
             hiddenLineCount: max(0, lines.count - limit)
