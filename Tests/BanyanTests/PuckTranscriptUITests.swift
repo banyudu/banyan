@@ -35,6 +35,47 @@ struct PuckTranscriptUITests {
         ))
     }
 
+    @Test func questionWizardShowsOnlyTheActiveStep() async throws {
+        let daemon = FakePuckDaemon()
+        let fixture = try PuckStoreFixture(daemon: daemon)
+        let store = fixture.makeStore()
+        let question = try PuckPendingQuestion([
+            "call_id": "question-1", "expires_at_ms": 0,
+            "questions": [
+                [
+                    "header": "Approach", "question": "How should this be implemented?",
+                    "multiple": false, "custom": false,
+                    "options": [
+                        ["label": "Option one", "description": "Take the direct route."],
+                        ["label": "Option two", "description": "Take the careful route."],
+                    ],
+                ],
+                [
+                    "header": "Scope", "question": "Which inputs should be supported?",
+                    "multiple": false, "custom": false,
+                    "options": [["label": "Paste", "description": "Handle pasted content."]],
+                ],
+            ],
+        ])
+        let summary = puckSummary(cwd: fixture.project.path, position: "parked", pendingQuestion: question)
+        daemon.put(summary)
+        store.applyPuckSummaries([summary])
+        let session = try #require(store.sessions.first as? PuckSession)
+
+        let text = try await render(
+            PuckSessionDetail(session: session)
+                .environmentObject(store)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: NSSize(width: 960, height: 640),
+            name: "question-wizard-step-1"
+        )
+
+        #expect(text.contains("Question 1 of 2"))
+        #expect(text.contains("How should this be implemented?"))
+        #expect(text.contains("Continue"))
+        #expect(!text.contains("Which inputs should be supported?"))
+    }
+
     @Test func scrollObserverTracksTheLiveEndAndAUserScroll() async throws {
         let probe = TranscriptFollowProbe()
         let content = ScrollView {

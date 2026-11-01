@@ -47,6 +47,8 @@ final class PuckSession: BanyanSession {
     /// The last daemon failure: unreachable, or a rejected request.
     @Published private(set) var daemonError: String?
     @Published private(set) var cancelInFlight = false
+    @Published private(set) var decisionInFlight = false
+    @Published private(set) var answerInFlight = false
     /// Shown after an accepted cancel so the user knows the session itself was
     /// not closed and its durable history is still available.
     @Published private(set) var cancellationNotice: String?
@@ -63,6 +65,8 @@ final class PuckSession: BanyanSession {
     var onAdmissionTurnStarting: (() -> Void)?
     var onPendingChangedWithoutStatusTransition: (() -> Void)?
     private var summaryRevision = 0
+    private var resolvedApprovalCallID: String?
+    private var resolvedQuestionCallID: String?
 
     deinit { followTask?.cancel(); historyTask?.cancel() }
 
@@ -246,9 +250,19 @@ final class PuckSession: BanyanSession {
         }
         markDetectedAgentModel(reported.model, isExact: true)
         position = summary.position
-        pendingApproval = summary.pendingApproval
+        if let resolvedApprovalCallID, summary.pendingApproval?.callID == resolvedApprovalCallID {
+            pendingApproval = nil
+        } else {
+            self.resolvedApprovalCallID = nil
+            pendingApproval = summary.pendingApproval
+        }
         let priorQuestion = pendingQuestion?.callID
-        pendingQuestion = summary.pendingQuestion
+        if let resolvedQuestionCallID, summary.pendingQuestion?.callID == resolvedQuestionCallID {
+            pendingQuestion = nil
+        } else {
+            self.resolvedQuestionCallID = nil
+            pendingQuestion = summary.pendingQuestion
+        }
         if pendingQuestion?.callID != priorQuestion {
             questionPlan = nil
             if let callID = pendingQuestion?.callID {
@@ -456,16 +470,19 @@ final class PuckSession: BanyanSession {
     }
 
     func decide(_ decision: String) {
-        guard let pending = pendingApproval else { return }
+        guard let pending = pendingApproval, !decisionInFlight else { return }
+        decisionInFlight = true
+        daemonError = nil
         let daemon = self.daemon
         let id = self.id
         Task { [weak self] in
+            defer { self?.decisionInFlight = false }
             do {
-                let summary = try await PuckBackgroundIO.run {
-                    try daemon.decide(id, callID: pending.callID, decision: decision)
-                    return try daemon.get(id)
-                }
-                self?.apply(summary: summary)
+                try await PuckBackgroundIO.run { try daemon.decide(id, callID: pending.callID, decision: decision) }
+                guard let self else { return }
+                self.acknowledgeApproval(pending.callID)
+                let summary = try await PuckBackgroundIO.run { try daemon.get(id) }
+                self.apply(summary: summary)
             } catch {
                 self?.daemonError = error.localizedDescription
             }
@@ -499,19 +516,39 @@ final class PuckSession: BanyanSession {
     }
 
     func answer(_ selections: [PuckQuestionSelection]) {
-        guard let pending = pendingQuestion else { return }
+        guard let pending = pendingQuestion, !answerInFlight else { return }
+        answerInFlight = true
+        daemonError = nil
         let daemon = self.daemon
         let id = self.id
         Task { [weak self] in
+            defer { self?.answerInFlight = false }
             do {
-                let summary = try await PuckBackgroundIO.run {
+                try await PuckBackgroundIO.run {
                     try daemon.answer(id, callID: pending.callID, selections: selections)
-                    return try daemon.get(id)
                 }
-                self?.apply(summary: summary)
+                guard let self else { return }
+                self.acknowledgeQuestion(pending.callID)
+                let summary = try await PuckBackgroundIO.run { try daemon.get(id) }
+                self.apply(summary: summary)
             } catch {
                 self?.daemonError = error.localizedDescription
             }
         }
+    }
+
+    private func acknowledgeApproval(_ callID: String) {
+        guard pendingApproval?.callID == callID else { return }
+        pendingApproval = nil
+        resolvedApprovalCallID = callID
+        if status != .closed, !isSuspended { onPendingChangedWithoutStatusTransition?() }
+    }
+
+    private func acknowledgeQuestion(_ callID: String) {
+        guard pendingQuestion?.callID == callID else { return }
+        pendingQuestion = nil
+        questionPlan = nil
+        resolvedQuestionCallID = callID
+        if status != .closed, !isSuspended { onPendingChangedWithoutStatusTransition?() }
     }
 }

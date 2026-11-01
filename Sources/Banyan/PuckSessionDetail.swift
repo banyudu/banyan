@@ -10,6 +10,8 @@ struct PuckSessionDetail: View {
     @ObservedObject var session: PuckSession
     @State private var questionChoices: [Int: Set<String>] = [:]
     @State private var questionTexts: [Int: String] = [:]
+    @State private var questionStep = 0
+    @State private var isQuestionPlanExpanded = false
     @State private var hoveredQuestionRow: String?
     @State private var approvalSelection: PuckApprovalChoice = .approve
     @State private var isFollowingLatest = true
@@ -27,11 +29,11 @@ struct PuckSessionDetail: View {
             }
             Divider()
             transcript(timeline)
-            if let pending = session.pendingApproval {
+            if let pending = session.pendingApproval, !session.decisionInFlight {
                 Divider()
                 approvalPanel(pending)
             }
-            if let pending = session.pendingQuestion {
+            if let pending = session.pendingQuestion, !session.answerInFlight {
                 Divider()
                 questionPanel(pending, plan: session.questionPlan)
             }
@@ -54,6 +56,8 @@ struct PuckSessionDetail: View {
         .onChange(of: session.pendingQuestion?.callID) { _, _ in
             questionChoices = [:]
             questionTexts = [:]
+            questionStep = 0
+            isQuestionPlanExpanded = false
             hoveredQuestionRow = nil
         }
         .onChange(of: session.pendingApproval?.callID) { _, _ in
@@ -302,52 +306,130 @@ struct PuckSessionDetail: View {
         .accessibilityLabel(choice.label)
     }
 
+    @ViewBuilder
     private func questionPanel(_ pending: PuckPendingQuestion, plan: String?) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Answer needed")
-                    .font(.callout.weight(.semibold))
-                Spacer()
-                Text("\(pending.questions.count) \(pending.questions.count == 1 ? "question" : "questions")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let plan, !plan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                questionPlanPreview(plan)
-            }
-            if questionRowCount(pending) > 12 {
-                ScrollView {
-                    questionList(pending)
-                }
-                .frame(height: 360)
-            } else {
-                questionList(pending)
-            }
-            HStack(spacing: 12) {
-                Text(pending.questions.contains(where: \.multiple)
-                    ? "Select one or more answers per question."
-                    : "Select one answer per question.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                Button("Submit answer") {
-                    if let selections = selections(for: pending) {
-                        session.answer(selections)
+        if pending.questions.isEmpty {
+            EmptyView()
+        } else {
+            let step = min(max(questionStep, 0), pending.questions.count - 1)
+            let question = pending.questions[step]
+            let isFinalStep = step == pending.questions.count - 1
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Answer needed")
+                            .font(.callout.weight(.semibold))
+                        Spacer()
+                        Text("Question \(step + 1) of \(pending.questions.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if pending.questions.count > 1 {
+                        ProgressView(value: Double(step + 1), total: Double(pending.questions.count))
+                            .progressViewStyle(.linear)
+                            .accessibilityLabel("Question progress")
+                            .accessibilityValue("Question \(step + 1) of \(pending.questions.count)")
                     }
                 }
-                .buttonStyle(.banyanBorderedProminent)
-                .controlSize(.small)
-                .disabled(selections(for: pending) == nil)
+                if let plan, !plan.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    DisclosureGroup(isExpanded: $isQuestionPlanExpanded) {
+                        questionPlanPreview(plan)
+                            .padding(.top, 6)
+                    } label: {
+                        Label("Plan", systemImage: "list.bullet.rectangle")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                questionStem(question)
+                if questionRowCount(question) > 10 {
+                    ScrollView {
+                        questionChoices(question, questionIndex: step)
+                    }
+                    .frame(height: 300)
+                } else {
+                    questionChoices(question, questionIndex: step)
+                }
+                HStack(spacing: 8) {
+                    Text(questionHint(question))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 12)
+                    if step > 0 {
+                        Button("Back") {
+                            questionStep = step - 1
+                        }
+                        .buttonStyle(.banyanBordered)
+                        .controlSize(.small)
+                    }
+                    if isFinalStep {
+                        Button(pending.questions.count == 1 ? "Submit answer" : "Submit answers") {
+                            if let selections = selections(for: pending) {
+                                session.answer(selections)
+                            }
+                        }
+                        .buttonStyle(.banyanBorderedProminent)
+                        .controlSize(.small)
+                        .disabled(selections(for: pending) == nil)
+                    } else {
+                        Button("Continue") {
+                            questionStep = step + 1
+                        }
+                        .buttonStyle(.banyanBorderedProminent)
+                        .controlSize(.small)
+                        .disabled(selection(for: question, questionIndex: step) == nil)
+                    }
+                }
+            }
+            .pendingAskLayout()
+            .onChange(of: questionStep) { _, _ in
+                hoveredQuestionRow = nil
             }
         }
-        .pendingAskLayout()
+    }
+
+    private func questionStem(_ question: PuckQuestion) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !question.header.isEmpty {
+                Text(question.header)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(question.question)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func questionChoices(_ question: PuckQuestion, questionIndex: Int) -> some View {
+        VStack(spacing: 2) {
+            ForEach(Array(question.options.enumerated()), id: \.offset) { optionIndex, option in
+                questionChoiceRow(
+                    option,
+                    number: optionIndex + 1,
+                    questionIndex: questionIndex,
+                    multiple: question.multiple
+                )
+            }
+            if question.custom {
+                customQuestionRow(for: questionIndex, number: question.options.count + 1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func questionHint(_ question: PuckQuestion) -> String {
+        switch (question.multiple, question.custom) {
+        case (true, true): "Select one or more answers, or type your own."
+        case (true, false): "Select one or more answers."
+        case (false, true): "Select an answer or type your own."
+        case (false, false): "Select an answer."
+        }
     }
 
     private func questionPlanPreview(_ plan: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Plan")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        Group {
             if planLineCount(plan) > 6 {
                 ScrollView {
                     planText(plan)
@@ -370,39 +452,8 @@ struct PuckSessionDetail: View {
         plan.split(separator: "\n", omittingEmptySubsequences: false).count
     }
 
-    private func questionRowCount(_ pending: PuckPendingQuestion) -> Int {
-        pending.questions.reduce(0) { total, question in
-            total + 2 + question.options.count + (question.custom ? 1 : 0)
-        }
-    }
-
-    private func questionList(_ pending: PuckPendingQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Question \(index + 1)/\(pending.questions.count) · \(question.header)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(question.question)
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
-                    VStack(spacing: 2) {
-                        ForEach(Array(question.options.enumerated()), id: \.offset) { optionIndex, option in
-                            questionChoiceRow(
-                                option,
-                                number: optionIndex + 1,
-                                questionIndex: index,
-                                multiple: question.multiple
-                            )
-                        }
-                        if question.custom {
-                            customQuestionRow(for: index, number: question.options.count + 1)
-                        }
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    private func questionRowCount(_ question: PuckQuestion) -> Int {
+        question.options.count + (question.custom ? 1 : 0)
     }
 
     @ViewBuilder
@@ -522,11 +573,12 @@ struct PuckSessionDetail: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(alignment: .bottom, spacing: 10) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("›")
-                        .font(.system(.body, design: .monospaced).weight(.semibold))
+            HStack(alignment: .center, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .frame(width: 12)
                         .accessibilityHidden(true)
                     TextField("Ask Puck to do anything", text: $session.draft, axis: .vertical)
                         .textFieldStyle(.plain)
@@ -612,18 +664,22 @@ struct PuckSessionDetail: View {
         )
     }
 
+    private func selection(for question: PuckQuestion, questionIndex: Int) -> PuckQuestionSelection? {
+        let text = questionTexts[questionIndex]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if question.custom && !text.isEmpty {
+            return PuckQuestionSelection(text: text)
+        }
+        let chosen = questionChoices[questionIndex] ?? []
+        let labels = question.options.map(\.label).filter { chosen.contains($0) }
+        guard !labels.isEmpty, question.multiple || labels.count == 1 else { return nil }
+        return PuckQuestionSelection(labels: labels)
+    }
+
     private func selections(for pending: PuckPendingQuestion) -> [PuckQuestionSelection]? {
         var answers: [PuckQuestionSelection] = []
         for (index, question) in pending.questions.enumerated() {
-            let text = questionTexts[index]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if question.custom && !text.isEmpty {
-                answers.append(PuckQuestionSelection(text: text))
-                continue
-            }
-            let chosen = questionChoices[index] ?? []
-            let labels = question.options.map(\.label).filter { chosen.contains($0) }
-            guard !labels.isEmpty, question.multiple || labels.count == 1 else { return nil }
-            answers.append(PuckQuestionSelection(labels: labels))
+            guard let answer = selection(for: question, questionIndex: index) else { return nil }
+            answers.append(answer)
         }
         return answers.count == pending.questions.count ? answers : nil
     }

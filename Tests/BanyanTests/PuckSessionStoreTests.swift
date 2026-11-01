@@ -406,3 +406,58 @@ import Testing
     #expect(session.turnUnavailableReason == nil)
     #expect(session.status != .closed)
 }
+
+@MainActor
+@Test func confirmingAPuckApprovalHidesItBeforeTheSummaryReturns() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let approval = PuckPendingApproval(callID: "approval-1", tool: "shell", arguments: "ls", expiresAtMS: 0)
+    let summary = puckSummary(cwd: fixture.project.path, position: "parked", pendingApproval: approval)
+    daemon.put(summary)
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+    let gate = daemon.holdNextGet(after: 0)
+
+    session.decide("approve")
+    try await waitForPuckState { daemon.decisions == ["approve"] }
+
+    #expect(session.decisionInFlight)
+    #expect(session.pendingApproval == nil)
+    store.applyPuckSummaries([summary])
+    #expect(session.pendingApproval == nil)
+    gate.signal()
+    try await waitForPuckState { !session.decisionInFlight }
+    #expect(session.position == "running")
+}
+
+@MainActor
+@Test func confirmingAPuckQuestionHidesItBeforeTheSummaryReturns() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let question = try PuckPendingQuestion([
+        "call_id": "question-1", "expires_at_ms": 0,
+        "questions": [[
+            "header": "Files", "question": "Which files?", "multiple": false,
+            "custom": false,
+            "options": [["label": "One", "description": "Use one file."]],
+        ]],
+    ])
+    let summary = puckSummary(cwd: fixture.project.path, position: "parked", pendingQuestion: question)
+    daemon.put(summary)
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+    let gate = daemon.holdNextGet(after: 0)
+
+    session.answer([PuckQuestionSelection(labels: ["One"])])
+    try await waitForPuckState { daemon.answers.count == 1 }
+
+    #expect(session.answerInFlight)
+    #expect(session.pendingQuestion == nil)
+    store.applyPuckSummaries([summary])
+    #expect(session.pendingQuestion == nil)
+    gate.signal()
+    try await waitForPuckState { !session.answerInFlight }
+    #expect(session.position == "running")
+}
