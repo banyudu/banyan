@@ -5,25 +5,29 @@ public struct SessionChildVisibilityItem: Sendable, Equatable {
     public let parentSessionID: String?
     public let status: SessionStatus
     public let isSuspended: Bool
+    public let focusLane: SessionFocusLane?
 
     public init(
         id: String,
         parentSessionID: String?,
         status: SessionStatus,
-        isSuspended: Bool = false
+        isSuspended: Bool = false,
+        focusLane: SessionFocusLane? = nil
     ) {
         self.id = id
         self.parentSessionID = parentSessionID
         self.status = status
         self.isSuspended = isSuspended
+        self.focusLane = focusLane
     }
 }
 
 /// Decides which parent/child hierarchy rows stay visible when parents are
 /// collapsed and finished children are hidden.
 ///
-/// Top-level rows (depth 0) are never hidden by this policy — only children
-/// collapse away, so a parent is always there to expand.
+/// Top-level rows remain visible in the all-sessions scope. Focus additionally
+/// hides managed watch/settled work, including top-level work, while retaining
+/// selected sessions and sessions that need a human decision.
 public enum SessionChildVisibilityPolicy {
     /// Terminal children hidden by the "show finished" toggle. Deliberately
     /// completed-only: a failed session needs a human decision (see
@@ -38,7 +42,8 @@ public enum SessionChildVisibilityPolicy {
     /// the selected session's ancestry never auto-collapses.
     public static func autoCollapsedParents(
         in items: [SessionChildVisibilityItem],
-        selectedID: String? = nil
+        selectedID: String? = nil,
+        scope: SessionSidebarScope = .all
     ) -> Set<String> {
         let ids = Set(items.map(\.id))
         var childrenByParent: [String: [String]] = [:]
@@ -67,7 +72,9 @@ public enum SessionChildVisibilityPolicy {
             while let id = stack.popLast() {
                 guard visited.insert(id).inserted else { continue }
                 guard let item = itemsByID[id] else { continue }
-                if item.status != .completed, item.status != .closed, !item.isSuspended {
+                let isLive = item.status != .completed && item.status != .closed && !item.isSuspended
+                let contributesToFocus = scope == .all || item.focusLane == nil || item.focusLane == .act
+                if isLive, contributesToFocus {
                     hasLiveDescendant = true
                     break
                 }
@@ -90,7 +97,8 @@ public enum SessionChildVisibilityPolicy {
         itemsByID: [String: SessionChildVisibilityItem],
         collapsedParentIDs: Set<String>,
         showFinishedChildren: Bool,
-        selectedID: String? = nil
+        selectedID: String? = nil,
+        scope: SessionSidebarScope = .all
     ) -> (visible: [SessionSidebarRow], hiddenCountByParentID: [String: Int]) {
         var selectedAncestors: Set<String> = []
         if let selectedID {
@@ -99,6 +107,20 @@ public enum SessionChildVisibilityPolicy {
             while let current = cursor, visited.insert(current).inserted {
                 selectedAncestors.insert(current)
                 cursor = itemsByID[current]?.parentSessionID
+            }
+        }
+
+        var focusPinnedIDs = selectedAncestors
+        if let selectedID { focusPinnedIDs.insert(selectedID) }
+        if scope == .focus {
+            for item in itemsByID.values where item.focusLane == nil || item.focusLane == .act {
+                focusPinnedIDs.insert(item.id)
+                var cursor = item.parentSessionID
+                var visited: Set<String> = []
+                while let current = cursor, visited.insert(current).inserted {
+                    focusPinnedIDs.insert(current)
+                    cursor = itemsByID[current]?.parentSessionID
+                }
             }
         }
 
@@ -127,10 +149,6 @@ public enum SessionChildVisibilityPolicy {
 
         for row in rows {
             guard let item = itemsByID[row.id] else { continue }
-            if row.depth == 0 {
-                visible.append(row)
-                continue
-            }
             if let parent = item.parentSessionID, hidden.contains(parent) {
                 hide(rowID: row.id, item: item)
                 continue
@@ -140,6 +158,14 @@ public enum SessionChildVisibilityPolicy {
                 continue
             }
             if row.id == selectedID || selectedAncestors.contains(row.id) {
+                visible.append(row)
+                continue
+            }
+            if scope == .focus, let lane = item.focusLane, lane != .act, !focusPinnedIDs.contains(row.id) {
+                hide(rowID: row.id, item: item)
+                continue
+            }
+            if row.depth == 0 {
                 visible.append(row)
                 continue
             }

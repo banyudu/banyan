@@ -129,6 +129,12 @@ struct SessionWorkDetailsView: View {
     @ViewBuilder private var ownDetails: some View {
         Text(summary.own.label).font(.subheadline).foregroundStyle(summary.own.needsAttention ? .orange : .secondary)
         if let job = summary.own.job {
+            if let groupTitle = job.groupTitle, !groupTitle.isEmpty {
+                Label(groupTitle, systemImage: "rectangle.stack").font(.caption).foregroundStyle(.secondary)
+            }
+            if let phase = job.phase {
+                Text("Lifecycle: \(phase.label)").font(.caption).foregroundStyle(.secondary)
+            }
             if let reason = job.stopReason, !reason.isEmpty {
                 Text("Stopped because").font(.caption).foregroundStyle(.secondary)
                 Text(reason).textSelection(.enabled)

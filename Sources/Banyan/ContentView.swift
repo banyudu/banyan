@@ -596,6 +596,19 @@ struct ContentView: View {
                         }
                     }
                     Divider()
+                    Picker("Show", selection: $store.sidebarScope) {
+                        ForEach(SessionSidebarScope.allCases, id: \.self) { scope in
+                            Text(scope.label).tag(scope)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                    if store.sidebarScope == .focus, store.hiddenManagedSessionCount > 0 {
+                        Text(store.hiddenManagedSessionCount == 1
+                            ? "1 managed session hidden"
+                            : "\(store.hiddenManagedSessionCount) managed sessions hidden")
+                    }
+                    Divider()
                     Toggle("Show finished children", isOn: $store.showFinishedChildren)
                         .help("Reveal completed child sessions in the sidebar")
                     Divider()
@@ -611,7 +624,9 @@ struct ContentView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .accessibilityIdentifier(AccessibilityID.sidebarOptions)
-                .help("Sidebar options")
+                .help(store.sidebarScope == .focus
+                    ? "Sidebar options — Focus hides quiet managed work"
+                    : "Sidebar options — All sessions")
 
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")

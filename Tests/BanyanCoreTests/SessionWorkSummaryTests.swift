@@ -15,6 +15,21 @@ import Testing
         return try WorkitOverview.decode(JSONSerialization.data(withJSONObject: ["version": 1, "generatedAt": "2026-01-01T00:00:00Z", "total": 1, "truncated": false, "jobs": [job]]))
     }
 
+    private func phasedOverview(_ jobs: [[String: Any]]) throws -> WorkitOverview {
+        try WorkitOverview.decode(JSONSerialization.data(withJSONObject: [
+            "version": 1, "generatedAt": "2026-01-01T00:00:00Z", "total": jobs.count,
+            "truncated": false, "jobs": jobs,
+        ]))
+    }
+
+    private func phasedJob(_ id: String, phase: String, attention: String, group: String,
+                           kind: String = "working", label: String = "Working") -> [String: Any] {
+        ["id": id, "sessionID": id, "revision": 1, "title": id, "stage": "implementing",
+         "group": group, "phase": phase, "attention": attention,
+         "display": ["kind": kind, "label": label], "detail": "", "createdAt": "2026-01-01T00:00:00Z",
+         "progress": ["passed": 0, "total": 2], "nextAction": "Continue", "evidence": []]
+    }
+
     @Test func nestedBackgroundWorkRemainsCountedAndIdleIsNotCompletion() throws {
         let nodes = [node("parent"), node("worker", parent: "parent", job: "job", state: .needsYou, background: true),
             node("review", parent: "worker", job: "review", state: .waiting),
@@ -54,5 +69,30 @@ import Testing
         let cycle = SessionWorkTree.summaries(nodes: [node("a", parent: "b"), node("b", parent: "a")], overview: nil)
         #expect(cycle["a"]?.descendants.map(\.id) == ["b"])
         #expect(cycle["b"]?.descendants.map(\.id) == ["a"])
+    }
+
+    @Test func phaseMetadataDrivesFocusAndMergeBoundaryPresentation() throws {
+        let nodes = [node("parent"), node("merged", parent: "parent", job: "merged", state: .needsYou),
+                     node("proving", parent: "parent", job: "proving", state: .working),
+                     node("quiet", parent: "parent", job: "quiet", state: .waiting)]
+        let feed = try phasedOverview([
+            phasedJob("merged", phase: "merged", attention: "act", group: "needs-you",
+                      kind: "blocked", label: "Check merge"),
+            phasedJob("proving", phase: "merged", attention: "watch", group: "working"),
+            phasedJob("quiet", phase: "pr-open", attention: "watch", group: "waiting"),
+        ])
+        let result = SessionWorkTree.summaries(nodes: nodes, overview: feed)
+
+        #expect(result["merged"]?.own.phase == .merged)
+        #expect(result["merged"]?.own.focusLane == .act)
+        #expect(result["merged"]?.own.label == "Merged · 0/2 AC")
+        #expect(result["proving"]?.own.focusLane == .watch)
+        #expect(result["parent"]?.groupLabel == "1 needs you · 1 PR open · 1 merged")
+
+        let askingNodes = [node("asking", job: "asking", status: .asking)]
+        let askingFeed = try phasedOverview([
+            phasedJob("asking", phase: "implementation", attention: "watch", group: "working"),
+        ])
+        #expect(SessionWorkTree.summaries(nodes: askingNodes, overview: askingFeed)["asking"]?.own.focusLane == .act)
     }
 }

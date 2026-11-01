@@ -106,9 +106,21 @@ struct WorkJobRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
+            if let groupTitle = job.groupTitle, !groupTitle.isEmpty {
+                Label(groupTitle, systemImage: "rectangle.stack")
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
             Text(job.title).font(.headline).fixedSize(horizontal: false, vertical: true)
-            Text("\(job.display?.label ?? job.stage.replacingOccurrences(of: "-", with: " ").capitalized) · \(job.progress.passed)/\(job.progress.total) ACs proven")
-                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                if let phase = job.phase {
+                    Text(phase.label)
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                }
+                Text("\(job.display?.label ?? job.stage.replacingOccurrences(of: "-", with: " ").capitalized) · \(job.progress.passed)/\(job.progress.total) ACs proven")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if !job.detail.isEmpty { Text(job.detail).font(.callout).lineLimit(3).help(job.detail) }
             if let reason = job.stopReason, reason != job.detail { Text(reason).font(.callout).lineLimit(3).help(reason) }
             Text(job.nextAction).font(.caption).fixedSize(horizontal: false, vertical: true)

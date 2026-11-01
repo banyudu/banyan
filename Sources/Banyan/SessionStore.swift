@@ -351,7 +351,12 @@ final class SessionStore: ObservableObject {
     // Fetch coordination only; no view reads this flag. Publishing it redraws
     // the whole session list before and after every overview request.
     var isRefreshingWorkOverview = false
-    var workSummaryRevision = 0 { didSet { scheduleWorkSummaryUpdate() } }
+    var workSummaryRevision = 0 {
+        didSet {
+            sidebarGroupsRevision &+= 1
+            scheduleWorkSummaryUpdate()
+        }
+    }
     var workStates: [String: SessionWorkState] = [:]
     var workSummaryUpdateTask: Task<Void, Never>?
     var workOverviewRefreshTask: Task<Void, Never>?
@@ -475,9 +480,20 @@ final class SessionStore: ObservableObject {
             )
         }
     }
+    /// Presentation-only scope for the Sessions sidebar. Focus keeps ordinary
+    /// sessions plus managed work that needs a decision; quiet managed work stays
+    /// in All sessions without being paused, suspended, or closed.
+    @Published var sidebarScope: SessionSidebarScope = .focus {
+        didSet {
+            guard sidebarScope != oldValue else { return }
+            sidebarGroupsRevision &+= 1
+            UserDefaults.standard.set(sidebarScope.rawValue, forKey: Self.sidebarScopeDefaultsKey)
+        }
+    }
     private static let collapsedParentsDefaultsKey = "sidebarCollapsedParentIDs"
     private static let expandedParentsDefaultsKey = "sidebarManuallyExpandedParentIDs"
     private static let showFinishedChildrenDefaultsKey = "sidebarShowFinishedChildren"
+    private static let sidebarScopeDefaultsKey = "sidebarScope"
 
     let codexThreads: CodexThreadCoordinator
     let codexRemote: CodexRemoteControl
@@ -648,6 +664,7 @@ final class SessionStore: ObservableObject {
     private var isClosingScratchTerminal = false
     private var cachedSessionSidebarGroups: [SidebarSessionGroup]?
     private var cachedSessionSidebarGroupsRevision = -1
+    private var cachedHiddenManagedSessionCount = 0
     /// Bumped whenever an input to the active sidebar projection changes. The
     /// projection used to hash every active row on every SwiftUI pass; even a
     /// cache hit walked the active set and read every presentation field.
@@ -824,6 +841,8 @@ final class SessionStore: ObservableObject {
             expandedParentIDs = Set(expanded)
         }
         showFinishedChildren = defaults.bool(forKey: Self.showFinishedChildrenDefaultsKey)
+        sidebarScope = defaults.string(forKey: Self.sidebarScopeDefaultsKey)
+            .flatMap(SessionSidebarScope.init(rawValue:)) ?? .focus
         dismissedPuckSessionIDs = persistence.loadDismissedPuckSessionIDs()
         let launchConfiguration = SessionLaunchProfileLoader.load(
             homeDirectory: host.homeDirectory
@@ -916,12 +935,14 @@ final class SessionStore: ObservableObject {
             )
         }
         let sessionsByID = Dictionary(active.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let workSummaries = sessionWorkSummaries
         let visibilityInfo = active.map {
             SessionChildVisibilityItem(
                 id: $0.id,
                 parentSessionID: $0.parentSessionID,
                 status: $0.status,
-                isSuspended: $0.isSuspended
+                isSuspended: $0.isSuspended,
+                focusLane: workSummaries[$0.id]?.own.focusLane
             )
         }
         let visibilityByID = Dictionary(
@@ -931,10 +952,11 @@ final class SessionStore: ObservableObject {
         let effectiveCollapsed = collapsedParentIDs.union(
             SessionChildVisibilityPolicy.autoCollapsedParents(
                 in: visibilityInfo,
-                selectedID: selectedSessionID
+                selectedID: selectedSessionID,
+                scope: sidebarScope
             )
         ).subtracting(expandedParentIDs)
-        let result = SessionSidebarGroupingPolicy.groups(for: candidates).map { group in
+        let result: [SidebarSessionGroup] = SessionSidebarGroupingPolicy.groups(for: candidates).compactMap { group -> SidebarSessionGroup? in
             let rowIDs = Set(group.rows.map(\.id))
             let moveItems = group.rows.compactMap { row -> SessionSelectionItem? in
                 guard let session = sessionsByID[row.id] else { return nil }
@@ -950,8 +972,10 @@ final class SessionStore: ObservableObject {
                 itemsByID: visibilityByID,
                 collapsedParentIDs: effectiveCollapsed,
                 showFinishedChildren: showFinishedChildren,
-                selectedID: selectedSessionID
+                selectedID: selectedSessionID,
+                scope: sidebarScope
             )
+            guard !visibleRows.isEmpty else { return nil }
             return SidebarSessionGroup(
                 id: group.id,
                 title: group.title,
@@ -969,9 +993,20 @@ final class SessionStore: ObservableObject {
                 moveItems: moveItems
             )
         }
+        let visibleIDs = Set(result.flatMap(\.items).map(\.id))
+        cachedHiddenManagedSessionCount = active.filter {
+            !visibleIDs.contains($0.id) && workSummaries[$0.id]?.own.managed == true
+        }.count
         cachedSessionSidebarGroupsRevision = sidebarGroupsRevision
         cachedSessionSidebarGroups = result
         return result
+    }
+
+    /// Managed rows the current sidebar projection is not showing, whether
+    /// because Focus suppressed quiet work or a parent is collapsed.
+    var hiddenManagedSessionCount: Int {
+        _ = sessionSidebarGroups
+        return cachedHiddenManagedSessionCount
     }
 
     var historySidebarGroup: SidebarSessionGroup? {
@@ -4842,6 +4877,7 @@ final class SessionStore: ObservableObject {
     /// Manual collapses plus auto-collapsed finished/parked subtrees, minus
     /// manual expansions.
     func effectiveCollapsedParentIDs() -> Set<String> {
+        let workSummaries = sessionWorkSummaries
         let items = sessions
             .filter { !$0.isImportedHistory && $0.status != .closed }
             .map {
@@ -4849,12 +4885,14 @@ final class SessionStore: ObservableObject {
                     id: $0.id,
                     parentSessionID: $0.parentSessionID,
                     status: $0.status,
-                    isSuspended: $0.isSuspended
+                    isSuspended: $0.isSuspended,
+                    focusLane: workSummaries[$0.id]?.own.focusLane
                 )
             }
         let auto = SessionChildVisibilityPolicy.autoCollapsedParents(
             in: items,
-            selectedID: selectedSessionID
+            selectedID: selectedSessionID,
+            scope: sidebarScope
         )
         return collapsedParentIDs.union(auto).subtracting(expandedParentIDs)
     }

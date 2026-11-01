@@ -27,35 +27,65 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
     public let background: Bool
     public let job: WorkitJobSummary?
     public let managed: Bool
+    public let phase: WorkitJobSummary.Phase?
+    public let focusLane: SessionFocusLane?
     public var needsAttention: Bool { kind == .blocked || kind == .decision }
 
     init(node: SessionWorkNode, job: WorkitJobSummary?) {
         id = node.id; title = node.title; background = node.background; managed = node.workflow != nil
         identity = node.workflow.map { "\($0.owner):\($0.jobID)" } ?? "session:\(node.id)"
         self.job = job
+        phase = job?.phase
+        let nextFocusLane: SessionFocusLane?
         if node.recoveryError {
-            kind = .blocked; label = "Recovery needed"; detail = "The workflow journal could not be read. Inspect recovery before continuing."
-        } else if let job, let display = job.display, let parsed = Kind(rawValue: display.kind), !display.label.isEmpty {
-            kind = parsed; label = display.label; detail = job.stopReason ?? job.detail
-        } else if let workflow = node.workflow {
-            detail = job?.stopReason ?? job?.detail ?? workflow.detail
-            switch workflow.state {
-            case .working: kind = .working; label = "Working"
-            case .waiting: kind = .waiting; label = "Waiting"
-            case .needsYou: kind = .blocked; label = "Check job"
-            case .paused: kind = .paused; label = "Paused"
-            case .verified: kind = .verified; label = "Verified"
-            case .cancelled: kind = .cancelled; label = "Cancelled"
+            nextFocusLane = .act
+        } else if let attention = job?.attention {
+            nextFocusLane = .init(rawValue: attention.rawValue)
+        } else if let job {
+            switch job.group {
+            case .needsYou: nextFocusLane = .act
+            case .paused, .verified, .cancelled: nextFocusLane = .settled
+            case .working, .waiting: nextFocusLane = .watch
             }
         } else {
-            detail = "Conversation status; no managed issue completion is recorded."
+            nextFocusLane = nil
+        }
+        // A terminal prompt is newer than the saved overview. Never let stale
+        // work metadata turn an explicit human request into quiet background work.
+        focusLane = nextFocusLane == .watch && (node.status == .asking || node.status == .failed)
+            ? .act : nextFocusLane
+        var nextKind: Kind
+        var nextLabel: String
+        var nextDetail: String
+        if node.recoveryError {
+            nextKind = .blocked; nextLabel = "Recovery needed"; nextDetail = "The workflow journal could not be read. Inspect recovery before continuing."
+        } else if let job, let display = job.display, let parsed = Kind(rawValue: display.kind), !display.label.isEmpty {
+            nextKind = parsed; nextLabel = display.label; nextDetail = job.stopReason ?? job.detail
+        } else if let workflow = node.workflow {
+            nextDetail = job?.stopReason ?? job?.detail ?? workflow.detail
+            switch workflow.state {
+            case .working: nextKind = .working; nextLabel = "Working"
+            case .waiting: nextKind = .waiting; nextLabel = "Waiting"
+            case .needsYou: nextKind = .blocked; nextLabel = "Check job"
+            case .paused: nextKind = .paused; nextLabel = "Paused"
+            case .verified: nextKind = .verified; nextLabel = "Verified"
+            case .cancelled: nextKind = .cancelled; nextLabel = "Cancelled"
+            }
+        } else {
+            nextDetail = "Conversation status; no managed issue completion is recorded."
             switch node.status {
-            case .executing, .subagents, .longRunningShell: kind = .working; label = "Working"
-            case .asking: kind = .decision; label = "Input requested"
-            case .failed: kind = .blocked; label = "Session failed"
-            default: kind = .idle; label = "Idle"
+            case .executing, .subagents, .longRunningShell: nextKind = .working; nextLabel = "Working"
+            case .asking: nextKind = .decision; nextLabel = "Input requested"
+            case .failed: nextKind = .blocked; nextLabel = "Session failed"
+            default: nextKind = .idle; nextLabel = "Idle"
             }
         }
+        if let phase = job?.phase, phase == .merged {
+            nextLabel = (job?.progress.total ?? 0) > 0
+                ? "Merged · \(job?.progress.passed ?? 0)/\(job?.progress.total ?? 0) AC"
+                : "Merged"
+        }
+        kind = nextKind; label = nextLabel; detail = nextDetail
     }
 }
 
@@ -63,6 +93,21 @@ public struct SessionWorkSummary: Sendable, Equatable {
     public let own: SessionWorkEntry
     public var descendants: [SessionWorkEntry] = []
     public var groupLabel: String {
+        if descendants.contains(where: { $0.phase != nil }) {
+            var entries: [(Int, String)] = []
+            let needsYou = descendants.filter(\.needsAttention).count
+            if needsYou > 0 { entries.append((needsYou, "needs you")) }
+            let remaining = descendants.filter { !$0.needsAttention }
+            for phase in WorkitJobSummary.Phase.allCases {
+                let count = remaining.filter { $0.phase == phase }.count
+                if count > 0 { entries.append((count, phase.summaryLabel)) }
+            }
+            let counts = Dictionary(grouping: remaining.filter { $0.phase == nil }, by: \.kind).mapValues(\.count)
+            let names: [(SessionWorkEntry.Kind, String)] = [(.working, "working"), (.waiting, "waiting"),
+                (.blocked, "blocked"), (.decision, "need input"), (.paused, "paused"), (.verified, "verified"), (.idle, "idle"), (.cancelled, "cancelled")]
+            entries.append(contentsOf: names.compactMap { kind, name in counts[kind].map { ($0, name) } })
+            return entries.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
+        }
         let counts = Dictionary(grouping: descendants, by: \.kind).mapValues(\.count)
         let names: [(SessionWorkEntry.Kind, String)] = [(.working, "working"), (.waiting, "waiting"),
             (.blocked, "blocked"), (.decision, "need input"), (.paused, "paused"), (.verified, "verified"), (.idle, "idle"), (.cancelled, "cancelled")]

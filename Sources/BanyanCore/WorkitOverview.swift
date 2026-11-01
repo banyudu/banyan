@@ -15,6 +15,7 @@ public struct WorkitOverview: Decodable, Sendable, Equatable {
               value.jobs.allSatisfy({ !$0.id.isEmpty && $0.title.count <= 600 && $0.detail.count <= 1000
                   && $0.nextAction.count <= 1000 && $0.progress.passed >= 0 && $0.progress.total >= $0.progress.passed
                   && ($0.stopReason?.count ?? 0) <= 1000 && ($0.display?.label.count ?? 0) <= 80
+                  && ($0.groupID?.count ?? 0) <= 200 && ($0.groupTitle?.count ?? 0) <= 300
                   && $0.evidence.count <= 5 }) else { throw WorkitOverviewError.invalidResponse }
         return value
     }
@@ -35,6 +36,36 @@ public struct WorkitJobSummary: Decodable, Sendable, Equatable, Identifiable {
         }
     }
     public struct Progress: Decodable, Sendable, Equatable { public let passed: Int; public let total: Int }
+    public enum Phase: String, Decodable, Sendable, CaseIterable {
+        case investigation, implementation
+        case prOpen = "pr-open"
+        case merged, verified, cancelled
+
+        public var label: String {
+            switch self {
+            case .investigation: "Investigation"
+            case .implementation: "Implementation"
+            case .prOpen: "PR open"
+            case .merged: "Merged"
+            case .verified: "Verified"
+            case .cancelled: "Cancelled"
+            }
+        }
+
+        var summaryLabel: String {
+            switch self {
+            case .investigation: "investigating"
+            case .implementation: "implementing"
+            case .prOpen: "PR open"
+            case .merged: "merged"
+            case .verified: "verified"
+            case .cancelled: "cancelled"
+            }
+        }
+    }
+    public enum Attention: String, Decodable, Sendable, CaseIterable {
+        case act, watch, settled
+    }
     public let id: String
     public let revision: Int
     public let title: String
@@ -42,6 +73,10 @@ public struct WorkitJobSummary: Decodable, Sendable, Equatable, Identifiable {
     public let sessionID: String?
     public let stage: String
     public let group: Group
+    public let phase: Phase?
+    public let attention: Attention?
+    public let groupID: String?
+    public let groupTitle: String?
     public let detail: String
     public let lastProgressAt: String?
     public let createdAt: String

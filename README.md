@@ -74,6 +74,21 @@ stop. The chord stays
 put when the session you are on is the only one waiting, so nothing happens
 silently. Both directions are also in the Terminal menu and the command palette.
 
+### Focus on work that needs you
+
+The Sessions sidebar defaults to **Focus**. Ordinary sessions stay visible;
+managed Workit jobs appear only when they need a human decision, hold, or
+recovery. Jobs that are investigating, implementing, waiting on CI/deployment,
+merged and still proving acceptance criteria, paused, or verified remain in
+**All sessions**, available from the sidebar options menu. Focus is presentation
+only: it never pauses, suspends, or closes a session, and selecting a hidden job
+from Work or search reveals its row and ancestry. The options menu shows how
+many managed sessions the current projection hides.
+
+Managed rows carry an explicit lifecycle phase — investigation, implementation,
+PR open, merged, verified, or cancelled. A merged PR therefore remains visibly
+in progress until its Linear acceptance criteria are independently verified.
+
 The toolbar is intentionally small:
 
 - `+` forks the selected session's working directory into a new default shell.
