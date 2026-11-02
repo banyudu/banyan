@@ -93,6 +93,10 @@ final class PuckSession: BanyanSession {
     private func clearHistoryCache() {
         events = []; historyWindow.clear(); historyItems = []; nextHistoryCursor = nil
     }
+    private func discardHistoryCache() {
+        clearHistoryCache()
+        Self.historyOwners.removeValue(forKey: id)
+    }
     func loadOlderHistory() {
         guard let cursor = nextHistoryCursor, !historyLoading, followState != .stopped else { return }
         historyLoading = true; viewingOlderHistory = true
@@ -220,18 +224,18 @@ final class PuckSession: BanyanSession {
     }
 
     override func closeBackingSession() {
-        stopFollowing()
+        stopFollowing(retainHistory: false)
         super.closeBackingSession()
     }
 
     override func terminate(markClosed: Bool = true) {
-        stopFollowing()
+        stopFollowing(retainHistory: false)
         super.terminate(markClosed: markClosed)
     }
 
     override func suspend() {
         guard status != .closed, !isSuspended else { return }
-        stopFollowing()
+        stopFollowing(retainHistory: false)
         super.suspend()
     }
 
@@ -317,14 +321,15 @@ final class PuckSession: BanyanSession {
     // MARK: - Following
 
     /// Replays the transcript and follows new events while the session is on
-    /// screen. Sidebar state comes from the store's shared watch connection.
+    /// screen. The previous transcript stays visible until that replay arrives,
+    /// so switching back does not flash an empty loading state. Sidebar state
+    /// comes from the store's shared watch connection.
     func startFollowing() {
         guard status != .closed, !isSuspended else { return }
         if followState == .lost { followTask?.cancel(); followTask = nil }
         guard followTask == nil else { return }
         followGeneration += 1
         let generation = followGeneration
-        clearHistoryCache()
         viewingOlderHistory = false
         daemonError = nil
         followState = .connecting
@@ -356,15 +361,20 @@ final class PuckSession: BanyanSession {
         }
     }
 
-    /// Detaches this client. A running turn continues in the daemon.
-    func stopFollowing() {
+    /// Detaches this client. A running turn continues in the daemon. The
+    /// bounded cache remains available for a quick switch back and is evicted
+    /// by the shared history budget as other sessions are viewed.
+    func stopFollowing(retainHistory: Bool = true) {
         followGeneration += 1
         followTask?.cancel()
         followTask = nil
         historyTask?.cancel(); historyTask = nil; historyLoading = false
         followState = .stopped
-        clearHistoryCache()
-        Self.historyOwners.removeValue(forKey: id)
+        if retainHistory {
+            enforceHistoryBudget()
+        } else {
+            discardHistoryCache()
+        }
     }
 
     private func receive(_ update: PuckSessionUpdate) {

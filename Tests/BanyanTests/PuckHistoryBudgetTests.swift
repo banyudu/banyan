@@ -51,7 +51,9 @@ struct PuckHistoryBudgetTests {
         #expect(session.historyItems.map(\.id) == ["item-6", "item-7", "item-8"])
         #expect(daemon.historyRequests.last?.cursor == nil)
         session.stopFollowing()
-        #expect(session.historyItems.isEmpty)
+        #expect(session.followState == .stopped)
+        #expect(session.historyItems.map(\.id) == ["item-6", "item-7", "item-8"])
+        #expect(session.nextHistoryCursor == "latest-cursor")
         #expect(session.events.isEmpty)
         #expect(daemon.base.turns.isEmpty)
     }
@@ -82,7 +84,7 @@ struct PuckHistoryBudgetTests {
         #expect(sessions.last?.historyItems.count == 2)
     }
 
-    @Test func detachedViewDoesNotRepopulateCacheFromAnInflightPage() async throws {
+    @Test func detachedViewKeepsItsLastPageWithoutApplyingInflightResults() async throws {
         let daemon = HistoryBudgetDaemon()
         let fixture = try PuckStoreFixture(daemon: daemon)
         let store = fixture.makeStore()
@@ -101,14 +103,15 @@ struct PuckHistoryBudgetTests {
         session.loadOlderHistory()
         try await waitForPuckState { daemon.historyRequests.count == 1 }
         session.stopFollowing()
-        #expect(session.historyItems.isEmpty)
+        #expect(session.historyItems.map(\.id) == ["item-4", "item-5", "item-6"])
+        #expect(session.nextHistoryCursor == "held-page")
         release.signal()
         try await waitForPuckState { daemon.historyReturns == 1 }
         try await Task.sleep(for: .milliseconds(40))
         try await waitForPuckState { !session.historyLoading }
         #expect(session.followState == .stopped)
-        #expect(session.historyItems.isEmpty)
-        #expect(session.nextHistoryCursor == nil)
+        #expect(session.historyItems.map(\.id) == ["item-4", "item-5", "item-6"])
+        #expect(session.nextHistoryCursor == "held-page")
     }
 
     @Test(arguments: ["server", "notSubmitted", "ambiguousUnavailable"])

@@ -305,8 +305,36 @@ import Testing
 
     session.stopFollowing()
     #expect(session.followState == .stopped)
-    #expect(session.events.isEmpty)
+    #expect(session.events.map(\.cursor) == [1])
     try await waitForPuckState { !daemon.isFollowed(session.id) }
+}
+
+@MainActor
+@Test func switchingBackKeepsCachedTranscriptUntilReplayCompletes() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let summary = puckSummary(cwd: fixture.project.path, position: "idle")
+    daemon.put(summary, transcript: [
+        PuckSessionEvent(cursor: 1, kind: "user_message", text: "Hello"),
+        PuckSessionEvent(cursor: 2, kind: "assistant_message", text: "Hi there"),
+    ])
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+
+    session.startFollowing()
+    try await waitForPuckState { session.followState == .following }
+    #expect(session.events.map(\.cursor) == [1, 2])
+
+    session.stopFollowing()
+    #expect(session.events.map(\.cursor) == [1, 2])
+
+    session.startFollowing()
+    #expect(session.followState == .connecting)
+    #expect(session.events.map(\.cursor) == [1, 2])
+    try await waitForPuckState { session.followState == .following }
+    #expect(session.events.map(\.cursor) == [1, 2])
+    session.stopFollowing()
 }
 
 @MainActor
