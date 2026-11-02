@@ -59,6 +59,62 @@ struct PuckTranscriptTypography: Equatable {
     }
 }
 
+private struct PuckDisclosureHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct PuckAnimatedDisclosure<Content: View>: View {
+    let isExpanded: Bool
+    @State private var contentHeight: CGFloat = 0
+    @State private var isMounted: Bool
+    private let content: Content
+
+    init(isExpanded: Bool, @ViewBuilder content: () -> Content) {
+        self.isExpanded = isExpanded
+        self.content = content()
+        _isMounted = State(initialValue: isExpanded)
+    }
+
+    var body: some View {
+        Group {
+            if isExpanded || isMounted {
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear.preference(key: PuckDisclosureHeightKey.self, value: proxy.size.height)
+                        }
+                    }
+                    .frame(height: isExpanded ? contentHeight : 0, alignment: .top)
+                    .clipped()
+                    .opacity(isExpanded && contentHeight > 0 ? 1 : 0)
+                    .onPreferenceChange(PuckDisclosureHeightKey.self) { height in
+                        if abs(height - contentHeight) > 0.5 {
+                            contentHeight = height
+                        }
+                    }
+                    .animation(.easeInOut(duration: 0.15), value: contentHeight)
+                    .accessibilityHidden(!isExpanded)
+            }
+        }
+        .onChange(of: isExpanded, initial: true) { _, expanded in
+            if expanded && !isMounted {
+                isMounted = true
+            }
+        }
+        .task(id: isExpanded) {
+            guard !isExpanded, isMounted else { return }
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            isMounted = false
+        }
+    }
+}
+
 /// Stable rows for the normalized Puck conversation. Expansion is keyed by
 /// timeline item id so streamed text can update in place without closing a
 /// disclosure the reader opened.
@@ -208,11 +264,9 @@ private struct PuckToolGroupRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
+                isExpanded.toggle()
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("•")
@@ -243,7 +297,7 @@ private struct PuckToolGroupRow: View {
             }
             .buttonStyle(.banyanPlainLabelOnly)
 
-            if isExpanded {
+            PuckAnimatedDisclosure(isExpanded: isExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(items) { item in
                         PuckTimelineRow(
@@ -255,7 +309,7 @@ private struct PuckToolGroupRow: View {
                     }
                 }
                 .padding(.leading, 20)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .padding(.top, 8)
             }
         }
         .accessibilityElement(children: .contain)
@@ -351,12 +405,10 @@ struct PuckTimelineRow: View {
     }
 
     private func toolRow(_ tool: PuckToolActivity) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 0) {
             if tool.hasDetails {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        isExpanded.toggle()
-                    }
+                    isExpanded.toggle()
                 } label: {
                     toolHeader(tool)
                 }
@@ -364,18 +416,28 @@ struct PuckTimelineRow: View {
             } else {
                 toolHeader(tool)
             }
-            if !isExpanded, let preview = tool.preview {
+            if tool.hasDetails {
+                if let preview = tool.preview {
+                    PuckAnimatedDisclosure(isExpanded: !isExpanded) {
+                        outputPreview(preview)
+                            .padding(.top, 5)
+                    }
+                }
+                PuckAnimatedDisclosure(isExpanded: isExpanded) {
+                    toolDetails(tool)
+                        .padding(.leading, 20)
+                        .padding(.top, 8)
+                }
+            } else if let preview = tool.preview {
                 outputPreview(preview)
-            } else if isExpanded {
-                toolDetails(tool)
-                    .padding(.leading, 20)
-                    .padding(.top, 3)
+                    .padding(.top, 5)
             }
             if item.truncated || tool.state == .truncated {
                 Label("Output was truncated by puckd.", systemImage: "scissors")
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .padding(.leading, 20)
+                    .padding(.top, 5)
             }
         }
         .accessibilityElement(children: .contain)
@@ -424,9 +486,7 @@ struct PuckTimelineRow: View {
             }
             if preview.hiddenLineCount > 0 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        isExpanded = true
-                    }
+                    isExpanded = true
                 } label: {
                     Text("+\(preview.hiddenLineCount) lines")
                         .font(.caption)
@@ -498,11 +558,9 @@ struct PuckTimelineRow: View {
     }
 
     private func unknownRow(kind: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
+                isExpanded.toggle()
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     marker("•", emphasis: .secondary)
@@ -520,14 +578,14 @@ struct PuckTimelineRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.banyanPlainLabelOnly)
-            if isExpanded {
+            PuckAnimatedDisclosure(isExpanded: isExpanded) {
                 PuckToolDetailBlock(
                     title: "Event details",
                     text: detail,
                     typography: typography
                 )
                     .padding(.leading, 20)
-                    .padding(.top, 3)
+                    .padding(.top, 8)
             }
         }
         .accessibilityElement(children: .contain)
