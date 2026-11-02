@@ -158,28 +158,7 @@ struct ContentView: View {
             showingCommandPalette = true
         }
         .alert(Text(closeConfirmationTitle), isPresented: closeConfirmationBinding) {
-            Button("Cancel", role: .cancel) {}
-            if let session = store.pendingCloseSession, store.canHideAndKeepWorking(session) {
-                Button("Keep Working in Background") { store.confirmPendingHideAndKeepWorking() }
-                    .keyboardShortcut(.defaultAction)
-            }
-            if store.pendingCloseCanPause {
-                Button("Pause and Close", role: .destructive) {
-                    store.confirmPendingPauseAndClose()
-                }
-                .disabled(closeConfirmationActionsDisabled)
-            }
-            if store.pendingCloseNeedsForce {
-                Button(closeConfirmationAction, role: .destructive) {
-                    store.confirmPendingForceClose()
-                }
-                .disabled(closeConfirmationActionsDisabled)
-            } else if !store.pendingCloseCanPause {
-                Button(closeConfirmationAction, role: .destructive) {
-                    store.confirmPendingClose()
-                }
-                .disabled(closeConfirmationActionsDisabled)
-            }
+            closeConfirmationButtons
         } message: {
             Text(store.pendingCloseMessage)
         }
@@ -1472,6 +1451,35 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private var closeConfirmationButtons: some View {
+        Button("Cancel", role: .cancel) {}
+        if let session = store.pendingCloseSession, store.canHideAndKeepWorking(session) {
+            Button("Keep Working in Background") { store.confirmPendingHideAndKeepWorking() }
+                .modifier(DefaultActionModifier(enabled: closeConfirmationBackgroundIsDefault))
+        }
+        if store.pendingCloseCanPause {
+            Button("Pause and Close", role: .destructive) {
+                store.confirmPendingPauseAndClose()
+            }
+            .disabled(closeConfirmationActionsDisabled)
+            .modifier(DefaultActionModifier(enabled: closeConfirmationActionsAreDefault))
+        }
+        if store.pendingCloseNeedsForce {
+            Button(closeConfirmationAction, role: .destructive) {
+                store.confirmPendingForceClose()
+            }
+            .disabled(closeConfirmationActionsDisabled)
+            .modifier(DefaultActionModifier(enabled: closeConfirmationForceCloseIsDefault))
+        } else if !store.pendingCloseCanPause {
+            Button(closeConfirmationAction, role: .destructive) {
+                store.confirmPendingClose()
+            }
+            .disabled(closeConfirmationActionsDisabled)
+            .modifier(DefaultActionModifier(enabled: closeConfirmationActionsAreDefault))
+        }
+    }
+
     private var handoffNoticeBinding: Binding<Bool> {
         Binding(
             get: { store.handoffNotice != nil },
@@ -1493,6 +1501,18 @@ struct ContentView: View {
 
     private var closeConfirmationActionsDisabled: Bool {
         store.pendingCloseIsPausing || !commandModifierHeld
+    }
+
+    private var closeConfirmationActionsAreDefault: Bool {
+        !closeConfirmationActionsDisabled
+    }
+
+    private var closeConfirmationForceCloseIsDefault: Bool {
+        closeConfirmationActionsAreDefault && !store.pendingCloseCanPause
+    }
+
+    private var closeConfirmationBackgroundIsDefault: Bool {
+        !closeConfirmationActionsAreDefault
     }
 
     private var puckSessionErrorBinding: Binding<Bool> {
@@ -2008,6 +2028,21 @@ private struct TitleBarLogo: NSViewRepresentable {
             return bundled
         }
         return NSApp.applicationIconImage
+    }
+}
+
+/// Moves the close alert's default action between buttons without changing
+/// either button's action or enabled state.
+private struct DefaultActionModifier: ViewModifier {
+    let enabled: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content.keyboardShortcut(.defaultAction)
+        } else {
+            content
+        }
     }
 }
 
