@@ -18,6 +18,7 @@ struct MarkdownText: View {
             }
         }
         .fixedSize(horizontal: false, vertical: true)
+        .lineSpacing(style.lineSpacing)
         .textSelection(.enabled)
     }
 
@@ -181,14 +182,16 @@ struct MarkdownText: View {
     }
 }
 
-enum MarkdownTextStyle {
+enum MarkdownTextStyle: Equatable {
     case body
     case comment
+    case transcript(fontFamily: String?, fontSize: Double)
 
     var blockSpacing: CGFloat {
         switch self {
         case .body: return 10
         case .comment: return 6
+        case .transcript(_, let fontSize): return max(8, fontSize * 0.65)
         }
     }
 
@@ -196,6 +199,14 @@ enum MarkdownTextStyle {
         switch self {
         case .body: return 5
         case .comment: return 3
+        case .transcript(_, let fontSize): return max(4, fontSize * 0.3)
+        }
+    }
+
+    var lineSpacing: CGFloat {
+        switch self {
+        case .body, .comment: return 0
+        case .transcript(_, let fontSize): return max(1.5, fontSize * 0.16)
         }
     }
 
@@ -203,6 +214,7 @@ enum MarkdownTextStyle {
         switch self {
         case .body: return .callout
         case .comment: return .caption
+        case .transcript(let family, let fontSize): return transcriptFont(family: family, size: fontSize)
         }
     }
 
@@ -210,6 +222,7 @@ enum MarkdownTextStyle {
         switch self {
         case .body: return .callout
         case .comment: return .caption
+        case .transcript(let family, let fontSize): return transcriptFont(family: family, size: fontSize)
         }
     }
 
@@ -217,6 +230,7 @@ enum MarkdownTextStyle {
         switch self {
         case .body: return .callout
         case .comment: return .caption
+        case .transcript(let family, let fontSize): return transcriptFont(family: family, size: fontSize)
         }
     }
 
@@ -224,6 +238,7 @@ enum MarkdownTextStyle {
         switch self {
         case .body: return .system(.callout, design: .monospaced)
         case .comment: return .system(.caption, design: .monospaced)
+        case .transcript(let family, let fontSize): return transcriptFont(family: family, size: fontSize)
         }
     }
 
@@ -237,7 +252,21 @@ enum MarkdownTextStyle {
             }
         case .comment:
             return .caption.weight(.semibold)
+        case .transcript(let family, let fontSize):
+            let bump: Double = switch level {
+            case 1: 2
+            case 2: 1
+            default: 0
+            }
+            return transcriptFont(family: family, size: fontSize + bump).weight(.semibold)
         }
+    }
+
+    private func transcriptFont(family: String?, size: Double) -> Font {
+        if let family {
+            return .custom(family, size: size)
+        }
+        return .system(size: size, design: .monospaced)
     }
 }
 

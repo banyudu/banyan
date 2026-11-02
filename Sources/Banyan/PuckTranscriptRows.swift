@@ -3,19 +3,81 @@ import BanyanCore
 import Foundation
 import SwiftUI
 
+/// Typography shared by the transcript and its editor. Puck content mirrors
+/// the terminal font because both surfaces present agent output side by side.
+struct PuckTranscriptTypography: Equatable {
+    static let fallback = PuckTranscriptTypography(fontFamily: "Menlo", fontSize: 13)
+
+    let fontFamily: String
+    let fontSize: Double
+
+    var markdownStyle: MarkdownTextStyle {
+        .transcript(fontFamily: resolvedFontFamily, fontSize: fontSize)
+    }
+
+    var font: Font {
+        resolvedFont(size: fontSize)
+    }
+
+    var semiboldFont: Font {
+        font.weight(.semibold)
+    }
+
+    var detailFontSize: Double {
+        max(10, fontSize - 1)
+    }
+
+    var detailFont: Font {
+        resolvedFont(size: detailFontSize)
+    }
+
+    var captionFontSize: Double {
+        max(10, fontSize - 2)
+    }
+
+    var captionFont: Font {
+        resolvedFont(size: captionFontSize)
+    }
+
+    var rowSpacing: CGFloat {
+        max(18, CGFloat(fontSize) * 1.4)
+    }
+
+    var detailLineHeight: CGFloat {
+        max(18, CGFloat(detailFontSize) * 1.5)
+    }
+
+    private var resolvedFontFamily: String? {
+        NSFont(name: fontFamily, size: fontSize) == nil ? nil : fontFamily
+    }
+
+    private func resolvedFont(size: Double) -> Font {
+        if let resolvedFontFamily {
+            return .custom(resolvedFontFamily, size: size)
+        }
+        return .system(size: size, design: .monospaced)
+    }
+}
+
 /// Stable rows for the normalized Puck conversation. Expansion is keyed by
 /// timeline item id so streamed text can update in place without closing a
 /// disclosure the reader opened.
 struct PuckTimelineRows: View {
     let items: [PuckTimelineItem]
+    private let typography: PuckTranscriptTypography
     private let initiallyExpandedItemIDs: Set<String>
     private let entries: [PuckTranscriptLayout.Entry]
     @State private var expandedItemIDs: Set<String>
     @State private var expandedToolGroupIDs: Set<String>
 
-    init(items: [PuckTimelineItem], initiallyExpandedItemIDs: Set<String> = []) {
+    init(
+        items: [PuckTimelineItem],
+        typography: PuckTranscriptTypography = .fallback,
+        initiallyExpandedItemIDs: Set<String> = []
+    ) {
         let entries = PuckTranscriptLayout.entries(for: items)
         self.items = items
+        self.typography = typography
         self.initiallyExpandedItemIDs = initiallyExpandedItemIDs
         self.entries = entries
         _expandedItemIDs = State(initialValue: initiallyExpandedItemIDs)
@@ -29,15 +91,20 @@ struct PuckTimelineRows: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: typography.rowSpacing) {
             ForEach(entries) { entry in
                 switch entry {
                 case .item(let item):
-                    PuckTimelineRow(item: item, isExpanded: expansionBinding(for: item.id))
+                    PuckTimelineRow(
+                        item: item,
+                        typography: typography,
+                        isExpanded: expansionBinding(for: item.id)
+                    )
                         .id(entry.id)
                 case .toolGroup(let items):
                     PuckToolGroupRow(
                         items: items,
+                        typography: typography,
                         isExpanded: toolGroupExpansionBinding(for: entry.id),
                         initiallyExpandedItemIDs: initiallyExpandedItemIDs
                     )
@@ -120,11 +187,18 @@ enum PuckTranscriptLayout {
 
 private struct PuckToolGroupRow: View {
     let items: [PuckTimelineItem]
+    let typography: PuckTranscriptTypography
     @Binding var isExpanded: Bool
     @State private var expandedItemIDs: Set<String>
 
-    init(items: [PuckTimelineItem], isExpanded: Binding<Bool>, initiallyExpandedItemIDs: Set<String> = []) {
+    init(
+        items: [PuckTimelineItem],
+        typography: PuckTranscriptTypography,
+        isExpanded: Binding<Bool>,
+        initiallyExpandedItemIDs: Set<String> = []
+    ) {
         self.items = items
+        self.typography = typography
         _isExpanded = isExpanded
         _expandedItemIDs = State(initialValue: initiallyExpandedItemIDs)
     }
@@ -142,16 +216,16 @@ private struct PuckToolGroupRow: View {
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("•")
-                        .font(.system(.body, design: .monospaced).weight(.semibold))
+                        .font(typography.semiboldFont)
                         .foregroundStyle(.secondary)
                         .frame(width: 12, alignment: .leading)
                         .accessibilityHidden(true)
                     Text(summary.title)
-                        .font(.callout.weight(.semibold))
+                        .font(typography.semiboldFont)
                         .foregroundStyle(summary.tint)
                     if let detail = summary.detail {
                         Text(detail)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(typography.detailFont)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -172,7 +246,11 @@ private struct PuckToolGroupRow: View {
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(items) { item in
-                        PuckTimelineRow(item: item, isExpanded: expansionBinding(for: item.id))
+                        PuckTimelineRow(
+                            item: item,
+                            typography: typography,
+                            isExpanded: expansionBinding(for: item.id)
+                        )
                             .id(item.id)
                     }
                 }
@@ -201,7 +279,18 @@ private struct PuckToolGroupRow: View {
 
 struct PuckTimelineRow: View {
     let item: PuckTimelineItem
+    let typography: PuckTranscriptTypography
     @Binding var isExpanded: Bool
+
+    init(
+        item: PuckTimelineItem,
+        typography: PuckTranscriptTypography = .fallback,
+        isExpanded: Binding<Bool>
+    ) {
+        self.item = item
+        self.typography = typography
+        _isExpanded = isExpanded
+    }
 
     @ViewBuilder
     var body: some View {
@@ -235,7 +324,7 @@ struct PuckTimelineRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             marker("›", emphasis: .secondary)
             Text(text)
-                .font(.body)
+                .font(typography.font)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -251,7 +340,7 @@ struct PuckTimelineRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             marker("•", emphasis: .secondary)
             VStack(alignment: .leading, spacing: 6) {
-                MarkdownText(text)
+                MarkdownText(text, style: typography.markdownStyle)
                 truncationNotice
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -297,10 +386,10 @@ struct PuckTimelineRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             marker("•", emphasis: .secondary)
             Text(tool.actionLabel)
-                .font(.callout.weight(.semibold))
+                .font(typography.semiboldFont)
                 .foregroundStyle(tool.state.presentation.tint)
             Text(tool.displayTitle)
-                .font(tool.displayTitleIsCommand ? .system(.callout, design: .monospaced) : .callout)
+                .font(typography.font)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if tool.state == .running {
@@ -322,11 +411,11 @@ struct PuckTimelineRow: View {
             ForEach(Array(preview.lines.enumerated()), id: \.offset) { index, line in
                 HStack(alignment: .top, spacing: 8) {
                     Text(index == 0 ? "└" : " ")
-                        .font(.system(.caption, design: .monospaced))
+                        .font(typography.detailFont)
                         .foregroundStyle(.tertiary)
                         .frame(width: 12, alignment: .leading)
                     Text(line.isEmpty ? " " : line)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(typography.font)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .textSelection(.enabled)
@@ -355,23 +444,29 @@ struct PuckTimelineRow: View {
         let output = tool.displayOutput
         VStack(alignment: .leading, spacing: 10) {
             if let arguments = tool.arguments, !arguments.isEmpty {
-                PuckToolDetailBlock(title: "Arguments", text: arguments, language: "json")
+                PuckToolDetailBlock(
+                    title: "Arguments",
+                    text: arguments,
+                    language: "json",
+                    typography: typography
+                )
             }
             if !output.isEmpty {
                 PuckToolDetailBlock(
                     title: "Output",
                     text: output,
-                    language: output.hasPrefix("diff --git") ? "diff" : nil
+                    language: output.hasPrefix("diff --git") ? "diff" : nil,
+                    typography: typography
                 )
             } else if tool.state == .running {
                 Text("Waiting for the tool result…")
-                    .font(.caption)
+                    .font(typography.detailFont)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
             if tool.arguments?.isEmpty != false && output.isEmpty && tool.state != .running {
                 Text("No arguments or output were captured for this call.")
-                    .font(.caption)
+                    .font(typography.detailFont)
                     .foregroundStyle(.secondary)
             }
         }
@@ -385,10 +480,10 @@ struct PuckTimelineRow: View {
                 .frame(width: 12)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.caption.weight(.bold))
+                    .font(typography.captionFont.weight(.bold))
                     .foregroundStyle(tint)
                 Text(text)
-                    .font(.callout)
+                    .font(typography.font)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 truncationNotice
@@ -415,7 +510,7 @@ struct PuckTimelineRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("Unknown event · \(kind)")
-                        .font(.callout)
+                        .font(typography.font)
                         .lineLimit(1)
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption2.weight(.semibold))
@@ -426,7 +521,11 @@ struct PuckTimelineRow: View {
             }
             .buttonStyle(.banyanPlainLabelOnly)
             if isExpanded {
-                PuckToolDetailBlock(title: "Event details", text: detail)
+                PuckToolDetailBlock(
+                    title: "Event details",
+                    text: detail,
+                    typography: typography
+                )
                     .padding(.leading, 20)
                     .padding(.top, 3)
             }
@@ -437,7 +536,7 @@ struct PuckTimelineRow: View {
 
     private func marker(_ glyph: String, emphasis: HierarchicalShapeStyle) -> some View {
         Text(glyph)
-            .font(.system(.body, design: .monospaced).weight(.semibold))
+            .font(typography.semiboldFont)
             .foregroundStyle(emphasis)
             .frame(width: 12, alignment: .leading)
             .accessibilityHidden(true)
@@ -455,11 +554,12 @@ struct PuckTimelineRow: View {
 
 struct PuckTimelineNotices: View {
     let notices: [PuckTimelineNotice]
+    var typography: PuckTranscriptTypography = .fallback
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(notices) { notice in
-                PuckTimelineNoticeRow(notice: notice)
+                PuckTimelineNoticeRow(notice: notice, typography: typography)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -468,6 +568,7 @@ struct PuckTimelineNotices: View {
 
 private struct PuckTimelineNoticeRow: View {
     let notice: PuckTimelineNotice
+    let typography: PuckTranscriptTypography
 
     private var tint: Color {
         notice.role == .interruption ? .orange : .red
@@ -485,10 +586,10 @@ private struct PuckTimelineNoticeRow: View {
                 .frame(width: 12)
             VStack(alignment: .leading, spacing: 4) {
                 Text(notice.title)
-                    .font(.caption.weight(.bold))
+                    .font(typography.captionFont.weight(.bold))
                     .foregroundStyle(tint)
                 Text(notice.text)
-                    .font(.callout)
+                    .font(typography.font)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if notice.truncated {
@@ -511,19 +612,25 @@ struct PuckToolDetailBlock: View {
     let title: String
     let text: String
     var language: String?
+    var typography: PuckTranscriptTypography = .fallback
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
+                .font(typography.captionFont.weight(.semibold))
                 .foregroundStyle(.secondary)
-            CodeBlockView(text: text, language: language, previewHeight: previewHeight)
+            CodeBlockView(
+                text: text,
+                language: language,
+                font: typography.font,
+                previewHeight: previewHeight
+            )
         }
     }
 
     private var previewHeight: CGFloat {
         let lineCount = text.split(separator: "\n", omittingEmptySubsequences: false).count
-        return min(180, max(40, CGFloat(lineCount) * 18 + 16))
+        return min(220, max(40, CGFloat(lineCount) * typography.detailLineHeight + 16))
     }
 }
 
@@ -606,10 +713,6 @@ private extension PuckToolActivity {
 
     var displayTitle: String {
         commandText ?? displayName
-    }
-
-    var displayTitleIsCommand: Bool {
-        commandText != nil
     }
 
     var displayName: String {

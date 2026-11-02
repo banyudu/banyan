@@ -14,6 +14,19 @@ struct PuckTranscriptUITests {
         #expect(Set(states.map(\.presentation.systemImage)).count == 4)
     }
 
+    @Test func transcriptTypographyMirrorsTheConfiguredTerminalFont() {
+        let typography = PuckTranscriptTypography(fontFamily: "Menlo", fontSize: 18)
+
+        #expect(typography.markdownStyle == .transcript(fontFamily: "Menlo", fontSize: 18))
+        #expect(typography.markdownStyle.lineSpacing > 2)
+        #expect(typography.detailFontSize == 17)
+        #expect(typography.captionFontSize == 16)
+        #expect(typography.rowSpacing > 18)
+
+        let unavailable = PuckTranscriptTypography(fontFamily: "Missing Font", fontSize: 18)
+        #expect(unavailable.markdownStyle == .transcript(fontFamily: nil, fontSize: 18))
+    }
+
     @Test func adjacentToolCallsShareOneTranscriptRow() {
         let tool = { (index: Int) in
             PuckTimelineItem(
@@ -286,10 +299,11 @@ struct PuckTranscriptUITests {
             ]
         )
 
+        let typography = PuckTranscriptTypography(fontFamily: "Menlo", fontSize: 12)
         let text = try await render(
             VStack(alignment: .leading, spacing: 14) {
-                PuckTimelineRows(items: timeline.items)
-                PuckTimelineNotices(notices: timeline.notices)
+                PuckTimelineRows(items: timeline.items, typography: typography)
+                PuckTimelineNotices(notices: timeline.notices, typography: typography)
             }
                 .padding(20)
                 .frame(width: 800, height: 1_250, alignment: .topLeading)
@@ -303,7 +317,7 @@ struct PuckTranscriptUITests {
         #expect(text.contains("Fixed flaky parsing"))
         #expect(text.contains("Parser"))
         #expect(text.contains("Passing"))
-        #expect(text.contains("Some paths are best explored slowly."))
+        #expect(compactOCR(text).contains("pathsarebestexploredslowly."))
         #expect(!text.contains(">\"Some paths"))
         #expect(!text.contains("> Some paths"))
         #expect(!text.contains("---"))
@@ -351,7 +365,7 @@ struct PuckTranscriptUITests {
         #expect(text.contains("swift test"))
         #expect(text.contains("All tests passed"))
         #expect(text.contains("Unknown event"))
-        #expect(text.contains("new payload"))
+        #expect(compactOCR(text).contains(compactOCR("new payload")))
         #expect(text.contains("new_flag=true") || text.contains("new_flag-true"))
     }
 
@@ -403,6 +417,10 @@ struct PuckTranscriptUITests {
         if let scrollView = view as? NSScrollView { return scrollView }
         return view.subviews.lazy.compactMap { firstScrollView(in: $0) }.first
     }
+}
+
+private func compactOCR(_ text: String) -> String {
+    text.filter { !$0.isWhitespace }
 }
 
 @MainActor

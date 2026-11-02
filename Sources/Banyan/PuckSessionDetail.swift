@@ -20,6 +20,13 @@ struct PuckSessionDetail: View {
 
     private let transcriptEndID = "puck-transcript-end"
 
+    private var transcriptTypography: PuckTranscriptTypography {
+        PuckTranscriptTypography(
+            fontFamily: store.terminalFontFamily,
+            fontSize: store.terminalFontSize
+        )
+    }
+
     var body: some View {
         let timeline = session.timeline
         VStack(alignment: .leading, spacing: 0) {
@@ -150,9 +157,12 @@ struct PuckSessionDetail: View {
                             Spacer()
                         }
                     }
-                    PuckTimelineRows(items: timeline.items)
+                    PuckTimelineRows(items: timeline.items, typography: transcriptTypography)
                     if !timeline.notices.isEmpty {
-                        PuckTimelineNotices(notices: timeline.notices)
+                        PuckTimelineNotices(
+                            notices: timeline.notices,
+                            typography: transcriptTypography
+                        )
                     }
                     Color.clear
                         .frame(height: 1)
@@ -397,7 +407,7 @@ struct PuckSessionDetail: View {
                     .foregroundStyle(.secondary)
             }
             Text(question.question)
-                .font(.body)
+                .font(transcriptTypography.font)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -445,7 +455,7 @@ struct PuckSessionDetail: View {
     }
 
     private func planText(_ plan: String) -> some View {
-        MarkdownText(plan, style: .comment)
+        MarkdownText(plan, style: transcriptTypography.markdownStyle)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -461,7 +471,7 @@ struct PuckSessionDetail: View {
     private func quietCodePreview(_ text: String, maximumVisibleLines: Int, maximumHeight: CGFloat) -> some View {
         let lineCount = text.split(separator: "\n", omittingEmptySubsequences: false).count
         let preview = Text(text)
-            .font(.system(.caption, design: .monospaced))
+            .font(transcriptTypography.font)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
         Group {
@@ -546,7 +556,7 @@ struct PuckSessionDetail: View {
                 .foregroundStyle(.secondary)
             TextField("Other answer", text: customAnswerBinding(for: index))
                 .textFieldStyle(.plain)
-                .font(.callout)
+                .font(transcriptTypography.font)
                 .accessibilityLabel("Other answer for question \(index + 1)")
         }
         .padding(.horizontal, 6)
@@ -583,7 +593,7 @@ struct PuckSessionDetail: View {
                         .accessibilityHidden(true)
                     TextField("Ask Puck to do anything", text: promptBinding, axis: .vertical)
                         .textFieldStyle(.plain)
-                        .font(.body)
+                        .font(transcriptTypography.font)
                         .lineLimit(1...8)
                         .focused($isPromptFocused)
                         .onSubmit(send)
