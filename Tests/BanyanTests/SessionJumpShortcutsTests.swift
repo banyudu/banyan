@@ -185,6 +185,47 @@ struct SessionJumpShortcutUITests {
         #expect(store.selection.selectedSessionID == ids[2])
     }
 
+    @Test func commandReturnConfirmsCloseOnlyWhenHandled() throws {
+        let monitor = JumpOverlayMonitor()
+        var requests = 0
+        monitor.onConfirmClose = {
+            requests += 1
+            return true
+        }
+
+        let commandReturn = try keyEvent(
+            type: .keyDown, modifiers: .command, characters: "\r", keyCode: 36
+        )
+        #expect(monitor.handleEvent(commandReturn) == nil)
+        #expect(requests == 1)
+
+        let commandKeypadEnter = try keyEvent(
+            type: .keyDown, modifiers: .command, characters: "\r", keyCode: 76
+        )
+        #expect(monitor.handleEvent(commandKeypadEnter) == nil)
+        #expect(requests == 2)
+
+        monitor.onConfirmClose = {
+            requests += 1
+            return false
+        }
+        #expect(monitor.handleEvent(commandReturn) != nil)
+        #expect(requests == 3)
+
+        #expect(monitor.handleEvent(try keyEvent(
+            type: .keyDown, modifiers: [], characters: "\r", keyCode: 36
+        )) != nil)
+        #expect(monitor.handleEvent(try keyEvent(
+            type: .keyDown, modifiers: [.command, .shift], characters: "\r", keyCode: 36
+        )) != nil)
+        #expect(requests == 3)
+
+        #expect(monitor.handleEvent(try keyEvent(
+            type: .keyDown, modifiers: .command, characters: "\r", keyCode: 36, isRepeat: true
+        )) != nil)
+        #expect(requests == 3)
+    }
+
     @Test func nativeListUpdatesKeysAfterScrollingBeyondFortyFiveSessions() async throws {
         _ = NSApplication.shared
         let shortcuts = SessionJumpShortcuts()
@@ -231,12 +272,13 @@ struct SessionJumpShortcutUITests {
     }
 
     private func keyEvent(type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags,
-                          characters: String = "") throws -> NSEvent {
+                          characters: String = "", keyCode: UInt16? = nil,
+                          isRepeat: Bool = false) throws -> NSEvent {
         try #require(NSEvent.keyEvent(
             with: type, location: .zero, modifierFlags: modifiers, timestamp: 0,
             windowNumber: 0, context: nil, characters: characters,
-            charactersIgnoringModifiers: characters, isARepeat: false,
-            keyCode: type == .flagsChanged ? 55 : 29
+            charactersIgnoringModifiers: characters, isARepeat: isRepeat,
+            keyCode: keyCode ?? (type == .flagsChanged ? 55 : 29)
         ))
     }
 }

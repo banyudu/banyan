@@ -17,6 +17,7 @@ final class JumpOverlayMonitor {
     var onLastSession: (() -> Void)?
     var onPage: ((SessionSelectionDirection) -> Void)?
     var onHandoff: (() -> Bool)?
+    var onConfirmClose: (() -> Bool)?
     var onCommandModifierChange: ((Bool) -> Void)?
 
     private var keyMonitor: Any?
@@ -86,6 +87,7 @@ final class JumpOverlayMonitor {
     func handleEvent(_ event: NSEvent) -> NSEvent? {
         onCommandModifierChange?(event.modifierFlags.contains(.command))
         guard event.type == .keyDown else { return event }
+        if handleCloseConfirmationShortcut(event) { return nil }
         if handleHandoff(event) { return nil }
         if handleAttentionShortcut(event) { return nil }
         if handleProjectShortcut(event) { return nil }
@@ -96,6 +98,16 @@ final class JumpOverlayMonitor {
     }
 
     private static let interestingModifiers = SessionShortcut.comparedModifiers
+
+    /// Command-Return is the keyboard path through the hold-to-confirm close
+    /// alert. A native alert does not receive its own default-action shortcut
+    /// while Command remains held, so consume the chord at the app boundary.
+    private func handleCloseConfirmationShortcut(_ event: NSEvent) -> Bool {
+        guard !event.isARepeat, event.keyCode == 36 || event.keyCode == 76 else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .control, .option])
+        guard modifiers == .command else { return false }
+        return onConfirmClose?() ?? false
+    }
 
     private func handleHandoff(_ event: NSEvent) -> Bool {
         guard let char = event.charactersIgnoringModifiers?.lowercased().first,

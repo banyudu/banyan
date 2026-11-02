@@ -176,6 +176,13 @@ struct BanyanApp: App {
                             store?.handleHandoffShortcut()
                             return true
                         }
+                        Self.jumpOverlayMonitor.onConfirmClose = { [weak store] in
+                            guard let store,
+                                  store.pendingCloseSession != nil,
+                                  !store.pendingCloseIsPausing else { return false }
+                            store.confirmPendingCloseFromKeyboardShortcut()
+                            return true
+                        }
                         Self.jumpOverlayMonitor.start()
                     }
                     store.selection.startClickMonitor()

@@ -31,6 +31,21 @@ import Testing
 }
 
 @MainActor
+@Test func keyboardCloseShortcutConfirmsThePendingOrdinaryClose() throws {
+    let fixture = try ClosePromptFixture()
+    let store = fixture.makeStore()
+    store.loadPersistedSessionsIfNeeded()
+    let session = try #require(store.sessions.first)
+
+    store.requestClose(id: session.id)
+    #expect(store.pendingCloseSession?.id == session.id)
+
+    store.confirmPendingCloseFromKeyboardShortcut()
+    #expect(store.pendingCloseSession == nil)
+    #expect(session.status == .closed)
+}
+
+@MainActor
 private struct ClosePromptFixture {
     let root: URL
     let project: URL

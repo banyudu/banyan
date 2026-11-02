@@ -50,17 +50,17 @@ extension SessionStore {
             details.append("Keep Working in Background leaves this conversation and its children running. Its compact row stays in Sessions; select it to return. Child sessions are collapsed. The close options below stop continuation.")
         }
         if pendingCloseCanPause {
-            details.append("Pause and Close leaves the issue unfinished and stops future automatic continuation. It does not verify or cancel the issue. Hold Command while clicking Pause and Close to enable it.")
+            details.append("Pause and Close leaves the issue unfinished and stops future automatic continuation. It does not verify or cancel the issue. Hold Command while clicking Pause and Close, or hold Command and press Return, to enable it.")
             if session.closeEndsAgentWork {
                 details.append("Closing may terminate the current coding agent.")
             }
         }
         if pendingCloseNeedsForce {
-            details.append("Normal close is blocked by an unfinished workflow or recovery error. Holding Command enables the close action, which force closes. This does not mark work verified, pause or repair the workflow.")
+            details.append("Normal close is blocked by an unfinished workflow or recovery error. Holding Command enables the close action, which force closes; hold Command and press Return to confirm it. This does not mark work verified, pause or repair the workflow.")
             details.append("The workflow owner may continue scheduling work. If the recovery error came from coordination input, that input remains unrecorded.")
         }
         if !pendingCloseCanPause && !pendingCloseNeedsForce {
-            details.append("Hold Command while clicking the close action to enable it.")
+            details.append("Hold Command while clicking the close action, or hold Command and press Return, to enable it.")
         }
         details.append(session.closeConsequence)
         if pendingCloseHasOngoingAgent {
@@ -85,6 +85,20 @@ extension SessionStore {
         catch {
             pauseCloseRetrySessionID = nil
             pauseCloseError = error.localizedDescription
+        }
+    }
+
+    /// Keep the keyboard path aligned with the alert's default close button:
+    /// Pause and Close wins when offered, then the force-close override, then
+    /// ordinary close.
+    func confirmPendingCloseFromKeyboardShortcut() {
+        guard pendingCloseSession != nil, !pendingCloseIsPausing else { return }
+        if pendingCloseCanPause {
+            confirmPendingPauseAndClose()
+        } else if pendingCloseNeedsForce {
+            confirmPendingForceClose()
+        } else {
+            confirmPendingClose()
         }
     }
 
