@@ -40,6 +40,8 @@ import Testing
         let parent = try #require(result["parent"])
         #expect(parent.descendants.count == 5)
         #expect(parent.groupLabel == "1 waiting · 1 blocked · 1 verified · 2 idle")
+        #expect(parent.groupStatuses.map(\.count) == [1, 1, 1, 2])
+        #expect(parent.groupStatuses.map(\.label) == ["waiting", "blocked", "verified", "idle"])
         #expect(result["worker"]?.own.label == "Tool error")
         #expect(result["worker"]?.own.detail == "Tool timed out")
         #expect(result["worker"]?.own.background == true)
@@ -88,6 +90,7 @@ import Testing
         #expect(result["merged"]?.own.label == "Merged · 0/2 AC")
         #expect(result["proving"]?.own.focusLane == .watch)
         #expect(result["parent"]?.groupLabel == "1 needs you · 1 PR open · 1 merged")
+        #expect(result["parent"]?.groupStatuses.map(\.label) == ["needs you", "PR open", "merged"])
 
         let askingNodes = [node("asking", job: "asking", status: .asking)]
         let askingFeed = try phasedOverview([

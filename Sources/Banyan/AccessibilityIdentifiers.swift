@@ -101,10 +101,6 @@ enum AccessibilityID {
         "banyan.sidebar.session-row.\(id).handoff"
     }
 
-    static func sessionRowCloseButton(_ id: String) -> String {
-        "banyan.sidebar.session-row.\(id).close"
-    }
-
     static func sessionRowCost(_ id: String) -> String {
         "banyan.sidebar.session-row.\(id).cost"
     }

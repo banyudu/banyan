@@ -26,31 +26,102 @@ struct SessionWorkStatusButton: View {
     let openSession: (String) -> Void
     @State private var isPresented = false
 
-    private var label: String {
-        if summary.descendants.isEmpty { return summary.own.label }
+    private var summaryText: String {
+        guard !summary.descendants.isEmpty else { return summary.own.label }
         return summary.own.needsAttention
             ? "\(summary.own.label) · \(summary.groupLabel)" : summary.groupLabel
     }
+
     var body: some View {
         Button { isPresented = true } label: {
             HStack(spacing: 3) {
                 if summary.own.background { Image(systemName: "moon").accessibilityLabel("Background work") }
-                Text(label).lineLimit(1).truncationMode(.tail)
+                statusContent
             }.font(.caption2)
                 .foregroundStyle(summary.own.needsAttention || summary.descendants.contains(where: \.needsAttention)
                     ? Color.orange : summary.own.kind == .verified && summary.descendants.isEmpty ? Color.green : Color.secondary)
-                .frame(maxWidth: summary.descendants.isEmpty ? 85 : 110, alignment: .trailing)
         }
         .fixedSize(horizontal: true, vertical: false)
         .buttonStyle(.banyanPlainLabelOnly)
-        .help("\(label) — show work details")
-        .accessibilityLabel("Work details: \(label)")
+        .help("\(summaryText) — show work details")
+        .accessibilityLabel("Work details: \(summaryText)")
         .accessibilityIdentifier("session.\(summary.own.id).workflow")
         .popover(isPresented: $isPresented, arrowEdge: .trailing) {
             LiveSessionWorkDetailsView(summary: summary, status: overviewStatus, refresh: refresh) { id in
                 isPresented = false
                 openSession(id)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var statusContent: some View {
+        if summary.descendants.isEmpty {
+            Text(summary.own.label).lineLimit(1).truncationMode(.tail)
+        } else {
+            if summary.own.needsAttention {
+                Text(summary.own.label).lineLimit(1).truncationMode(.tail)
+            }
+            ForEach(summary.groupStatuses) { status in
+                WorkStatusBadge(status: status)
+            }
+        }
+    }
+}
+
+private struct WorkStatusBadge: View {
+    let status: SessionWorkSummary.GroupStatus
+
+    var body: some View {
+        HStack(spacing: 1) {
+            Image(systemName: status.systemImage)
+                .font(.system(size: 9, weight: .semibold))
+            Text("\(status.count)")
+                .font(.system(size: 9, weight: .semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(status.tint)
+        .padding(.horizontal, 4)
+        .frame(height: 16)
+        .background(status.tint.opacity(0.12), in: Capsule())
+        .help("\(status.count) \(status.label)")
+        .accessibilityLabel("\(status.count) \(status.label)")
+    }
+}
+
+private extension SessionWorkSummary.GroupStatus {
+    var systemImage: String {
+        switch category {
+        case .needsYou: "hand.raised.fill"
+        case .phase(let phase):
+            switch phase {
+            case .investigation: "magnifyingglass"
+            case .implementation: "hammer.fill"
+            case .prOpen: "arrow.triangle.branch"
+            case .merged: "arrow.triangle.merge"
+            case .verified: "checkmark.seal.fill"
+            case .cancelled: "xmark.circle.fill"
+            }
+        case .kind(let kind):
+            switch kind {
+            case .working: "gearshape.fill"
+            case .waiting: "clock.fill"
+            case .blocked: "exclamationmark.triangle.fill"
+            case .decision: "questionmark.bubble.fill"
+            case .paused: "pause.circle.fill"
+            case .verified: "checkmark.seal.fill"
+            case .idle: "moon.zzz.fill"
+            case .cancelled: "xmark.circle.fill"
+            }
+        }
+    }
+
+    var tint: Color {
+        switch category {
+        case .needsYou, .kind(.blocked), .kind(.decision): .orange
+        case .phase(.verified), .kind(.verified): .green
+        case .phase(.cancelled), .kind(.cancelled), .kind(.paused), .kind(.idle): .secondary
+        default: .blue
         }
     }
 }

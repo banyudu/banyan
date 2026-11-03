@@ -17,7 +17,7 @@ public struct SessionWorkNode: Sendable, Equatable {
 }
 
 public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
-    public enum Kind: String, Sendable { case working, waiting, blocked, decision, paused, verified, cancelled, idle }
+    public enum Kind: String, Sendable, Equatable { case working, waiting, blocked, decision, paused, verified, cancelled, idle }
     public let id: String
     public let title: String
     public let identity: String
@@ -90,28 +90,70 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
 }
 
 public struct SessionWorkSummary: Sendable, Equatable {
+    public struct GroupStatus: Identifiable, Sendable, Equatable {
+        public enum Category: Sendable, Equatable {
+            case needsYou
+            case phase(WorkitJobSummary.Phase)
+            case kind(SessionWorkEntry.Kind)
+        }
+
+        public let category: Category
+        public let count: Int
+
+        public var id: String {
+            switch category {
+            case .needsYou: "needs-you"
+            case .phase(let phase): "phase-\(phase.rawValue)"
+            case .kind(let kind): "kind-\(kind.rawValue)"
+            }
+        }
+
+        public var label: String {
+            switch category {
+            case .needsYou: "needs you"
+            case .phase(let phase): phase.summaryLabel
+            case .kind(let kind):
+                switch kind {
+                case .working: "working"
+                case .waiting: "waiting"
+                case .blocked: "blocked"
+                case .decision: "need input"
+                case .paused: "paused"
+                case .verified: "verified"
+                case .idle: "idle"
+                case .cancelled: "cancelled"
+                }
+            }
+        }
+    }
+
     public let own: SessionWorkEntry
     public var descendants: [SessionWorkEntry] = []
-    public var groupLabel: String {
+    public var groupStatuses: [GroupStatus] {
         if descendants.contains(where: { $0.phase != nil }) {
-            var entries: [(Int, String)] = []
+            var entries: [GroupStatus] = []
             let needsYou = descendants.filter(\.needsAttention).count
-            if needsYou > 0 { entries.append((needsYou, "needs you")) }
+            if needsYou > 0 { entries.append(.init(category: .needsYou, count: needsYou)) }
             let remaining = descendants.filter { !$0.needsAttention }
             for phase in WorkitJobSummary.Phase.allCases {
                 let count = remaining.filter { $0.phase == phase }.count
-                if count > 0 { entries.append((count, phase.summaryLabel)) }
+                if count > 0 { entries.append(.init(category: .phase(phase), count: count)) }
             }
             let counts = Dictionary(grouping: remaining.filter { $0.phase == nil }, by: \.kind).mapValues(\.count)
-            let names: [(SessionWorkEntry.Kind, String)] = [(.working, "working"), (.waiting, "waiting"),
-                (.blocked, "blocked"), (.decision, "need input"), (.paused, "paused"), (.verified, "verified"), (.idle, "idle"), (.cancelled, "cancelled")]
-            entries.append(contentsOf: names.compactMap { kind, name in counts[kind].map { ($0, name) } })
-            return entries.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
+            let kinds: [SessionWorkEntry.Kind] = [.working, .waiting, .blocked, .decision, .paused, .verified, .idle, .cancelled]
+            entries.append(contentsOf: kinds.compactMap { kind in
+                counts[kind].map { GroupStatus(category: .kind(kind), count: $0) }
+            })
+            return entries
         }
         let counts = Dictionary(grouping: descendants, by: \.kind).mapValues(\.count)
-        let names: [(SessionWorkEntry.Kind, String)] = [(.working, "working"), (.waiting, "waiting"),
-            (.blocked, "blocked"), (.decision, "need input"), (.paused, "paused"), (.verified, "verified"), (.idle, "idle"), (.cancelled, "cancelled")]
-        return names.compactMap { kind, name in counts[kind].map { "\($0) \(name)" } }.joined(separator: " · ")
+        let kinds: [SessionWorkEntry.Kind] = [.working, .waiting, .blocked, .decision, .paused, .verified, .idle, .cancelled]
+        return kinds.compactMap { kind in
+            counts[kind].map { GroupStatus(category: .kind(kind), count: $0) }
+        }
+    }
+    public var groupLabel: String {
+        groupStatuses.map { "\($0.count) \($0.label)" }.joined(separator: " · ")
     }
 }
 

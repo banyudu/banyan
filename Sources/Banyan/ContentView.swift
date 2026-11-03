@@ -2894,8 +2894,7 @@ struct SessionRow: View, Equatable {
     }
 
     /// When the handoff affordance is showing, it already occupies the row's
-    /// trailing edge. The hover close button is suppressed there so it can't shift
-    /// the handoff button or be clicked by accident in its place.
+    /// trailing edge.
     private var showsHandoffButton: Bool {
         isHandoffAvailable && session.canDispatchHandoff && !isHandoffPending
     }
@@ -3073,19 +3072,6 @@ struct SessionRow: View, Equatable {
                 .help("Handoff")
                 .accessibilityLabel("Handoff")
                 .accessibilityIdentifier(AccessibilityID.sessionRowHandoffButton(session.id))
-            }
-
-            if isRowHovered && session.status != .closed && !showsHandoffButton {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(.banyanPlainLabelOnly)
-                .help("Close session")
-                .accessibilityLabel("Close session")
-                .accessibilityIdentifier(AccessibilityID.sessionRowCloseButton(session.id))
-                .transition(.opacity)
             }
 
             if sessionCost != nil {

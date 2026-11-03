@@ -36,7 +36,7 @@ public struct WorkitJobSummary: Decodable, Sendable, Equatable, Identifiable {
         }
     }
     public struct Progress: Decodable, Sendable, Equatable { public let passed: Int; public let total: Int }
-    public enum Phase: String, Decodable, Sendable, CaseIterable {
+    public enum Phase: String, Decodable, Sendable, Equatable, CaseIterable {
         case investigation, implementation
         case prOpen = "pr-open"
         case merged, verified, cancelled
