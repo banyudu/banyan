@@ -2974,9 +2974,10 @@ struct SessionRow: View, Equatable {
                     .accessibilityIdentifier(AccessibilityID.sessionRowSuspendedBadge(session.id))
             }
 
-            if !session.isImportedHistory && session.status != .closed && !hidesStatusEmoji && session.agentQueuePosition == nil {
-                Text(session.status.emoji)
-                    .font(.system(size: 12))
+            if !session.isImportedHistory && session.status != .closed && !hidesStatusIcon && session.agentQueuePosition == nil {
+                Image(systemName: session.status.systemImage)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
                     .frame(width: 16, height: 18)
                     .help(session.status.label)
                     .accessibilityLabel(session.status.label)
@@ -3367,7 +3368,7 @@ struct SessionRow: View, Equatable {
 
     /// `.running` only ever means "a bare shell prompt", which the terminal icon
     /// already says — the gear next to it just reads as a settings affordance.
-    private var hidesStatusEmoji: Bool {
+    private var hidesStatusIcon: Bool {
         session.displayAgentProvider == nil && session.status == .running
     }
 
