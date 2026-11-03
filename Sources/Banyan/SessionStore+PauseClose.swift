@@ -1,6 +1,24 @@
 import BanyanCore
 import Foundation
 
+/// Availability and default-action rules for the close confirmation. Only the
+/// force-close override requires Command; ordinary close and Pause and Close
+/// remain directly available.
+struct CloseConfirmationActionAvailability: Equatable {
+    let isPausing: Bool
+    let canPause: Bool
+    let needsForce: Bool
+    let commandHeld: Bool
+
+    var primaryCloseDisabled: Bool { isPausing }
+    var forceCloseDisabled: Bool { isPausing || !commandHeld }
+    var primaryCloseIsDefault: Bool { !primaryCloseDisabled }
+    var forceCloseIsDefault: Bool { !forceCloseDisabled && !canPause }
+    var backgroundIsDefault: Bool {
+        isPausing || (needsForce && !canPause && !commandHeld)
+    }
+}
+
 /// A retained receipt makes projection-only retries honest and non-destructive.
 @MainActor
 final class PauseCloseAttempt {
@@ -50,7 +68,7 @@ extension SessionStore {
             details.append("Keep Working in Background leaves this conversation and its children running. Its compact row stays in Sessions; select it to return. Child sessions are collapsed. The close options below stop continuation.")
         }
         if pendingCloseCanPause {
-            details.append("Pause and Close leaves the issue unfinished and stops future automatic continuation. It does not verify or cancel the issue. Hold Command while clicking Pause and Close, or hold Command and press Return, to enable it.")
+            details.append("Pause and Close leaves the issue unfinished and stops future automatic continuation. It does not verify or cancel the issue.")
             if session.closeEndsAgentWork {
                 details.append("Closing may terminate the current coding agent.")
             }
@@ -58,9 +76,6 @@ extension SessionStore {
         if pendingCloseNeedsForce {
             details.append("Normal close is blocked by an unfinished workflow or recovery error. Holding Command enables the close action, which force closes; hold Command and press Return to confirm it. This does not mark work verified, pause or repair the workflow.")
             details.append("The workflow owner may continue scheduling work. If the recovery error came from coordination input, that input remains unrecorded.")
-        }
-        if !pendingCloseCanPause && !pendingCloseNeedsForce {
-            details.append("Hold Command while clicking the close action, or hold Command and press Return, to enable it.")
         }
         details.append(session.closeConsequence)
         if pendingCloseHasOngoingAgent {

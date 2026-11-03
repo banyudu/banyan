@@ -1,13 +1,14 @@
 # Pause and Close
 
-Every close action in the native close confirmation stays disabled until
-Command is held. For active, non-imported sessions with an unfinished `workit`
-workflow (`working`, `waiting`, or `needs-you`), the confirmation offers
-**Pause and Close**. Pausing leaves the issue and acceptance unfinished, stops
-future automatic continuation, and then closes the terminal. Closing can kill
-the current agent. Children are promoted normally and the closed session stays
-in history. Unmanaged, verified, paused and cancelled sessions use ordinary
-close. Other workflow owners must resolve their own holds.
+Normal close stays available directly in the native close confirmation, as
+does **Pause and Close** for active, non-imported sessions with an unfinished
+`workit` workflow (`working`, `waiting`, or `needs-you`). Pausing leaves the
+issue and acceptance unfinished, stops future automatic continuation, and then
+closes the terminal. Closing can kill the current agent. Children are promoted
+normally and the closed session stays in history. Unmanaged, verified, paused
+and cancelled sessions use ordinary close. The destructive force-close override
+for an unfinished workflow or unreadable recovery journal still requires
+holding Command. Other workflow owners must resolve their own holds.
 
 ## Trusted configuration
 

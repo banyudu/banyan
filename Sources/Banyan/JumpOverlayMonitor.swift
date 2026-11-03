@@ -99,9 +99,9 @@ final class JumpOverlayMonitor {
 
     private static let interestingModifiers = SessionShortcut.comparedModifiers
 
-    /// Command-Return is the keyboard path through the hold-to-confirm close
-    /// alert. A native alert does not receive its own default-action shortcut
-    /// while Command remains held, so consume the chord at the app boundary.
+    /// Command-Return is the keyboard path through the force-close override.
+    /// A native alert does not receive its own default-action shortcut while
+    /// Command remains held, so consume the chord at the app boundary.
     private func handleCloseConfirmationShortcut(_ event: NSEvent) -> Bool {
         guard !event.isARepeat, event.keyCode == 36 || event.keyCode == 76 else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .control, .option])

@@ -45,6 +45,44 @@ import Testing
     #expect(session.status == .closed)
 }
 
+@Test func closeConfirmationOnlyRequiresCommandForForceClose() {
+    let ordinary = CloseConfirmationActionAvailability(
+        isPausing: false, canPause: false, needsForce: false, commandHeld: false
+    )
+    #expect(!ordinary.primaryCloseDisabled)
+    #expect(ordinary.primaryCloseIsDefault)
+    #expect(!ordinary.backgroundIsDefault)
+
+    let pause = CloseConfirmationActionAvailability(
+        isPausing: false, canPause: true, needsForce: true, commandHeld: false
+    )
+    #expect(!pause.primaryCloseDisabled)
+    #expect(pause.primaryCloseIsDefault)
+    #expect(pause.forceCloseDisabled)
+    #expect(!pause.backgroundIsDefault)
+
+    let force = CloseConfirmationActionAvailability(
+        isPausing: false, canPause: false, needsForce: true, commandHeld: false
+    )
+    #expect(force.forceCloseDisabled)
+    #expect(!force.forceCloseIsDefault)
+    #expect(force.backgroundIsDefault)
+
+    let forceWithCommand = CloseConfirmationActionAvailability(
+        isPausing: false, canPause: false, needsForce: true, commandHeld: true
+    )
+    #expect(!forceWithCommand.forceCloseDisabled)
+    #expect(forceWithCommand.forceCloseIsDefault)
+    #expect(!forceWithCommand.backgroundIsDefault)
+
+    let pausing = CloseConfirmationActionAvailability(
+        isPausing: true, canPause: true, needsForce: true, commandHeld: true
+    )
+    #expect(pausing.primaryCloseDisabled)
+    #expect(pausing.forceCloseDisabled)
+    #expect(pausing.backgroundIsDefault)
+}
+
 @MainActor
 private struct ClosePromptFixture {
     let root: URL

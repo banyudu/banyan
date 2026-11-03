@@ -549,7 +549,7 @@ private final class FakeWorkitPauseClient: WorkitPauseClient {
         #expect(store.pendingCloseCanPause == !state.permitsClose)
         #expect(store.pendingCloseSession === session)
         if state.permitsClose {
-            #expect(store.pendingCloseMessage.contains("Hold Command while clicking the close action"))
+            #expect(!store.pendingCloseMessage.contains("Hold Command"))
             store.confirmPendingClose()
             #expect(session.status == .closed)
             #expect(session.workflow?.state == state)
@@ -559,7 +559,7 @@ private final class FakeWorkitPauseClient: WorkitPauseClient {
             #expect(store.pendingCloseMessage.contains("leaves the issue unfinished"))
             #expect(store.pendingCloseMessage.contains("stops future automatic continuation"))
             #expect(store.pendingCloseMessage.contains("may terminate the current coding agent"))
-            #expect(store.pendingCloseMessage.contains("Hold Command while clicking Pause and Close"))
+            #expect(!store.pendingCloseMessage.contains("Hold Command"))
         }
         store.requestClose(id: "legacy")
         #expect(!store.pendingCloseCanPause)

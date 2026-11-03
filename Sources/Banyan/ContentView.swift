@@ -1453,30 +1453,31 @@ struct ContentView: View {
 
     @ViewBuilder
     private var closeConfirmationButtons: some View {
+        let availability = closeConfirmationAvailability
         Button("Cancel", role: .cancel) {}
         if let session = store.pendingCloseSession, store.canHideAndKeepWorking(session) {
             Button("Keep Working in Background") { store.confirmPendingHideAndKeepWorking() }
-                .modifier(DefaultActionModifier(enabled: closeConfirmationBackgroundIsDefault))
+                .modifier(DefaultActionModifier(enabled: availability.backgroundIsDefault))
         }
         if store.pendingCloseCanPause {
             Button("Pause and Close", role: .destructive) {
                 store.confirmPendingPauseAndClose()
             }
-            .disabled(closeConfirmationActionsDisabled)
-            .modifier(DefaultActionModifier(enabled: closeConfirmationActionsAreDefault))
+            .disabled(availability.primaryCloseDisabled)
+            .modifier(DefaultActionModifier(enabled: availability.primaryCloseIsDefault))
         }
         if store.pendingCloseNeedsForce {
             Button(closeConfirmationAction, role: .destructive) {
                 store.confirmPendingForceClose()
             }
-            .disabled(closeConfirmationActionsDisabled)
-            .modifier(DefaultActionModifier(enabled: closeConfirmationForceCloseIsDefault))
+            .disabled(availability.forceCloseDisabled)
+            .modifier(DefaultActionModifier(enabled: availability.forceCloseIsDefault))
         } else if !store.pendingCloseCanPause {
             Button(closeConfirmationAction, role: .destructive) {
                 store.confirmPendingClose()
             }
-            .disabled(closeConfirmationActionsDisabled)
-            .modifier(DefaultActionModifier(enabled: closeConfirmationActionsAreDefault))
+            .disabled(availability.primaryCloseDisabled)
+            .modifier(DefaultActionModifier(enabled: availability.primaryCloseIsDefault))
         }
     }
 
@@ -1499,20 +1500,13 @@ struct ContentView: View {
         return store.pendingCloseSession?.closeEndsAgentWork == false ? "Close" : "Close and Kill"
     }
 
-    private var closeConfirmationActionsDisabled: Bool {
-        store.pendingCloseIsPausing || !commandModifierHeld
-    }
-
-    private var closeConfirmationActionsAreDefault: Bool {
-        !closeConfirmationActionsDisabled
-    }
-
-    private var closeConfirmationForceCloseIsDefault: Bool {
-        closeConfirmationActionsAreDefault && !store.pendingCloseCanPause
-    }
-
-    private var closeConfirmationBackgroundIsDefault: Bool {
-        !closeConfirmationActionsAreDefault
+    private var closeConfirmationAvailability: CloseConfirmationActionAvailability {
+        CloseConfirmationActionAvailability(
+            isPausing: store.pendingCloseIsPausing,
+            canPause: store.pendingCloseCanPause,
+            needsForce: store.pendingCloseNeedsForce,
+            commandHeld: commandModifierHeld
+        )
     }
 
     private var puckSessionErrorBinding: Binding<Bool> {
