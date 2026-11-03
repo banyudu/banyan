@@ -1303,7 +1303,6 @@ struct ContentView: View {
             isParent: item.isParent,
             showsDisclosureGutter: showsDisclosureGutter,
             isCollapsed: item.isCollapsed,
-            hiddenChildCount: item.hiddenChildCount,
             jumpKeyLabel: jumpKeyLabel,
             jumpShortcuts: sessionJumpShortcuts,
             workState: store.workState(for: item.id),
@@ -1316,13 +1315,6 @@ struct ContentView: View {
             },
             onToggleCollapse: {
                 store.toggleChildrenCollapsed(for: item.session.id)
-            },
-            onRevealHidden: {
-                if item.isCollapsed {
-                    store.toggleChildrenCollapsed(for: item.session.id)
-                } else {
-                    store.showFinishedChildren = true
-                }
             },
             onClose: {
                 store.requestClose(id: item.session.id)
@@ -2808,7 +2800,6 @@ struct SessionRow: View, Equatable {
     /// and a top-level parent can't read as its sibling's child.
     let showsDisclosureGutter: Bool
     let isCollapsed: Bool
-    let hiddenChildCount: Int
     let jumpKeyLabel: String
     var jumpShortcuts: SessionJumpShortcuts? = nil
     @ObservedObject var workState: SessionWorkState
@@ -2819,7 +2810,6 @@ struct SessionRow: View, Equatable {
     let openWorkSession: (String) -> Void
     let onSelect: () -> Void
     let onToggleCollapse: () -> Void
-    let onRevealHidden: () -> Void
     let onClose: () -> Void
     let onRestart: () -> Void
     let onRespawn: () -> Void
@@ -2849,7 +2839,7 @@ struct SessionRow: View, Equatable {
             && lhs.launchProfile == rhs.launchProfile && lhs.depth == rhs.depth
             && lhs.titleOverride == rhs.titleOverride && lhs.isHistory == rhs.isHistory
             && lhs.isParent == rhs.isParent && lhs.showsDisclosureGutter == rhs.showsDisclosureGutter
-            && lhs.isCollapsed == rhs.isCollapsed && lhs.hiddenChildCount == rhs.hiddenChildCount
+            && lhs.isCollapsed == rhs.isCollapsed
             && lhs.jumpKeyLabel == rhs.jumpKeyLabel && lhs.workState === rhs.workState
             && lhs.jumpShortcuts === rhs.jumpShortcuts
             && lhs.isHandoffAvailable == rhs.isHandoffAvailable && lhs.isHandoffPending == rhs.isHandoffPending
@@ -3027,28 +3017,6 @@ struct SessionRow: View, Equatable {
             if let error = session.coordinationRecoveryError {
                 Text("Coordination unavailable").font(.caption2).foregroundStyle(.red)
                     .help(error)
-            }
-
-            if hiddenChildCount > 0 {
-                Button(action: onRevealHidden) {
-                    Text("\(hiddenChildCount)")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
-                }
-                .buttonStyle(.banyanPlainLabelOnly)
-                .help(
-                    isCollapsed
-                        ? "\(hiddenChildCount) hidden child sessions — click to expand"
-                        : "\(hiddenChildCount) finished child sessions hidden — click to show"
-                )
-                .accessibilityLabel(
-                    isCollapsed
-                        ? "Expand \(hiddenChildCount) hidden child sessions"
-                        : "Show \(hiddenChildCount) finished child sessions"
-                )
             }
 
             Spacer(minLength: 0)
