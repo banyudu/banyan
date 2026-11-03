@@ -1277,9 +1277,9 @@ struct ContentView: View {
         // both edges.
         .padding(.top, isFirst ? 4 : (isStatic ? 8 : 0))
         .padding(.bottom, 2)
-        // The session rows' horizontal insets, so the chip lines up with their
-        // highlights.
-        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
+        // Match the session rows' leading inset so the chip lines up with
+        // their highlights, while letting both use the sidebar's trailing edge.
+        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 0))
     }
 
     private func sidebarRow(
@@ -1380,7 +1380,7 @@ struct ContentView: View {
         .id(item.session.id)
         .tag(item.session.id)
         .sessionJumpShortcutRow(id: item.id)
-        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 4))
+        .listRowInsets(EdgeInsets(top: 1, leading: 4, bottom: 1, trailing: 0))
         .modifier(SidebarDragSortModifier(
             sessionID: item.session.id,
             isEnabled: allowsDragSort,
@@ -3048,7 +3048,6 @@ struct SessionRow: View, Equatable {
         .padding(.vertical, 2)
         .padding(.leading, CGFloat(depth) * 18)
         .padding(.leading, 4)
-        .padding(.trailing, 4)
         .background(rowBackground)
         .opacity(dimsRow ? 0.55 : 1)
         .contentShape(Rectangle())
