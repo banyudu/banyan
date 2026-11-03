@@ -62,6 +62,18 @@ final class PuckSession: BanyanSession {
     private var followGeneration = 0
     @Published private(set) var admissionTurnInFlight = false
     @Published var draft = ""
+    /// The user's own message while the daemon has not echoed it yet. Native
+    /// engine sessions only publish the prompt with the turn's history at
+    /// completion, so waiting for `puckd` would hide the row for the whole
+    /// response. The row is withdrawn once the canonical copy arrives.
+    private struct OptimisticPrompt: Identifiable, Equatable {
+        let id: String
+        let text: String
+        /// Matching user rows already visible when this prompt was submitted.
+        /// Comparing counts keeps repeated prompts distinct from older ones.
+        let canonicalCount: Int
+    }
+    @Published private var optimisticPrompts: [OptimisticPrompt] = []
     var onAdmissionTurnStarting: (() -> Void)?
     var onPendingChangedWithoutStatusTransition: (() -> Void)?
     private var summaryRevision = 0
@@ -70,8 +82,58 @@ final class PuckSession: BanyanSession {
 
     deinit { followTask?.cancel(); historyTask?.cancel() }
 
-    var timeline: PuckTimeline {
+    private var canonicalTimeline: PuckTimeline {
         PuckTimelineProjection.project(history: historyItems, events: events)
+    }
+
+    var timeline: PuckTimeline {
+        let canonical = canonicalTimeline
+        let counts = Self.userMessageCounts(in: canonical)
+        let pending = optimisticPrompts.filter {
+            counts[$0.text, default: 0] <= $0.canonicalCount
+        }
+        guard !pending.isEmpty else { return canonical }
+        return PuckTimeline(
+            items: canonical.items + pending.map { prompt in
+                PuckTimelineItem(
+                    id: "optimistic:\(prompt.id)",
+                    role: .user,
+                    content: .user(prompt.text)
+                )
+            },
+            notices: canonical.notices,
+            usage: canonical.usage
+        )
+    }
+
+    private static func normalizedUserText(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func userMessageCounts(in timeline: PuckTimeline) -> [String: Int] {
+        timeline.items.reduce(into: [:]) { counts, item in
+            guard item.role == .user else { return }
+            counts[normalizedUserText(item.text), default: 0] += 1
+        }
+    }
+
+    @discardableResult
+    private func showOptimisticPrompt(_ text: String) -> String {
+        let id = UUID().uuidString.lowercased()
+        let pendingCopies = optimisticPrompts.filter { $0.text == text }.count
+        let count = Self.userMessageCounts(in: canonicalTimeline)[text, default: 0] + pendingCopies
+        optimisticPrompts.append(OptimisticPrompt(id: id, text: text, canonicalCount: count))
+        return id
+    }
+
+    private func withdrawOptimisticPrompt(_ id: String) {
+        optimisticPrompts.removeAll { $0.id == id }
+    }
+
+    private func reconcileOptimisticPrompts() {
+        guard !optimisticPrompts.isEmpty else { return }
+        let counts = Self.userMessageCounts(in: canonicalTimeline)
+        optimisticPrompts.removeAll { counts[$0.text, default: 0] > $0.canonicalCount }
     }
 
     private var cachedBytes: Int {
@@ -95,6 +157,7 @@ final class PuckSession: BanyanSession {
     }
     private func discardHistoryCache() {
         clearHistoryCache()
+        optimisticPrompts = []
         Self.historyOwners.removeValue(forKey: id)
     }
     func loadOlderHistory() {
@@ -108,6 +171,7 @@ final class PuckSession: BanyanSession {
                 guard followGeneration == generation, followState != .stopped, !Task.isCancelled else { return }
                 historyWindow.merge(page, older: true); historyItems = historyWindow.items
                 nextHistoryCursor = page.nextCursor; enforceHistoryBudget()
+                reconcileOptimisticPrompts()
             } catch { daemonError = error.localizedDescription }
         }
     }
@@ -122,6 +186,7 @@ final class PuckSession: BanyanSession {
                 guard followGeneration == generation, followState != .stopped, !Task.isCancelled else { return }
                 historyWindow.replace(with: page); historyItems = historyWindow.items
                 nextHistoryCursor = page.nextCursor; events = []; enforceHistoryBudget()
+                reconcileOptimisticPrompts()
             } catch { daemonError = error.localizedDescription }
         }
     }
@@ -397,6 +462,7 @@ final class PuckSession: BanyanSession {
             apply(summary: summary)
         }
         enforceHistoryBudget()
+        reconcileOptimisticPrompts()
     }
 
     // MARK: - Input
@@ -404,13 +470,30 @@ final class PuckSession: BanyanSession {
     /// Starts a turn. The first prompt names an untitled session, as it does a
     /// terminal agent.
     func send(_ prompt: String) {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let optimisticID = showOptimisticPrompt(text)
+        if draft == prompt { draft = "" }
         Task { [weak self] in
             do {
-                try await self?.startTurn(prompt)
-                if self?.draft == prompt { self?.draft = "" }
+                try await self?.startTurn(text)
             } catch {
-                self?.daemonError = error.localizedDescription
+                guard let self else { return }
+                self.daemonError = error.localizedDescription
+                if Self.definitelyRejected(error) {
+                    self.withdrawOptimisticPrompt(optimisticID)
+                    if self.draft.isEmpty { self.draft = text }
+                }
             }
+        }
+    }
+
+    private static func definitelyRejected(_ error: Error) -> Bool {
+        if error is CancellationError || error is ControlError { return true }
+        guard let daemonError = error as? PuckDaemonError else { return false }
+        switch daemonError {
+        case .rejected, .server, .notSubmitted: return true
+        case .unavailable, .invalidResponse: return false
         }
     }
 

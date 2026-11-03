@@ -338,6 +338,122 @@ import Testing
 }
 
 @MainActor
+@Test func submittedPromptAppearsImmediatelyAndReconcilesWithTheDaemonEcho() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let summary = puckSummary(cwd: fixture.project.path, position: "idle")
+    daemon.put(summary)
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+
+    session.startFollowing()
+    try await waitForPuckState { session.followState == .following }
+    let gate = daemon.holdTurns()
+    session.draft = "Inspect the parser"
+    session.send(session.draft)
+
+    // The row and composer update synchronously; the daemon has not acknowledged yet.
+    #expect(session.draft.isEmpty)
+    #expect(daemon.turns.isEmpty)
+    #expect(session.timeline.items.filter { $0.role == .user }.map(\.text) == ["Inspect the parser"])
+
+    gate.signal()
+    try await waitForPuckState { daemon.turns.count == 1 && !session.admissionTurnInFlight }
+    #expect(session.timeline.items.filter { $0.role == .user }.map(\.text) == ["Inspect the parser"])
+
+    daemon.push(.events([
+        PuckSessionEvent(cursor: 2, kind: "user_message", text: "Inspect the parser"),
+    ]), to: session.id)
+    try await waitForPuckState { session.events.contains { $0.kind == "user_message" } }
+    #expect(session.timeline.items.filter { $0.role == .user }.map(\.text) == ["Inspect the parser"])
+
+    daemon.push(.history(PuckHistoryPage(
+        session: session.id,
+        source: "display",
+        items: [
+            PuckHistoryItem(id: "user-1", turnID: "turn-1", kind: "user", text: "Inspect the parser"),
+            PuckHistoryItem(id: "assistant-1", turnID: "turn-1", kind: "assistant", text: "Done"),
+        ],
+        nextCursor: nil
+    )), to: session.id)
+    try await waitForPuckState { session.historyItems.count == 2 }
+    #expect(session.timeline.items.filter { $0.role == .user }.map(\.text) == ["Inspect the parser"])
+    session.stopFollowing()
+}
+
+@MainActor
+@Test func repeatedPromptDoesNotHideAllCopiesWhenTheDaemonEchoArrives() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let summary = puckSummary(cwd: fixture.project.path, position: "idle")
+    daemon.put(summary, transcript: [
+        PuckSessionEvent(cursor: 1, kind: "user_message", text: "Try again"),
+    ])
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+
+    session.startFollowing()
+    try await waitForPuckState { session.events.count == 1 }
+    let gate = daemon.holdTurns()
+    session.send("Try again")
+    #expect(session.timeline.items.filter { $0.role == .user }.map(\.text) == ["Try again", "Try again"])
+
+    gate.signal()
+    try await waitForPuckState { daemon.turns.count == 1 && !session.admissionTurnInFlight }
+    daemon.push(.events([
+        PuckSessionEvent(cursor: 2, kind: "user_message", text: "Try again"),
+    ]), to: session.id)
+    try await waitForPuckState { session.events.count == 2 }
+
+    // The canonical echo replaces only the optimistic copy, not the older prompt.
+    #expect(session.timeline.items.filter { $0.role == .user }.map(\.text) == ["Try again", "Try again"])
+    session.stopFollowing()
+}
+
+@MainActor
+@Test func rejectedPromptWithdrawsTheOptimisticRowAndRestoresTheDraft() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let summary = puckSummary(cwd: fixture.project.path, position: "idle")
+    daemon.put(summary)
+    daemon.turnError = .rejected("busy")
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+
+    session.draft = "Do not lose this"
+    session.send(session.draft)
+    #expect(session.timeline.items.contains { $0.role == .user && $0.text == "Do not lose this" })
+
+    try await waitForPuckState(timeout: .seconds(15)) { daemon.turnAttempts == 1 && session.daemonError != nil }
+    #expect(session.draft == "Do not lose this")
+    #expect(!session.timeline.items.contains { $0.role == .user && $0.text == "Do not lose this" })
+}
+
+@MainActor
+@Test func uncertainPromptDeliveryKeepsTheOptimisticRow() async throws {
+    let daemon = FakePuckDaemon()
+    let fixture = try PuckStoreFixture(daemon: daemon)
+    let store = fixture.makeStore()
+    let summary = puckSummary(cwd: fixture.project.path, position: "idle")
+    daemon.put(summary)
+    daemon.turnError = .unavailable("Socket closed before an acknowledgement")
+    store.applyPuckSummaries([summary])
+    let session = try #require(store.sessions.first as? PuckSession)
+
+    session.draft = "Maybe delivered"
+    session.send(session.draft)
+    try await waitForPuckState(timeout: .seconds(15)) { daemon.turnAttempts == 1 && session.daemonError != nil }
+
+    // The daemon may have accepted the turn before the connection dropped, so
+    // keeping the row is safer than showing a message that was never sent.
+    #expect(session.draft.isEmpty)
+    #expect(session.timeline.items.filter { $0.role == .user }.map(\.text) == ["Maybe delivered"])
+}
+
+@MainActor
 @Test func puckSessionsSayWhyTheyCannotTakeATurn() throws {
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
