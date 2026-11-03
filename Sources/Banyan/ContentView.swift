@@ -4021,7 +4021,7 @@ private struct SuspendedSessionBanner: View {
 /// hover tracking so this view never intercepts a title or trailing control.
 struct SessionCostGutter: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let visibleDuration: Duration = .milliseconds(300)
+    private static let visibleDuration: Duration = .milliseconds(500)
 
     let session: BanyanSession
     let isHovered: Bool
