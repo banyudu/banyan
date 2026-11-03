@@ -84,6 +84,64 @@ import Testing
         #expect(maxRedBias > 0.3, "Critical badge should have a red fill, got bias \(maxRedBias)")
     }
 
+    @Test func costEstimateFadesOutAfterBriefReveal() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("banyan-cost-visibility-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let host = HostRuntimeContext(
+            environment: ["PATH": "/usr/bin:/bin"],
+            homeDirectory: root,
+            currentDirectory: root.path
+        )
+        let session = BanyanSession(
+            id: "cost-visibility-row",
+            title: "A row with a visible cost estimate",
+            cwd: root.path,
+            command: "",
+            status: .needInput,
+            telemetry: banyanTestTelemetry,
+            host: host
+        )
+        let source = SessionCostTranscriptSource(
+            provider: .codex,
+            transcriptURL: root.appendingPathComponent("unused.jsonl"),
+            sessionKey: "codex:cost-visibility-row"
+        )
+        let gutter = SessionCostGutter(
+            session: session,
+            isHovered: true,
+            source: { source },
+            estimate: { _ in .complete(amount: Decimal(string: "0.31")!, tint: .codex) },
+            onEstimate: { _ in }
+        )
+
+        let size = NSSize(width: 420, height: 48)
+        let window = NSWindow(
+            contentRect: NSRect(origin: NSPoint(x: -2_000, y: -2_000), size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        let hosting = NSHostingView(rootView: gutter.frame(width: size.width, height: size.height))
+        window.contentView = hosting
+        hosting.frame = NSRect(origin: .zero, size: size)
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+
+        try await Task.sleep(for: .milliseconds(700))
+        let visiblePixels = try costTintPixelCount(in: hosting)
+        #expect(visiblePixels > 0, "The cost estimate should be visible after hover settles")
+
+        try await Task.sleep(for: .milliseconds(1_100))
+        let hiddenPixels = try costTintPixelCount(in: hosting)
+        #expect(hiddenPixels < visiblePixels / 2, "The cost estimate should fade out after about a second")
+    }
+
     private func badgeChannelBias(
         amount: Decimal,
         metric: (NSColor) -> CGFloat
@@ -164,6 +222,30 @@ import Testing
             }
         }
         return maxBias
+    }
+
+    private func costTintPixelCount<V: View>(in hosting: NSHostingView<V>) throws -> Int {
+        hosting.layoutSubtreeIfNeeded()
+        let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+
+        let scaleX = CGFloat(bitmap.pixelsWide) / hosting.bounds.width
+        let minX = Int((hosting.bounds.width - 170) * scaleX)
+        let maxX = Int((hosting.bounds.width - 20) * scaleX)
+        var count = 0
+        for x in minX..<maxX {
+            for y in 0..<bitmap.pixelsHigh {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                    continue
+                }
+                let cyanBias = min(
+                    color.greenComponent - color.redComponent,
+                    color.blueComponent - color.redComponent
+                )
+                if cyanBias > 0.25 { count += 1 }
+            }
+        }
+        return count
     }
 
     @Test func gutterOwnsOnlyTheReservedTrailingStrip() {

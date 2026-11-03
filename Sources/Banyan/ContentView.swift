@@ -4056,8 +4056,10 @@ private struct SuspendedSessionBanner: View {
 
 /// Visual-only cost readout for `SessionRow`'s trailing gutter. The row owns
 /// hover tracking so this view never intercepts a title or trailing control.
-private struct SessionCostGutter: View {
+struct SessionCostGutter: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let visibleDuration: Duration = .seconds(1)
+
     let session: BanyanSession
     let isHovered: Bool
     let source: () -> SessionCostTranscriptSource?
@@ -4100,8 +4102,8 @@ private struct SessionCostGutter: View {
             }
             .opacity(amountText == nil ? 0 : 1)
             .offset(x: amountText == nil && !reduceMotion ? 5 : 0)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: amountText)
-            // Keep the amount clear of the close/handoff button. The cost is an
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: amountText)
+            // Keep the amount clear of the handoff button. The cost is an
             // overlay, so reserving that control slot does not reflow the row.
             .padding(.trailing, 38)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
@@ -4120,6 +4122,9 @@ private struct SessionCostGutter: View {
                 onEstimate(result)
                 guard case .complete = result else { return }
                 visibleEstimate = result
+                try? await Task.sleep(for: Self.visibleDuration)
+                guard !Task.isCancelled, isHovered else { return }
+                visibleEstimate = nil
             }
     }
 }
