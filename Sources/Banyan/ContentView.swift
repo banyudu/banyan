@@ -531,6 +531,7 @@ struct ContentView: View {
                 }
                 .sessionJumpShortcutViewport(shortcuts: sessionJumpShortcuts, sessionIDs: sessionIDs)
                 .listStyle(.sidebar)
+                .contentMargins(.trailing, 4, for: .scrollContent)
                 .scrollIndicators(.hidden)
                 .hidesVerticalScroller()
                 .accessibilityIdentifier(AccessibilityID.sidebarList)
