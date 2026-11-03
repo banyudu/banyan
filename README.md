@@ -77,13 +77,14 @@ silently. Both directions are also in the Terminal menu and the command palette.
 ### Focus on work that needs you
 
 The Sessions sidebar defaults to **Focus**. Ordinary sessions stay visible;
-managed Workit jobs appear only when they need a human decision, hold, or
-recovery. Jobs that are investigating, implementing, waiting on CI/deployment,
+top-level managed Workit jobs appear only when they need a human decision, hold,
+or recovery. Jobs that are investigating, implementing, waiting on CI/deployment,
 merged and still proving acceptance criteria, paused, or verified remain in
-**All sessions**, available from the sidebar options menu. Focus is presentation
-only: it never pauses, suspends, or closes a session, and selecting a hidden job
-from Work or search reveals its row and ancestry. The options menu shows how
-many managed sessions the current projection hides.
+**All sessions**, available from the sidebar options menu. Child rows follow
+their parent's fold state instead of being filtered again by Focus. Focus is
+presentation only: it never pauses, suspends, or closes a session, and selecting
+a hidden job from Work or search reveals its row and ancestry. The options menu
+shows how many managed sessions the current projection hides.
 
 Managed rows carry an explicit lifecycle phase — investigation, implementation,
 PR open, merged, verified, or cancelled. A merged PR therefore remains visibly
@@ -664,8 +665,9 @@ make it the target's last child. A folded target unfolds to reveal the moved
 session. Reordering switches the sidebar to manual sort.
 
 Each parent row has one fold state: folding it hides every child and
-descendant, and unfolding it shows them all again. Completed and failed child
-rows are not hidden separately.
+descendant, and unfolding it shows them all again. Completed, failed and closed
+child rows are not hidden separately; a closed child stays in the parent's tree
+until retention removes it.
 
 Within the same project group, moves keep the session's ID, process, metadata,
 and children. Self-parenting, cycles, missing or closed targets, and moves

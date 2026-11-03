@@ -1222,7 +1222,7 @@ struct ContentView: View {
                             item,
                             groupID: group.id,
                             allowsDragSort: true,
-                            isHistory: false,
+                            isHistory: item.isHistory,
                             showsDisclosureGutter: showsDisclosureGutter,
                             jumpKeyLabel: ""
                         )
@@ -1704,10 +1704,10 @@ private struct LinearIssueRow: View {
     let onSelect: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(issue.identifier)
-                    .font(.caption.weight(.semibold))
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(isSelected ? .white : .secondary)
                     .lineLimit(1)
                 statusPill
@@ -1731,8 +1731,8 @@ private struct LinearIssueRow: View {
             .truncationMode(.tail)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 72, alignment: .center)
-        .padding(.horizontal, 8)
+        .frame(minHeight: 64, alignment: .center)
+        .padding(.horizontal, 6)
         .background(rowBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -2886,7 +2886,7 @@ struct SessionRow: View, Equatable {
     var body: some View {
         let _ = EnergyTrace.count("session.row.body", sessionID: session.id)
         let costTier = residentCostTier
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             // All rows in a group with any nesting share a fixed leading
             // slot, so same-depth badges align whether or not a given row
             // has a disclosure triangle of its own.
@@ -2931,10 +2931,10 @@ struct SessionRow: View, Equatable {
             // icon identity; otherwise the detected provider wins, so an agent
             // started by hand inside a shell is still recognized.
             if isBrandedByLaunchProfile, let launchProfile {
-                NewSessionLaunchIcon(launch: launchProfile, size: 18)
+                NewSessionLaunchIcon(launch: launchProfile, size: 15)
                     .accessibilityLabel(launchProfile.label)
             } else if let provider = session.displayAgentProvider {
-                AgentProviderIcon(provider: provider, size: 18, helpText: session.agentRuntimeIdentityLabel)
+                AgentProviderIcon(provider: provider, size: 15, helpText: session.agentRuntimeIdentityLabel)
                     .accessibilityLabel(provider.displayName)
             } else if !session.isImportedHistory {
                 ShellSessionIcon()
@@ -2974,9 +2974,10 @@ struct SessionRow: View, Equatable {
 
             if !session.isImportedHistory && session.status != .closed && !hidesStatusIcon && session.agentQueuePosition == nil {
                 Image(systemName: session.status.systemImage)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 18)
+                    .font(.system(size: 12, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(session.status.sidebarTint)
+                    .frame(width: 14, height: 16)
                     .help(session.status.label)
                     .accessibilityLabel(session.status.label)
                     .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
@@ -3391,12 +3392,25 @@ struct SessionRow: View, Equatable {
     }
 }
 
+private extension SessionStatus {
+    var sidebarTint: Color {
+        switch self {
+        case .running, .executing, .longRunningShell, .review: .blue
+        case .subagents: .purple
+        case .needInput, .asking: .orange
+        case .completed: .green
+        case .failed: .red
+        case .idle, .closed: .secondary
+        }
+    }
+}
+
 private struct ShellSessionIcon: View {
     var body: some View {
         Image(systemName: "terminal")
-            .font(.system(size: 13, weight: .medium))
+            .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.secondary)
-            .frame(width: 18, height: 18)
+            .frame(width: 15, height: 15)
             .help("Shell")
             .accessibilityLabel("Shell")
     }

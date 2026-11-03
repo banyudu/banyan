@@ -145,6 +145,25 @@ private func hierarchyRow(_ id: String, depth: Int) -> SessionSidebarRow {
     #expect(all == rows)
 }
 
+@Test func focusShowsQuietChildrenUnderAnUnfoldedParent() {
+    let rows = [
+        hierarchyRow("parent", depth: 0),
+        hierarchyRow("quiet-child", depth: 1),
+    ]
+    let items: [String: SessionChildVisibilityItem] = [
+        "parent": visibilityItem("parent"),
+        "quiet-child": visibilityItem("quiet-child", parent: "parent", focus: .watch),
+    ]
+
+    let visible = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows, itemsByID: items, foldedParentIDs: [], scope: .focus)
+    #expect(visible == rows)
+
+    let folded = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows, itemsByID: items, foldedParentIDs: ["parent"], scope: .focus)
+    #expect(folded.map(\.id) == ["parent"])
+}
+
 @Test func focusPinsAncestorsOfActionableAndUnmanagedChildren() {
     let rows = [hierarchyRow("quiet-parent", depth: 0), hierarchyRow("active", depth: 1),
                 hierarchyRow("plain-parent", depth: 0), hierarchyRow("unmanaged", depth: 1)]

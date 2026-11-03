@@ -26,9 +26,12 @@ public struct SessionVisibilityItem: Sendable, Equatable {
 public enum SessionVisibilityPolicy {
     public static func visibleIDs(
         from items: [SessionVisibilityItem],
-        sortMode: SortMode
+        sortMode: SortMode,
+        includingClosedIDs: Set<String> = []
     ) -> [String] {
-        let active = items.filter { $0.status != .closed }
+        let active = items.filter {
+            $0.status != .closed || includingClosedIDs.contains($0.id)
+        }
         return sinkingSuspended(ordered(active, sortMode: sortMode)).map(\.id)
     }
 
