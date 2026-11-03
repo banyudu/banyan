@@ -18,7 +18,7 @@ import Testing
         switch scenario {
         case "legacy": screen = screen.replacingOccurrences(of: " · Research Team [research_2]", with: "")
         case "empty": screen = screen.replacingOccurrences(of: "› Ask Codex to do anything", with: "›")
-        case "narrow": screen = "Work complete\n› Ask Codex to do anything\nModel-v2 high · ~/dev/my-project · Con…"
+        case "narrow": screen = "Work complete\n› Ask Codex to do anything\n\nModel-v2 high · ~/dev/my-project/.worktrees/task-123-with-a-long-session-name-sess…\n? for shortcuts"
         case "malformed": screen = screen.replacingOccurrences(of: "[research_2]", with: "[[research_2]]")
         case "extra": screen += "\nUnexpected footer field"
         case "draft": screen = screen.replacingOccurrences(of: "Ask Codex to do anything", with: "Unsent draft")
@@ -49,7 +49,7 @@ import Testing
         terminal.parentSessionID = "legacy"
         terminal.isSuspended = scenario == "parked"
         terminal.isFrozen = scenario == "frozen"
-        let positive = ["legacy", "profile", "empty"].contains(scenario)
+        let positive = ["legacy", "profile", "empty", "narrow"].contains(scenario)
         let workflow = SessionWorkflow(owner: "workit", jobID: "job-a", revision: 4,
             state: positive || caller == "retire" ? .verified : .waiting,
             wake: .init(id: "earlier", status: .delivered))

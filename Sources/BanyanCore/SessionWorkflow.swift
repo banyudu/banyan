@@ -127,12 +127,11 @@ public enum SessionWorkflowPolicy {
             guard index >= max(0, lines.count - 12),
                   draft.isEmpty || (isCodexComposer && draft == "Ask Codex to do anything") else { return false }
             return lines.dropFirst(index + 1).allSatisfy {
-                // Footer-shaped rows must match the entire known layout, even
-                // if a malformed suffix happens to contain a hint phrase.
+                // Footer-shaped rows must match the known layout, or a clipped
+                // prefix that still identifies the footer. Arbitrary overlay
+                // text is not allowed.
                 if isCodexComposer && $0.contains(" · ") && !$0.hasPrefix("? for shortcuts") {
-                    return $0.range(
-                        of: #"\A[^\s·][^·\r\n]* · [^\s·][^·\r\n]* · Context [0-9]{1,3}% used · weekly [0-9]{1,3}% left(?: · [^\s·\[\]](?:[^·\[\]\r\n]*[^\s·\[\]])? \[[A-Za-z0-9_-][A-Za-z0-9_.-]*\])?\z"#,
-                        options: .regularExpression) != nil
+                    return isCompleteCodexFooter($0) || isClippedCodexFooter($0)
                 }
                 return $0.isEmpty || $0.contains("for shortcuts") || $0.contains("context left")
                     || $0.contains("shift+tab to cycle") || $0.contains("ctrl+t to hide")
@@ -145,6 +144,24 @@ public enum SessionWorkflowPolicy {
         return block.count >= 2 && block.contains("") && block.allSatisfy {
             $0.isEmpty || $0.hasPrefix("Ask anything...") || ($0.contains(" · ") && !$0.contains("?"))
         }
+    }
+
+    private static func isCompleteCodexFooter(_ line: String) -> Bool {
+        line.range(
+            of: #"\A[^\s·][^·\r\n]* · [^\s·][^·\r\n]* · Context [0-9]{1,3}% used · weekly [0-9]{1,3}% left(?: · [^\s·\[\]](?:[^·\[\]\r\n]*[^\s·\[\]])? \[[A-Za-z0-9_-][A-Za-z0-9_.-]*\])?\z"#,
+            options: .regularExpression) != nil
+    }
+
+    /// Codex clips its model/path/usage footer with an ellipsis when the pane
+    /// is too narrow. The visible prefix still identifies the footer: it starts
+    /// with the model/effort and a path, and any later field starts with a known
+    /// label. Drafts and overlays do not have that shape.
+    private static func isClippedCodexFooter(_ line: String) -> Bool {
+        guard line.hasSuffix("…") else { return false }
+        let pathClipped = #"\A[^\s·]+ [^\s·]+ · (?:~|/)[^·\r\n]*…\z"#
+        let usageClipped = #"\A[^\s·]+ [^\s·]+ · (?:~|/)[^·\r\n]* · (?:Context |weekly )[^\r\n]*…\z"#
+        return line.range(of: pathClipped, options: .regularExpression) != nil
+            || line.range(of: usageClipped, options: .regularExpression) != nil
     }
 
     public static func shouldCloseVerified(workflow: SessionWorkflow?, status: SessionStatus) -> Bool {

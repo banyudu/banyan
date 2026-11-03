@@ -88,6 +88,29 @@ import Testing
     }
 
     @Test(arguments: [
+        "GPT-6.1-Sol xhigh · ~/dev/my-project/.worktrees/task-123-with-a-long-session-name-sess…",
+        "GPT-6.1-Sol xhigh · ~/dev/my-project/.worktrees/task-123 · Context 48% used…",
+        "GPT-6.1-Sol xhigh · ~/dev/my-project/.worktrees/task-123 · weekly 99% lef…",
+        "GPT-6.1-Sol xhigh · ~/dev/my-project/.worktrees/task-123 · Context 48% used · weekly 99% left · Main […"
+    ])
+    func clippedCodexFootersPermitWake(clippedFooter: String) {
+        let capture = "Work complete\n› Ask Codex to do anything\n\n\(clippedFooter)\n? for shortcuts"
+        #expect(SessionWorkflowPolicy.hasEmptyInput(capture))
+        #expect(SessionWorkflowPolicy.canWake(status: .needInput, isSuspended: false, isFrozen: false,
+            isDeepSuspended: false, hasObservation: true, isAgent: true, hasEmptyInput: true))
+    }
+
+    @Test func clippedCodexFootersStillRejectOverlaysAndAmbiguousFields() {
+        for overlay in [
+            "Permission required · Context unavailable…",
+            "GPT-6 xhigh · ~/dev/my-project · Con…"
+        ] {
+            #expect(!SessionWorkflowPolicy.hasEmptyInput(
+                "› Ask Codex to do anything\n\n\(overlay)\n? for shortcuts"))
+        }
+    }
+
+    @Test(arguments: [
         "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left",
         "GPT-6 xhigh · ~/dev/my-project · Context 48% used · weekly 99% left · Main [default]",
         "Other-Model medium · /tmp/sample project · Context 0% used · weekly 100% left · Research Team [research_2]",
