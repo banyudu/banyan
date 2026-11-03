@@ -15,15 +15,14 @@ import Testing
         let shortcuts = SessionJumpShortcuts()
         shortcuts.updateSessionIDs(["other", session.id])
         shortcuts.updateVisibleSessionIDs(["other", session.id])
-        let overviewStatus = WorkOverviewStatus()
         let workState = SessionWorkState()
         func row() -> SessionRow {
             SessionRow(session: session, selection: selection, launchProfile: nil, depth: 0,
                 titleOverride: nil, isHistory: false, isParent: false, showsDisclosureGutter: false,
-                isCollapsed: false, hiddenChildCount: 0, jumpKeyLabel: "", jumpShortcuts: shortcuts,
+                isCollapsed: false, jumpKeyLabel: "", jumpShortcuts: shortcuts,
                 workState: workState,
-                overviewStatus: overviewStatus, actionOwner: ObjectIdentifier(selection),
-                refreshWork: {}, openWorkSession: { _ in }, onSelect: {}, onToggleCollapse: {}, onRevealHidden: {},
+                actionOwner: ObjectIdentifier(selection),
+                openWorkSession: { _ in }, onSelect: {}, onToggleCollapse: {},
                 onClose: {}, onRestart: {}, onRespawn: {}, onRecover: {}, isHandoffAvailable: false,
                 isHandoffPending: false, onHandoff: {}, onCodexRemoteHandoff: {}, onRemove: {},
                 onChooseParent: {}, onToggleSuspended: {}, onSetFrozen: { _ in }, onSetDeepSuspended: { _ in },
@@ -31,9 +30,6 @@ import Testing
         }
         let original = row()
         #expect(original == row()) // Fresh action closures do not dirty an unchanged row.
-        overviewStatus.updatedAt = "2026-01-01T01:00:00Z"
-        overviewStatus.error = "Refresh unavailable"
-        #expect(original == row()) // Only an open details popup observes this metadata.
         let window = NSWindow(contentRect: NSRect(x: -2000, y: -2000, width: 420, height: 48),
             styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -103,18 +99,16 @@ import Testing
             .init(id: $0.id, parentID: $0.parentSessionID, title: $0.title, status: $0.status, workflow: $0.workflow)
         }, overview: feed)
         let selection = SessionSelection()
-        let overviewStatus = WorkOverviewStatus()
-        overviewStatus.updatedAt = feed.generatedAt
         let workStates = summaries.mapValues { SessionWorkState(summary: $0) }
         let rows = VStack(alignment: .leading, spacing: 8) {
             Text("example/project").font(.caption).foregroundStyle(.secondary)
             ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
                 SessionRow(session: session, selection: selection, launchProfile: nil, depth: index,
                     titleOverride: nil, isHistory: false, isParent: index < 2, showsDisclosureGutter: true,
-                    isCollapsed: false, hiddenChildCount: 0, jumpKeyLabel: String(index),
-                    workState: workStates[session.id]!, overviewStatus: overviewStatus,
+                    isCollapsed: false, jumpKeyLabel: String(index),
+                    workState: workStates[session.id]!,
                     actionOwner: ObjectIdentifier(selection),
-                    refreshWork: {}, openWorkSession: { _ in }, onSelect: {}, onToggleCollapse: {}, onRevealHidden: {},
+                    openWorkSession: { _ in }, onSelect: {}, onToggleCollapse: {},
                     onClose: {}, onRestart: {}, onRespawn: {}, onRecover: {}, isHandoffAvailable: false,
                     isHandoffPending: false, onHandoff: {}, onCodexRemoteHandoff: {}, onRemove: {},
                     onChooseParent: {}, onToggleSuspended: {},
@@ -122,8 +116,7 @@ import Testing
             }
         }.padding(12)
         try await render(rows, size: NSSize(width: 340, height: 170), to: root.appendingPathComponent("sessions.png"))
-        let details = SessionWorkDetailsView(summary: try #require(summaries[worker.id]), error: nil,
-            updatedAt: feed.generatedAt, refresh: {}, openSession: { _ in })
+        let details = SessionWorkDetailsView(summary: try #require(summaries[worker.id]), openSession: { _ in })
         try await render(details, size: NSSize(width: 400, height: 600), to: root.appendingPathComponent("details.png"))
         let recovery = SessionWorkTree.summaries(nodes: sessions.map {
             .init(id: $0.id, parentID: $0.parentSessionID, title: $0.title, status: $0.status,
@@ -131,8 +124,8 @@ import Testing
         }, overview: feed)
         let recoveryParent = try #require(recovery[parent.id])
         #expect(!recoveryParent.own.managed && recoveryParent.own.needsAttention)
-        try await render(SessionWorkDetailsView(summary: recoveryParent, error: nil, updatedAt: nil,
-            refresh: {}, openSession: { _ in }), size: NSSize(width: 400, height: 400),
+        try await render(SessionWorkDetailsView(summary: recoveryParent, openSession: { _ in }),
+            size: NSSize(width: 400, height: 400),
             to: root.appendingPathComponent("recovery-parent.png"))
     }
 

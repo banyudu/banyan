@@ -337,17 +337,10 @@ final class SessionStore: ObservableObject {
         didSet { sidebarGroupsRevision &+= 1 }
     }
     @Published var backgroundPresentationError: String?
-    let workOverviewStatus = WorkOverviewStatus()
     var workOverview: WorkitOverview? {
-        didSet {
-            workSummaryRevision &+= 1
-            workOverviewStatus.updatedAt = workOverview?.generatedAt
-        }
+        didSet { workSummaryRevision &+= 1 }
     }
-    var workOverviewError: String? {
-        get { workOverviewStatus.error }
-        set { workOverviewStatus.error = newValue }
-    }
+    var workOverviewError: String?
     // Fetch coordination only; no view reads this flag. Publishing it redraws
     // the whole session list before and after every overview request.
     var isRefreshingWorkOverview = false

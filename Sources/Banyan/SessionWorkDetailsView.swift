@@ -1,4 +1,3 @@
-import AppKit
 import BanyanCore
 import SwiftUI
 
@@ -13,16 +12,8 @@ import SwiftUI
     }
 }
 
-/// Refresh metadata belongs to the open details popup, not every sidebar row.
-@MainActor final class WorkOverviewStatus: ObservableObject {
-    @Published var error: String?
-    @Published var updatedAt: String?
-}
-
 struct SessionWorkStatusButton: View {
     let summary: SessionWorkSummary
-    let overviewStatus: WorkOverviewStatus
-    let refresh: () -> Void
     let openSession: (String) -> Void
     @State private var isPresented = false
 
@@ -47,7 +38,7 @@ struct SessionWorkStatusButton: View {
         .accessibilityLabel("Work details: \(summaryText)")
         .accessibilityIdentifier("session.\(summary.own.id).workflow")
         .popover(isPresented: $isPresented, arrowEdge: .trailing) {
-            LiveSessionWorkDetailsView(summary: summary, status: overviewStatus, refresh: refresh) { id in
+            SessionWorkDetailsView(summary: summary) { id in
                 isPresented = false
                 openSession(id)
             }
@@ -126,75 +117,37 @@ private extension SessionWorkSummary.GroupStatus {
     }
 }
 
-private struct LiveSessionWorkDetailsView: View {
-    let summary: SessionWorkSummary
-    @ObservedObject var status: WorkOverviewStatus
-    let refresh: () -> Void
-    let openSession: (String) -> Void
-
-    var body: some View {
-        SessionWorkDetailsView(summary: summary, error: status.error, updatedAt: status.updatedAt,
-            refresh: refresh, openSession: openSession)
-    }
-}
-
 struct SessionWorkDetailsView: View {
     let summary: SessionWorkSummary
-    let error: String?
-    let updatedAt: String?
-    let refresh: () -> Void
     let openSession: (String) -> Void
-    @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Work details").font(.headline)
-                Spacer()
-                Button(action: refresh) { Image(systemName: "arrow.clockwise") }.help("Refresh saved work status")
-                    .accessibilityLabel("Refresh work details")
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(summary.own.title).font(.headline).textSelection(.enabled)
-                    if summary.own.background {
-                        Text("Working in the background. Selecting the conversation brings it back; collapsing the group does not pause its work.")
-                            .font(.caption).foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(summary.own.title).font(.headline).textSelection(.enabled)
+                if summary.own.background {
+                    Text("Working in the background. Selecting the conversation brings it back; collapsing the group does not pause its work.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if summary.own.managed || summary.own.needsAttention || summary.descendants.isEmpty { ownDetails }
+                if !summary.descendants.isEmpty {
+                    Text("Child sessions · \(summary.groupLabel)").font(.subheadline)
+                    ForEach(summary.descendants) { entry in
+                        Button { openSession(entry.id) } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(entry.title).lineLimit(2).multilineTextAlignment(.leading)
+                                Text(entry.label + (entry.background ? " · Background" : ""))
+                                    .font(.caption).foregroundStyle(entry.needsAttention ? .orange : .secondary)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(.borderless)
                     }
-                    if summary.own.managed || summary.own.needsAttention || summary.descendants.isEmpty { ownDetails }
-                    if !summary.descendants.isEmpty {
-                        Text("Child sessions · \(summary.groupLabel)").font(.subheadline)
-                        ForEach(summary.descendants) { entry in
-                            Button { openSession(entry.id) } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(entry.title).lineLimit(2).multilineTextAlignment(.leading)
-                                    Text(entry.label + (entry.background ? " · Background" : ""))
-                                        .font(.caption).foregroundStyle(entry.needsAttention ? .orange : .secondary)
-                                }.frame(maxWidth: .infinity, alignment: .leading)
-                            }.buttonStyle(.borderless)
-                        }
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxHeight: 440)
-            Divider()
-            if let error, summary.own.managed || summary.descendants.contains(where: \.managed) {
-                Text("Saved details may be out of date. \(error)").font(.caption).foregroundStyle(.secondary)
-            } else if let date = updatedAt.flatMap(WorkitJobSummary.date) {
-                Text("Status loaded \(date.formatted(date: .omitted, time: .shortened)). Refresh reads saved status; it does not resume work.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                Button("Open conversation") { openSession(summary.own.id) }
-                if let job = summary.own.job, summary.own.needsAttention {
-                    Button(copied ? "Copied" : "Copy inspection request") {
-                        let request = "Inspect workit job \(job.id) in its original conversation. Saved reason: \(job.stopReason ?? job.detail). Next step: \(job.nextAction). Check current state and any uncertain continuation receipts before proposing recovery."
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(request, forType: .string)
-                        copied = true
-                    }.help("Copy a request to paste into the conversation; no prompt is sent automatically")
                 }
             }
-        }.padding(16).frame(width: 360)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: 440)
+        .padding(16)
+        .frame(width: 360)
     }
 
     @ViewBuilder private var ownDetails: some View {
@@ -234,7 +187,7 @@ struct SessionWorkDetailsView: View {
         } else {
             Text(summary.own.detail).textSelection(.enabled)
             if summary.own.managed {
-                Text("Matching job details are unavailable or older than this session. Refresh, or inspect the original conversation.")
+                Text("Matching job details are unavailable or older than this session. Select the conversation to inspect it directly.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

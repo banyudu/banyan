@@ -995,11 +995,9 @@ show specific saved work status such as Tool error, Waiting for CI, or Verified.
 Click a status or parent summary to open **Work details** without replacing the
 conversation. The panel shows the original stop reason, next step, saved
 acceptance evidence and links; select a child to return to its conversation.
-**Copy inspection request** copies a recovery question to paste into that
-conversation. It does not send a prompt or resume a held job.
 
-Details refresh on app activation, explicit refresh and coalesced workflow
-updates. A single bounded read serves the whole tree. Old or mismatched job
+Details refresh on app activation and coalesced workflow updates. A single
+bounded read serves the whole tree. Old or mismatched job
 bindings fall back to the session's own workflow status. Tool failures and
 uncertain delivery remain blocked; displaying a reason never clears a hold.
 

@@ -44,7 +44,7 @@ extension SessionStore {
     }
 
     /// Workflow projections arrive in bursts. Coalesce them without polling or a
-    /// process per row. Fetch also occurs on app activation and explicit refresh.
+    /// process per row. Fetch also occurs on app activation and workflow changes.
     func scheduleWorkOverviewRefresh() {
         guard !isRefreshingWorkOverview else { workOverviewRefreshRequested = true; return }
         workOverviewRefreshTask?.cancel()

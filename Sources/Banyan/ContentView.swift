@@ -1306,9 +1306,7 @@ struct ContentView: View {
             jumpKeyLabel: jumpKeyLabel,
             jumpShortcuts: sessionJumpShortcuts,
             workState: store.workState(for: item.id),
-            overviewStatus: store.workOverviewStatus,
             actionOwner: ObjectIdentifier(store),
-            refreshWork: { store.scheduleWorkOverviewRefresh() },
             openWorkSession: { store.userSelect(id: $0) },
             onSelect: {
                 store.userSelect(id: item.session.id)
@@ -2804,9 +2802,7 @@ struct SessionRow: View, Equatable {
     var jumpShortcuts: SessionJumpShortcuts? = nil
     @ObservedObject var workState: SessionWorkState
     private var workSummary: SessionWorkSummary? { workState.summary }
-    let overviewStatus: WorkOverviewStatus
     let actionOwner: ObjectIdentifier
-    let refreshWork: () -> Void
     let openWorkSession: (String) -> Void
     let onSelect: () -> Void
     let onToggleCollapse: () -> Void
@@ -2835,7 +2831,7 @@ struct SessionRow: View, Equatable {
     // updates and this row's selection subscription still redraw it directly.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.session === rhs.session && lhs.selection === rhs.selection
-            && lhs.actionOwner == rhs.actionOwner && lhs.overviewStatus === rhs.overviewStatus
+            && lhs.actionOwner == rhs.actionOwner
             && lhs.launchProfile == rhs.launchProfile && lhs.depth == rhs.depth
             && lhs.titleOverride == rhs.titleOverride && lhs.isHistory == rhs.isHistory
             && lhs.isParent == rhs.isParent && lhs.showsDisclosureGutter == rhs.showsDisclosureGutter
@@ -3005,8 +3001,7 @@ struct SessionRow: View, Equatable {
             }
 
             if let summary = workSummary, summary.own.managed || summary.own.background || !summary.descendants.isEmpty {
-                SessionWorkStatusButton(summary: summary, overviewStatus: overviewStatus,
-                    refresh: refreshWork, openSession: openWorkSession)
+                SessionWorkStatusButton(summary: summary, openSession: openWorkSession)
                     .onGeometryChange(for: CGRect.self) { proxy in
                         proxy.frame(in: .named("session-work-row-\(session.id)"))
                     } action: { workStatusBounds = $0 }
