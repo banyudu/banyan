@@ -1909,7 +1909,7 @@ final class SessionStore: ObservableObject {
                     } else if self.selectedLinearListIssueID == nil {
                         self.selectedLinearListIssueID = issues.first?.identifier
                     }
-                    self.persistence.saveLinearIssueListCache(
+                    self.persistLinearIssueListCache(
                         LinearIssueListCacheSnapshot(
                             issues: issues,
                             workflowStates: self.linearIssueWorkflowStates,
@@ -2009,7 +2009,7 @@ final class SessionStore: ObservableObject {
         guard mergedWorkflowStates != linearIssueWorkflowStates else { return }
         linearIssueWorkflowStates = mergedWorkflowStates
         guard !linearIssues.isEmpty else { return }
-        persistence.saveLinearIssueListCache(
+        persistLinearIssueListCache(
             LinearIssueListCacheSnapshot(
                 issues: linearIssues,
                 workflowStates: linearIssueWorkflowStates,
@@ -5751,6 +5751,16 @@ final class SessionStore: ObservableObject {
             $0.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize, force: true)
         }
         scratchSession?.apply(theme: terminalTheme, fontFamily: terminalFontFamily, fontSize: terminalFontSize, force: true)
+    }
+
+    /// Encoding and writing the Linear list cache is a multi-megabyte SQLite
+    /// write. It shares the serial persistence queue with session saves so it
+    /// can neither block the main actor nor overtake a pending session write.
+    private func persistLinearIssueListCache(_ snapshot: LinearIssueListCacheSnapshot) {
+        let persistence = persistence
+        sessionPersistenceQueue.async {
+            persistence.saveLinearIssueListCache(snapshot)
+        }
     }
 
     func saveSessions() {

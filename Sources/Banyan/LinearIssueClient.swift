@@ -62,7 +62,7 @@ struct LinearIssueStatusSnapshot: Equatable {
     let workflowStates: [LinearWorkflowState]
 }
 
-struct LinearWorkflowState: Equatable, Identifiable, Codable {
+struct LinearWorkflowState: Equatable, Identifiable, Codable, Sendable {
     let id: String
     let name: String
     let type: String?
@@ -70,7 +70,7 @@ struct LinearWorkflowState: Equatable, Identifiable, Codable {
     let position: Double?
 }
 
-struct LinearIssueLabel: Equatable, Identifiable, Codable {
+struct LinearIssueLabel: Equatable, Identifiable, Codable, Sendable {
     var id: String { name }
     let name: String
     let color: String?
@@ -90,7 +90,7 @@ struct LinearIssueAttachment: Equatable, Identifiable {
     let url: String
 }
 
-struct LinearIssueSummary: Equatable, Identifiable, Codable {
+struct LinearIssueSummary: Equatable, Identifiable, Codable, Sendable {
     let id: String
     let identifier: String
     let title: String

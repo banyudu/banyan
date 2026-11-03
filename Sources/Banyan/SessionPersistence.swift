@@ -18,7 +18,7 @@ struct WorkspaceSnapshot {
     var autoRetryCodexFailures = true
 }
 
-struct LinearIssueListCacheSnapshot: Codable {
+struct LinearIssueListCacheSnapshot: Codable, Sendable {
     let issues: [LinearIssueSummary]
     let workflowStates: [LinearWorkflowState]?
     let selectedIssueID: String?
