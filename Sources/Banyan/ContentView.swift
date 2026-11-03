@@ -1564,7 +1564,10 @@ struct ContentView: View {
                     fontFamily: store.terminalFontFamily,
                     fontSize: store.terminalFontSize,
                     focusRequestID: store.terminalFocusRequestID,
-                    switchRequestedAt: store.sessionSwitchRequestedAt
+                    switchRequestedAt: store.sessionSwitchRequestedAt,
+                    onTerminalSlashCommand: { terminal, command in
+                        _ = store.runTerminalSlashCommand(command, from: terminal)
+                    }
                 )
                 .ignoresSafeArea(edges: .bottom)
 
@@ -2736,6 +2739,7 @@ private struct SelectionAwareTerminalSwitcher: View {
     let fontSize: Double
     let focusRequestID: UUID
     let switchRequestedAt: DispatchTime?
+    let onTerminalSlashCommand: (TerminalSession, TerminalSlashCommand) -> Void
 
     var body: some View {
         TerminalSwitcherView(
@@ -2748,7 +2752,8 @@ private struct SelectionAwareTerminalSwitcher: View {
             switchRequestedAt: switchRequestedAt,
             selectionChangedAt: selection.changedAt,
             clickAt: selection.pendingClickAt,
-            selection: selection
+            selection: selection,
+            onTerminalSlashCommand: onTerminalSlashCommand
         )
     }
 }

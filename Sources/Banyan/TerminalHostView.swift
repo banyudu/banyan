@@ -104,6 +104,7 @@ final class TerminalContainerView: NSView {
     private let paintProbe = TerminalPaintProbeView()
     var onLayout: (() -> Void)?
     var onUserSubmittedInput: ((String?) -> Void)?
+    var onTerminalSlashCommand: ((TerminalSession, TerminalSlashCommand) -> Void)?
     private let contentInset: CGFloat = 14
     private var leadingConstraint: NSLayoutConstraint?
     private var trailingConstraint: NSLayoutConstraint?
@@ -122,10 +123,16 @@ final class TerminalContainerView: NSView {
     private var energyFrameSyncCalls = 0
     private var energyFrameChanges = 0
 
-    init(terminalView: LocalProcessTerminalView, session: TerminalSession, onUserSubmittedInput: ((String?) -> Void)? = nil) {
+    init(
+        terminalView: LocalProcessTerminalView,
+        session: TerminalSession,
+        onUserSubmittedInput: ((String?) -> Void)? = nil,
+        onTerminalSlashCommand: ((TerminalSession, TerminalSlashCommand) -> Void)? = nil
+    ) {
         self.terminalView = terminalView
         self.session = session
         self.onUserSubmittedInput = onUserSubmittedInput
+        self.onTerminalSlashCommand = onTerminalSlashCommand
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier(AccessibilityID.terminal)
         wantsLayer = true
@@ -160,6 +167,7 @@ final class TerminalContainerView: NSView {
         pendingReadyTerminalView = nil
         onLayout = nil
         onUserSubmittedInput = nil
+        onTerminalSlashCommand = nil
         selectionAutoScrollTimer?.invalidate()
         selectionAutoScrollTimer = nil
         lastSelectionDragEvent = nil
@@ -410,7 +418,11 @@ final class TerminalContainerView: NSView {
                     return self.handleTerminalShortcut(event) ? nil : event
                 }
                 if self.isSubmitKey(event) {
-                    self.onUserSubmittedInput?(self.submittedInputBuffer)
+                    let submittedInput = self.submittedInputBuffer
+                    if self.handleSubmittedSlashCommand(submittedInput, event: event) {
+                        return nil
+                    }
+                    self.onUserSubmittedInput?(submittedInput)
                     self.submittedInputBuffer = ""
                 } else {
                     self.recordInput(event)
@@ -472,13 +484,24 @@ final class TerminalContainerView: NSView {
 
     private func recordInput(_ event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard !flags.contains(.command), !flags.contains(.control) else { return }
+        if flags.contains(.control) {
+            // Control chords such as Ctrl-U/W/K edit the agent's draft without
+            // producing committed text, so the captured line may now be stale.
+            submittedInputBuffer = ""
+            return
+        }
+        guard !flags.contains(.command) else { return }
         switch event.keyCode {
         case 51:
             if !submittedInputBuffer.isEmpty {
                 submittedInputBuffer.removeLast()
             }
         case 53:
+            submittedInputBuffer = ""
+        case 48, 115, 116, 117, 119, 121, 123, 124, 125, 126:
+            // Cursor movement, history recall, completion, and page scrolling can
+            // replace the agent's draft without producing committed text. Drop the
+            // captured line so an old exact slash command cannot trigger later.
             submittedInputBuffer = ""
         default:
             // Printable text is captured by DetectingLocalProcessTerminalView's
@@ -487,6 +510,28 @@ final class TerminalContainerView: NSView {
             // would miss paste/autocomplete insertion entirely.
             return
         }
+    }
+
+    /// Intercepts only Banyan-local commands and only on a plain Return. The
+    /// command was already typed into the agent's composer, so erase those
+    /// characters before dispatching the app action. Everything else, including
+    /// `/clear` and `/compact`, follows the normal agent input path untouched.
+    private func handleSubmittedSlashCommand(_ input: String, event: NSEvent) -> Bool {
+        guard !event.isARepeat,
+              event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty,
+              session.acceptsTerminalSlashCommand,
+              let command = TerminalSlashCommand.parse(input),
+              let onTerminalSlashCommand else {
+            return false
+        }
+
+        let count = input.unicodeScalars.count
+        if count > 0 {
+            terminalView.send(data: ArraySlice(Array(repeating: UInt8(0x7F), count: count)))
+        }
+        submittedInputBuffer = ""
+        onTerminalSlashCommand(session, command)
+        return true
     }
 
     private func handleTerminalShortcut(_ event: NSEvent) -> Bool {

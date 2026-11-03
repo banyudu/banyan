@@ -385,6 +385,22 @@ and shows the parsing diagnostic in Preferences. An old remembered profile ID
 that is no longer configured falls back to the `zsh` profile, or the first profile when
 no `zsh` profile is configured.
 
+## Slash commands in session input
+
+Terminal coding-agent sessions accept Banyan slash commands directly in the
+agent's prompt. Type the command and press Return; Banyan removes it from the
+agent's draft and runs the session action locally:
+
+- `/new`, `/new-root`, `/new-terminal`, and `/scratch` create sessions.
+- `/find`, `/rename`, `/close`, and `/sessions` manage the current view.
+- `/next`, `/previous` (or `/prev`), `/attention`, `/previous-attention`, and
+  `/workable` move between sessions.
+
+Agent-owned commands such as `/clear`, `/compact`, `/review`, `/status`,
+`/model`, and `/init` are not intercepted. They continue to the running agent
+exactly as typed, so the provider's own shortcut behavior and arguments are
+preserved. Plain shells and imported history are also left alone.
+
 ## Custom palette commands
 
 The ⌘P palette supports user-defined commands from `~/.banyan/palette.yml`

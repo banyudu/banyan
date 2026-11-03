@@ -16,6 +16,7 @@ struct TerminalSwitcherView: NSViewRepresentable {
     var selectionChangedAt: DispatchTime?
     var clickAt: DispatchTime?
     var selection: SessionSelection?
+    var onTerminalSlashCommand: ((TerminalSession, TerminalSlashCommand) -> Void)? = nil
 
     func makeNSView(context: Context) -> TerminalSwitcherContainer {
         let container = TerminalSwitcherContainer()
@@ -60,7 +61,8 @@ struct TerminalSwitcherView: NSViewRepresentable {
                     guard let session, session.terminalClientGeneration == generation else { return }
                     session.recoverBlankTerminalClientIfNeeded()
                 }
-            }
+            },
+            onTerminalSlashCommand: onTerminalSlashCommand
         )
     }
 }
@@ -252,7 +254,8 @@ final class TerminalSwitcherContainer: NSView {
         fontSize: Double,
         focusRequestID: UUID,
         onUserSubmittedInput: @escaping (TerminalSession, String?) -> Void,
-        onTerminalReady: @escaping (TerminalSession) -> Void
+        onTerminalReady: @escaping (TerminalSession) -> Void,
+        onTerminalSlashCommand: ((TerminalSession, TerminalSlashCommand) -> Void)? = nil
     ) {
         let trace = EnergyTrace.span("switcher.update")
         defer { trace?.end() }
@@ -295,7 +298,8 @@ final class TerminalSwitcherContainer: NSView {
             let container = TerminalContainerView(
                 terminalView: selectedSession.terminalView,
                 session: selectedSession,
-                onUserSubmittedInput: { onUserSubmittedInput(selectedSession, $0) }
+                onUserSubmittedInput: { onUserSubmittedInput(selectedSession, $0) },
+                onTerminalSlashCommand: onTerminalSlashCommand
             )
             container.apply(theme: theme)
             selectedSession.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
@@ -307,6 +311,7 @@ final class TerminalSwitcherContainer: NSView {
             guard let container = containers[session.id] else { continue }
             container.apply(theme: theme)
             container.onUserSubmittedInput = { onUserSubmittedInput(session, $0) }
+            container.onTerminalSlashCommand = onTerminalSlashCommand
             session.apply(theme: theme, fontFamily: fontFamily, fontSize: fontSize)
         }
 
@@ -328,7 +333,8 @@ final class TerminalSwitcherContainer: NSView {
                     fontSize: fontSize,
                     focusRequestID: focusRequestID,
                     onUserSubmittedInput: onUserSubmittedInput,
-                    onTerminalReady: onTerminalReady
+                    onTerminalReady: onTerminalReady,
+                    onTerminalSlashCommand: onTerminalSlashCommand
                 )
             }
             prepareDeferredProjectSwitch(

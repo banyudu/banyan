@@ -2082,6 +2082,40 @@ final class SessionStore: ObservableObject {
         commandPaletteRequestID = UUID()
     }
 
+    @discardableResult
+    func runTerminalSlashCommand(_ command: TerminalSlashCommand, from terminal: TerminalSession) -> Bool {
+        guard selectedSession === terminal, terminal.acceptsTerminalSlashCommand else { return false }
+        switch command {
+        case .new:
+            _ = spawnPaletteAgentSession()
+        case .newRoot:
+            _ = spawnPaletteAgentSessionInProjectRoot()
+        case .newTerminal:
+            _ = spawnTerminalSiblingSession()
+        case .scratch:
+            openScratchTerminal()
+        case .find:
+            showFindInSelectedSession()
+        case .rename:
+            selection.requestRenameSelectedSession()
+        case .close:
+            handleCloseCommand(in: NSApp.keyWindow)
+        case .sessions:
+            sidebarMode = .sessions
+        case .next:
+            selectNextSession()
+        case .previous:
+            selectPreviousSession()
+        case .nextAttention:
+            selectNextSessionNeedingAttention()
+        case .previousAttention:
+            selectPreviousSessionNeedingAttention()
+        case .workable:
+            selectNextWorkableSession()
+        }
+        return true
+    }
+
     func updateLinearIssueNavigationIDs(_ ids: [String]) {
         guard linearIssueNavigationIDs != ids else { return }
         linearIssueNavigationIDs = ids
