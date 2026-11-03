@@ -21,9 +21,7 @@ import Testing
         for session in store.sessions where session.id != "closed" { session.status = .idle }
         try #require(store.sessions.first { $0.id == "foreign" }).projectGroupID = "other-project"
         store.sortMode = .manual
-        store.collapsedParentIDs = []
-        store.expandedParentIDs = []
-        store.showFinishedChildren = true
+        store.foldedParentIDs = []
         store.selectedSessionID = nil
         store.saveSessions()
         store.flushPendingSessionSaves()
@@ -109,24 +107,20 @@ import Testing
     @Test func targetPickerIncludesHiddenHierarchyAndMoveKeepsVisibilityState() throws {
         let (_, store, _) = try fixture()
         defer { store.flushPendingSessionSaves() }
-        store.collapsedParentIDs = ["target"]
-        store.expandedParentIDs = ["old"]
-        store.showFinishedChildren = false
+        store.foldedParentIDs = ["target"]
         try session("hidden", in: store).status = .completed
         let targets = store.reparentTargets(for: "source")
         #expect(targets.map(\.id) == ["old", "target", "hidden"])
         #expect(targets.first { $0.id == "hidden" }?.depth == 1)
         #expect(!store.sessionSidebarGroups.flatMap(\.items).contains { $0.id == "hidden" })
         try store.reparent(id: "source", parentSessionID: "target")
-        #expect(store.collapsedParentIDs == ["target"])
-        #expect(store.expandedParentIDs == ["old"])
+        #expect(store.foldedParentIDs == ["target"])
         #expect(store.selectedSessionID == nil)
-        #expect(!store.showFinishedChildren)
         #expect(!store.sessionSidebarGroups.flatMap(\.items).contains { $0.id == "source" })
         try store.reparent(id: "source", parentSessionID: "hidden")
         #expect(try session("source", in: store).parentSessionID == "hidden")
         #expect(try session("child", in: store).parentSessionID == "source")
-        #expect(store.collapsedParentIDs == ["target"])
+        #expect(store.foldedParentIDs == ["target"])
         #expect(store.reparentTargets(for: "closed").isEmpty)
     }
 
@@ -155,7 +149,6 @@ import Testing
         for id in ["source", "child", "leaf"] {
             try session(id, in: store).status = .completed
         }
-        store.showFinishedChildren = false
         store.selectedSessionID = "old"
 
         try store.close(id: "old")

@@ -4,169 +4,126 @@ import Testing
 private func visibilityItem(
     _ id: String,
     parent: String? = nil,
-    status: SessionStatus = .running,
-    suspended: Bool = false,
     focus: SessionFocusLane? = nil
 ) -> SessionChildVisibilityItem {
-    SessionChildVisibilityItem(id: id, parentSessionID: parent, status: status, isSuspended: suspended, focusLane: focus)
+    SessionChildVisibilityItem(id: id, parentSessionID: parent, focusLane: focus)
 }
 
 private func hierarchyRow(_ id: String, depth: Int) -> SessionSidebarRow {
     SessionSidebarRow(id: id, depth: depth)
 }
 
-@Test func collapsedParentHidesParkedChildrenButCountsThem() {
-    let rows = [
-        hierarchyRow("parent", depth: 0),
-        hierarchyRow("parked-a", depth: 1),
-        hierarchyRow("parked-b", depth: 1),
-    ]
-    let items: [String: SessionChildVisibilityItem] = [
-        "parent": visibilityItem("parent"),
-        "parked-a": visibilityItem("parked-a", parent: "parent", status: .needInput, suspended: true),
-        "parked-b": visibilityItem("parked-b", parent: "parent", status: .asking, suspended: true),
-    ]
-    let (visible, counts) = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows,
-        itemsByID: items,
-        collapsedParentIDs: ["parent"],
-        showFinishedChildren: false
-    )
-    #expect(visible.map(\.id) == ["parent"])
-    #expect(counts == ["parent": 2])
-}
-
-@Test(arguments: [SessionStatus.asking, .needInput, .failed, .idle, .running, .completed])
-func collapsedParentHidesAllDescendantsUntilExpanded(status: SessionStatus) {
+@Test func foldedParentHidesAllDescendantsUntilUnfolded() {
     let rows = [
         hierarchyRow("parent", depth: 0),
         hierarchyRow("child", depth: 1),
         hierarchyRow("grandchild", depth: 2),
-        hierarchyRow("quiet", depth: 1),
         hierarchyRow("other-parent", depth: 0),
     ]
     let items: [String: SessionChildVisibilityItem] = [
         "parent": visibilityItem("parent"),
-        "child": visibilityItem("child", parent: "parent", status: status),
-        "grandchild": visibilityItem("grandchild", parent: "child", status: .asking),
-        "quiet": visibilityItem("quiet", parent: "parent", status: .idle),
+        "child": visibilityItem("child", parent: "parent"),
+        "grandchild": visibilityItem("grandchild", parent: "child"),
         "other-parent": visibilityItem("other-parent"),
     ]
-    let (visible, counts) = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows,
-        itemsByID: items,
-        collapsedParentIDs: ["parent"],
-        showFinishedChildren: true
-    )
-    #expect(visible.map(\.id) == ["parent", "other-parent"])
-    #expect(counts == ["parent": 3])
 
-    let (expanded, expandedCounts) = SessionChildVisibilityPolicy.visibleRows(
+    let folded = SessionChildVisibilityPolicy.visibleRows(
         rows: rows,
         itemsByID: items,
-        collapsedParentIDs: [],
-        showFinishedChildren: true
+        foldedParentIDs: ["parent"]
     )
-    #expect(expanded == rows)
-    #expect(expandedCounts == [:])
+    #expect(folded.map(\.id) == ["parent", "other-parent"])
+
+    let unfolded = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows,
+        itemsByID: items,
+        foldedParentIDs: []
+    )
+    #expect(unfolded == rows)
 }
 
-@Test func finishedChildrenHideUnderExpandedParentsUntilToggled() {
+@Test func unfoldedParentShowsEveryChild() {
     let rows = [
         hierarchyRow("parent", depth: 0),
-        hierarchyRow("done", depth: 1),
+        hierarchyRow("running", depth: 1),
+        hierarchyRow("completed", depth: 1),
         hierarchyRow("failed", depth: 1),
+        hierarchyRow("parked", depth: 1),
     ]
     let items: [String: SessionChildVisibilityItem] = [
         "parent": visibilityItem("parent"),
-        "done": visibilityItem("done", parent: "parent", status: .completed),
-        // Failed needs a human decision, so it is never finished-hidden.
-        "failed": visibilityItem("failed", parent: "parent", status: .failed),
+        "running": visibilityItem("running", parent: "parent"),
+        "completed": visibilityItem("completed", parent: "parent"),
+        "failed": visibilityItem("failed", parent: "parent"),
+        "parked": visibilityItem("parked", parent: "parent"),
     ]
-    let (hidden, hiddenCounts) = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows,
-        itemsByID: items,
-        collapsedParentIDs: [],
-        showFinishedChildren: false
-    )
-    #expect(hidden.map(\.id) == ["parent", "failed"])
-    #expect(hiddenCounts == ["parent": 1])
 
-    let (shown, shownCounts) = SessionChildVisibilityPolicy.visibleRows(
+    let visible = SessionChildVisibilityPolicy.visibleRows(
         rows: rows,
         itemsByID: items,
-        collapsedParentIDs: [],
-        showFinishedChildren: true
+        foldedParentIDs: []
     )
-    #expect(shown.map(\.id) == ["parent", "done", "failed"])
-    #expect(shownCounts == [:])
+    #expect(visible == rows)
 }
 
-@Test func selectedChildAndItsAncestorsOnlyStayVisibleWhenExpanded() {
+@Test func foldingOneBranchDoesNotHideSiblings() {
     let rows = [
         hierarchyRow("parent", depth: 0),
-        hierarchyRow("done-parent", depth: 1),
-        hierarchyRow("done", depth: 2),
+        hierarchyRow("branch", depth: 1),
+        hierarchyRow("branch-child", depth: 2),
+        hierarchyRow("sibling", depth: 1),
     ]
     let items: [String: SessionChildVisibilityItem] = [
         "parent": visibilityItem("parent"),
-        "done-parent": visibilityItem("done-parent", parent: "parent", status: .completed),
-        "done": visibilityItem("done", parent: "done-parent", status: .completed),
+        "branch": visibilityItem("branch", parent: "parent"),
+        "branch-child": visibilityItem("branch-child", parent: "branch"),
+        "sibling": visibilityItem("sibling", parent: "parent"),
     ]
-    let (visible, counts) = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows,
-        itemsByID: items,
-        collapsedParentIDs: ["parent"],
-        showFinishedChildren: false,
-        selectedID: "done"
-    )
-    #expect(visible.map(\.id) == ["parent"])
-    #expect(counts == ["parent": 2])
 
-    let (expanded, expandedCounts) = SessionChildVisibilityPolicy.visibleRows(
+    let visible = SessionChildVisibilityPolicy.visibleRows(
         rows: rows,
         itemsByID: items,
-        collapsedParentIDs: [],
-        showFinishedChildren: false,
-        selectedID: "done"
+        foldedParentIDs: ["branch"]
     )
-    #expect(expanded == rows)
-    #expect(expandedCounts == [:])
+    #expect(visible.map(\.id) == ["parent", "branch", "sibling"])
 }
 
-@Test func topLevelSessionsRemainVisibleInAllScope() {
-    let rows = [hierarchyRow("done-root", depth: 0)]
-    let items = ["done-root": visibilityItem("done-root", status: .completed)]
-    let (visible, _) = SessionChildVisibilityPolicy.visibleRows(
+@Test func selectedChildStaysHiddenWhileAncestorIsFolded() {
+    let rows = [
+        hierarchyRow("parent", depth: 0),
+        hierarchyRow("child", depth: 1),
+    ]
+    let items: [String: SessionChildVisibilityItem] = [
+        "parent": visibilityItem("parent"),
+        "child": visibilityItem("child", parent: "parent"),
+    ]
+
+    let folded = SessionChildVisibilityPolicy.visibleRows(
         rows: rows,
         itemsByID: items,
-        collapsedParentIDs: [],
-        showFinishedChildren: false
+        foldedParentIDs: ["parent"],
+        selectedID: "child"
+    )
+    #expect(folded.map(\.id) == ["parent"])
+
+    let unfolded = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows,
+        itemsByID: items,
+        foldedParentIDs: [],
+        selectedID: "child"
+    )
+    #expect(unfolded == rows)
+}
+
+@Test func topLevelCompletedRowsRemainVisible() {
+    let rows = [hierarchyRow("done-root", depth: 0)]
+    let items = ["done-root": visibilityItem("done-root")]
+    let visible = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows,
+        itemsByID: items,
+        foldedParentIDs: []
     )
     #expect(visible.map(\.id) == ["done-root"])
-}
-
-@Test func parentsWithOnlyFinishedOrParkedDescendantsStartCollapsed() {
-    let items = [
-        visibilityItem("live-parent", status: .running),
-        visibilityItem("worker", parent: "live-parent", status: .executing),
-        visibilityItem("done-parent", status: .running),
-        visibilityItem("done-child", parent: "done-parent", status: .completed),
-        visibilityItem("parked-parent", status: .running),
-        visibilityItem("parked-child", parent: "parked-parent", status: .needInput, suspended: true),
-    ]
-    let auto = SessionChildVisibilityPolicy.autoCollapsedParents(in: items)
-    #expect(!auto.contains("live-parent"))
-    #expect(auto.contains("done-parent"))
-    #expect(auto.contains("parked-parent"))
-}
-
-@Test func autoCollapseSkipsTheSelectedAncestry() {
-    let items = [
-        visibilityItem("parent", status: .running),
-        visibilityItem("done-child", parent: "parent", status: .completed),
-    ]
-    #expect(SessionChildVisibilityPolicy.autoCollapsedParents(in: items, selectedID: "done-child") == [])
 }
 
 @Test func focusHidesQuietManagedWorkButKeepsAttentionAndUnmanagedSessions() {
@@ -175,17 +132,16 @@ func collapsedParentHidesAllDescendantsUntilExpanded(status: SessionStatus) {
     let items: [String: SessionChildVisibilityItem] = [
         "active": visibilityItem("active", focus: .act),
         "quiet": visibilityItem("quiet", focus: .watch),
-        "settled": visibilityItem("settled", status: .completed, focus: .settled),
+        "settled": visibilityItem("settled", focus: .settled),
         "unmanaged": visibilityItem("unmanaged"),
     ]
 
-    let (focused, counts) = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows, itemsByID: items, collapsedParentIDs: [], showFinishedChildren: false, scope: .focus)
+    let focused = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows, itemsByID: items, foldedParentIDs: [], scope: .focus)
     #expect(focused.map(\.id) == ["active", "unmanaged"])
-    #expect(counts == [:])
 
-    let (all, _) = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows, itemsByID: items, collapsedParentIDs: [], showFinishedChildren: true, scope: .all)
+    let all = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows, itemsByID: items, foldedParentIDs: [], scope: .all)
     #expect(all == rows)
 }
 
@@ -198,10 +154,9 @@ func collapsedParentHidesAllDescendantsUntilExpanded(status: SessionStatus) {
         "plain-parent": visibilityItem("plain-parent", focus: .settled),
         "unmanaged": visibilityItem("unmanaged", parent: "plain-parent"),
     ]
-    let (visible, counts) = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows, itemsByID: items, collapsedParentIDs: [], showFinishedChildren: false, scope: .focus)
+    let visible = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows, itemsByID: items, foldedParentIDs: [], scope: .focus)
     #expect(visible == rows)
-    #expect(counts == [:])
 }
 
 @Test func focusIncludesSelectedQuietWorkAndItsAncestors() {
@@ -210,8 +165,8 @@ func collapsedParentHidesAllDescendantsUntilExpanded(status: SessionStatus) {
         "umbrella": visibilityItem("umbrella", focus: .settled),
         "quiet": visibilityItem("quiet", parent: "umbrella", focus: .watch),
     ]
-    let (visible, _) = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows, itemsByID: items, collapsedParentIDs: [], showFinishedChildren: false,
+    let visible = SessionChildVisibilityPolicy.visibleRows(
+        rows: rows, itemsByID: items, foldedParentIDs: [],
         selectedID: "quiet", scope: .focus)
     #expect(visible == rows)
 }

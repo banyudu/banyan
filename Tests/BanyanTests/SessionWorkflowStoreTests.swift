@@ -930,7 +930,7 @@ extension SessionWorkflowStoreTests {
         #expect(store.backgroundedSessionIDs.contains(child.id))
         #expect(store.visibleSessions.contains { $0.id == session.id })
         #expect(store.sidebarMode == .linear)
-        #expect(store.collapsedParentIDs.contains(session.id))
+        #expect(store.foldedParentIDs.contains(session.id))
         #expect(store.sessionWorkSummaries[session.id]?.descendants.count == 1)
         child.workflow = .init(owner: "workit", jobID: "child-job", revision: 1, state: .waiting)
         #expect(store.sessionWorkSummaries[session.id]?.groupLabel == "1 waiting")

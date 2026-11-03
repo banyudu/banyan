@@ -28,9 +28,7 @@ import Testing
         store.loadPersistedSessionsIfNeeded()
         for session in store.sessions { session.status = .idle }
         store.sortMode = .manual
-        store.collapsedParentIDs = []
-        store.expandedParentIDs = []
-        store.showFinishedChildren = true
+        store.foldedParentIDs = []
         store.saveSessions()
         store.flushPendingSessionSaves()
         let groupID = try #require(store.sessionSidebarGroups.first?.id)
@@ -58,18 +56,17 @@ import Testing
         let expandedRows = visibleRows(in: store)
         #expect(expandedRows.map(\.id) == ["a", "a1", "b", "a2", "c"])
 
-        store.toggleChildrenCollapsed(for: "a")
+        store.toggleChildrenFolded(for: "a")
 
         #expect(visibleRows(in: store).map(\.id) == ["a", "c"])
         let parent = try #require(store.sessionSidebarGroups.flatMap(\.items).first { $0.id == "a" })
-        #expect(parent.isCollapsed)
-        #expect(parent.hiddenChildCount == 3)
+        #expect(parent.isFolded)
         #expect(store.selectedSessionID == "b")
 
-        store.toggleChildrenCollapsed(for: "a")
+        store.toggleChildrenFolded(for: "a")
         #expect(visibleRows(in: store) == expandedRows)
 
-        store.toggleChildrenCollapsed(for: "a")
+        store.toggleChildrenFolded(for: "a")
         store.userSelect(id: "b")
         #expect(visibleRows(in: store) == expandedRows)
     }
@@ -130,11 +127,10 @@ import Testing
         store.moveSidebarSession("c", command: .before("a"), in: groupID)
         #expect(visibleRows(in: store).map(\.id) == ["c", "a", "a1", "a2", "b"])
 
-        store.collapsedParentIDs = ["b"]
+        store.foldedParentIDs = ["b"]
         store.moveSidebarSession("a", command: .child("b"), in: groupID)
         #expect(try session("a", in: store).parentSessionID == "b")
-        #expect(!store.collapsedParentIDs.contains("b"))
-        #expect(store.expandedParentIDs.contains("b"))
+        #expect(!store.foldedParentIDs.contains("b"))
         #expect(visibleRows(in: store) == [
             SessionSidebarRow(id: "c", depth: 0),
             SessionSidebarRow(id: "b", depth: 0),

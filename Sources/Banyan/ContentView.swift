@@ -589,9 +589,6 @@ struct ContentView: View {
                             : "\(store.hiddenManagedSessionCount) managed sessions hidden")
                     }
                     Divider()
-                    Toggle("Show finished children", isOn: $store.showFinishedChildren)
-                        .help("Reveal completed child sessions in the sidebar")
-                    Divider()
                     Button("Reveal Command Logs") {
                         revealPaletteCommandLogs()
                     }
@@ -1303,7 +1300,7 @@ struct ContentView: View {
             isHistory: isHistory,
             isParent: item.isParent,
             showsDisclosureGutter: showsDisclosureGutter,
-            isCollapsed: item.isCollapsed,
+            isFolded: item.isFolded,
             jumpKeyLabel: jumpKeyLabel,
             jumpShortcuts: sessionJumpShortcuts,
             workState: store.workState(for: item.id),
@@ -1312,8 +1309,8 @@ struct ContentView: View {
             onSelect: {
                 store.userSelect(id: item.session.id)
             },
-            onToggleCollapse: {
-                store.toggleChildrenCollapsed(for: item.session.id)
+            onToggleFold: {
+                store.toggleChildrenFolded(for: item.session.id)
             },
             onClose: {
                 store.requestClose(id: item.session.id)
@@ -2798,7 +2795,7 @@ struct SessionRow: View, Equatable {
     /// row needs it, rows stay compact; otherwise same-depth badges align
     /// and a top-level parent can't read as its sibling's child.
     let showsDisclosureGutter: Bool
-    let isCollapsed: Bool
+    let isFolded: Bool
     let jumpKeyLabel: String
     var jumpShortcuts: SessionJumpShortcuts? = nil
     @ObservedObject var workState: SessionWorkState
@@ -2806,7 +2803,7 @@ struct SessionRow: View, Equatable {
     let actionOwner: ObjectIdentifier
     let openWorkSession: (String) -> Void
     let onSelect: () -> Void
-    let onToggleCollapse: () -> Void
+    let onToggleFold: () -> Void
     let onClose: () -> Void
     let onRestart: () -> Void
     let onRespawn: () -> Void
@@ -2836,7 +2833,7 @@ struct SessionRow: View, Equatable {
             && lhs.launchProfile == rhs.launchProfile && lhs.depth == rhs.depth
             && lhs.titleOverride == rhs.titleOverride && lhs.isHistory == rhs.isHistory
             && lhs.isParent == rhs.isParent && lhs.showsDisclosureGutter == rhs.showsDisclosureGutter
-            && lhs.isCollapsed == rhs.isCollapsed
+            && lhs.isFolded == rhs.isFolded
             && lhs.jumpKeyLabel == rhs.jumpKeyLabel && lhs.workState === rhs.workState
             && lhs.jumpShortcuts === rhs.jumpShortcuts
             && lhs.isHandoffAvailable == rhs.isHandoffAvailable && lhs.isHandoffPending == rhs.isHandoffPending
@@ -2895,16 +2892,16 @@ struct SessionRow: View, Equatable {
             // has a disclosure triangle of its own.
             if showsDisclosureGutter {
                 if isParent {
-                    Button(action: onToggleCollapse) {
+                    Button(action: onToggleFold) {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .frame(width: 14, height: 18)
-                            .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                            .rotationEffect(.degrees(isFolded ? 0 : 90))
                     }
                     .buttonStyle(.banyanPlainLabelOnly)
-                    .help(isCollapsed ? "Expand child sessions" : "Collapse child sessions")
-                    .accessibilityLabel(isCollapsed ? "Expand child sessions" : "Collapse child sessions")
+                    .help(isFolded ? "Unfold child sessions" : "Fold child sessions")
+                    .accessibilityLabel(isFolded ? "Unfold child sessions" : "Fold child sessions")
                     .accessibilityIdentifier(AccessibilityID.sessionRowDisclosure(session.id))
                 } else {
                     Color.clear

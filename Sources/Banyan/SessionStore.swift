@@ -9,8 +9,7 @@ struct SidebarSessionItem: Identifiable {
     let titleOverride: String?
     let isHistory: Bool
     let isParent: Bool
-    let isCollapsed: Bool
-    let hiddenChildCount: Int
+    let isFolded: Bool
     let moveOptions: SessionSidebarMoveOptions
 
     init(
@@ -19,8 +18,7 @@ struct SidebarSessionItem: Identifiable {
         titleOverride: String? = nil,
         isHistory: Bool = false,
         isParent: Bool = false,
-        isCollapsed: Bool = false,
-        hiddenChildCount: Int = 0,
+        isFolded: Bool = false,
         moveOptions: SessionSidebarMoveOptions = []
     ) {
         self.session = session
@@ -28,8 +26,7 @@ struct SidebarSessionItem: Identifiable {
         self.titleOverride = titleOverride
         self.isHistory = isHistory
         self.isParent = isParent
-        self.isCollapsed = isCollapsed
-        self.hiddenChildCount = hiddenChildCount
+        self.isFolded = isFolded
         self.moveOptions = moveOptions
     }
 
@@ -438,38 +435,15 @@ final class SessionStore: ObservableObject {
     /// Owns the pending slot and the dedup window behind `pendingSuggestion`.
     private var suggestionInbox = SuggestionInbox()
     private static let projectLaunchDefaultsKey = "projectNewSessionLaunch"
-    /// Parents whose child rows are manually collapsed. Persisted in
-    /// `UserDefaults`; the effective collapsed set also auto-collapses parents
-    /// whose whole subtree is finished or parked (see
-    /// `SessionChildVisibilityPolicy`).
-    @Published var collapsedParentIDs: Set<String> = [] {
+    /// Parents whose children are folded. Persisted in `UserDefaults`; this is
+    /// the only child-visibility state, so a parent is either folded or
+    /// unfolded, and unfolding shows every child again.
+    @Published var foldedParentIDs: Set<String> = [] {
         didSet {
             sidebarGroupsRevision &+= 1
             UserDefaults.standard.set(
-                Array(collapsedParentIDs),
-                forKey: Self.collapsedParentsDefaultsKey
-            )
-        }
-    }
-    /// Parents the user explicitly expanded, exempting them from auto-collapse.
-    @Published var expandedParentIDs: Set<String> = [] {
-        didSet {
-            sidebarGroupsRevision &+= 1
-            UserDefaults.standard.set(
-                Array(expandedParentIDs),
-                forKey: Self.expandedParentsDefaultsKey
-            )
-        }
-    }
-    /// When false (the default), completed child rows hide behind their
-    /// parent's count badge instead of spending a row each. Failed children
-    /// stay visible under expanded parents: they need a human decision.
-    @Published var showFinishedChildren = false {
-        didSet {
-            sidebarGroupsRevision &+= 1
-            UserDefaults.standard.set(
-                showFinishedChildren,
-                forKey: Self.showFinishedChildrenDefaultsKey
+                Array(foldedParentIDs),
+                forKey: Self.foldedParentsDefaultsKey
             )
         }
     }
@@ -483,9 +457,8 @@ final class SessionStore: ObservableObject {
             UserDefaults.standard.set(sidebarScope.rawValue, forKey: Self.sidebarScopeDefaultsKey)
         }
     }
-    private static let collapsedParentsDefaultsKey = "sidebarCollapsedParentIDs"
-    private static let expandedParentsDefaultsKey = "sidebarManuallyExpandedParentIDs"
-    private static let showFinishedChildrenDefaultsKey = "sidebarShowFinishedChildren"
+    private static let foldedParentsDefaultsKey = "sidebarFoldedParentIDs"
+    private static let legacyCollapsedParentsDefaultsKey = "sidebarCollapsedParentIDs"
     private static let sidebarScopeDefaultsKey = "sidebarScope"
 
     let codexThreads: CodexThreadCoordinator
@@ -827,13 +800,11 @@ final class SessionStore: ObservableObject {
             projectLaunchByGroup = stored
         }
         paletteAgentProfileID = defaults.string(forKey: Self.paletteAgentProfileDefaultsKey)
-        if let collapsed = defaults.array(forKey: Self.collapsedParentsDefaultsKey) as? [String] {
-            collapsedParentIDs = Set(collapsed)
+        if let folded = defaults.array(forKey: Self.foldedParentsDefaultsKey) as? [String] {
+            foldedParentIDs = Set(folded)
+        } else if let collapsed = defaults.array(forKey: Self.legacyCollapsedParentsDefaultsKey) as? [String] {
+            foldedParentIDs = Set(collapsed)
         }
-        if let expanded = defaults.array(forKey: Self.expandedParentsDefaultsKey) as? [String] {
-            expandedParentIDs = Set(expanded)
-        }
-        showFinishedChildren = defaults.bool(forKey: Self.showFinishedChildrenDefaultsKey)
         sidebarScope = defaults.string(forKey: Self.sidebarScopeDefaultsKey)
             .flatMap(SessionSidebarScope.init(rawValue:)) ?? .focus
         dismissedPuckSessionIDs = persistence.loadDismissedPuckSessionIDs()
@@ -933,8 +904,6 @@ final class SessionStore: ObservableObject {
             SessionChildVisibilityItem(
                 id: $0.id,
                 parentSessionID: $0.parentSessionID,
-                status: $0.status,
-                isSuspended: $0.isSuspended,
                 focusLane: workSummaries[$0.id]?.own.focusLane
             )
         }
@@ -942,13 +911,6 @@ final class SessionStore: ObservableObject {
             visibilityInfo.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let effectiveCollapsed = collapsedParentIDs.union(
-            SessionChildVisibilityPolicy.autoCollapsedParents(
-                in: visibilityInfo,
-                selectedID: selectedSessionID,
-                scope: sidebarScope
-            )
-        ).subtracting(expandedParentIDs)
         let result: [SidebarSessionGroup] = SessionSidebarGroupingPolicy.groups(for: candidates).compactMap { group -> SidebarSessionGroup? in
             let rowIDs = Set(group.rows.map(\.id))
             let moveItems = group.rows.compactMap { row -> SessionSelectionItem? in
@@ -960,11 +922,10 @@ final class SessionStore: ObservableObject {
                 group.rows.compactMap { visibilityByID[$0.id]?.parentSessionID }
                     .filter { rowIDs.contains($0) }
             )
-            let (visibleRows, hiddenCounts) = SessionChildVisibilityPolicy.visibleRows(
+            let visibleRows = SessionChildVisibilityPolicy.visibleRows(
                 rows: group.rows,
                 itemsByID: visibilityByID,
-                collapsedParentIDs: effectiveCollapsed,
-                showFinishedChildren: showFinishedChildren,
+                foldedParentIDs: foldedParentIDs,
                 selectedID: selectedSessionID,
                 scope: sidebarScope
             )
@@ -978,8 +939,7 @@ final class SessionStore: ObservableObject {
                         session: session,
                         depth: row.depth,
                         isParent: parentsInGroup.contains(row.id),
-                        isCollapsed: effectiveCollapsed.contains(row.id),
-                        hiddenChildCount: hiddenCounts[row.id] ?? 0,
+                        isFolded: foldedParentIDs.contains(row.id),
                         moveOptions: moveOptionsByID[row.id] ?? []
                     )
                 },
@@ -1352,7 +1312,7 @@ final class SessionStore: ObservableObject {
         restoreWorkflows()
         restoreBackgroundPresentation()
         // Background roots remain discoverable in the familiar session tree.
-        collapsedParentIDs.formUnion(backgroundSessionRoots)
+        foldedParentIDs.formUnion(backgroundSessionRoots)
         // Register the whole restored fleet before any recovery can claim a
         // new slot. Over-budget work stays intact, including parked/frozen rows.
         for terminal in terminalSessions where agentAdmission.running.contains(terminal.id) {
@@ -4883,45 +4843,18 @@ final class SessionStore: ObservableObject {
         var cursor = sessionsByID[id]?.parentSessionID
         var visited: Set<String> = []
         while let current = cursor, visited.insert(current).inserted {
-            collapsedParentIDs.remove(current)
-            expandedParentIDs.insert(current)
+            foldedParentIDs.remove(current)
             cursor = sessionsByID[current]?.parentSessionID
         }
     }
 
-    /// Flips a parent between collapsed and expanded child rows. Manual state
-    /// wins over auto-collapse in both directions.
-    func toggleChildrenCollapsed(for parentID: String) {
-        if effectiveCollapsedParentIDs().contains(parentID) {
-            collapsedParentIDs.remove(parentID)
-            expandedParentIDs.insert(parentID)
+    /// Flips a parent between folded and unfolded child rows.
+    func toggleChildrenFolded(for parentID: String) {
+        if foldedParentIDs.contains(parentID) {
+            foldedParentIDs.remove(parentID)
         } else {
-            collapsedParentIDs.insert(parentID)
-            expandedParentIDs.remove(parentID)
+            foldedParentIDs.insert(parentID)
         }
-    }
-
-    /// Manual collapses plus auto-collapsed finished/parked subtrees, minus
-    /// manual expansions.
-    func effectiveCollapsedParentIDs() -> Set<String> {
-        let workSummaries = sessionWorkSummaries
-        let items = sessions
-            .filter { !$0.isImportedHistory && $0.status != .closed }
-            .map {
-                SessionChildVisibilityItem(
-                    id: $0.id,
-                    parentSessionID: $0.parentSessionID,
-                    status: $0.status,
-                    isSuspended: $0.isSuspended,
-                    focusLane: workSummaries[$0.id]?.own.focusLane
-                )
-            }
-        let auto = SessionChildVisibilityPolicy.autoCollapsedParents(
-            in: items,
-            selectedID: selectedSessionID,
-            scope: sidebarScope
-        )
-        return collapsedParentIDs.union(auto).subtracting(expandedParentIDs)
     }
 
     private func applySidebarSessionOrder(activeSidebarIDs: [String], reorderedIDs: [String]) {
@@ -4969,10 +4902,9 @@ final class SessionStore: ObservableObject {
         if parentChanged {
             session.parentSessionID = result.parentSessionID
             if let parentID = result.parentSessionID {
-                // A drop onto or an indent under a collapsed parent should reveal
+                // A drop onto or an indent under a folded parent should reveal
                 // the moved session immediately rather than hiding the result.
-                collapsedParentIDs.remove(parentID)
-                expandedParentIDs.insert(parentID)
+                foldedParentIDs.remove(parentID)
             }
         }
         if orderChanged {

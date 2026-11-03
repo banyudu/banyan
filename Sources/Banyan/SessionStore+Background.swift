@@ -33,8 +33,7 @@ extension SessionStore {
         var roots = backgroundSessionRoots; roots.insert(id)
         try backgroundJournal.save(roots)
         backgroundSessionRoots = roots
-        collapsedParentIDs.insert(id)
-        expandedParentIDs.remove(id)
+        foldedParentIDs.insert(id)
         if let selectedSessionID, backgroundedSessionIDs.contains(selectedSessionID) {
             self.selectedSessionID = visibleSessions.first { !backgroundedSessionIDs.contains($0.id) }?.id
         }

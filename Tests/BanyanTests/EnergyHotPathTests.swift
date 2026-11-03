@@ -138,11 +138,10 @@ import Testing
     parent.status = .executing
     child.status = .idle
     child.parentSessionID = parent.id
-    store.expandedParentIDs = []
-    store.collapsedParentIDs = [parent.id]
+    store.foldedParentIDs = [parent.id]
     #expect(!store.hasMultipleSidebarSessions)
     #expect(!store.hasWorkableSession)
-    store.expandedParentIDs = [parent.id]
+    store.foldedParentIDs = []
     #expect(store.hasMultipleSidebarSessions)
     #expect(store.hasWorkableSession)
     child.status = .closed

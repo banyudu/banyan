@@ -655,13 +655,17 @@ To move an existing session, use `reparent --id CHILD --parent PARENT`, or
 right-click an active session to use **Move Up**, **Move Down**, **Indent Under
 Previous Sibling**, **Move Out One Level**, **Move to Top Level**, or **Move
 to…**. The commands preserve the session's subtree, and **Move to…** lists the
-active hierarchy, including collapsed and hidden targets in the same project
+active hierarchy, including folded and hidden targets in the same project
 group.
 
 You can also drag a session row. Drop on the top or bottom edge to place its
 subtree before or after the target at the target's level; drop on the center to
-make it the target's last child. A collapsed target expands to reveal the moved
+make it the target's last child. A folded target unfolds to reveal the moved
 session. Reordering switches the sidebar to manual sort.
+
+Each parent row has one fold state: folding it hides every child and
+descendant, and unfolding it shows them all again. Completed and failed child
+rows are not hidden separately.
 
 Within the same project group, moves keep the session's ID, process, metadata,
 and children. Self-parenting, cycles, missing or closed targets, and moves
@@ -989,7 +993,7 @@ Banyan is released under the [MIT License](LICENSE). The vendored
 ### Durable work overview
 
 **Sessions remains the main working surface.** Existing parent rows summarize
-their child sessions, including nested, collapsed and background work. Idle
+their child sessions, including nested, folded and background work. Idle
 conversations are counted as idle, not as completed issues. Managed session rows
 show specific saved work status such as Tool error, Waiting for CI, or Verified.
 Click a status or parent summary to open **Work details** without replacing the

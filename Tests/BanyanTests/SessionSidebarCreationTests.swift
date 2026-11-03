@@ -17,9 +17,7 @@ import Testing
         store.loadPersistedSessionsIfNeeded()
         for session in store.sessions { session.status = .idle }
         store.sortMode = .manual
-        store.collapsedParentIDs = []
-        store.expandedParentIDs = []
-        store.showFinishedChildren = true
+        store.foldedParentIDs = []
         return (fixture, store)
     }
 
@@ -61,10 +59,10 @@ import Testing
         let (fixture, store) = try fixture()
         defer { store.flushPendingSessionSaves() }
         store.selectedSessionID = "a1"
-        store.collapsedParentIDs = ["a", "a1"]
+        store.foldedParentIDs = ["a", "a1"]
         let new = store.spawn(id: "new-child", cwd: fixture.project.path, command: "", parentSessionID: "a1")
         #expect(rows(store).contains { $0.id == new.id && $0.depth == 2 })
-        #expect(store.collapsedParentIDs.isEmpty)
+        #expect(store.foldedParentIDs.isEmpty)
     }
 
     @Test func topLevelCreationFromANestedFocusKeepsTheExistingHierarchy() throws {
