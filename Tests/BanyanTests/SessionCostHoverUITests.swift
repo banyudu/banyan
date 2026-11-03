@@ -133,13 +133,16 @@ import Testing
             window.close()
         }
 
-        try await Task.sleep(for: .milliseconds(700))
-        let visiblePixels = try costTintPixelCount(in: hosting)
+        var visiblePixels = 0
+        for _ in 0..<10 {
+            try await Task.sleep(for: .milliseconds(50))
+            visiblePixels = max(visiblePixels, try costTintPixelCount(in: hosting))
+        }
         #expect(visiblePixels > 0, "The cost estimate should be visible after hover settles")
 
-        try await Task.sleep(for: .milliseconds(1_100))
+        try await Task.sleep(for: .milliseconds(700))
         let hiddenPixels = try costTintPixelCount(in: hosting)
-        #expect(hiddenPixels < visiblePixels / 2, "The cost estimate should fade out after about a second")
+        #expect(hiddenPixels < visiblePixels / 2, "The cost estimate should fade out after a brief reveal")
     }
 
     private func badgeChannelBias(
