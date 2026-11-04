@@ -1222,7 +1222,7 @@ struct ContentView: View {
                             item,
                             groupID: group.id,
                             allowsDragSort: true,
-                            isHistory: item.isHistory,
+                            isHistory: false,
                             showsDisclosureGutter: showsDisclosureGutter,
                             jumpKeyLabel: ""
                         )

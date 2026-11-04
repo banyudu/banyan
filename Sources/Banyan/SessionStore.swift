@@ -869,56 +869,6 @@ final class SessionStore: ObservableObject {
         return SessionVisibilityPolicy.visibleIDs(from: items, sortMode: sortMode).compactMap { sessionsByID[$0] }
     }
 
-    /// Sessions that belong to the live sidebar tree: every non-closed row plus
-    /// the retained closed rows that sit in the same tree. A closed child stays
-    /// attached to its parent, so unfolding reveals it and folding hides it;
-    /// only a closed row with no live ancestor or descendant stays out.
-    private var sidebarTreeSessionIDs: Set<String> {
-        let live = sessions.filter { !$0.isImportedHistory && $0.status != .closed }
-        guard !live.isEmpty else { return [] }
-        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var included: Set<String> = []
-        var pending: [String] = []
-        for session in live {
-            var cursor: String? = session.id
-            while let id = cursor, included.insert(id).inserted {
-                pending.append(id)
-                cursor = sessionsByID[id]?.parentSessionID
-            }
-        }
-        var childrenByParent: [String: [String]] = [:]
-        for session in sessions where !session.isImportedHistory {
-            guard let parentID = session.parentSessionID else { continue }
-            childrenByParent[parentID, default: []].append(session.id)
-        }
-        while let parentID = pending.popLast() {
-            for childID in childrenByParent[parentID] ?? [] where included.insert(childID).inserted {
-                pending.append(childID)
-            }
-        }
-        return included
-    }
-
-    private var sidebarTreeSessions: [BanyanSession] {
-        let included = sidebarTreeSessionIDs
-        guard !included.isEmpty else { return [] }
-        let sessionsByID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let orderedIDs = SessionVisibilityPolicy.visibleIDs(
-            from: sessions.map {
-                SessionVisibilityItem(
-                    id: $0.id,
-                    status: $0.status,
-                    updatedAt: $0.updatedAt,
-                    displayTitle: $0.displayTitle,
-                    isSuspended: $0.isSuspended
-                )
-            },
-            sortMode: sortMode,
-            includingClosedIDs: included
-        )
-        return orderedIDs.compactMap { sessionsByID[$0] }.filter { !$0.isImportedHistory }
-    }
-
     /// The sessions with a tmux pane, for work only a terminal has: pane
     /// supervision, liveness sweeps, and terminal rendering.
     var terminalSessions: [TerminalSession] {
@@ -939,7 +889,7 @@ final class SessionStore: ObservableObject {
            let cached = cachedSessionSidebarGroups {
             return cached
         }
-        let active = sidebarTreeSessions
+        let active = visibleSessions.filter { !$0.isImportedHistory }
         let candidates = active.map {
             SessionSidebarCandidate(
                 id: $0.id,
@@ -988,10 +938,9 @@ final class SessionStore: ObservableObject {
                     return SidebarSessionItem(
                         session: session,
                         depth: row.depth,
-                        isHistory: session.status == .closed,
                         isParent: parentsInGroup.contains(row.id),
                         isFolded: foldedParentIDs.contains(row.id),
-                        moveOptions: session.status == .closed ? [] : (moveOptionsByID[row.id] ?? [])
+                        moveOptions: moveOptionsByID[row.id] ?? []
                     )
                 },
                 moveItems: moveItems
@@ -1141,15 +1090,13 @@ final class SessionStore: ObservableObject {
             return cached
         }
 
-        let treeSessionIDs = sidebarTreeSessionIDs
         let historySessions = sessions.filter { session in
-            !treeSessionIDs.contains(session.id)
-                && SessionHistoryPolicy.isLocalHistorySession(
-                    status: session.status,
-                    isImportedHistory: session.isImportedHistory,
-                    provider: session.agentProvider,
-                    hasIssueLink: session.titleLinkLabel != nil
-                )
+            SessionHistoryPolicy.isLocalHistorySession(
+                status: session.status,
+                isImportedHistory: session.isImportedHistory,
+                provider: session.agentProvider,
+                hasIssueLink: session.titleLinkLabel != nil
+            )
         }
 
         // Browse path pre-limits by `updatedAt` before rendering titles;

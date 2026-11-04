@@ -665,9 +665,8 @@ make it the target's last child. A folded target unfolds to reveal the moved
 session. Reordering switches the sidebar to manual sort.
 
 Each parent row has one fold state: folding it hides every child and
-descendant, and unfolding it shows them all again. Completed, failed and closed
-child rows are not hidden separately; a closed child stays in the parent's tree
-until retention removes it.
+descendant, and unfolding it shows them all again. Completed and failed child
+rows are not hidden separately.
 
 Within the same project group, moves keep the session's ID, process, metadata,
 and children. Self-parenting, cycles, missing or closed targets, and moves

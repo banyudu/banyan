@@ -23,22 +23,6 @@ import Testing
     #expect(SessionVisibilityPolicy.visibleIDs(from: items, sortMode: .manual) == ["first", "second"])
 }
 
-@Test func visibilityPolicyKeepsExplicitlyIncludedClosedSessions() {
-    let items = [
-        SessionVisibilityItem(id: "parent", status: .idle, updatedAt: .init(timeIntervalSince1970: 100), displayTitle: "Parent"),
-        SessionVisibilityItem(id: "closed-child", status: .closed, updatedAt: .init(timeIntervalSince1970: 300), displayTitle: "Closed child"),
-        SessionVisibilityItem(id: "closed-elsewhere", status: .closed, updatedAt: .init(timeIntervalSince1970: 200), displayTitle: "Closed elsewhere")
-    ]
-
-    #expect(
-        SessionVisibilityPolicy.visibleIDs(
-            from: items,
-            sortMode: .manual,
-            includingClosedIDs: ["closed-child"]
-        ) == ["parent", "closed-child"]
-    )
-}
-
 @Test func visibilityPolicySortsByStatusUpdatedTimeAndTitle() {
     let items = [
         SessionVisibilityItem(id: "running", status: .running, updatedAt: .init(timeIntervalSince1970: 300), displayTitle: "Zulu"),
