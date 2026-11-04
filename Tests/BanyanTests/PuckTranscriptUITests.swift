@@ -114,6 +114,80 @@ struct PuckTranscriptUITests {
         #expect(!expanded.contains("--- stdout ---"))
     }
 
+    @Test func historyToolCallWrapperIsNotRenderedAsOutput() async throws {
+        let timeline = PuckTimelineProjection.project(
+            history: [
+                PuckHistoryItem(id: "native-1", turnID: "turn-1", kind: "tool", text: "exec_command"),
+                PuckHistoryItem(
+                    id: "native-2",
+                    turnID: "turn-1",
+                    kind: "tool",
+                    text: "exit code: 0\n--- stdout ---\nAll tests passed"
+                ),
+            ],
+            events: []
+        )
+
+        let text = try await render(
+            PuckTimelineRows(
+                items: timeline.items,
+                initiallyExpandedItemIDs: Set(timeline.items.map(\.id))
+            )
+                .padding(20)
+                .frame(width: 720, height: 420, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: NSSize(width: 720, height: 420),
+            name: "history-tool-call-wrapper"
+        )
+
+        #expect(text.contains("Ran Command"))
+        #expect(text.contains("All tests passed"))
+        #expect(!text.contains("exec_command"))
+        #expect(!text.contains("exit code"))
+    }
+
+    @Test func protocol22HistoryShowsTheCommandBehindTheToolCall() async throws {
+        let timeline = PuckTimelineProjection.project(
+            history: [
+                PuckHistoryItem(
+                    id: "call-1",
+                    turnID: "turn-1",
+                    kind: "tool_call",
+                    text: "exec_command",
+                    toolName: "exec_command",
+                    callID: "call-abc",
+                    arguments: #"{"cmd":"cat src/app/sitemap.ts"}"#
+                ),
+                PuckHistoryItem(
+                    id: "result-1",
+                    turnID: "turn-1",
+                    kind: "tool_result",
+                    text: "exit code: 0\n--- stdout ---\nimport type { MetadataRoute } from \"next\";",
+                    callID: "call-abc"
+                ),
+            ],
+            events: []
+        )
+
+        let text = try await render(
+            PuckTimelineRows(
+                items: timeline.items,
+                initiallyExpandedItemIDs: Set(timeline.items.map(\.id))
+            )
+                .padding(20)
+                .frame(width: 760, height: 460, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: NSSize(width: 760, height: 460),
+            name: "protocol22-history-tool-call"
+        )
+
+        #expect(text.contains("cat src/app/sitemap.ts")
+            || compactOCR(text).contains(compactOCR("cat src/app/sitemap.ts")))
+        #expect(text.contains("MetadataRoute"))
+        #expect(!text.contains("exec_command"))
+        #expect(!text.contains("exit code"))
+    }
+
     @Test func followLogicKeepsStreamingAtTheEndButRespectsAUserScroll() {
         #expect(PuckTranscriptFollowLogic.shouldFollow(
             previousAtBottom: true,

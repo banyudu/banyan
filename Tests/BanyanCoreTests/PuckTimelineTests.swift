@@ -58,6 +58,142 @@ struct PuckTimelineTests {
         #expect(timeline.usage?.total.outputTokens == 30)
     }
 
+    @Test func historyToolCallAndResultBecomeOneNamedActivity() {
+        let history = [
+            PuckHistoryItem(id: "native-1", turnID: "turn-1", kind: "tool", text: "exec_command"),
+            PuckHistoryItem(
+                id: "native-2",
+                turnID: "turn-1",
+                kind: "tool",
+                text: "exit code: 0\n--- stdout ---\nSources/BanyanCore"
+            ),
+            PuckHistoryItem(id: "native-3", turnID: "turn-1", kind: "tool", text: "edit"),
+            PuckHistoryItem(id: "native-4", turnID: "turn-1", kind: "tool", text: "replaced 1 occurrence(s)"),
+        ]
+
+        let timeline = PuckTimelineProjection.project(history: history, events: [])
+
+        #expect(timeline.items.count == 2)
+        #expect(timeline.items.map(\.id) == ["tool:native-1", "tool:native-3"])
+        let tools = timeline.items.compactMap { item -> PuckToolActivity? in
+            guard case .tool(let tool) = item.content else { return nil }
+            return tool
+        }
+        #expect(tools.map(\.name) == ["exec_command", "edit"])
+        #expect(tools.map(\.callID) == ["native-1", "native-3"])
+        #expect(tools[0].output == "exit code: 0\n--- stdout ---\nSources/BanyanCore")
+        #expect(tools[1].output == "replaced 1 occurrence(s)")
+        #expect(tools.allSatisfy { $0.state == .succeeded })
+    }
+
+    @Test func orphanedHistoryToolCallDoesNotBecomeAnOutputRow() {
+        let history = [
+            PuckHistoryItem(id: "native-7", kind: "tool", text: "exec_command"),
+        ]
+
+        let timeline = PuckTimelineProjection.project(history: history, events: [])
+
+        #expect(timeline.items.count == 1)
+        guard case .tool(let tool) = timeline.items[0].content else {
+            Issue.record("Orphaned tool call was not kept as tool activity")
+            return
+        }
+        #expect(tool.name == "exec_command")
+        #expect(tool.output.isEmpty)
+    }
+
+    @Test func historyToolCallPairsWithResultByCallID() {
+        let history = [
+            PuckHistoryItem(
+                id: "call-1",
+                turnID: "turn-1",
+                kind: "tool_call",
+                text: "exec_command",
+                toolName: "exec_command",
+                callID: "call-abc",
+                arguments: #"{"cmd":"cat src/app/sitemap.ts"}"#
+            ),
+            PuckHistoryItem(id: "reply-1", turnID: "turn-1", kind: "assistant", text: "Reading it"),
+            PuckHistoryItem(
+                id: "result-1",
+                turnID: "turn-1",
+                kind: "tool_result",
+                text: "exit code: 0\n--- stdout ---\nimport type { MetadataRoute } from \"next\";",
+                callID: "call-abc"
+            ),
+        ]
+
+        let timeline = PuckTimelineProjection.project(history: history, events: [])
+
+        #expect(timeline.items.count == 2)
+        guard case .tool(let tool) = timeline.items[0].content else {
+            Issue.record("Tool call and result did not merge by call ID")
+            return
+        }
+        #expect(tool.callID == "call-abc")
+        #expect(tool.name == "exec_command")
+        #expect(tool.arguments == #"{"cmd":"cat src/app/sitemap.ts"}"#)
+        #expect(tool.output.contains("MetadataRoute"))
+        #expect(tool.state == .succeeded)
+    }
+
+    @Test func historyToolResultBeforeItsCallStillMerges() {
+        let history = [
+            PuckHistoryItem(
+                id: "result-1",
+                kind: "tool_result",
+                text: "All tests passed",
+                callID: "call-abc"
+            ),
+            PuckHistoryItem(
+                id: "call-1",
+                kind: "tool_call",
+                text: "exec_command",
+                toolName: "exec_command",
+                callID: "call-abc",
+                arguments: #"{"cmd":"swift test"}"#
+            ),
+        ]
+
+        let timeline = PuckTimelineProjection.project(history: history, events: [])
+
+        #expect(timeline.items.count == 1)
+        guard case .tool(let tool) = timeline.items[0].content else {
+            Issue.record("Reversed call/result rows did not merge")
+            return
+        }
+        #expect(tool.callID == "call-abc")
+        #expect(tool.name == "exec_command")
+        #expect(tool.arguments == #"{"cmd":"swift test"}"#)
+        #expect(tool.output == "All tests passed")
+    }
+
+    @Test func combinedHistoryToolRowKeepsCommandAndOutputSeparate() {
+        let history = [
+            PuckHistoryItem(
+                id: "command-1",
+                turnID: "turn-1",
+                kind: "tool",
+                text: "All tests passed",
+                toolName: "exec_command",
+                callID: "call-abc",
+                arguments: #"{"cmd":"swift test","workdir":"/tmp/project"}"#
+            ),
+        ]
+
+        let timeline = PuckTimelineProjection.project(history: history, events: [])
+
+        #expect(timeline.items.count == 1)
+        guard case .tool(let tool) = timeline.items[0].content else {
+            Issue.record("Combined tool row was not normalized")
+            return
+        }
+        #expect(tool.name == "exec_command")
+        #expect(tool.arguments == #"{"cmd":"swift test","workdir":"/tmp/project"}"#)
+        #expect(tool.output == "All tests passed")
+        #expect(tool.state == .succeeded)
+    }
+
     @Test func historyAndLiveOverlapUseStableIdentityWithoutDuplicates() {
         let history = [
             PuckHistoryItem(id: "user-1", turnID: "turn-1", kind: "user", text: "Inspect"),

@@ -36,15 +36,31 @@ public struct PuckResources: Codable, Sendable {
     enum CodingKeys: String, CodingKey { case sessions, active, queued, parked, hibernated, workers
         case loadedThreads = "loaded_threads", activeLimit = "active_limit", queueLimit = "queue_limit", loadedThreadsPerAccount = "loaded_threads_per_account", loadedThreadsTotal = "loaded_threads_total" }
 }
+/// One display row. Tool rows use three kinds: `tool_call` is a native call
+/// whose `text` is the tool name; `tool_result` is that call's output, in its
+/// own row with the same `callID`; `tool` is one row for a whole activity, such
+/// as a Codex command, whose `text` is its output. Protocol 2.2 added the tool
+/// fields; payloads without them decode with nil values.
 public struct PuckHistoryItem: Codable, Sendable, Identifiable, Equatable {
     public let id: String
     public let turnID: String?
     public let kind: String
     public let text: String
     public let truncated: Bool
-    enum CodingKeys: String, CodingKey { case id, kind, text, truncated; case turnID = "turn_id" }
-    public init(id: String, turnID: String? = nil, kind: String, text: String, truncated: Bool = false) {
+    public let toolName: String?
+    public let callID: String?
+    /// The call input: a native call's raw arguments JSON or freeform input.
+    /// A Codex command is normalized to `exec_command` arguments,
+    /// `{"cmd", "workdir"}`. A long value is a preview and sets `truncated`.
+    public let arguments: String?
+    enum CodingKeys: String, CodingKey {
+        case id, kind, text, truncated, arguments
+        case turnID = "turn_id", toolName = "tool_name", callID = "call_id"
+    }
+    public init(id: String, turnID: String? = nil, kind: String, text: String, truncated: Bool = false,
+                toolName: String? = nil, callID: String? = nil, arguments: String? = nil) {
         self.id = id; self.turnID = turnID; self.kind = kind; self.text = text; self.truncated = truncated
+        self.toolName = toolName; self.callID = callID; self.arguments = arguments
     }
 }
 public struct PuckHistoryPage: Codable, Sendable {
@@ -66,7 +82,12 @@ public struct PuckHistoryWindow: Sendable {
     public private(set) var items: [PuckHistoryItem] = []
     public let maxItems: Int
     public let maxBytes: Int
-    public var byteCount: Int { items.reduce(0) { $0 + $1.text.utf8.count + $1.id.utf8.count + 128 } }
+    public var byteCount: Int {
+        items.reduce(0) { total, item in
+            [item.id, item.text, item.toolName, item.callID, item.arguments]
+                .reduce(total + 128) { $0 + ($1?.utf8.count ?? 0) }
+        }
+    }
     public init(maxItems: Int = 200, maxBytes: Int = 2 * 1_048_576) {
         self.maxItems = max(1, maxItems); self.maxBytes = max(1024, maxBytes)
     }

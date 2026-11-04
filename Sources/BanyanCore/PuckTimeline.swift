@@ -282,7 +282,33 @@ private struct Builder {
     }
 
     mutating func append(history: [PuckHistoryItem]) {
-        for item in history { append(historyItem: item) }
+        var index = 0
+        while index < history.count {
+            let item = history[index]
+            var consumed = 1
+            switch item.kind.lowercased() {
+            case "tool_call":
+                append(historyToolCall: item)
+            case "tool_result":
+                append(historyToolResult: item)
+            case "tool", "tool_start", "command", "file_change":
+                if item.toolName != nil || item.callID != nil || item.arguments != nil {
+                    append(historyToolResult: item, name: item.toolName, arguments: item.arguments)
+                } else if let name = Self.historyToolCallName(item) {
+                    let next = index + 1 < history.count ? history[index + 1] : nil
+                    let output = next.flatMap {
+                        Self.isHistoryToolItem($0) && Self.historyToolCallName($0) == nil ? $0 : nil
+                    }
+                    append(legacyHistoryToolCall: item, name: name, output: output)
+                    consumed = output == nil ? 1 : 2
+                } else {
+                    append(historyItem: item)
+                }
+            default:
+                append(historyItem: item)
+            }
+            index += consumed
+        }
         enforceLimits()
     }
 
@@ -297,6 +323,170 @@ private struct Builder {
             notices: notices.map(\.notice),
             usage: usage
         )
+    }
+
+    /// Protocol 2.1 exposed a native call as a `tool` row whose text was only
+    /// the tool name, followed by its output as another `tool` row. Older
+    /// daemons still return that shape, so recognize the known wrapper names
+    /// and pair them with the following row.
+    private static func historyToolCallName(_ item: PuckHistoryItem) -> String? {
+        guard isHistoryToolItem(item) else { return nil }
+        let text = item.text
+        guard text.count <= 64,
+              !text.isEmpty,
+              text.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
+            return nil
+        }
+        let normalized = text.lowercased()
+        let isKnownName = historyToolNames.contains(normalized)
+            || historyToolNamePrefixes.contains { normalized.hasPrefix($0) }
+        guard isKnownName else { return nil }
+        return text
+    }
+
+    private static func isHistoryToolItem(_ item: PuckHistoryItem) -> Bool {
+        switch item.kind.lowercased() {
+        case "tool", "tool_call", "tool_result", "tool_start", "command", "file_change":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static let historyToolNames: Set<String> = [
+        "agent", "apply_patch", "ask", "bash", "create_goal", "edit", "exec_command",
+        "fetch", "get_goal", "glob", "grep", "list_dir", "list_directory", "list_files",
+        "ls", "patch", "plan", "question", "read", "read_file", "request_user_input",
+        "run_command", "search", "shell", "spawn_agent", "terminal", "tool", "update_goal",
+        "update_plan", "view_image", "web_search", "webfetch", "write", "write_file",
+        "write_stdin",
+    ]
+
+    private static let historyToolNamePrefixes = [
+        "agents.", "epics.", "jobs.", "mcp__", "sessions.", "tasks.",
+    ]
+
+    private mutating func append(historyToolCall item: PuckHistoryItem) {
+        let callID = item.callID ?? item.id
+        let name = item.toolName ?? item.text
+        if let index = toolIndex[callID] {
+            updateTool(at: index) { tool in
+                PuckToolActivity(
+                    callID: tool.callID,
+                    name: name.isEmpty ? tool.name : name,
+                    arguments: item.arguments ?? tool.arguments,
+                    output: tool.output,
+                    state: item.truncated ? .truncated : tool.state
+                )
+            }
+            registerHistoryToolItem(item, callID: callID, at: index)
+            return
+        }
+        let index = appendDraft(Draft(
+            id: "tool:\(item.id)",
+            role: .tool,
+            content: .tool(PuckToolActivity(
+                callID: callID,
+                name: name.isEmpty ? "tool" : name,
+                arguments: item.arguments,
+                output: "",
+                state: item.truncated ? .truncated : .succeeded
+            )),
+            turnID: item.turnID,
+            firstCursor: nil,
+            lastCursor: nil,
+            truncated: item.truncated,
+            stableKeys: [item.id],
+            toolCallID: callID,
+            fromHistory: true,
+            matchedLive: false,
+            isStream: false
+        ))
+        toolIndex[callID] = index
+    }
+
+    private mutating func append(
+        historyToolResult item: PuckHistoryItem,
+        name: String? = nil,
+        arguments: String? = nil
+    ) {
+        let callID = item.callID ?? item.id
+        if let index = toolIndex[callID] {
+            updateTool(at: index) { tool in
+                PuckToolActivity(
+                    callID: tool.callID,
+                    name: name ?? tool.name,
+                    arguments: arguments ?? tool.arguments,
+                    output: tool.output.isEmpty ? item.text : tool.output,
+                    state: item.truncated || tool.state == .truncated ? .truncated : .succeeded
+                )
+            }
+            registerHistoryToolItem(item, callID: callID, at: index)
+            return
+        }
+        let index = appendDraft(Draft(
+            id: "tool:\(item.id)",
+            role: .tool,
+            content: .tool(PuckToolActivity(
+                callID: callID,
+                name: name ?? item.toolName ?? "tool",
+                arguments: arguments ?? item.arguments,
+                output: item.text,
+                state: item.truncated ? .truncated : .succeeded
+            )),
+            turnID: item.turnID,
+            firstCursor: nil,
+            lastCursor: nil,
+            truncated: item.truncated,
+            stableKeys: [item.id],
+            toolCallID: callID,
+            fromHistory: true,
+            matchedLive: false,
+            isStream: false
+        ))
+        toolIndex[callID] = index
+    }
+
+    private mutating func registerHistoryToolItem(
+        _ item: PuckHistoryItem,
+        callID: String,
+        at index: Int
+    ) {
+        registerStableKeys([item.id], at: index)
+        drafts[index].truncated = drafts[index].truncated || item.truncated
+        toolIndex[callID] = index
+    }
+
+    private mutating func append(
+        legacyHistoryToolCall call: PuckHistoryItem,
+        name: String,
+        output: PuckHistoryItem?
+    ) {
+        guard stableIndex[call.id] == nil else { return }
+        var stableKeys = [call.id]
+        if let output, !stableKeys.contains(output.id) {
+            stableKeys.append(output.id)
+        }
+        let index = appendDraft(Draft(
+            id: "tool:\(call.id)",
+            role: .tool,
+            content: .tool(PuckToolActivity(
+                callID: call.id,
+                name: name,
+                output: output?.text ?? "",
+                state: .succeeded
+            )),
+            turnID: call.turnID ?? output?.turnID,
+            firstCursor: nil,
+            lastCursor: nil,
+            truncated: call.truncated || output?.truncated == true,
+            stableKeys: stableKeys,
+            toolCallID: call.id,
+            fromHistory: true,
+            matchedLive: false,
+            isStream: false
+        ))
+        toolIndex[call.id] = index
     }
 
     private mutating func append(historyItem item: PuckHistoryItem) {
