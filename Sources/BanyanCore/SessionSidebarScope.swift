@@ -12,6 +12,11 @@ public enum SessionSidebarScope: String, CaseIterable, Sendable {
         case .all: "All sessions"
         }
     }
+
+    /// The other scope, for the command palette's Focus toggle.
+    public var toggled: SessionSidebarScope {
+        self == .focus ? .all : .focus
+    }
 }
 
 /// Why a session belongs in the current sidebar scope.

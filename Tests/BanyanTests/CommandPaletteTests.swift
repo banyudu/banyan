@@ -1,5 +1,6 @@
 @testable import Banyan
 import AppKit
+import BanyanCore
 import Foundation
 import Testing
 
@@ -45,6 +46,30 @@ private func navigationItems() -> [CommandPaletteItem] {
         "navigation.previous-needs-attention",
         "navigation.next-workable"
     ])
+}
+
+@Test func commandPaletteOffersAFocusModeToggleForTheCurrentScope() {
+    #expect(SessionSidebarScope.focus.toggled == .all)
+    #expect(SessionSidebarScope.all.toggled == .focus)
+
+    var scope = SessionSidebarScope.focus
+    let focusItem = ViewCommandPaletteItems.items(
+        sidebarScope: scope,
+        onToggleFocusMode: { scope = scope.toggled }
+    ).first
+
+    #expect(focusItem?.id == "view.toggle-focus-mode")
+    #expect(focusItem?.title == "Toggle Focus Mode")
+    #expect(focusItem?.detail == "Show all sessions")
+
+    focusItem?.action()
+    #expect(scope == .all)
+
+    let allItem = ViewCommandPaletteItems.items(
+        sidebarScope: .all,
+        onToggleFocusMode: {}
+    ).first
+    #expect(allItem?.detail == "Show only actionable work")
 }
 
 @Test func commandPaletteRecognizesLinearIssueIdentifiers() {

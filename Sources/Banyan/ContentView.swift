@@ -388,6 +388,13 @@ struct ContentView: View {
             action: { store.sidebarMode = .sessions }
         ))
 
+        items.append(contentsOf: ViewCommandPaletteItems.items(
+            sidebarScope: store.sidebarScope,
+            onToggleFocusMode: {
+                store.sidebarScope = store.sidebarScope.toggled
+            }
+        ))
+
         let fallbackTarget = paletteFallbackTarget
         for paletteCommand in store.paletteCommands {
             let title = paletteCommand.expandedTitle(

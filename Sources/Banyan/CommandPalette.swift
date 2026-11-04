@@ -69,6 +69,27 @@ enum NavigationCommandPaletteItems {
     }
 }
 
+/// The View rows of the command palette that depend on current app state.
+enum ViewCommandPaletteItems {
+    static func items(
+        sidebarScope: SessionSidebarScope,
+        onToggleFocusMode: @escaping () -> Void
+    ) -> [CommandPaletteItem] {
+        [
+            CommandPaletteItem(
+                id: "view.toggle-focus-mode",
+                category: "View",
+                title: "Toggle Focus Mode",
+                detail: sidebarScope == .focus
+                    ? "Show all sessions"
+                    : "Show only actionable work",
+                shortcut: nil,
+                action: onToggleFocusMode
+            )
+        ]
+    }
+}
+
 private struct ScoredCommandItem {
     let score: Int
     let offset: Int
