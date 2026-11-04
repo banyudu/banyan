@@ -128,4 +128,24 @@ import Testing
 
         #expect(SessionWorkTree.summaries(nodes: nodes, overview: feed)["done"]?.own.focusLane == .settled)
     }
+
+    @Test func externallyWaitingJobStaysQuietDespiteAStaleTerminalPrompt() throws {
+        let nodes = [node("waiting", job: "waiting", state: .waiting, status: .needInput)]
+        let feed = try phasedOverview([
+            phasedJob("waiting", phase: "pr-open", attention: "watch", group: "waiting",
+                      kind: "waiting", label: "Waiting for CI"),
+        ])
+
+        #expect(SessionWorkTree.summaries(nodes: nodes, overview: feed)["waiting"]?.own.focusLane == .watch)
+    }
+
+    @Test func externallyWaitingJobStillShowsWhenWorkitNeedsAct() throws {
+        let nodes = [node("waiting", job: "waiting", state: .waiting, status: .executing)]
+        let feed = try phasedOverview([
+            phasedJob("waiting", phase: "pr-open", attention: "act", group: "waiting",
+                      kind: "blocked", label: "Check CI"),
+        ])
+
+        #expect(SessionWorkTree.summaries(nodes: nodes, overview: feed)["waiting"]?.own.focusLane == .act)
+    }
 }

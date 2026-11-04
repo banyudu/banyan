@@ -50,11 +50,14 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
         } else {
             nextFocusLane = .forSessionStatus(node.status)
         }
-        // Terminal status is newer than the saved overview. Never let stale work
-        // metadata turn an explicit human request or a finished run into background work.
+        // Terminal status is normally newer than the saved overview. Never let stale
+        // work metadata turn an explicit human request or a finished run into
+        // background work. An external Workit wait is the exception: CI/deployment
+        // waits stay quiet even when their terminal still shows an old prompt.
+        let quietExternalWait = job?.group == .waiting && nextFocusLane == .watch
         switch node.status {
         case .needInput, .asking, .review, .failed:
-            focusLane = .act
+            focusLane = quietExternalWait ? .watch : .act
         case .completed, .closed:
             focusLane = nextFocusLane == .watch ? .settled : nextFocusLane
         default:
