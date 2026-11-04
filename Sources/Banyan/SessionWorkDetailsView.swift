@@ -17,72 +17,97 @@ struct SessionWorkStatusButton: View {
     let openSession: (String) -> Void
     @State private var isPresented = false
 
+    private var hasChildSessions: Bool { !summary.descendants.isEmpty }
+
     private var summaryText: String {
-        guard !summary.descendants.isEmpty else { return summary.own.label }
+        guard hasChildSessions else { return summary.own.label }
         return summary.own.needsAttention
             ? "\(summary.own.label) · \(summary.groupLabel)" : summary.groupLabel
     }
 
     var body: some View {
-        Button { isPresented = true } label: {
-            HStack(spacing: 3) {
-                if summary.own.background { Image(systemName: "moon").accessibilityLabel("Background work") }
-                statusContent
-            }.font(.caption2)
-                .foregroundStyle(summary.own.needsAttention || summary.descendants.contains(where: \.needsAttention)
-                    ? Color.orange : summary.own.kind == .verified && summary.descendants.isEmpty ? Color.green : Color.secondary)
+        if hasChildSessions {
+            Button { isPresented = true } label: { statusLabel }
+                .buttonStyle(.banyanPlainLabelOnly)
+                .help("\(summaryText) — show child sessions")
+                .accessibilityLabel("Child sessions: \(summaryText)")
+                .accessibilityIdentifier("session.\(summary.own.id).workflow")
+                .popover(isPresented: $isPresented, arrowEdge: .trailing) {
+                    SessionWorkDetailsView(summary: summary) { id in
+                        isPresented = false
+                        openSession(id)
+                    }
+                }
+        } else {
+            statusLabel
+                .help(summary.own.label)
+                .accessibilityLabel(summary.own.label)
+                .accessibilityIdentifier("session.\(summary.own.id).workflow")
         }
-        .fixedSize(horizontal: true, vertical: false)
-        .buttonStyle(.banyanPlainLabelOnly)
-        .help("\(summaryText) — show work details")
-        .accessibilityLabel("Work details: \(summaryText)")
-        .accessibilityIdentifier("session.\(summary.own.id).workflow")
-        .popover(isPresented: $isPresented, arrowEdge: .trailing) {
-            SessionWorkDetailsView(summary: summary) { id in
-                isPresented = false
-                openSession(id)
+    }
+
+    private var statusLabel: some View {
+        HStack(spacing: 3) {
+            if summary.own.background {
+                Image(systemName: "moon").foregroundStyle(.secondary).accessibilityLabel("Background work")
             }
+            statusContent
         }
+        .font(.caption2)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     @ViewBuilder
     private var statusContent: some View {
         if summary.descendants.isEmpty {
-            Text(summary.own.label).lineLimit(1).truncationMode(.tail)
+            ownBadge
         } else {
             if summary.own.needsAttention {
-                Text(summary.own.label).lineLimit(1).truncationMode(.tail)
+                ownBadge
             }
             ForEach(summary.groupStatuses) { status in
-                WorkStatusBadge(status: status)
+                WorkStatusBadge(category: status.category, count: status.count,
+                    label: "\(status.count) \(status.label)")
             }
         }
+    }
+
+    private var ownBadge: some View {
+        WorkStatusBadge(category: summary.own.badgeCategory,
+            emphasized: summary.own.needsAttention, label: summary.own.label)
     }
 }
 
 private struct WorkStatusBadge: View {
-    let status: SessionWorkSummary.GroupStatus
+    let category: SessionWorkSummary.GroupStatus.Category
+    var count: Int? = nil
+    var emphasized = false
+    let label: String
+
+    private var tint: Color { emphasized ? .orange : category.tint }
 
     var body: some View {
         HStack(spacing: 1) {
-            Image(systemName: status.systemImage)
+            Image(systemName: category.systemImage)
                 .font(.system(size: 9, weight: .semibold))
-            Text("\(status.count)")
-                .font(.system(size: 9, weight: .semibold))
-                .monospacedDigit()
+            if let count {
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .monospacedDigit()
+            }
         }
-        .foregroundStyle(status.tint)
+        .foregroundStyle(tint)
         .padding(.horizontal, 4)
         .frame(height: 16)
-        .background(status.tint.opacity(0.12), in: Capsule())
-        .help("\(status.count) \(status.label)")
-        .accessibilityLabel("\(status.count) \(status.label)")
+        .background(tint.opacity(0.12), in: Capsule())
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 
-private extension SessionWorkSummary.GroupStatus {
+extension SessionWorkSummary.GroupStatus.Category {
     var systemImage: String {
-        switch category {
+        switch self {
         case .needsYou: "hand.raised.fill"
         case .phase(let phase):
             switch phase {
@@ -108,7 +133,7 @@ private extension SessionWorkSummary.GroupStatus {
     }
 
     var tint: Color {
-        switch category {
+        switch self {
         case .needsYou, .kind(.blocked), .kind(.decision): .orange
         case .phase(.verified), .kind(.verified): .green
         case .phase(.cancelled), .kind(.cancelled), .kind(.paused), .kind(.idle): .secondary
@@ -117,79 +142,43 @@ private extension SessionWorkSummary.GroupStatus {
     }
 }
 
+extension SessionWorkEntry {
+    var badgeCategory: SessionWorkSummary.GroupStatus.Category {
+        if let phase { .phase(phase) } else { .kind(kind) }
+    }
+
+    var badgeSystemImage: String { badgeCategory.systemImage }
+}
+
 struct SessionWorkDetailsView: View {
     let summary: SessionWorkSummary
     let openSession: (String) -> Void
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(summary.own.title).font(.headline).textSelection(.enabled)
-                if summary.own.background {
-                    Text("Working in the background. Selecting the conversation brings it back; collapsing the group does not pause its work.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if summary.own.managed || summary.own.needsAttention || summary.descendants.isEmpty { ownDetails }
-                if !summary.descendants.isEmpty {
-                    Text("Child sessions · \(summary.groupLabel)").font(.subheadline)
-                    ForEach(summary.descendants) { entry in
-                        Button { openSession(entry.id) } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.title).lineLimit(2).multilineTextAlignment(.leading)
-                                Text(entry.label + (entry.background ? " · Background" : ""))
-                                    .font(.caption).foregroundStyle(entry.needsAttention ? .orange : .secondary)
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(.borderless)
+            LazyVStack(alignment: .leading, spacing: 4) {
+                ForEach(summary.descendants) { entry in
+                    Button { openSession(entry.id) } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            WorkStatusBadge(category: entry.badgeCategory,
+                                emphasized: entry.needsAttention, label: entry.label)
+                            Text(entry.title).lineLimit(2).multilineTextAlignment(.leading)
+                            if entry.background {
+                                Image(systemName: "moon").foregroundStyle(.secondary)
+                                    .help("Background work").accessibilityLabel("Background work")
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.borderless)
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxHeight: 440)
-        .padding(16)
+        .padding(12)
         .frame(width: 360)
-    }
-
-    @ViewBuilder private var ownDetails: some View {
-        Text(summary.own.label).font(.subheadline).foregroundStyle(summary.own.needsAttention ? .orange : .secondary)
-        if let job = summary.own.job {
-            if let groupTitle = job.groupTitle, !groupTitle.isEmpty {
-                Label(groupTitle, systemImage: "rectangle.stack").font(.caption).foregroundStyle(.secondary)
-            }
-            if let phase = job.phase {
-                Text("Lifecycle: \(phase.label)").font(.caption).foregroundStyle(.secondary)
-            }
-            if let reason = job.stopReason, !reason.isEmpty {
-                Text("Stopped because").font(.caption).foregroundStyle(.secondary)
-                Text(reason).textSelection(.enabled)
-            }
-            if job.detail != job.stopReason && !job.detail.isEmpty {
-                Text(job.detail).font(.callout).textSelection(.enabled)
-            }
-            Text("Next step").font(.caption).foregroundStyle(.secondary)
-            Text(job.nextAction).textSelection(.enabled)
-            Text("\(job.progress.passed)/\(job.progress.total) acceptance criteria have saved passing evidence.")
-                .font(.caption).foregroundStyle(.secondary)
-            if let date = job.lastProgressAt.flatMap(WorkitJobSummary.date) {
-                Text("Last recorded progress \(date.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
-            }
-            HStack {
-                if let url = WorkitJobSummary.webURL(job.issueURL) { Link("Issue", destination: url) }
-                if let url = WorkitJobSummary.webURL(job.prURL) { Link("PR", destination: url) }
-            }
-            if !job.evidence.isEmpty {
-                DisclosureGroup("Evidence (\(job.evidence.count))") {
-                    ForEach(Array(job.evidence.enumerated()), id: \.offset) { index, value in
-                        if let url = WorkitJobSummary.webURL(value) { Link("Evidence \(index + 1)", destination: url) }
-                    }
-                }.font(.caption)
-            }
-        } else {
-            Text(summary.own.detail).textSelection(.enabled)
-            if summary.own.managed {
-                Text("Matching job details are unavailable or older than this session. Select the conversation to inspect it directly.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
     }
 }

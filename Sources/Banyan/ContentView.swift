@@ -3370,9 +3370,13 @@ struct SessionRow: View, Equatable {
         session.displayAgentProvider == nil && session.status == .running
     }
 
+    private func isOverChildSessionSummary(at location: CGPoint) -> Bool {
+        workSummary?.descendants.isEmpty == false && workStatusBounds.contains(location)
+    }
+
     private var doubleClickRenameGesture: some Gesture {
         SpatialTapGesture(count: 2, coordinateSpace: .named("session-work-row-\(session.id)")).onEnded { event in
-            guard !workStatusBounds.contains(event.location) else { return }
+            guard !isOverChildSessionSummary(at: event.location) else { return }
             if isHistory {
                 onReopenHistory()
             } else {
@@ -3383,9 +3387,9 @@ struct SessionRow: View, Equatable {
 
     private var singleClickSelectGesture: some Gesture {
         SpatialTapGesture(count: 1, coordinateSpace: .named("session-work-row-\(session.id)")).onEnded { event in
-            // Status inspection must not bubble into the row's simultaneous
+            // Parent summaries must not bubble into the row's simultaneous
             // selection gesture. Keyboard/AX button activation has no row tap.
-            if !isRenaming && !workStatusBounds.contains(event.location) {
+            if !isRenaming && !isOverChildSessionSummary(at: event.location) {
                 onSelect()
             }
         }

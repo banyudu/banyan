@@ -5,6 +5,39 @@ import Testing
 @testable import Banyan
 
 @Suite @MainActor struct SessionWorkUITests {
+    @Test func leafStatusBadgesUseStatusSymbols() throws {
+        let nodes = [
+            SessionWorkNode(id: "merged", parentID: nil, title: "Merged", status: .needInput,
+                workflow: .init(owner: "workit", jobID: "merged-job", revision: 1, state: .needsYou)),
+            SessionWorkNode(id: "waiting", parentID: nil, title: "Waiting", status: .needInput,
+                workflow: .init(owner: "workit", jobID: "waiting-job", revision: 1, state: .waiting)),
+        ]
+        let jobs: [[String: Any]] = [
+            ["id": "merged-job", "revision": 1, "sessionID": "merged", "title": "Merged",
+             "stage": "merged", "group": "needs-you", "phase": "merged", "attention": "act",
+             "display": ["kind": "blocked", "label": "Check merge"], "detail": "",
+             "createdAt": "2026-01-01T00:00:00Z", "progress": ["passed": 4, "total": 5],
+             "nextAction": "Wait for deployment", "evidence": []],
+            ["id": "waiting-job", "revision": 1, "sessionID": "waiting", "title": "Waiting",
+             "stage": "waiting", "group": "waiting",
+             "display": ["kind": "waiting", "label": "Waiting for CI"], "detail": "",
+             "createdAt": "2026-01-01T00:00:00Z", "progress": ["passed": 0, "total": 4],
+             "nextAction": "Wait for CI", "evidence": []],
+        ]
+        let feed = try WorkitOverview.decode(JSONSerialization.data(withJSONObject: [
+            "version": 1, "generatedAt": "2026-01-01T00:00:00Z", "total": jobs.count,
+            "truncated": false, "jobs": jobs,
+        ]))
+        let summaries = SessionWorkTree.summaries(nodes: nodes, overview: feed)
+
+        let merged = try #require(summaries["merged"])
+        #expect(merged.descendants.isEmpty)
+        #expect(merged.own.badgeSystemImage == "arrow.triangle.merge")
+        let waiting = try #require(summaries["waiting"])
+        #expect(waiting.descendants.isEmpty)
+        #expect(waiting.own.badgeSystemImage == "clock.fill")
+    }
+
     @Test func equatableRowsKeepSessionSelectionAndWorkUpdatesLive() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let host = HostRuntimeContext(environment: ["PATH": "/usr/bin:/bin"], homeDirectory: root, currentDirectory: root.path)

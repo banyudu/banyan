@@ -996,12 +996,12 @@ Banyan is released under the [MIT License](LICENSE). The vendored
 **Sessions remains the main working surface.** Existing parent rows summarize
 their child sessions, including nested, folded and background work. Idle
 conversations are counted as idle, not as completed issues. Managed session rows
-show specific saved work status such as Tool error, Waiting for CI, or Verified.
-Click a status or parent summary to open **Work details** without replacing the
-conversation. The panel shows the original stop reason, next step, saved
-acceptance evidence and links; select a child to return to its conversation.
+show their saved work status as icon badges; hover a badge to see the full
+status, such as Tool error, Waiting for CI, or Verified. A parent summary opens a
+compact child-session list without replacing the conversation. Select a child to
+return to its conversation. Leaf status badges do not open a panel.
 
-Details refresh on app activation and coalesced workflow updates. A single
+Work status refreshes on app activation and coalesced workflow updates. A single
 bounded read serves the whole tree. Old or mismatched job
 bindings fall back to the session's own workflow status. Tool failures and
 uncertain delivery remain blocked; displaying a reason never clears a hold.
