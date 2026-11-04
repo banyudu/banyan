@@ -22,6 +22,14 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
         }
     }
 
+    /// True while the terminal is actively doing work without waiting on a human.
+    public var isActivelyWorking: Bool {
+        switch self {
+        case .running, .executing, .longRunningShell, .subagents: return true
+        case .needInput, .asking, .review, .idle, .completed, .failed, .closed: return false
+        }
+    }
+
     /// True only for the states that mean a human still has to say something.
     ///
     /// Narrower than `isCodingAgentIdle` on purpose: `.idle` is an agent sitting at

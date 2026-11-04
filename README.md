@@ -88,6 +88,9 @@ reveals its row and ancestry. Focus is presentation only: it never pauses,
 suspends, or closes a session. The options menu shows how many live sessions the
 current projection hides.
 
+An actively executing terminal always counts as working in Focus, even when
+Workit has already marked the job verified or merged.
+
 Managed rows carry an explicit lifecycle phase — investigation, implementation,
 PR open, merged, verified, or cancelled. A merged PR therefore remains visibly
 in progress until its Linear acceptance criteria are independently verified.

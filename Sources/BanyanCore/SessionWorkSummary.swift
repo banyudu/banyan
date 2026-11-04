@@ -55,13 +55,17 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
         // background work. An external Workit wait is the exception: CI/deployment
         // waits stay quiet even when their terminal still shows an old prompt.
         let quietExternalWait = job?.group == .waiting && nextFocusLane == .watch
-        switch node.status {
-        case .needInput, .asking, .review, .failed:
-            focusLane = quietExternalWait ? .watch : .act
-        case .completed, .closed:
-            focusLane = nextFocusLane == .watch ? .settled : nextFocusLane
-        default:
-            focusLane = nextFocusLane
+        if node.status.isActivelyWorking, nextFocusLane != .act {
+            focusLane = .watch
+        } else {
+            switch node.status {
+            case .needInput, .asking, .review, .failed:
+                focusLane = quietExternalWait ? .watch : .act
+            case .completed, .closed:
+                focusLane = nextFocusLane == .watch ? .settled : nextFocusLane
+            default:
+                focusLane = nextFocusLane
+            }
         }
         var nextKind: Kind
         var nextLabel: String

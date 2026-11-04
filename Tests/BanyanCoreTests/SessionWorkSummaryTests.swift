@@ -148,4 +148,24 @@ import Testing
 
         #expect(SessionWorkTree.summaries(nodes: nodes, overview: feed)["waiting"]?.own.focusLane == .act)
     }
+
+    @Test func activeTerminalWorkOverridesSettledWorkitState() throws {
+        let nodes = [node("verified", job: "verified", state: .verified, status: .executing)]
+        let feed = try phasedOverview([
+            phasedJob("verified", phase: "verified", attention: "settled", group: "verified",
+                      kind: "verified", label: "Verified"),
+        ])
+
+        #expect(SessionWorkTree.summaries(nodes: nodes, overview: feed)["verified"]?.own.focusLane == .watch)
+    }
+
+    @Test func activeTerminalWorkStillShowsWhenWorkitNeedsAct() throws {
+        let nodes = [node("held", job: "held", state: .needsYou, status: .executing)]
+        let feed = try phasedOverview([
+            phasedJob("held", phase: "pr-open", attention: "act", group: "needs-you",
+                      kind: "blocked", label: "Held"),
+        ])
+
+        #expect(SessionWorkTree.summaries(nodes: nodes, overview: feed)["held"]?.own.focusLane == .act)
+    }
 }
