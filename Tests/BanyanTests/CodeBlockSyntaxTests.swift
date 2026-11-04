@@ -4,6 +4,8 @@ import Testing
 @Test func codeBlockLanguagesNormalizeCommonAliases() {
     #expect(CodeBlockLanguage(identifier: "swift") == .swift)
     #expect(CodeBlockLanguage(identifier: "Swift linenums") == .swift)
+    #expect(CodeBlockLanguage(identifier: "jsonl") == .jsonl)
+    #expect(CodeBlockLanguage(identifier: "ndjson") == .jsonl)
     #expect(CodeBlockLanguage(identifier: "js") == .javascript)
     #expect(CodeBlockLanguage(identifier: "tsx") == .typescript)
     #expect(CodeBlockLanguage(identifier: "python3") == .python)
@@ -26,6 +28,7 @@ import Testing
     let samples: [(String, String)] = [
         ("swift", "let answer = 42 // note\nprint(\"ok\")"),
         ("json", #"{"name": "banyan", "ready": true, "count": 3}"#),
+        ("jsonl", "{\"type\":\"start\"}\n{\"type\":\"finish\",\"ok\":true}"),
         ("python", "def run(value):\n    return value + 1  # note"),
         ("shell", "for file in *.swift; do\n  echo \"$file\"\ndone"),
         ("sql", "SELECT id, name FROM sessions WHERE active = true;"),

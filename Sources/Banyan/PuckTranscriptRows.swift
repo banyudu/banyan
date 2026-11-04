@@ -671,6 +671,20 @@ struct PuckToolDetailBlock: View {
     let text: String
     var language: String?
     var typography: PuckTranscriptTypography = .fallback
+    private let presentation: PuckToolTextPresentation
+
+    init(
+        title: String,
+        text: String,
+        language: String? = nil,
+        typography: PuckTranscriptTypography = .fallback
+    ) {
+        self.title = title
+        self.text = text
+        self.language = language
+        self.typography = typography
+        presentation = PuckToolTextPresentation(text: text, explicitLanguage: language)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -678,15 +692,15 @@ struct PuckToolDetailBlock: View {
                 .font(typography.captionFont.weight(.semibold))
                 .foregroundStyle(.secondary)
             CodeBlockView(
-                text: text,
-                language: language,
+                text: presentation.text,
+                language: presentation.language?.rawValue,
                 font: typography.font,
-                previewHeight: previewHeight
+                previewHeight: previewHeight(for: presentation.text)
             )
         }
     }
 
-    private var previewHeight: CGFloat {
+    private func previewHeight(for text: String) -> CGFloat {
         let lineCount = text.split(separator: "\n", omittingEmptySubsequences: false).count
         return min(220, max(40, CGFloat(lineCount) * typography.detailLineHeight + 16))
     }

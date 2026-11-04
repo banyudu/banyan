@@ -188,6 +188,41 @@ struct PuckTranscriptUITests {
         #expect(!text.contains("exit code"))
     }
 
+    @Test func toolResultJSONIsPrettyPrintedAndLabeled() async throws {
+        let timeline = PuckTimelineProjection.project(
+            history: [],
+            events: [
+                puckTranscriptEvent(cursor: 1, kind: "tool_start", tool: "tool", callID: "workers",
+                                    arguments: #"{"query":"workers"}"#),
+                puckTranscriptEvent(
+                    cursor: 2,
+                    kind: "tool_result",
+                    tool: "tool",
+                    callID: "workers",
+                    output: #"[{"class":"worker","engine":"native","id":"worker-1","ready":true}]"#,
+                    success: true
+                ),
+            ]
+        )
+
+        let text = try await render(
+            PuckTimelineRows(
+                items: timeline.items,
+                initiallyExpandedItemIDs: Set(timeline.items.map(\.id))
+            )
+                .padding(20)
+                .frame(width: 720, height: 500, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: NSSize(width: 720, height: 500),
+            name: "tool-result-json"
+        )
+
+        #expect(text.contains("JSON"))
+        #expect(text.contains("engine"))
+        #expect(text.contains("worker"))
+        #expect(!text.contains(#"{"class":"worker""#))
+    }
+
     @Test func followLogicKeepsStreamingAtTheEndButRespectsAUserScroll() {
         #expect(PuckTranscriptFollowLogic.shouldFollow(
             previousAtBottom: true,

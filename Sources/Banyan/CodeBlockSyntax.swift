@@ -3,6 +3,7 @@ import Foundation
 enum CodeBlockLanguage: String, CaseIterable, Sendable {
     case swift
     case json
+    case jsonl
     case javascript
     case typescript
     case python
@@ -39,6 +40,7 @@ enum CodeBlockLanguage: String, CaseIterable, Sendable {
         switch self {
         case .swift: return "Swift"
         case .json: return "JSON"
+        case .jsonl: return "JSONL"
         case .javascript: return "JavaScript"
         case .typescript: return "TypeScript"
         case .python: return "Python"
@@ -53,6 +55,8 @@ enum CodeBlockLanguage: String, CaseIterable, Sendable {
     private static let aliases: [String: CodeBlockLanguage] = [
         "swift": .swift,
         "json": .json,
+        "jsonl": .jsonl,
+        "ndjson": .jsonl,
         "js": .javascript,
         "javascript": .javascript,
         "jsx": .javascript,
@@ -193,6 +197,12 @@ enum CodeBlockSyntaxHighlighter {
 
     private static let rules: [CodeBlockLanguage: [Rule]] = [
         .json: [
+            rule(#""(?:\\.|[^"\\])*"(?=\s*:)"#, .key, priority: 95),
+            rule(stringPattern, .string, priority: 90),
+            rule(numberPattern, .number, priority: 80),
+            rule(words(["true", "false", "null"]), .literal, priority: 75)
+        ],
+        .jsonl: [
             rule(#""(?:\\.|[^"\\])*"(?=\s*:)"#, .key, priority: 95),
             rule(stringPattern, .string, priority: 90),
             rule(numberPattern, .number, priority: 80),
