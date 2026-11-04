@@ -28,6 +28,7 @@ import Testing
         store.loadPersistedSessionsIfNeeded()
         for session in store.sessions { session.status = .idle }
         store.sortMode = .manual
+        store.sidebarScope = .all
         store.foldedParentIDs = []
         store.saveSessions()
         store.flushPendingSessionSaves()
@@ -69,6 +70,32 @@ import Testing
         store.toggleChildrenFolded(for: "a")
         store.userSelect(id: "b")
         #expect(visibleRows(in: store) == expandedRows)
+    }
+
+    @Test func focusShowsInputAndFinishedRowsButHidesWorkingRows() throws {
+        let (_, store, _) = try fixture()
+        defer { store.flushPendingSessionSaves() }
+        try session("a", in: store).status = .executing
+        try session("a1", in: store).status = .executing
+        try session("a2", in: store).status = .needInput
+        try session("b", in: store).parentSessionID = "a"
+        try session("b", in: store).status = .completed
+        try session("c", in: store).status = .executing
+        store.sidebarScope = .focus
+
+        #expect(visibleRows(in: store) == [
+            SessionSidebarRow(id: "a", depth: 0),
+            SessionSidebarRow(id: "a2", depth: 1),
+            SessionSidebarRow(id: "b", depth: 1),
+        ])
+
+        store.userSelect(id: "a1")
+        #expect(visibleRows(in: store) == [
+            SessionSidebarRow(id: "a", depth: 0),
+            SessionSidebarRow(id: "a1", depth: 1),
+            SessionSidebarRow(id: "a2", depth: 1),
+            SessionSidebarRow(id: "b", depth: 1),
+        ])
     }
 
     @Test func indentAndOutdentUpdateHierarchyWithoutChangingRowOrder() throws {

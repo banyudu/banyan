@@ -75,8 +75,8 @@ import Testing
 
     @Test func phaseMetadataDrivesFocusAndMergeBoundaryPresentation() throws {
         let nodes = [node("parent"), node("merged", parent: "parent", job: "merged", state: .needsYou),
-                     node("proving", parent: "parent", job: "proving", state: .working),
-                     node("quiet", parent: "parent", job: "quiet", state: .waiting)]
+                     node("proving", parent: "parent", job: "proving", state: .working, status: .executing),
+                     node("quiet", parent: "parent", job: "quiet", state: .waiting, status: .executing)]
         let feed = try phasedOverview([
             phasedJob("merged", phase: "merged", attention: "act", group: "needs-you",
                       kind: "blocked", label: "Check merge"),
@@ -97,5 +97,35 @@ import Testing
             phasedJob("asking", phase: "implementation", attention: "watch", group: "working"),
         ])
         #expect(SessionWorkTree.summaries(nodes: askingNodes, overview: askingFeed)["asking"]?.own.focusLane == .act)
+    }
+
+    @Test func unmanagedStatusesResolveToFocusLanes() {
+        let nodes = [
+            node("executing", status: .executing),
+            node("idle", status: .idle),
+            node("input", status: .needInput),
+            node("asking", status: .asking),
+            node("review", status: .review),
+            node("failed", status: .failed),
+            node("completed", status: .completed),
+        ]
+        let result = SessionWorkTree.summaries(nodes: nodes, overview: nil)
+
+        #expect(result["executing"]?.own.focusLane == .watch)
+        #expect(result["idle"]?.own.focusLane == .watch)
+        #expect(result["input"]?.own.focusLane == .act)
+        #expect(result["asking"]?.own.focusLane == .act)
+        #expect(result["review"]?.own.focusLane == .act)
+        #expect(result["failed"]?.own.focusLane == .act)
+        #expect(result["completed"]?.own.focusLane == .settled)
+    }
+
+    @Test func finishedTerminalStatusOverridesAStaleWorkingJob() throws {
+        let nodes = [node("done", job: "job", state: .working, status: .completed)]
+        let feed = try phasedOverview([
+            phasedJob("done", phase: "implementation", attention: "watch", group: "working"),
+        ])
+
+        #expect(SessionWorkTree.summaries(nodes: nodes, overview: feed)["done"]?.own.focusLane == .settled)
     }
 }

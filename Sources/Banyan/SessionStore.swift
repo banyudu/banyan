@@ -447,9 +447,9 @@ final class SessionStore: ObservableObject {
             )
         }
     }
-    /// Presentation-only scope for the Sessions sidebar. Focus keeps ordinary
-    /// sessions plus managed work that needs a decision; quiet managed work stays
-    /// in All sessions without being paused, suspended, or closed.
+    /// Presentation-only scope for the Sessions sidebar. Focus keeps work that
+    /// needs a human or has finished; quiet work stays in All sessions without
+    /// being paused, suspended, or closed.
     @Published var sidebarScope: SessionSidebarScope = .focus {
         didSet {
             guard sidebarScope != oldValue else { return }
@@ -630,7 +630,7 @@ final class SessionStore: ObservableObject {
     private var isClosingScratchTerminal = false
     private var cachedSessionSidebarGroups: [SidebarSessionGroup]?
     private var cachedSessionSidebarGroupsRevision = -1
-    private var cachedHiddenManagedSessionCount = 0
+    private var cachedHiddenSessionCount = 0
     /// Bumped whenever an input to the active sidebar projection changes. The
     /// projection used to hash every active row on every SwiftUI pass; even a
     /// cache hit walked the active set and read every presentation field.
@@ -904,7 +904,7 @@ final class SessionStore: ObservableObject {
             SessionChildVisibilityItem(
                 id: $0.id,
                 parentSessionID: $0.parentSessionID,
-                focusLane: workSummaries[$0.id]?.own.focusLane
+                focusLane: workSummaries[$0.id]?.own.focusLane ?? .forSessionStatus($0.status)
             )
         }
         let visibilityByID = Dictionary(
@@ -947,19 +947,19 @@ final class SessionStore: ObservableObject {
             )
         }
         let visibleIDs = Set(result.flatMap(\.items).map(\.id))
-        cachedHiddenManagedSessionCount = active.filter {
-            !visibleIDs.contains($0.id) && workSummaries[$0.id]?.own.managed == true
+        cachedHiddenSessionCount = active.filter {
+            !visibleIDs.contains($0.id) && $0.status != .closed
         }.count
         cachedSessionSidebarGroupsRevision = sidebarGroupsRevision
         cachedSessionSidebarGroups = result
         return result
     }
 
-    /// Managed rows the current sidebar projection is not showing, whether
-    /// because Focus suppressed quiet work or a parent is collapsed.
-    var hiddenManagedSessionCount: Int {
+    /// Live rows the current sidebar projection is not showing, whether because
+    /// Focus suppressed non-actionable work or a parent is folded.
+    var hiddenSessionCount: Int {
         _ = sessionSidebarGroups
-        return cachedHiddenManagedSessionCount
+        return cachedHiddenSessionCount
     }
 
     var historySidebarGroup: SidebarSessionGroup? {

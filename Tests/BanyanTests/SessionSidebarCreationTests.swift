@@ -17,6 +17,7 @@ import Testing
         store.loadPersistedSessionsIfNeeded()
         for session in store.sessions { session.status = .idle }
         store.sortMode = .manual
+        store.sidebarScope = .all
         store.foldedParentIDs = []
         return (fixture, store)
     }

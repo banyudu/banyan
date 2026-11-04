@@ -73,6 +73,12 @@ generalize them before writing them into the repo.
   lands). Report the commit, push, build, restart, and verification results,
   including any pre-existing test failures or build warnings.
 
+- Auto-ship completed work: do not wait for a separate "ship" request after a
+  requested implementation is finished and verified. Run the full ship workflow
+  automatically. Skip auto-ship only when the user explicitly asks to hold, the
+  work is exploratory or intentionally WIP, or unrelated concurrent changes make
+  a clean build impossible; report that blocker instead of packaging dirty work.
+
 - Prefer native SwiftUI controls, toolbar items, window styling, and layout APIs for the macOS app. Avoid custom AppKit titlebar/accessory replacements unless there is no native SwiftUI path and the tradeoff is explicitly accepted.
 - Prefer async, event-driven app logic for UI and runtime state. Avoid polling loops and repeating timers for state that can come from delegate callbacks, notifications, filesystem/process events, async sequences, or SwiftUI/Observation updates; if polling is unavoidable, document why and keep the interval adaptive to foreground/background, battery, and session count.
 - When spawning child terminals or coding-agent sessions while working on Banyan, use Banyan-native commands such as `banyanctl session new` or `banyanctl agent run` rather than external terminal-automation helpers, unless the user explicitly asks for an external workflow.

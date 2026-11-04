@@ -14,12 +14,24 @@ public enum SessionSidebarScope: String, CaseIterable, Sendable {
     }
 }
 
-/// Why managed work belongs in the current sidebar scope.
+/// Why a session belongs in the current sidebar scope.
 public enum SessionFocusLane: String, Equatable, Sendable {
-    /// A human decision, hold or recovery is required now.
+    /// A human decision, input, review, hold or recovery is required now.
     case act
     /// The agent or an external system is expected to continue without help.
     case watch
-    /// Verified, cancelled or deliberately paused work.
+    /// Finished or deliberately paused work, kept visible for acknowledgement.
     case settled
+
+    /// The lane for an unmanaged session, derived from its terminal status.
+    public static func forSessionStatus(_ status: SessionStatus) -> SessionFocusLane {
+        switch status {
+        case .needInput, .asking, .review, .failed: .act
+        case .completed, .closed: .settled
+        case .running, .executing, .longRunningShell, .subagents, .idle: .watch
+        }
+    }
+
+    /// Focus keeps only work that needs a human or has reached a resting point.
+    public var isActionable: Bool { self != .watch }
 }

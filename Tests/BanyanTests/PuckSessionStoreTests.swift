@@ -12,6 +12,7 @@ import Testing
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
+    store.sidebarScope = .all
     store.loadPersistedSessionsIfNeeded()
     daemon.put(puckSummary(model: "gpt-5.5", cwd: fixture.project.path, position: "running"))
 

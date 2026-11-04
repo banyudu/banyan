@@ -50,6 +50,7 @@ Config edits apply without restarting Banyan. Remove the setting or set it to
   selecting that project's top session.
 - `Cmd+Home` / `Cmd+End` jump to the first and last session.
 - `Cmd+PageUp` / `Cmd+PageDown` move by one screenful of visible session rows.
+- `Cmd+Left` / `Cmd+Right` fold and unfold the selected session's children.
 
 Adjacent and project navigation wrap around the sidebar. First/last and paging
 stop at the ends instead. Plain `PageUp` / `PageDown` remain terminal scrollback
@@ -74,17 +75,18 @@ stop. The chord stays
 put when the session you are on is the only one waiting, so nothing happens
 silently. Both directions are also in the Terminal menu and the command palette.
 
-### Focus on work that needs you
+### Focus on actionable work
 
-The Sessions sidebar defaults to **Focus**. Ordinary sessions stay visible;
-top-level managed Workit jobs appear only when they need a human decision, hold,
-or recovery. Jobs that are investigating, implementing, waiting on CI/deployment,
-merged and still proving acceptance criteria, paused, or verified remain in
-**All sessions**, available from the sidebar options menu. Child rows follow
-their parent's fold state instead of being filtered again by Focus. Focus is
-presentation only: it never pauses, suspends, or closes a session, and selecting
-a hidden job from Work or search reveals its row and ancestry. The options menu
-shows how many managed sessions the current projection hides.
+The Sessions sidebar defaults to **Focus**. It shows only actionable rows:
+sessions that need input, a decision, review, or recovery, plus sessions that
+have finished or settled. Running, executing, idle, and waiting work stays in
+**All sessions**, available from the sidebar options menu. The rule applies at
+every hierarchy depth, so working children disappear even under an unfolded
+parent. A parent remains visible when it contains an actionable or settled
+child, and selecting a hidden session from Work, search, or the command palette
+reveals its row and ancestry. Focus is presentation only: it never pauses,
+suspends, or closes a session. The options menu shows how many live sessions the
+current projection hides.
 
 Managed rows carry an explicit lifecycle phase — investigation, implementation,
 PR open, merged, verified, or cancelled. A merged PR therefore remains visibly
@@ -665,8 +667,9 @@ make it the target's last child. A folded target unfolds to reveal the moved
 session. Reordering switches the sidebar to manual sort.
 
 Each parent row has one fold state: folding it hides every child and
-descendant, and unfolding it shows them all again. Completed and failed child
-rows are not hidden separately.
+descendant, and unfolding it shows every child that the current scope allows.
+**All sessions** does not hide completed or failed children separately; Focus
+applies its actionable-row filter first.
 
 Within the same project group, moves keep the session's ID, process, metadata,
 and children. Self-parenting, cycles, missing or closed targets, and moves

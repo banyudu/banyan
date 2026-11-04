@@ -583,10 +583,10 @@ struct ContentView: View {
                     }
                     .pickerStyle(.inline)
                     .labelsHidden()
-                    if store.sidebarScope == .focus, store.hiddenManagedSessionCount > 0 {
-                        Text(store.hiddenManagedSessionCount == 1
-                            ? "1 managed session hidden"
-                            : "\(store.hiddenManagedSessionCount) managed sessions hidden")
+                    if store.sidebarScope == .focus, store.hiddenSessionCount > 0 {
+                        Text(store.hiddenSessionCount == 1
+                            ? "1 session hidden"
+                            : "\(store.hiddenSessionCount) sessions hidden")
                     }
                     Divider()
                     Button("Reveal Command Logs") {
@@ -602,7 +602,7 @@ struct ContentView: View {
                 .fixedSize()
                 .accessibilityIdentifier(AccessibilityID.sidebarOptions)
                 .help(store.sidebarScope == .focus
-                    ? "Sidebar options — Focus hides quiet managed work"
+                    ? "Sidebar options — Focus shows only actionable work"
                     : "Sidebar options — All sessions")
 
                 HStack(spacing: 6) {

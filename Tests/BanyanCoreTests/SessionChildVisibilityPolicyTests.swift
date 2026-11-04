@@ -126,7 +126,7 @@ private func hierarchyRow(_ id: String, depth: Int) -> SessionSidebarRow {
     #expect(visible.map(\.id) == ["done-root"])
 }
 
-@Test func focusHidesQuietManagedWorkButKeepsAttentionAndUnmanagedSessions() {
+@Test func focusKeepsOnlyActionableAndSettledWork() {
     let rows = [hierarchyRow("active", depth: 0), hierarchyRow("quiet", depth: 0),
                 hierarchyRow("settled", depth: 0), hierarchyRow("unmanaged", depth: 0)]
     let items: [String: SessionChildVisibilityItem] = [
@@ -138,44 +138,48 @@ private func hierarchyRow(_ id: String, depth: Int) -> SessionSidebarRow {
 
     let focused = SessionChildVisibilityPolicy.visibleRows(
         rows: rows, itemsByID: items, foldedParentIDs: [], scope: .focus)
-    #expect(focused.map(\.id) == ["active", "unmanaged"])
+    #expect(focused.map(\.id) == ["active", "settled"])
 
     let all = SessionChildVisibilityPolicy.visibleRows(
         rows: rows, itemsByID: items, foldedParentIDs: [], scope: .all)
     #expect(all == rows)
 }
 
-@Test func focusShowsQuietChildrenUnderAnUnfoldedParent() {
+@Test func focusFiltersChildrenAtEveryDepth() {
     let rows = [
-        hierarchyRow("parent", depth: 0),
+        hierarchyRow("active-parent", depth: 0),
         hierarchyRow("quiet-child", depth: 1),
+        hierarchyRow("settled-child", depth: 1),
     ]
     let items: [String: SessionChildVisibilityItem] = [
-        "parent": visibilityItem("parent"),
-        "quiet-child": visibilityItem("quiet-child", parent: "parent", focus: .watch),
+        "active-parent": visibilityItem("active-parent", focus: .act),
+        "quiet-child": visibilityItem("quiet-child", parent: "active-parent", focus: .watch),
+        "settled-child": visibilityItem("settled-child", parent: "active-parent", focus: .settled),
     ]
 
     let visible = SessionChildVisibilityPolicy.visibleRows(
         rows: rows, itemsByID: items, foldedParentIDs: [], scope: .focus)
-    #expect(visible == rows)
+    #expect(visible.map(\.id) == ["active-parent", "settled-child"])
 
     let folded = SessionChildVisibilityPolicy.visibleRows(
-        rows: rows, itemsByID: items, foldedParentIDs: ["parent"], scope: .focus)
-    #expect(folded.map(\.id) == ["parent"])
+        rows: rows, itemsByID: items, foldedParentIDs: ["active-parent"], scope: .focus)
+    #expect(folded.map(\.id) == ["active-parent"])
 }
 
-@Test func focusPinsAncestorsOfActionableAndUnmanagedChildren() {
+@Test func focusPinsAncestorsOfActionableAndSettledChildren() {
     let rows = [hierarchyRow("quiet-parent", depth: 0), hierarchyRow("active", depth: 1),
-                hierarchyRow("plain-parent", depth: 0), hierarchyRow("unmanaged", depth: 1)]
+                hierarchyRow("plain-parent", depth: 0), hierarchyRow("settled", depth: 1),
+                hierarchyRow("unmanaged", depth: 1)]
     let items: [String: SessionChildVisibilityItem] = [
         "quiet-parent": visibilityItem("quiet-parent", focus: .watch),
         "active": visibilityItem("active", parent: "quiet-parent", focus: .act),
-        "plain-parent": visibilityItem("plain-parent", focus: .settled),
+        "plain-parent": visibilityItem("plain-parent", focus: .watch),
+        "settled": visibilityItem("settled", parent: "plain-parent", focus: .settled),
         "unmanaged": visibilityItem("unmanaged", parent: "plain-parent"),
     ]
     let visible = SessionChildVisibilityPolicy.visibleRows(
         rows: rows, itemsByID: items, foldedParentIDs: [], scope: .focus)
-    #expect(visible == rows)
+    #expect(visible.map(\.id) == ["quiet-parent", "active", "plain-parent", "settled"])
 }
 
 @Test func focusIncludesSelectedQuietWorkAndItsAncestors() {

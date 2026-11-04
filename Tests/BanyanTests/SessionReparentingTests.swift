@@ -21,6 +21,7 @@ import Testing
         for session in store.sessions where session.id != "closed" { session.status = .idle }
         try #require(store.sessions.first { $0.id == "foreign" }).projectGroupID = "other-project"
         store.sortMode = .manual
+        store.sidebarScope = .all
         store.foldedParentIDs = []
         store.selectedSessionID = nil
         store.saveSessions()

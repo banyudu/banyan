@@ -48,12 +48,18 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
             case .working, .waiting: nextFocusLane = .watch
             }
         } else {
-            nextFocusLane = nil
+            nextFocusLane = .forSessionStatus(node.status)
         }
-        // A terminal prompt is newer than the saved overview. Never let stale
-        // work metadata turn an explicit human request into quiet background work.
-        focusLane = nextFocusLane == .watch && (node.status == .asking || node.status == .failed)
-            ? .act : nextFocusLane
+        // Terminal status is newer than the saved overview. Never let stale work
+        // metadata turn an explicit human request or a finished run into background work.
+        switch node.status {
+        case .needInput, .asking, .review, .failed:
+            focusLane = .act
+        case .completed, .closed:
+            focusLane = nextFocusLane == .watch ? .settled : nextFocusLane
+        default:
+            focusLane = nextFocusLane
+        }
         var nextKind: Kind
         var nextLabel: String
         var nextDetail: String

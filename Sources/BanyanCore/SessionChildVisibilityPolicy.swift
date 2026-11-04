@@ -19,9 +19,8 @@ public struct SessionChildVisibilityItem: Sendable, Equatable {
 /// Decides which hierarchy rows stay visible.
 ///
 /// Folding a parent hides its entire subtree; unfolding shows every child
-/// again. Nothing is hidden by child status. Focus scope additionally hides
-/// quiet managed top-level work while keeping selected rows and their ancestors
-/// visible. Descendants follow the parent's fold state only.
+/// again. Focus scope additionally hides non-actionable rows at every depth,
+/// while keeping selected rows and their ancestors visible.
 public enum SessionChildVisibilityPolicy {
     /// Filters hierarchy-ordered (parent-first) rows. A folded parent hides
     /// every descendant, including selected sessions and those needing
@@ -37,7 +36,7 @@ public enum SessionChildVisibilityPolicy {
         if scope == .focus {
             pinnedIDs.formUnion(ancestors(of: selectedID, in: itemsByID))
             if let selectedID { pinnedIDs.insert(selectedID) }
-            for item in itemsByID.values where item.focusLane == nil || item.focusLane == .act {
+            for item in itemsByID.values where item.focusLane?.isActionable == true {
                 pinnedIDs.insert(item.id)
                 pinnedIDs.formUnion(ancestors(of: item.id, in: itemsByID))
             }
@@ -69,7 +68,7 @@ public enum SessionChildVisibilityPolicy {
                 visible.append(row)
                 continue
             }
-            if scope == .focus, row.depth == 0, let lane = item.focusLane, lane != .act {
+            if scope == .focus, item.focusLane?.isActionable != true {
                 hidden.insert(row.id)
                 continue
             }
