@@ -183,6 +183,9 @@ struct BanyanApp: App {
                             store.confirmPendingCloseFromKeyboardShortcut()
                             return true
                         }
+                        Self.jumpOverlayMonitor.onSetSelectedSessionChildrenFolded = { [weak store = self.store] folded in
+                            store?.setSelectedSessionChildrenFolded(folded) ?? false
+                        }
                         Self.jumpOverlayMonitor.start()
                     }
                     store.selection.startClickMonitor()
@@ -297,6 +300,20 @@ private struct BanyanCommands: Commands {
                 store.requestCommandPalette()
             }
             .keyboardShortcut("p")
+
+            Divider()
+
+            Button("Fold Child Sessions") {
+                store.setSelectedSessionChildrenFolded(true)
+            }
+            .keyboardShortcut(.leftArrow, modifiers: .command)
+            .disabled(store.selectedSessionChildrenFoldState != false)
+
+            Button("Unfold Child Sessions") {
+                store.setSelectedSessionChildrenFolded(false)
+            }
+            .keyboardShortcut(.rightArrow, modifiers: .command)
+            .disabled(store.selectedSessionChildrenFoldState != true)
         }
         CommandMenu("Terminal") {
             Button("Close Current Terminal") {

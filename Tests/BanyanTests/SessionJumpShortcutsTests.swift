@@ -226,6 +226,33 @@ struct SessionJumpShortcutUITests {
         #expect(requests == 3)
     }
 
+    @Test func commandArrowsFoldAndUnfoldChildrenOnlyWhenHandled() throws {
+        let monitor = JumpOverlayMonitor()
+        var requests: [Bool] = []
+        monitor.onSetSelectedSessionChildrenFolded = { folded in
+            requests.append(folded)
+            return true
+        }
+
+        let commandLeft = try keyEvent(
+            type: .keyDown, modifiers: .command, characters: "", keyCode: 123
+        )
+        let commandRight = try keyEvent(
+            type: .keyDown, modifiers: .command, characters: "", keyCode: 124
+        )
+        #expect(monitor.handleEvent(commandLeft) == nil)
+        #expect(monitor.handleEvent(commandRight) == nil)
+        #expect(requests == [true, false])
+
+        let commandShiftLeft = try keyEvent(
+            type: .keyDown, modifiers: [.command, .shift], characters: "", keyCode: 123
+        )
+        #expect(monitor.handleEvent(commandShiftLeft) != nil)
+
+        monitor.onSetSelectedSessionChildrenFolded = { _ in false }
+        #expect(monitor.handleEvent(commandLeft) != nil)
+    }
+
     @Test func nativeListUpdatesKeysAfterScrollingBeyondFortyFiveSessions() async throws {
         _ = NSApplication.shared
         let shortcuts = SessionJumpShortcuts()

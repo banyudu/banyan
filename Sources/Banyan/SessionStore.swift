@@ -4857,6 +4857,35 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// The selected parent's child fold state, or nil when the selection is not
+    /// an active parent in the Sessions sidebar.
+    var selectedSessionChildrenFoldState: Bool? {
+        guard sidebarMode == .sessions,
+              let selectedSessionID,
+              sessionSidebarGroups.contains(where: { group in
+                  group.items.contains { $0.id == selectedSessionID && $0.isParent }
+              }) else {
+            return nil
+        }
+        return foldedParentIDs.contains(selectedSessionID)
+    }
+
+    /// Sets the selected parent's child fold state. Returns false when the
+    /// selection has no children, so the shortcut can fall through unchanged.
+    @discardableResult
+    func setSelectedSessionChildrenFolded(_ folded: Bool) -> Bool {
+        guard let selectedSessionID,
+              selectedSessionChildrenFoldState != nil else {
+            return false
+        }
+        if folded {
+            foldedParentIDs.insert(selectedSessionID)
+        } else {
+            foldedParentIDs.remove(selectedSessionID)
+        }
+        return true
+    }
+
     private func applySidebarSessionOrder(activeSidebarIDs: [String], reorderedIDs: [String]) {
         let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
         let reorderedSidebarSessions = reorderedIDs.compactMap { sessionsByID[$0] }

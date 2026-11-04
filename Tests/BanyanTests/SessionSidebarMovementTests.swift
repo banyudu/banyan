@@ -98,6 +98,27 @@ import Testing
         ])
     }
 
+    @Test func selectedParentCanFoldAndUnfoldChildrenDirectly() throws {
+        let (_, store, _) = try fixture()
+        defer { store.flushPendingSessionSaves() }
+        store.userSelect(id: "a")
+
+        #expect(store.selectedSessionChildrenFoldState == false)
+        #expect(store.setSelectedSessionChildrenFolded(true))
+        #expect(store.foldedParentIDs.contains("a"))
+        #expect(store.selectedSessionChildrenFoldState == true)
+        #expect(visibleRows(in: store).map(\.id) == ["a", "b", "c"])
+
+        #expect(store.setSelectedSessionChildrenFolded(false))
+        #expect(!store.foldedParentIDs.contains("a"))
+        #expect(visibleRows(in: store).map(\.id) == ["a", "a1", "a2", "b", "c"])
+
+        store.userSelect(id: "a1")
+        #expect(store.selectedSessionChildrenFoldState == nil)
+        #expect(!store.setSelectedSessionChildrenFolded(true))
+        #expect(!store.foldedParentIDs.contains("a1"))
+    }
+
     @Test func indentAndOutdentUpdateHierarchyWithoutChangingRowOrder() throws {
         let (fixture, store, groupID) = try fixture()
         defer { store.flushPendingSessionSaves() }

@@ -18,6 +18,7 @@ final class JumpOverlayMonitor {
     var onPage: ((SessionSelectionDirection) -> Void)?
     var onHandoff: (() -> Bool)?
     var onConfirmClose: (() -> Bool)?
+    var onSetSelectedSessionChildrenFolded: ((Bool) -> Bool)?
     var onCommandModifierChange: ((Bool) -> Void)?
 
     private var keyMonitor: Any?
@@ -87,6 +88,7 @@ final class JumpOverlayMonitor {
     func handleEvent(_ event: NSEvent) -> NSEvent? {
         onCommandModifierChange?(event.modifierFlags.contains(.command))
         guard event.type == .keyDown else { return event }
+        if handleChildrenFoldShortcut(event) { return nil }
         if handleCloseConfirmationShortcut(event) { return nil }
         if handleHandoff(event) { return nil }
         if handleAttentionShortcut(event) { return nil }
@@ -98,6 +100,48 @@ final class JumpOverlayMonitor {
     }
 
     private static let interestingModifiers = SessionShortcut.comparedModifiers
+
+    enum ChildrenFoldAction: Equatable {
+        case fold
+        case unfold
+
+        var folded: Bool { self == .fold }
+    }
+
+    /// Plain Cmd+Left/Right act on the selected parent in the Sessions sidebar.
+    /// Key codes are used because macOS sends the arrow keys as function-key
+    /// scalars rather than printable characters.
+    static func childrenFoldAction(
+        keyCode: UInt16,
+        modifiers: NSEvent.ModifierFlags
+    ) -> ChildrenFoldAction? {
+        let relevant = modifiers.intersection(SessionShortcut.comparedModifiers)
+        guard relevant == .command else { return nil }
+        switch keyCode {
+        case 123: return .fold
+        case 124: return .unfold
+        default: return nil
+        }
+    }
+
+    static func dispatchChildrenFoldShortcut(
+        keyCode: UInt16,
+        modifiers: NSEvent.ModifierFlags,
+        onSetFolded: ((Bool) -> Bool)?
+    ) -> Bool {
+        guard let action = childrenFoldAction(keyCode: keyCode, modifiers: modifiers) else {
+            return false
+        }
+        return onSetFolded?(action.folded) ?? false
+    }
+
+    private func handleChildrenFoldShortcut(_ event: NSEvent) -> Bool {
+        Self.dispatchChildrenFoldShortcut(
+            keyCode: event.keyCode,
+            modifiers: event.modifierFlags,
+            onSetFolded: onSetSelectedSessionChildrenFolded
+        )
+    }
 
     /// Command-Return is the keyboard path through the force-close override.
     /// A native alert does not receive its own default-action shortcut while
