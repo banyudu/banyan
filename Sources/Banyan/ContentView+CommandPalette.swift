@@ -191,6 +191,8 @@ extension ContentView {
             ))
         }
 
+        items.append(contentsOf: store.projectCommandPaletteItems(for: commandPaletteProjects))
+
         for item in store.sidebarSessions {
             let shortcut = sessionJumpShortcuts.shortcutDisplay(for: item.id)
             items.append(CommandPaletteItem(

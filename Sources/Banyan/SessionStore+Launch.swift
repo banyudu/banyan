@@ -82,6 +82,16 @@ extension SessionStore {
         return spawn(launch, cwd: cwd, parentSessionID: nil)
     }
 
+    @discardableResult
+    func spawnPaletteAgentSession(in project: CommandPaletteProject, launch: NewSessionLaunch) -> BanyanSession? {
+        rememberProjectLaunch(launch, for: project.id)
+        return spawn(
+            launch.launchSpec(codexLaunchMode: codexLaunchMode),
+            cwd: project.cwd,
+            parentSessionID: nil
+        )
+    }
+
     /// Spawn a sibling using the selected session's coding-agent runtime when it
     /// is one of the runtimes supported by the quick new-session shortcut.
     @discardableResult

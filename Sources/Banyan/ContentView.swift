@@ -13,6 +13,7 @@ struct ContentView: View {
     @State var sessionJumpShortcuts = SessionJumpShortcuts()
     @State private var showingPreferences = false
     @State var showingCommandPalette = false
+    @State var commandPaletteProjects: [CommandPaletteProject] = []
     @State var commandModifierHeld = false
     @State var codexHandoffSession: TerminalSession?
     @State var reparentSession: BanyanSession?
@@ -131,6 +132,7 @@ struct ContentView: View {
                 move: { try store.reparent(id: session.id, parentSessionID: $0) })
         }
         .onChange(of: store.commandPaletteRequestID) {
+            commandPaletteProjects = []
             showingCommandPalette = true
         }
         .alert(Text(closeConfirmationTitle), isPresented: closeConfirmationBinding) {
@@ -203,6 +205,11 @@ struct ContentView: View {
                         agentProfiles: store.paletteAgentProfiles,
                         selectedAgentID: $store.paletteAgentProfileID
                     )
+                    .task(id: store.commandPaletteRequestID) {
+                        let projects = await store.commandPaletteProjects()
+                        guard !Task.isCancelled else { return }
+                        commandPaletteProjects = projects
+                    }
                 }
             }
         }

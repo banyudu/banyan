@@ -43,6 +43,19 @@ visible_row_shortcuts: false
 Config edits apply without restarting Banyan. Remove the setting or set it to
 `true` to enable rolling again. Use `Cmd+P` to search for an offscreen session.
 
+### New sessions from the command palette
+
+Press `Cmd+P` and type `new <project>` to find **New Session in <Project>**.
+Each active project has one action, including projects hidden by Focus or folded
+session rows. The subtitle shows the destination directory and launch profile;
+`Enter` opens and focuses a top-level session at the project's main checkout.
+Worktrees and subdirectories resolve to that root.
+
+Use the palette's agent picker (`Tab` / `Shift+Tab`) to choose a profile. **Auto**
+uses the target project's remembered profile, matching its sidebar `+` button.
+Launching with an explicit profile remembers it for that project. Projects with
+no active sessions are not included.
+
 ### Session navigation
 
 - `Cmd+J` / `Cmd+K` move to the next and previous session.

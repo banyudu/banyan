@@ -212,7 +212,7 @@ struct CommandPaletteView: View {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     agentPickerMenu
-                    TextField("Type a command or open a Linear/GitHub target", text: $query)
+                    TextField("Search commands, projects, or Linear/GitHub targets", text: $query)
                         .textFieldStyle(.plain)
                         .font(.system(size: 16))
                         .focused($isSearchFocused)
@@ -457,7 +457,7 @@ struct CommandPaletteView: View {
         item.action()
     }
 
-    private static func matchScore(_ query: String, item: CommandPaletteItem) -> Int? {
+    static func matchScore(_ query: String, item: CommandPaletteItem) -> Int? {
         let searchable = [item.category, item.title, item.detail ?? ""]
             .joined(separator: " ")
             .lowercased()
