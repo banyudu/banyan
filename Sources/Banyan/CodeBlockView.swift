@@ -6,6 +6,8 @@ struct CodeBlockView: View {
     private let displayText: String
     private let requestedLanguage: String?
     private let language: CodeBlockLanguage?
+    private let title: String?
+    private let copyText: String?
     private let font: Font
     private let minimumHeight: CGFloat
     private let previewHeight: CGFloat
@@ -18,6 +20,8 @@ struct CodeBlockView: View {
     init(
         text: String,
         language: String? = nil,
+        title: String? = nil,
+        copyText: String? = nil,
         font: Font = .system(.caption, design: .monospaced),
         minimumHeight: CGFloat = 30,
         previewHeight: CGFloat = 220,
@@ -26,6 +30,8 @@ struct CodeBlockView: View {
         self.displayText = CodexConversationText.plain(text)
         self.requestedLanguage = language
         self.language = CodeBlockLanguage(identifier: language)
+        self.title = title
+        self.copyText = copyText.map(CodexConversationText.plain)
         self.font = font
         self.minimumHeight = minimumHeight
         self.previewHeight = previewHeight
@@ -56,19 +62,25 @@ struct CodeBlockView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Text(languageLabel)
+            Text(title ?? languageLabel)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(title == nil ? Color.secondary : Color.primary)
                 .lineLimit(1)
+                .help(title ?? languageLabel)
             Spacer(minLength: 8)
+            if title != nil {
+                Text(languageLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             Button(action: copy) {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help(copied ? "Copied" : "Copy code")
-            .accessibilityLabel(copied ? "Copied" : "Copy code")
+            .help(copyActionLabel)
+            .accessibilityLabel(copyActionLabel)
             .accessibilityIdentifier(AccessibilityID.codeBlockCopy)
 
             if canExpand {
@@ -160,9 +172,13 @@ struct CodeBlockView: View {
         highlighted = value.map { HighlightedCode(request: request, value: $0) }
     }
 
+    private var copyActionLabel: String {
+        copied ? "Copied" : (copyText == nil ? "Copy code" : "Copy message")
+    }
+
     private func copy() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(displayText, forType: .string)
+        NSPasteboard.general.setString(copyText ?? displayText, forType: .string)
         copied = true
         Task {
             try? await Task.sleep(for: .seconds(1.2))

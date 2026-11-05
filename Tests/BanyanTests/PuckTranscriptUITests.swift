@@ -223,7 +223,7 @@ struct PuckTranscriptUITests {
         #expect(!text.contains(#"{"class":"worker""#))
     }
 
-    @Test func assistantTaggedJSONUsesTheCodeBlockView() async throws {
+    @Test func assistantTaggedJSONShowsItsKindAboveTheFormattedPayload() async throws {
         let message = """
         Investigation complete
         [[investigation-result]]
@@ -245,6 +245,12 @@ struct PuckTranscriptUITests {
         #expect(text.contains("JSON"))
         #expect(text.contains("investigation-result"))
         #expect(text.contains("confidence"))
+        #expect(!text.contains("[["))
+        #expect(!text.contains("]]"))
+        #expect(text.components(separatedBy: "investigation-result").count == 2)
+        #expect(text.components(separatedBy: "\n").contains {
+            $0.contains("confidence") && !$0.contains("verdict") && !$0.contains("root_cause")
+        })
         #expect(text.contains("Investigation complete"))
         #expect(text.contains("More evidence is needed"))
     }

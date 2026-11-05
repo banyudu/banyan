@@ -45,7 +45,7 @@ import Testing
     #expect(MarkdownBlockParser.containsHorizontalRule(in: markdown))
 }
 
-@Test func markdownParserHighlightsTaggedJSONWithoutChangingTheEnvelope() throws {
+@Test func markdownParserSeparatesTaggedJSONKindAndFormatsOnlyThePayload() throws {
     let envelope = """
     [[investigation-result]]
     {"verdict":"needs_more_evidence","confidence":0.91,"summary":"尚无共同根因 🐳","root_cause":null,"ready":false,"acceptance":[]}
@@ -54,17 +54,30 @@ import Testing
     let markdown = "Before the result\n" + envelope + "\nAfter the result"
     let blocks = MarkdownBlockParser.codeBlocks(in: markdown)
 
-    #expect(blocks == [.init(language: "json", text: envelope)])
+    #expect(blocks.count == 1)
     let block = try #require(blocks.first)
+    #expect(block.kind == "investigation-result")
+    #expect(block.language == "json")
+    #expect(block.originalText == envelope)
+    #expect(block.text == """
+    {
+      "verdict": "needs_more_evidence",
+      "confidence": 0.91,
+      "summary": "尚无共同根因 🐳",
+      "root_cause": null,
+      "ready": false,
+      "acceptance": []
+    }
+    """)
     let spans = try #require(CodeBlockSyntaxHighlighter.highlight(block.text, languageIdentifier: block.language))
-    #expect(spans.map(\.text).joined() == envelope)
+    #expect(spans.map(\.text).joined() == block.text)
     #expect(spans.contains { $0.text == "\"verdict\"" && $0.kind == .key })
     #expect(spans.contains { $0.text == "\"尚无共同根因 🐳\"" && $0.kind == .string })
     #expect(spans.contains { $0.text == "0.91" && $0.kind == .number })
     #expect(spans.contains { $0.text == "null" && $0.kind == .literal })
 }
 
-@Test func markdownParserRecognizesMultipleTaggedContainersAfterAList() {
+@Test func markdownParserRecognizesMultipleTaggedContainersAfterAList() throws {
     let object = """
       [[result_v2]]
       {
@@ -79,7 +92,24 @@ import Testing
     """
     let blocks = MarkdownBlockParser.codeBlocks(in: "- Findings\n" + object + "\n" + array)
 
-    #expect(blocks == [.init(language: "json", text: object), .init(language: "json", text: array)])
+    try #require(blocks.count == 2)
+    #expect(blocks.map(\.kind) == ["result_v2", "records.v1"])
+    #expect(blocks.map(\.originalText) == [object, array])
+    #expect(blocks[0].text == """
+    {
+      "message": "**literal** and \\n escaped text"
+    }
+    """)
+    #expect(blocks[1].text == """
+    [
+      {
+        "ok": true
+      },
+      {
+        "ok": false
+      }
+    ]
+    """)
 }
 
 @Test func markdownParserLeavesIncompleteOrNonJSONEnvelopesAsText() {

@@ -16,7 +16,10 @@ common aliases such as `js`, `tsx`, `zsh`, `yml`, `patch`, and `language-html`.
 
 Standalone `[[name]]` / `[[/name]]` envelopes containing a valid JSON object or
 array also use the JSON code view, including when adjacent to prose or a list.
-The wrapper and payload remain unchanged for selection and copying. Incomplete,
+The wrapper name appears as the message kind in the block title, with a JSON
+language label. The body contains only the pretty-printed JSON payload, preserving
+key order, values, and escaping. Text selection uses the displayed JSON; the
+"Copy message" action retains the original wrapped message. Incomplete,
 mismatched, non-JSON, and oversized envelopes remain ordinary text; explicit
 Markdown fences keep their declared language. Envelope detection uses the same
 character and line limits as highlighting.

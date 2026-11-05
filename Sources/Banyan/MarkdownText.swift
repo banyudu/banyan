@@ -55,8 +55,14 @@ struct MarkdownText: View {
             }
         case let .table(table):
             tableView(table)
-        case let .codeBlock(language, text):
-            CodeBlockView(text: text, language: language, font: style.codeFont)
+        case .codeBlock(let code):
+            CodeBlockView(
+                text: code.text,
+                language: code.language,
+                title: code.kind,
+                copyText: code.originalText,
+                font: style.codeFont
+            )
         }
     }
 
@@ -282,7 +288,7 @@ private enum MarkdownBlockContent {
     case horizontalRule
     case list([MarkdownListItem])
     case table(MarkdownTable)
-    case codeBlock(language: String?, text: String)
+    case codeBlock(MarkdownBlockParser.CodeBlock)
 }
 
 private struct MarkdownTable {
@@ -349,6 +355,8 @@ enum MarkdownBlockParser {
     struct CodeBlock: Equatable {
         let language: String?
         let text: String
+        var kind: String? = nil
+        var originalText: String? = nil
     }
 
     static func containsTable(in value: String) -> Bool {
@@ -374,8 +382,8 @@ enum MarkdownBlockParser {
 
     static func codeBlocks(in value: String) -> [CodeBlock] {
         parse(value).compactMap { block in
-            guard case let .codeBlock(language, text) = block.content else { return nil }
-            return CodeBlock(language: language, text: text)
+            guard case .codeBlock(let code) = block.content else { return nil }
+            return code
         }
     }
 
@@ -405,13 +413,13 @@ enum MarkdownBlockParser {
 
             if let fence = fenceStart(in: line) {
                 let parsed = parseCodeBlock(lines: lines, startIndex: index, fence: fence)
-                append(.codeBlock(language: parsed.language, text: parsed.text))
+                append(.codeBlock(CodeBlock(language: parsed.language, text: parsed.text)))
                 index = parsed.nextIndex
                 continue
             }
 
             if let tagged = parseTaggedJSONBlock(lines: lines, startIndex: index) {
-                append(.codeBlock(language: "json", text: tagged.text))
+                append(.codeBlock(tagged.block))
                 index = tagged.nextIndex
                 continue
             }
@@ -569,12 +577,12 @@ enum MarkdownBlockParser {
     }
 
     /// Agent result envelopes are not Markdown fences, but their JSON payload
-    /// should use the same code view. Keep the markers and payload verbatim so
-    /// selecting or copying the block preserves the original result.
+    /// should use the same code view. Show the kind as metadata and format only
+    /// the payload, retaining the original envelope for the copy action.
     private static func parseTaggedJSONBlock(
         lines: [String],
         startIndex: Int
-    ) -> (text: String, nextIndex: Int)? {
+    ) -> (block: CodeBlock, nextIndex: Int)? {
         let opening = lines[startIndex].trimmingCharacters(in: .whitespaces)
         guard opening.hasPrefix("[["), opening.hasSuffix("]]"), opening.count > 4 else {
             return nil
@@ -593,12 +601,13 @@ enum MarkdownBlockParser {
             guard characterCount <= CodeBlockHighlightPolicy.maximumCharacters else { return nil }
             if lines[index].trimmingCharacters(in: .whitespaces) == closing {
                 let payload = lines[(startIndex + 1)..<index].joined(separator: "\n")
-                guard let data = payload.data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data),
-                      object is [String: Any] || object is [Any] else {
-                    return nil
-                }
-                return (lines[startIndex...index].joined(separator: "\n"), index + 1)
+                guard let formatted = JSONTextFormatter.prettyPrinted(payload) else { return nil }
+                return (CodeBlock(
+                    language: "json",
+                    text: formatted,
+                    kind: String(name),
+                    originalText: lines[startIndex...index].joined(separator: "\n")
+                ), index + 1)
             }
         }
         return nil
