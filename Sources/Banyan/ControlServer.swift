@@ -3,8 +3,11 @@ import AppKit
 import Foundation
 import Network
 
-final class ControlServer {
-    weak var store: SessionStore?
+// Listener mutations run on `queue`; store access and parked replies run on
+// MainActor. The remaining shared fields are immutable. Network callbacks may
+// retain the server across executors without moving either set of mutable state.
+final class ControlServer: @unchecked Sendable {
+    @MainActor weak var store: SessionStore?
     /// Listener lifecycle state is confined to `queue`, including first startup.
     private var listener: NWListener?
     private let port: NWEndpoint.Port
@@ -17,7 +20,7 @@ final class ControlServer {
     /// the port on a quick restart, without looping forever.
     private let maxBindAttempts = 30
     /// `/events` requests parked until a session changes status. Main-actor only.
-    var eventWaiters: [EventWaiter] = []
+    @MainActor var eventWaiters: [EventWaiter] = []
     /// How long a parked `/events` request is held before it answers empty. Long
     /// enough that an idle bridge makes a couple of requests a minute rather than
     /// a poll loop, short enough to stay inside an ordinary client timeout.
@@ -201,7 +204,7 @@ final class ControlServer {
                     // The reply may be produced now, after tmux work, or only once a
                     // session changes status, so the connection is handed to the
                     // route rather than answered on return from it.
-                    self.route(nextBuffer) { [weak self] response in
+                    self.route(nextBuffer) { [weak self = self] response in
                         self?.send(connection, status: response.status, data: response.data, error: response.error)
                     }
                 }
@@ -564,8 +567,15 @@ final class ControlServer {
                 let body = try request.decode(ControlPayload.self)
                 try validateVersion(body.apiVersion)
                 try route.validate(body)
-                let url = try VisualSnapshotter.captureMainWindow(to: body.path!)
-                return respond(.ok(["path": url.path]))
+                Task { @MainActor in
+                    do {
+                        let url = try await VisualSnapshotter.captureMainWindow(to: body.path!)
+                        respond(.ok(["path": url.path]))
+                    } catch {
+                        respond(failure(for: error))
+                    }
+                }
+                return
 
             case .output:
                 let body = try payload(for: request)

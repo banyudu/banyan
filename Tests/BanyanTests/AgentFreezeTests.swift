@@ -291,10 +291,11 @@ private struct FreezeFixture {
         try peer.run()
         let port = fixture.root.appendingPathComponent("port")
         try await waitForPuckState { FileManager.default.fileExists(atPath: port.path) }
+        let preferences = try #require(UserDefaults(suiteName: backend.socketName))
         store = fixture.makeStore(tmuxBackend: backend,
                                   sessionBackend: agedActivity ? AgedFreezeBackend(base: backend) : nil,
                                   processTable: processTable,
-                                  freezePreferences: try #require(UserDefaults(suiteName: backend.socketName)))
+                                  freezePreferences: preferences)
         let command = "exec /usr/bin/python3 " + AgentLaunchCommand.shellQuote(agentScript.path) + " " + AgentLaunchCommand.shellQuote(directory)
         session = store.spawn(id: "synthetic-freeze", title: "Synthetic agent", cwd: fixture.project.path,
                               command: command, select: false)

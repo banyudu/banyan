@@ -14,13 +14,9 @@ final class PuckPresenceMonitor {
     private var lastActivity: Date?
     private var lastReport: Date?
 
-    deinit {
-        let tokens = observers
-        let monitor = inputMonitor
-        DispatchQueue.main.async {
-            for (center, token) in tokens { center.removeObserver(token) }
-            if let monitor { NSEvent.removeMonitor(monitor) }
-        }
+    isolated deinit {
+        for (center, token) in observers { center.removeObserver(token) }
+        if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
     }
 
     func observe(_ observation: (any PuckDaemonObservation)?) {

@@ -112,7 +112,7 @@ struct BanyanApp: App {
                 .onAppear {
                     EnergyTrace.start()
                     if Self.host.environment["BANYAN_CPU_CAPTURE"] != "0" {
-                        Self.resourceDiagnostics.start { [weak store] in
+                        Self.resourceDiagnostics.start { [weak store = self.store] in
                             (store?.selection.selectedSessionID,
                              store?.sessions.lazy.filter { $0.status != .closed && $0.isProcessStarted }.count ?? 0)
                         }
@@ -126,13 +126,13 @@ struct BanyanApp: App {
                     Self.commandWTerminalCloseMonitor.start()
 
                     if !isLab {
-                        Self.jumpOverlayMonitor.onJump = { [weak store] index in
+                        Self.jumpOverlayMonitor.onJump = { [weak store = self.store] index in
                             store?.selectSession(shortcutIndex: index) ?? false
                         }
                         Self.jumpOverlayMonitor.onCommandModifierChange = { held in
                             SessionJumpShortcuts.setCommandHeldInAllWindows(held)
                         }
-                        Self.jumpOverlayMonitor.onNext = { [weak store] in
+                        Self.jumpOverlayMonitor.onNext = { [weak store = self.store] in
                             guard let store else { return }
                             if store.sidebarMode == .linear {
                                 store.selectNextLinearIssue()
@@ -140,7 +140,7 @@ struct BanyanApp: App {
                                 store.selectNextSession()
                             }
                         }
-                        Self.jumpOverlayMonitor.onPrevious = { [weak store] in
+                        Self.jumpOverlayMonitor.onPrevious = { [weak store = self.store] in
                             guard let store else { return }
                             if store.sidebarMode == .linear {
                                 store.selectPreviousLinearIssue()
@@ -148,35 +148,35 @@ struct BanyanApp: App {
                                 store.selectPreviousSession()
                             }
                         }
-                        Self.jumpOverlayMonitor.onSelectNeedingAttention = { [weak store] direction in
+                        Self.jumpOverlayMonitor.onSelectNeedingAttention = { [weak store = self.store] direction in
                             store?.selectSessionNeedingAttention(direction: direction)
                         }
-                        Self.jumpOverlayMonitor.onProject = { [weak store] direction in
+                        Self.jumpOverlayMonitor.onProject = { [weak store = self.store] direction in
                             guard let store, store.sidebarMode == .sessions else { return }
                             switch direction {
                             case .next: store.selectNextProject()
                             case .previous: store.selectPreviousProject()
                             }
                         }
-                        Self.jumpOverlayMonitor.onFirstSession = { [weak store] in
+                        Self.jumpOverlayMonitor.onFirstSession = { [weak store = self.store] in
                             guard let store, store.sidebarMode == .sessions else { return }
                             store.selectFirstSession()
                         }
-                        Self.jumpOverlayMonitor.onLastSession = { [weak store] in
+                        Self.jumpOverlayMonitor.onLastSession = { [weak store = self.store] in
                             guard let store, store.sidebarMode == .sessions else { return }
                             store.selectLastSession()
                         }
-                        Self.jumpOverlayMonitor.onPage = { [weak store] direction in
+                        Self.jumpOverlayMonitor.onPage = { [weak store = self.store] direction in
                             guard let store, store.sidebarMode == .sessions else { return }
                             let pageSize = SessionJumpShortcuts
                                 .forWindow(NSApp.keyWindow)?.pageStride ?? 10
                             store.selectSessionPage(direction: direction, pageSize: pageSize)
                         }
-                        Self.jumpOverlayMonitor.onHandoff = { [weak store] in
+                        Self.jumpOverlayMonitor.onHandoff = { [weak store = self.store] in
                             store?.handleHandoffShortcut()
                             return true
                         }
-                        Self.jumpOverlayMonitor.onConfirmClose = { [weak store] in
+                        Self.jumpOverlayMonitor.onConfirmClose = { [weak store = self.store] in
                             guard let store,
                                   store.pendingCloseSession != nil,
                                   !store.pendingCloseIsPausing else { return false }
@@ -190,7 +190,7 @@ struct BanyanApp: App {
                     }
                     store.selection.startClickMonitor()
 
-                    Self.sessionRenameShortcutMonitor.action = { [weak store] in
+                    Self.sessionRenameShortcutMonitor.action = { [weak store = self.store] in
                         guard let store,
                               store.sidebarMode == .sessions,
                               store.selectedSession != nil else {

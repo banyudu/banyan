@@ -108,7 +108,7 @@ final class ChildReaper: @unchecked Sendable {
             }
             kill(pid, SIGTERM)
 
-            let forceKill = DispatchWorkItem { [weak self] in
+            let forceKill = DispatchWorkItem { [weak self = self] in
                 guard let self, self.adopted[pid] === adoption, !adoption.isReaped else { return }
                 kill(pid, SIGKILL)
             }

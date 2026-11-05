@@ -368,7 +368,7 @@ private struct EmptyUnifiedSessionSource: SessionListDataSource {
     }
 
     consumer.cancel()
-    #expect(detached.wait(timeout: .now() + 2) == .success)
+    #expect(await waitForPuckDetach(detached))
 }
 
 @Test func puckFollowReportsAnUnreachableDaemon() async {
@@ -490,7 +490,17 @@ private func writePuckLines(_ peer: Int32, _ lines: [String]) {
     #expect((params["client"] as? [String: String])?["capability"] == "interactive")
     #expect(activeRequest.request?["method"] as? String == "presence.active")
     observer.cancel()
-    #expect(detached.wait(timeout: .now() + 2) == .success)
+    #expect(await waitForPuckDetach(detached))
+}
+
+// Socket peers signal from a blocking I/O queue. Keep their bounded wait off
+// the main actor and Swift's cooperative executor so cancellation can complete.
+private func waitForPuckDetach(_ signal: DispatchSemaphore) async -> Bool {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+            continuation.resume(returning: signal.wait(timeout: .now() + 2) == .success)
+        }
+    }
 }
 
 @Test func puckAskRoutingAndCursorlessLagMarkersDecode() throws {

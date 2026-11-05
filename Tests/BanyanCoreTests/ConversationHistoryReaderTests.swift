@@ -168,8 +168,9 @@ private func codexMessage(_ role: String, _ text: String) -> String {
     let native = ConversationHistoryReader.Identity(provider: .codex, conversationID: "thread", transcriptURL: url, ownerSessionID: "first")
     let otherNative = ConversationHistoryReader.Identity(provider: .codex, conversationID: "thread", transcriptURL: url, ownerSessionID: "second")
     let nativePage = try await reader.page(identity: native, limit: 1)
+    let earlier = try #require(nativePage.earlier)
     await #expect(throws: ConversationHistoryReader.ReadError.invalidCursor) {
-        try await reader.page(identity: otherNative, earlier: try #require(nativePage.earlier))
+        try await reader.page(identity: otherNative, earlier: earlier)
     }
 }
 
