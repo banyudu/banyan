@@ -63,7 +63,7 @@ extension SessionStore {
             visibilityInfo.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let result: [SidebarSessionGroup] = SessionSidebarGroupingPolicy.groups(for: candidates).compactMap { group -> SidebarSessionGroup? in
+        let result: [SidebarSessionGroup] = SessionSidebarGroupingPolicy.groups(for: candidates).map { group in
             let rowIDs = Set(group.rows.map(\.id))
             let moveItems = group.rows.compactMap { row -> SessionSelectionItem? in
                 guard let session = sessionsByID[row.id] else { return nil }
@@ -81,7 +81,7 @@ extension SessionStore {
                 selectedID: selectedSessionID,
                 scope: sidebarScope
             )
-            guard !visibleRows.isEmpty else { return nil }
+            // Keep the project header and new-session button when Focus hides every row.
             return SidebarSessionGroup(
                 id: group.id,
                 title: group.title,

@@ -98,6 +98,33 @@ import Testing
         ])
     }
 
+    @Test func focusKeepsProjectHeaderWhenAllItsSessionsAreHidden() throws {
+        let (_, store, groupID) = try fixture()
+        defer { store.flushPendingSessionSaves() }
+        let groupTitle = try #require(store.sessionSidebarGroups.first?.title)
+        for session in store.sessions { session.status = .executing }
+        store.selectedSessionID = nil
+        store.sidebarScope = .focus
+
+        let group = try #require(store.sessionSidebarGroups.first)
+        #expect(group.id == groupID)
+        #expect(group.title == groupTitle)
+        #expect(group.items.isEmpty)
+        #expect(store.unifiedSidebarGroups.map(\.id) == [groupID])
+        #expect(store.hiddenSessionCount == 5)
+        #expect(store.sidebarSessionIDs(limit: 9).isEmpty)
+
+        store.sidebarScope = .all
+        #expect(store.sessionSidebarGroups.map(\.id) == [groupID])
+        #expect(visibleRows(in: store).map(\.id) == ["a", "a1", "a2", "b", "c"])
+        #expect(store.hiddenSessionCount == 0)
+
+        store.sidebarScope = .focus
+        for session in store.sessions { session.status = .closed }
+        #expect(store.sessionSidebarGroups.isEmpty)
+        #expect(store.hiddenSessionCount == 0)
+    }
+
     @Test func selectedParentCanFoldAndUnfoldChildrenDirectly() throws {
         let (_, store, _) = try fixture()
         defer { store.flushPendingSessionSaves() }
