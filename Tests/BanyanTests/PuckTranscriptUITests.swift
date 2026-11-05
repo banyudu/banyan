@@ -218,7 +218,7 @@ struct PuckTranscriptUITests {
         )
 
         #expect(text.contains("JSON"))
-        #expect(text.contains("engine"))
+        #expect(text.contains("engine"), "Recognized text: \(text)")
         #expect(text.contains("worker"))
         #expect(!text.contains(#"{"class":"worker""#))
     }
@@ -546,11 +546,27 @@ struct PuckTranscriptUITests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try png.write(to: directory.appendingPathComponent(name + ".png"))
         return try await Task.detached {
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["en-US"]
-            try VNImageRequestHandler(data: png).perform([request])
-            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+            // Accurate recognition handles prose, but can omit colored JSON
+            // keys entirely. The fast recognizer reads those literal code runs.
+            // Both operate on the same rendered pixels, without expected words
+            // or spelling substitutions that could hide a rendering regression.
+            var recognized: [VNRecognizedTextObservation] = []
+            for level: VNRequestTextRecognitionLevel in [.accurate, .fast] {
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = level
+                request.recognitionLanguages = ["en-US"]
+                request.usesLanguageCorrection = level == .accurate
+                try VNImageRequestHandler(data: png).perform([request])
+                // Add only regions the accurate pass missed. Concatenating both
+                // passes duplicates labels; deduplicating by text would instead
+                // hide real repeated labels at different positions in the UI.
+                let missing = (request.results ?? []).filter { candidate in
+                    !recognized.contains { $0.boundingBox.intersects(candidate.boundingBox) }
+                }
+                recognized += missing
+            }
+            return recognized.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+                .compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
         }.value
     }
 
