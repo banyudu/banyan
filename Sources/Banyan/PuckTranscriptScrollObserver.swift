@@ -49,6 +49,8 @@ final class PuckTranscriptScrollObserverView: NSView {
     private weak var documentView: NSView?
     private var lastContentMaxY: CGFloat?
     private var wasAtBottom = true
+    private var reportedAtBottom = true
+    private var pendingReport: Task<Void, Never>?
 
     init(onChange: @escaping @MainActor (Bool) -> Void) {
         self.onChange = onChange
@@ -59,6 +61,7 @@ final class PuckTranscriptScrollObserverView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     deinit {
+        pendingReport?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -78,6 +81,8 @@ final class PuckTranscriptScrollObserverView: NSView {
     }
 
     func stopObserving() {
+        pendingReport?.cancel()
+        pendingReport = nil
         NotificationCenter.default.removeObserver(self)
         scrollView = nil
         documentView = nil
@@ -141,8 +146,23 @@ final class PuckTranscriptScrollObserverView: NSView {
             visibleMaxY: scrollView.documentVisibleRect.maxY
         )
         lastContentMaxY = contentMaxY
-        guard following != wasAtBottom else { return }
         wasAtBottom = following
-        onChange(following)
+        guard following != reportedAtBottom else { return }
+        scheduleReport()
+    }
+
+    private func scheduleReport() {
+        guard pendingReport == nil else { return }
+        pendingReport = Task { @MainActor [weak self] in
+            // refresh() runs inside updateNSView and layout. Publishing there
+            // reenters SwiftUI; transient geometry can also toggle following
+            // several times before the same layout pass has finished.
+            await Task.yield()
+            guard !Task.isCancelled, let self else { return }
+            self.pendingReport = nil
+            guard self.reportedAtBottom != self.wasAtBottom else { return }
+            self.reportedAtBottom = self.wasAtBottom
+            self.onChange(self.wasAtBottom)
+        }
     }
 }

@@ -207,16 +207,18 @@ struct PuckSessionDetail: View {
             }
             .onAppear {
                 isFollowingLatest = true
-                DispatchQueue.main.async {
-                    proxy.scrollTo(transcriptEndID, anchor: .bottom)
-                }
             }
-            .onChange(of: timeline) { _, next in
-                guard isFollowingLatest, !next.items.isEmpty else { return }
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        proxy.scrollTo(transcriptEndID, anchor: .bottom)
-                    }
+            .task(id: timeline) {
+                guard isFollowingLatest, !timeline.items.isEmpty || !timeline.notices.isEmpty else { return }
+                // Streaming can change the timeline several times in one frame.
+                // Let layout settle, cancelling obsolete requests instead of
+                // queuing onChange animations that reenter scroll layout.
+                await Task.yield()
+                guard !Task.isCancelled, isFollowingLatest else { return }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    proxy.scrollTo(transcriptEndID, anchor: .bottom)
                 }
             }
         }
