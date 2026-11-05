@@ -3,8 +3,9 @@ import BanyanCore
 import Testing
 @testable import Banyan
 
+
 @Test func supervisorIgnoresClosedSessions() {
-    let result = makeSupervisor().inspect(
+    let result = makeTestSupervisor().inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .closed
@@ -14,12 +15,12 @@ import Testing
 }
 
 @Test func supervisorMarksMissingOrDeadPaneClosed() {
-    let missingPaneResult = makeSupervisor(pane: nil, sessionExists: false).inspect(
+    let missingPaneResult = makeTestSupervisor(pane: nil, sessionExists: false).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
     )
-    let deadPaneResult = makeSupervisor(pane: pane(isDead: true)).inspect(
+    let deadPaneResult = makeTestSupervisor(pane: supervisorTestPane(isDead: true)).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -32,7 +33,7 @@ import Testing
 }
 
 @Test func supervisorIgnoresMissingPaneWhenTmuxSessionStillExists() {
-    let result = makeSupervisor(pane: nil, sessionExists: true).inspect(
+    let result = makeTestSupervisor(pane: nil, sessionExists: true).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -42,7 +43,7 @@ import Testing
 }
 
 @Test func supervisorKeepsNonAgentSessionsRunning() {
-    let result = makeSupervisor(pane: pane(currentCommand: "zsh")).inspect(
+    let result = makeTestSupervisor(pane: supervisorTestPane(currentCommand: "zsh")).inspect(
         tmuxSessionName: "shell",
         launchCommand: "",
         currentStatus: .running
@@ -54,7 +55,7 @@ import Testing
 }
 
 @Test func supervisorClassifiesAgentWaitingForInput() {
-    let result = makeSupervisor(visibleText: "", processes: [agentProcess("codex")]).inspect(
+    let result = makeTestSupervisor(visibleText: "", processes: [supervisorTestAgentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -65,9 +66,9 @@ import Testing
 }
 
 @Test func supervisorClassifiesVisibleAgentQuestionAsAsking() {
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: "Can I edit these files?",
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -79,9 +80,9 @@ import Testing
 }
 
 @Test func supervisorClassifiesRecentAgentActivityAsExecuting() {
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: "Reading files\nEsc to interrupt",
-        processes: [agentProcess("opencode")]
+        processes: [supervisorTestAgentProcess("opencode")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "opencode",
@@ -105,9 +106,9 @@ import Testing
         "  ⬝⬝⬝⬝⬝⬝⬝⬝  esc interrupt  32.6K (3%) · $0.00  ctrl+p commands    • OpenCode 1.18.18"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: workingText,
-        processes: [agentProcess("opencode")]
+        processes: [supervisorTestAgentProcess("opencode")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "BANYAN_AGENT_PROVIDER=deepseek opencode",
@@ -133,9 +134,9 @@ import Testing
         "  /Users/example/dev/repo  135.5K (14%) · $0.02  ctrl+p commands    • OpenCode 1.18.18"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: idleText,
-        processes: [agentProcess("opencode")]
+        processes: [supervisorTestAgentProcess("opencode")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "BANYAN_AGENT_PROVIDER=deepseek opencode",
@@ -149,9 +150,9 @@ import Testing
 @Test func supervisorClassifiesFreshlyLaunchedOpenCodePaneAsIdle() {
     // Fresh OpenCode has no text banner. Its logo is followed by the empty
     // input's `Ask anything...` placeholder, which disappears after a turn.
-    let result = makeSupervisor(
-        visibleText: freshOpenCodePane,
-        processes: [agentProcess("opencode")]
+    let result = makeTestSupervisor(
+        visibleText: supervisorFreshOpenCodePane,
+        processes: [supervisorTestAgentProcess("opencode")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "opencode",
@@ -168,11 +169,11 @@ import Testing
     let clearedText = ([
         "Do you want to apply the previous patch?",
         ""
-    ] + [freshOpenCodePane]).joined(separator: "\n")
+    ] + [supervisorFreshOpenCodePane]).joined(separator: "\n")
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: clearedText,
-        processes: [agentProcess("opencode")]
+        processes: [supervisorTestAgentProcess("opencode")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "opencode",
@@ -186,7 +187,7 @@ import Testing
 @Test func supervisorIgnoresStaleActivityTextOutsideRecentLines() {
     let staleText = (["Thinking"] + Array(repeating: "idle", count: 8)).joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: staleText, processes: [agentProcess("codex")]).inspect(
+    let result = makeTestSupervisor(visibleText: staleText, processes: [supervisorTestAgentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -201,9 +202,9 @@ import Testing
     // `banyan-worktree --claude …`), then exited back to a bare login shell. With
     // no agent process left alive, the session must read as a plain running shell
     // — not a stale idle agent — so the provider icon and handoff affordance drop.
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "zsh"),
-        processes: [process(pid: 100, parentPID: 1, commandName: "/bin/zsh", arguments: "/bin/zsh -l", elapsed: 600)]
+    let result = makeTestSupervisor(
+        pane: supervisorTestPane(rootPID: 100, currentCommand: "zsh"),
+        processes: [supervisorTestProcess(pid: 100, parentPID: 1, commandName: "/bin/zsh", arguments: "/bin/zsh -l", elapsed: 600)]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "banyan-worktree --claude ENG-7747",
@@ -230,7 +231,7 @@ import Testing
         "  gpt-5.5 high fast · ~/dev/repo · Context 37% used"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: finishedText, processes: [agentProcess("codex")]).inspect(
+    let result = makeTestSupervisor(visibleText: finishedText, processes: [supervisorTestAgentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .executing
@@ -249,7 +250,7 @@ import Testing
         "─ Working (0m 12s • Esc to interrupt) ─"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: workingText, processes: [agentProcess("codex")]).inspect(
+    let result = makeTestSupervisor(visibleText: workingText, processes: [supervisorTestAgentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -278,7 +279,7 @@ import Testing
         "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: workingText, processes: [agentProcess("claude")]).inspect(
+    let result = makeTestSupervisor(visibleText: workingText, processes: [supervisorTestAgentProcess("claude")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
         currentStatus: .needInput
@@ -296,7 +297,7 @@ import Testing
         "❯ "
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: workingText, processes: [agentProcess("claude")]).inspect(
+    let result = makeTestSupervisor(visibleText: workingText, processes: [supervisorTestAgentProcess("claude")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
         currentStatus: .needInput
@@ -317,7 +318,7 @@ import Testing
         "  …/repo | TASK-123 | Opus 5 (1M context)"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: idleText, processes: [agentProcess("claude")]).inspect(
+    let result = makeTestSupervisor(visibleText: idleText, processes: [supervisorTestAgentProcess("claude")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
         currentStatus: .executing
@@ -337,7 +338,7 @@ import Testing
         "❯ "
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: idleText, processes: [agentProcess("claude")]).inspect(
+    let result = makeTestSupervisor(visibleText: idleText, processes: [supervisorTestAgentProcess("claude")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
         currentStatus: .executing
@@ -352,11 +353,11 @@ import Testing
     // the turn ends. It looks like persistent plumbing — it is not, so it must not
     // be filtered out the way an MCP server is. The ~1s gap between leases is
     // covered by the live-counter scan, not by counting caffeinate as idle.
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "claude"),
+    let result = makeTestSupervisor(
+        pane: supervisorTestPane(rootPID: 100, currentCommand: "claude"),
         processes: [
-            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
-            process(
+            supervisorTestProcess(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
+            supervisorTestProcess(
                 pid: 101,
                 parentPID: 100,
                 commandName: "/usr/bin/caffeinate",
@@ -387,7 +388,7 @@ import Testing
         "  Opus 5 (1M context) | 15% ctx | …/repo | TASK-123"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: idleText, processes: [agentProcess("claude")]).inspect(
+    let result = makeTestSupervisor(visibleText: idleText, processes: [supervisorTestAgentProcess("claude")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
         currentStatus: .executing
@@ -406,401 +407,22 @@ import Testing
         "❯ "
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: idleText, processes: [agentProcess("claude")]).inspect(
+    let result = makeTestSupervisor(visibleText: idleText, processes: [supervisorTestAgentProcess("claude")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
         currentStatus: .executing
     )
 
     #expect(result?.status == .needInput)
-}
-
-@Test func supervisorClassifiesExternalProcessAsExecuting() {
-    let result = makeSupervisor(processes: [
-        agentProcess("codex"),
-        process(pid: 102, commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 5)
-    ]).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "codex",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .executing)
-    #expect(result?.tone == .blue)
-}
-
-@Test func supervisorClassifiesLongExternalProcessAsExecuting() {
-    let result = makeSupervisor(processes: [
-        agentProcess("codex"),
-        process(pid: 102, commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 121)
-    ]).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "codex",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .executing)
-    #expect(result?.tone == .blue)
-}
-
-@Test func supervisorIgnoresShellWrapperProcesses() {
-    let result = makeSupervisor(processes: [
-        process(commandName: "/bin/zsh", arguments: "zsh -lc codex", elapsed: 300),
-        process(pid: 102, commandName: "/usr/bin/env", arguments: "env", elapsed: 300),
-        process(pid: 103, commandName: "/opt/homebrew/bin/tmux", arguments: "tmux attach", elapsed: 300)
-    ]).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "codex",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorDoesNotCountBanyanAgentWrapperAsSubagent() {
-    let result = makeSupervisor(processes: [
-        process(
-            commandName: "/bin/bash",
-            arguments: "/Users/example/.agents/bin/banyan-agent-wrapper --agent claude -- claude",
-            elapsed: 300
-        ),
-        process(
-            commandName: "/usr/bin/tee",
-            arguments: "tee -a /Users/example/.agents/logs/banyan-agent-process.log",
-            elapsed: 300
-        ),
-        agentProcess("claude", pid: 102)
-    ]).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "banyan-agent-wrapper --agent claude -- claude",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorTreatsPersistentMCPServerAsIdleNotExecuting() {
-    // A coding agent keeps its MCP servers alive across turns as direct children.
-    // They must not pin the session to `.executing` while it waits at the prompt.
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "claude"),
-        processes: [
-            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
-            process(
-                pid: 101,
-                parentPID: 100,
-                commandName: "/Users/example/go/bin/axiom-mcp",
-                arguments: "axiom-mcp -token redacted -url https://api.axiom.co",
-                elapsed: 599
-            )
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "claude",
-        currentStatus: .executing
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorTreatsMCPServerWorkerSubtreeAsIdle() {
-    // A node-based MCP server that forks a worker: the whole persistent subtree
-    // is plumbing, not command execution.
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "claude"),
-        processes: [
-            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
-            process(pid: 101, parentPID: 100, commandName: "/usr/bin/node", arguments: "node mcp-server.js", elapsed: 599),
-            process(pid: 102, parentPID: 101, commandName: "/usr/bin/node", arguments: "node worker.js", elapsed: 598)
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "claude",
-        currentStatus: .executing
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorStillClassifiesCommandUnderShellAsExecuting() {
-    // A genuine command execution runs under a shell wrapper (the agent's Bash
-    // tool spawns `bash -c …`), so it must still read as executing.
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "claude"),
-        processes: [
-            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 600),
-            process(pid: 101, parentPID: 100, commandName: "/bin/bash", arguments: "bash -c swift test", elapsed: 4),
-            process(pid: 102, parentPID: 101, commandName: "/usr/bin/swift", arguments: "swift test", elapsed: 3)
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "claude",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .executing)
-    #expect(result?.tone == .blue)
-}
-
-@Test func supervisorClassifiesMultipleAgentProcessesAsSubagents() {
-    let result = makeSupervisor(
-        pane: pane(currentCommand: "codex"),
-        processes: [
-            process(commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 5)
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "codex",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .subagents)
-    #expect(result?.tone == .purple)
-}
-
-@Test func supervisorTreatsNodeWrappedCodexAsSingleAgent() {
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "node"),
-        processes: [
-            process(
-                pid: 100,
-                parentPID: 1,
-                commandName: "node",
-                arguments: "node /Users/example/.nvm/versions/node/v24.4.1/bin/codex",
-                elapsed: 5
-            ),
-            process(
-                pid: 101,
-                parentPID: 100,
-                commandName: "/Users/example/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
-                arguments: "/Users/example/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
-                elapsed: 5
-            )
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-    #expect(result?.provider?.rawValue == "codex")
-}
-
-@Test func supervisorIgnoresCodexCodeModeHostAsAnAgent() {
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "node"),
-        processes: [
-            process(
-                pid: 100,
-                parentPID: 1,
-                commandName: "node",
-                arguments: "node /Users/example/bin/codex",
-                elapsed: 5
-            ),
-            process(
-                pid: 101,
-                parentPID: 100,
-                commandName: "/Users/example/lib/codex",
-                arguments: "/Users/example/lib/codex",
-                elapsed: 5
-            ),
-            process(
-                pid: 102,
-                parentPID: 101,
-                commandName: "/Users/example/lib/codex-code-mode-host",
-                arguments: "/Users/example/lib/codex-code-mode-host",
-                elapsed: 5
-            )
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "codex",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorIgnoresCodexCuaRuntimeAsExternalWork() {
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "node"),
-        processes: [
-            process(
-                pid: 100,
-                parentPID: 1,
-                commandName: "node",
-                arguments: "node /Users/example/bin/codex",
-                elapsed: 5
-            ),
-            process(
-                pid: 101,
-                parentPID: 100,
-                commandName: "/Users/example/lib/codex",
-                arguments: "/Users/example/lib/codex",
-                elapsed: 5
-            ),
-            process(
-                pid: 102,
-                parentPID: 101,
-                commandName: "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
-                arguments: "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
-                elapsed: 5
-            )
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "codex",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorDoesNotDoubleCountRootAgentProcess() {
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "codex"),
-        processes: [
-            process(pid: 100, parentPID: 1, commandName: "/opt/homebrew/bin/codex", arguments: "codex", elapsed: 5)
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorDoesNotDoubleCountAgentForegroundCommandUnderLoginShell() {
-    // tmux exposes the foreground command independently of `ps`. A login
-    // shell running opencode therefore reports opencode in both places, but
-    // this is one agent, not a parent plus subagent.
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "opencode"),
-        processes: [
-            process(pid: 100, parentPID: 1, commandName: "/bin/zsh", arguments: "/bin/zsh -l", elapsed: 300),
-            process(pid: 101, parentPID: 100, commandName: "/opt/homebrew/bin/opencode", arguments: "opencode", elapsed: 5)
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "opencode",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorDoesNotCountShellLauncherAsSubagent() {
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "zsh"),
-        visibleText: "❯",
-        processes: [
-            process(
-                pid: 100,
-                parentPID: 1,
-                commandName: "/bin/zsh",
-                arguments: "/bin/zsh -lc claude",
-                elapsed: 5
-            ),
-            process(
-                pid: 101,
-                parentPID: 100,
-                commandName: "claude",
-                arguments: "claude",
-                elapsed: 5
-            )
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "claude",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-}
-
-@Test func supervisorStillClassifiesNestedAgentWithNodeWrappedCodexAsSubagents() {
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "node"),
-        processes: [
-            process(
-                pid: 100,
-                parentPID: 1,
-                commandName: "node",
-                arguments: "node /Users/example/.nvm/versions/node/v24.4.1/bin/codex",
-                elapsed: 5
-            ),
-            process(
-                pid: 101,
-                parentPID: 100,
-                commandName: "/Users/example/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
-                arguments: "/Users/example/.nvm/versions/node/v24.4.1/lib/node_modules/@openai/codex/bin/codex",
-                elapsed: 5
-            ),
-            process(pid: 102, parentPID: 101, commandName: "/opt/homebrew/bin/claude", arguments: "claude", elapsed: 5)
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .subagents)
-    #expect(result?.tone == .purple)
-}
-
-@Test func supervisorCanDetectAgentFromDescendantProcess() {
-    let result = makeSupervisor(
-        pane: pane(currentCommand: "node"),
-        processes: [
-            process(commandName: "/opt/homebrew/bin/opencode", arguments: "opencode", elapsed: 5)
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "npm run agent",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-    #expect(result?.provider?.rawValue == "opencode")
-}
-
-@Test func supervisorDetectsCodexProviderFromNodeWrappedProcess() {
-    let result = makeSupervisor(
-        pane: pane(currentCommand: "node"),
-        processes: [
-            process(commandName: "node", arguments: "node /Users/example/.nvm/versions/node/v24.4.1/bin/codex", elapsed: 5)
-        ]
-    ).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "",
-        currentStatus: .running
-    )
-
-    #expect(result?.status == .needInput)
-    #expect(result?.tone == .yellow)
-    #expect(result?.provider?.rawValue == "codex")
 }
 
 @Test func supervisorCanDetectAgentFromPaneRootProcessArguments() {
     let processTable = ProcessTable(rows: [
-        process(pid: 100, commandName: "/bin/zsh", arguments: "/bin/zsh /tmp/banyan-e2e/codex", elapsed: 5),
-        process(pid: 101, parentPID: 100, commandName: "/bin/sleep", arguments: "sleep 240", elapsed: 5)
+        supervisorTestProcess(pid: 100, commandName: "/bin/zsh", arguments: "/bin/zsh /tmp/banyan-e2e/codex", elapsed: 5),
+        supervisorTestProcess(pid: 101, parentPID: 100, commandName: "/bin/sleep", arguments: "sleep 240", elapsed: 5)
     ])
-    let result = makeSupervisor(
-        pane: pane(rootPID: 100, currentCommand: "zsh"),
+    let result = makeTestSupervisor(
+        pane: supervisorTestPane(rootPID: 100, currentCommand: "zsh"),
         processes: processTable.descendants(of: 100)
     ).inspect(
         tmuxSessionName: "agent",
@@ -816,9 +438,9 @@ import Testing
 // pane width, so the idle heuristic is pinned to what the agents actually render.
 
 @Test func supervisorClassifiesFreshlyLaunchedClaudePaneAsIdle() {
-    let result = makeSupervisor(
-        visibleText: freshClaudePane,
-        processes: [agentProcess("claude")]
+    let result = makeTestSupervisor(
+        visibleText: supervisorFreshClaudePane,
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -845,7 +467,7 @@ import Testing
         "  gpt-5.6-luna medium fast · ~/dev/yudu/banyan · Context 0% used"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(visibleText: freshText, processes: [agentProcess("codex")]).inspect(
+    let result = makeTestSupervisor(visibleText: freshText, processes: [supervisorTestAgentProcess("codex")]).inspect(
         tmuxSessionName: "agent",
         launchCommand: "codex",
         currentStatus: .running
@@ -858,14 +480,14 @@ import Testing
 @Test func supervisorTreatsClearedConversationAsIdle() {
     // `/clear` repaints the welcome box and leaves only its own echoed command
     // behind, which is the state a user expects to read as "nothing to see here".
-    let clearedText = freshClaudePane.replacingOccurrences(
+    let clearedText = supervisorFreshClaudePane.replacingOccurrences(
         of: "─────────────────────────────────────── ↯ ─",
         with: "❯ /clear\n\n─────────────────────────────────────── ↯ ─"
     )
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: clearedText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -879,7 +501,7 @@ import Testing
     // A cache-warm ping fires itself on a timer and answers itself. It leaves a
     // transcript behind but no result the user is waiting to read, so a session
     // that was empty must stay empty across one.
-    let heartbeatText = freshClaudePane.replacingOccurrences(
+    let heartbeatText = supervisorFreshClaudePane.replacingOccurrences(
         of: "─────────────────────────────────────── ↯ ─",
         with: [
             "❯ /clear",
@@ -897,9 +519,9 @@ import Testing
         ].joined(separator: "\n")
     )
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: heartbeatText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -912,7 +534,7 @@ import Testing
 @Test func supervisorStillReportsUserWorkThatPrecededAHeartbeat() {
     // The heartbeat discount applies to the agent's own rows, never to a prompt
     // the user typed — otherwise a real answer would be hidden by the next ping.
-    let mixedText = freshClaudePane.replacingOccurrences(
+    let mixedText = supervisorFreshClaudePane.replacingOccurrences(
         of: "─────────────────────────────────────── ↯ ─",
         with: [
             "❯ summarize the failing test",
@@ -927,9 +549,9 @@ import Testing
         ].joined(separator: "\n")
     )
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: mixedText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -942,7 +564,7 @@ import Testing
 @Test func supervisorReportsLoopWorkThatIsNotAHeartbeat() {
     // A `/loop` that does real work is machine-triggered too, but its result is
     // worth reading — only the heartbeat's own sentinel silences a turn.
-    let loopText = freshClaudePane.replacingOccurrences(
+    let loopText = supervisorFreshClaudePane.replacingOccurrences(
         of: "─────────────────────────────────────── ↯ ─",
         with: [
             "✻ Claude resuming /loop wakeup (Aug 11 3:39pm)",
@@ -953,9 +575,9 @@ import Testing
         ].joined(separator: "\n")
     )
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: loopText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -984,9 +606,9 @@ import Testing
         "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: compactText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -1007,15 +629,15 @@ import Testing
         "",
         "⏺ Merged as c7395cd. Now the VM:",
         ""
-    ] + [freshClaudePane]).joined(separator: "\n")
+    ] + [supervisorFreshClaudePane]).joined(separator: "\n")
         .replacingOccurrences(
             of: "─────────────────────────────────────── ↯ ─",
             with: "❯ /clear\n\n─────────────────────────────────────── ↯ ─"
         )
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: clearedText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -1028,7 +650,7 @@ import Testing
 @Test func supervisorStillClassifiesLiveQuestionBelowBannerAsAsking() {
     // The reordering above must not swallow a genuine question asked in a session
     // whose banner is still on screen.
-    let askingText = freshClaudePane.replacingOccurrences(
+    let askingText = supervisorFreshClaudePane.replacingOccurrences(
         of: "─────────────────────────────────────── ↯ ─",
         with: [
             "❯ ship it",
@@ -1039,9 +661,9 @@ import Testing
         ].joined(separator: "\n")
     )
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: askingText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -1054,7 +676,7 @@ import Testing
 @Test func supervisorKeepsFinishedTurnAsNeedInputWhileBannerLingers() {
     // The welcome box stays inside the captured window for the first few turns,
     // so a banner match alone must never be enough to call a session untouched.
-    let finishedText = freshClaudePane.replacingOccurrences(
+    let finishedText = supervisorFreshClaudePane.replacingOccurrences(
         of: "─────────────────────────────────────── ↯ ─",
         with: [
             "❯ hi, reply with just the word ok",
@@ -1067,9 +689,9 @@ import Testing
         ].joined(separator: "\n")
     )
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: finishedText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -1091,9 +713,9 @@ import Testing
         "  Opus 5 (1M context) | 4% ctx | ~/dev/yudu/banyan | main"
     ].joined(separator: "\n")
 
-    let result = makeSupervisor(
+    let result = makeTestSupervisor(
         visibleText: bannerlessText,
-        processes: [agentProcess("claude")]
+        processes: [supervisorTestAgentProcess("claude")]
     ).inspect(
         tmuxSessionName: "agent",
         launchCommand: "claude",
@@ -1102,36 +724,6 @@ import Testing
 
     #expect(result?.status == .needInput)
 }
-
-private let freshClaudePane = [
-    "╭─── Claude Code v2.1.227 ─────────────────────────────╮",
-    "│                            │ Tips for getting started │",
-    "│      Welcome back Yudu!    │ Run /init to create a    │",
-    "│                            │ CLAUDE.md file           │",
-    "│         ▐▛███▜▌            │ What's new               │",
-    "│      ~/dev/yudu/banyan     │ /release-notes for more  │",
-    "╰──────────────────────────────────────────────────────╯",
-    "",
-    "",
-    "─────────────────────────────────────── ↯ ─",
-    "❯",
-    "───────────────────────────────────────────",
-    "  Opus 5 (1M context) | ~/dev/yudu/banyan | main",
-    "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents"
-].joined(separator: "\n")
-
-private let freshOpenCodePane = [
-    "█▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█",
-    "█  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀",
-    "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
-    "┃",
-    "┃  Ask anything... \"Fix a TODO in the codebase\"",
-    "┃",
-    "┃  Flash-Med · DeepSeek V4 Flash (2x usage) OpenCode Go",
-    "╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
-    "tab agents  ctrl+p commands",
-    "/tmp                                                                                                 1.18.18"
-].joined(separator: "\n")
 
 @Test func supportedAgentCommandParsingAcceptsPathsAndRejectsNearMatches() {
     #expect(AgentSupervisor.isSupportedAgentCommand("codex --ask-for-approval never"))
@@ -1152,273 +744,4 @@ private let freshOpenCodePane = [
     // applies to an executable path; on a Mac essentially every Homebrew- or
     // nvm-installed binary sits beyond it.
     #expect(rows.contains { $0.commandName.count > 16 && $0.commandName.hasPrefix("/") })
-}
-
-private func makeSupervisor(
-    pane: TmuxPaneSnapshot? = pane(),
-    sessionExists: Bool = true,
-    visibleText: String = "",
-    processes: [ProcessInfoRow] = []
-) -> AgentSupervisor {
-    AgentSupervisor(
-        backend: FakeSupervisorBackend(pane: pane, sessionExists: sessionExists, visibleText: visibleText),
-        processTable: ProcessTable(rows: processes)
-    )
-}
-
-private func pane(
-    rootPID: Int = 100,
-    currentCommand: String = "zsh",
-    isDead: Bool = false,
-    lastActivityAt: Date? = nil
-) -> TmuxPaneSnapshot {
-    TmuxPaneSnapshot(
-        paneID: "%1",
-        rootPID: rootPID,
-        currentCommand: currentCommand,
-        currentPath: "/tmp",
-        isDead: isDead,
-        isInMode: false,
-        lastActivityAt: lastActivityAt,
-        width: 120,
-        height: 40
-    )
-}
-
-/// A live agent process, child of the default pane's login shell (rootPID 100).
-/// A running claude/codex/opencode always appears as such a child, so tests that
-/// exercise an *active* agent session must include one — the launch command alone
-/// no longer implies a live agent.
-private func agentProcess(_ provider: String, pid: Int = 101) -> ProcessInfoRow {
-    process(pid: pid, parentPID: 100, commandName: "/opt/homebrew/bin/\(provider)", arguments: provider, elapsed: 5)
-}
-
-private func process(
-    pid: Int = 101,
-    parentPID: Int = 100,
-    commandName: String,
-    arguments: String,
-    elapsed: TimeInterval,
-    state: String = "S"
-) -> ProcessInfoRow {
-    ProcessInfoRow(
-        pid: pid,
-        parentPID: parentPID,
-        state: state,
-        elapsed: elapsed,
-        commandName: commandName,
-        arguments: arguments
-    )
-}
-
-private struct FakeSupervisorBackend: AgentSupervisorBackend {
-    var pane: TmuxPaneSnapshot?
-    var sessionExists: Bool
-    var visibleText: String
-
-    func hasSession(named name: String) -> Bool {
-        sessionExists
-    }
-
-    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? {
-        pane
-    }
-
-    func captureVisibleText(paneID: String, lineLimit: Int) -> String {
-        visibleText
-    }
-}
-
-@Test func supervisorIgnoresUnreapedChildrenWhenLookingForWork() {
-    // A defunct child is not a command in flight. Counting one as work pinned the
-    // session to `.executing`, which the backoff policy then exempts from ever
-    // slowing down — so a single unreaped process kept the supervisor at its
-    // fastest cadence indefinitely.
-    let supervisor = makeSupervisor(
-        visibleText: "❯ ",
-        processes: [
-            agentProcess("claude"),
-            process(pid: 102, parentPID: 101, commandName: "/bin/cat", arguments: "cat", elapsed: 3, state: "Z")
-        ]
-    )
-
-    let result = supervisor.inspect(
-        tmuxSessionName: "banyan-session-1",
-        launchCommand: "claude",
-        currentStatus: .running
-    )
-
-    #expect(result?.status != .executing)
-}
-
-@Test func supervisorCarriesTheCaptureItsBlockedVerdictWasMadeFrom() {
-    // `/output` parses the prompt from this text rather than taking its own
-    // capture: a second read is a different moment, and the whole point of gating
-    // on the supervisor is that the verdict and the text agree.
-    let dialog = freshClaudePane.replacingOccurrences(
-        of: "─────────────────────────────────────── ↯ ─",
-        with: [
-            "❯ delete the build directory",
-            "",
-            " Do you want to proceed?",
-            " ❯ 1. Yes",
-            "   2. No",
-            "",
-            "─────────────────────────────────────── ↯ ─"
-        ].joined(separator: "\n")
-    )
-
-    let result = makeSupervisor(visibleText: dialog, processes: [agentProcess("claude")]).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "claude",
-        currentStatus: .executing
-    )
-
-    #expect(result?.status == .asking)
-    #expect(result?.visibleText == dialog)
-}
-
-@Test func supervisorCarriesNoCaptureForVerdictsMadeFromTheProcessTreeAlone() {
-    // A pane whose agent has exited was never read, so there is no text a prompt
-    // could honestly be attributed to.
-    let closed = makeSupervisor(pane: pane(isDead: true)).inspect(
-        tmuxSessionName: "agent",
-        launchCommand: "claude",
-        currentStatus: .running
-    )
-    let busy = makeSupervisor(
-        visibleText: "",
-        processes: [
-            agentProcess("claude"),
-            process(pid: 102, parentPID: 101, commandName: "/usr/bin/make", arguments: "make -j8", elapsed: 3)
-        ]
-    ).inspect(tmuxSessionName: "agent", launchCommand: "claude", currentStatus: .running)
-
-    #expect(closed?.status == .closed)
-    #expect(closed?.visibleText == nil)
-    #expect(busy?.status == .executing)
-    #expect(busy?.visibleText == nil)
-}
-
-@Test func supervisorSkipsTheCaptureWhileThePaneProducesNoOutput() {
-    // The dominant per-tick cost at scale is one `tmux capture-pane` fork/exec
-    // per live agent pane. A pane that has produced no output since the last
-    // capture cannot classify differently, so the supervisor must reuse the text
-    // it already has rather than spawn for it again.
-    let backend = CountingSupervisorBackend(visibleText: "❯ ")
-    let cache = SupervisorInspectionCache()
-    let supervisor = AgentSupervisor(
-        backend: backend,
-        processTable: ProcessTable(rows: [agentProcess("claude")]),
-        cache: cache
-    )
-    let quiet = Date(timeIntervalSince1970: 1_000)
-
-    func inspect(activityAt: Date) -> AgentSupervisor.Result? {
-        supervisor.inspect(
-            tmuxSessionName: "banyan-test",
-            launchCommand: "claude",
-            currentStatus: .running,
-            paneSnapshot: pane(lastActivityAt: activityAt)
-        )
-    }
-
-    #expect(inspect(activityAt: quiet)?.status == .needInput)
-    #expect(inspect(activityAt: quiet)?.status == .needInput)
-    #expect(inspect(activityAt: quiet)?.status == .needInput)
-    #expect(backend.captureCount == 1)
-
-    // New output invalidates it, and the fresh text decides the status.
-    backend.visibleText = "esc to interrupt"
-    #expect(inspect(activityAt: quiet.addingTimeInterval(1))?.status == .executing)
-    #expect(backend.captureCount == 2)
-}
-
-@Test func supervisorWithoutACacheAlwaysCapturesThePane() {
-    // The prompt-answering path builds its own supervisor with no cache: it must
-    // read the pane it is about to type into, not a memo of it.
-    let backend = CountingSupervisorBackend(visibleText: "❯ ")
-    let supervisor = AgentSupervisor(
-        backend: backend,
-        processTable: ProcessTable(rows: [agentProcess("claude")])
-    )
-    let quiet = Date(timeIntervalSince1970: 1_000)
-
-    for _ in 0..<3 {
-        _ = supervisor.inspect(
-            tmuxSessionName: "banyan-test",
-            launchCommand: "claude",
-            currentStatus: .running,
-            paneSnapshot: pane(lastActivityAt: quiet)
-        )
-    }
-
-    #expect(backend.captureCount == 3)
-}
-
-private final class CountingSupervisorBackend: AgentSupervisorBackend, @unchecked Sendable {
-    var visibleText: String
-    private(set) var captureCount = 0
-
-    init(visibleText: String) {
-        self.visibleText = visibleText
-    }
-
-    func hasSession(named name: String) -> Bool { true }
-
-    func primaryPaneSnapshot(named name: String) -> TmuxPaneSnapshot? { nil }
-
-    func captureVisibleText(paneID: String, lineLimit: Int) -> String {
-        captureCount += 1
-        return visibleText
-    }
-}
-
-/// The status dot must stay as fresh as it was. Reusing a capture cannot delay
-/// `idle -> executing`, because that transition is decided by the process tree —
-/// a command appearing below the agent — and the process tree is read afresh
-/// every observation. Proven here with a warm cache: the pane is silent
-/// throughout (a command that prints nothing yet bumps no tmux activity), and
-/// the very next inspection still reports `.executing` without re-reading it.
-@Test func cachedPaneStillReportsExecutingTheMomentAProcessAppears() {
-    let backend = CountingSupervisorBackend(visibleText: "❯ ")
-    let cache = SupervisorInspectionCache()
-    let quiet = Date(timeIntervalSince1970: 1_000)
-
-    func inspect(processes: [ProcessInfoRow]) -> AgentSupervisor.Result? {
-        AgentSupervisor(
-            backend: backend,
-            processTable: ProcessTable(rows: processes),
-            cache: cache
-        ).inspect(
-            tmuxSessionName: "banyan-test",
-            launchCommand: "claude",
-            currentStatus: .running,
-            paneSnapshot: pane(lastActivityAt: quiet)
-        )
-    }
-
-    let idle = [agentProcess("claude")]
-    #expect(inspect(processes: idle)?.status == .needInput)
-    #expect(backend.captureCount == 1)
-
-    let working = idle + [
-        process(pid: 102, parentPID: 101, commandName: "/usr/bin/make", arguments: "make", elapsed: 1)
-    ]
-    #expect(inspect(processes: working)?.status == .executing)
-    #expect(inspect(processes: idle)?.status == .needInput)
-    // Still one capture: neither transition needed the pane re-read.
-    #expect(backend.captureCount == 1)
-}
-
-@Test func supervisorPublishesLiveProcessIDsForExitDrivenObservation() {
-    let result = makeSupervisor(
-        processes: [
-            agentProcess("codex"),
-            process(pid: 102, parentPID: 101, commandName: "make", arguments: "make", elapsed: 3),
-            process(pid: 103, parentPID: 101, commandName: "make", arguments: "make", elapsed: 3, state: "Z")
-        ]
-    ).inspect(tmuxSessionName: "agent", launchCommand: "codex", currentStatus: .executing)
-    #expect(result?.status == .executing)
-    #expect(result?.liveProcessIDs == [101, 102])
 }

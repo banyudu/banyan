@@ -647,170 +647,6 @@ public enum AgentSessionHistoryImporter {
         return homeDirectory.path
     }
 
-    public static func transcriptPreview(from url: URL, provider: CodingAgentProvider, maxMessages: Int = 40) -> String {
-        let lines = readLinePrefix(from: url, maxLines: 800, maxBytes: 2_000_000)
-        let messages = lines.compactMap { line -> String? in
-            guard let object = jsonObject(from: line) else { return nil }
-            switch provider {
-            case .codex:
-                return codexPreviewLine(object)
-            case .claude:
-                return claudePreviewLine(object)
-            default:
-                return nil
-            }
-        }
-        let preview = messages.prefix(maxMessages).joined(separator: "\n\n")
-        return preview.isEmpty ? "No readable transcript preview is available for this history file." : preview
-    }
-
-    private static func codexPreviewLine(_ object: [String: Any]) -> String? {
-        guard let type = object["type"] as? String else { return nil }
-        if type == "session_meta", let payload = object["payload"] as? [String: Any] {
-            let cwd = payload["cwd"] as? String
-            return cwd.map { "Session started in \($0)" }
-        }
-        guard let payload = object["payload"] as? [String: Any] else { return nil }
-        if let message = payload["message"] as? [String: Any],
-           let role = message["role"] as? String,
-           let content = plainText(from: message["content"]) {
-            return "\(role.capitalized): \(content)"
-        }
-        if let text = payload["text"] as? String, let title = sanitizedBody(text) {
-            return title
-        }
-        return nil
-    }
-
-    private static func codexUserPrompt(_ object: [String: Any]) -> String? {
-        guard let type = object["type"] as? String,
-              let payload = object["payload"] as? [String: Any] else { return nil }
-        if type == "event_msg",
-           payload["type"] as? String == "user_message",
-           let message = payload["message"] as? String {
-            return sanitizedBody(message)
-        }
-        // Newer Codex rollouts record prompts as `response_item` messages
-        // (`payload.type == "message"`, `role == "user"`) instead of
-        // `event_msg` / `user_message`. The first such message is the injected
-        // AGENTS.md bundle, not a user prompt, so it must be skipped or every
-        // new session would title itself after the instructions header.
-        if type == "response_item",
-           payload["type"] as? String == "message",
-           (payload["role"] as? String)?.lowercased() == "user",
-           let text = plainText(from: payload["content"]),
-           !isCodexAgentsMDInstructions(text) {
-            return sanitizedBody(text)
-        }
-        return nil
-    }
-
-    private static func isCodexAgentsMDInstructions(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("# AGENTS.md") { return true }
-        if trimmed.contains("<INSTRUCTIONS>") { return true }
-        if trimmed.contains("Treat `~/.agents` as the source of truth") { return true }
-        return false
-    }
-
-    private static func claudePreviewLine(_ object: [String: Any]) -> String? {
-        guard let type = object["type"] as? String,
-              ["user", "assistant"].contains(type),
-              let message = object["message"] as? [String: Any],
-              let role = message["role"] as? String,
-              let content = plainText(from: message["content"]) else {
-            return nil
-        }
-        if type == "user", isSkippableClaudeUserObject(object) {
-            return nil
-        }
-        return "\(role.capitalized): \(content)"
-    }
-
-    private static func plainText(from value: Any?) -> String? {
-        if let text = value as? String {
-            return sanitizedBody(text)
-        }
-        guard let parts = value as? [[String: Any]] else { return nil }
-        let texts = parts.compactMap { part -> String? in
-            if let text = part["text"] as? String {
-                return text
-            }
-            if let content = part["content"] as? String {
-                return content
-            }
-            return nil
-        }
-        return sanitizedBody(texts.joined(separator: "\n"))
-    }
-
-    private static func sanitizedTitle(_ value: String?) -> String? {
-        guard let body = sanitizedBody(value) else { return nil }
-        let normalized = SessionTitleGenerator.replacingImagePlaceholders(in: body)
-        let firstLine = SessionTitleGenerator.firstPromptTitleLine(in: normalized)
-        let collapsed = firstLine.replacingOccurrences(
-            of: #"\s+"#,
-            with: " ",
-            options: .regularExpression
-        )
-        let trimmed = collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != "__cache-warm-ping__" else { return nil }
-        return String(trimmed.prefix(80))
-    }
-
-    private static func sanitizedBody(_ value: String?) -> String? {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let trimmed, trimmed.isEmpty == false else { return nil }
-        guard !isClaudeLocalCommandText(trimmed) else { return nil }
-        return trimmed
-    }
-
-    private static func isSkippableClaudeUserObject(_ object: [String: Any]) -> Bool {
-        if object["isMeta"] as? Bool == true {
-            return true
-        }
-        guard let message = object["message"] as? [String: Any] else {
-            return false
-        }
-        return isClaudeLocalCommandContent(message["content"])
-    }
-
-    private static func isClaudeLocalCommandContent(_ value: Any?) -> Bool {
-        if let text = value as? String {
-            return isClaudeLocalCommandText(text)
-        }
-        guard let parts = value as? [[String: Any]] else {
-            return false
-        }
-        return parts.contains { part in
-            if let text = part["text"] as? String, isClaudeLocalCommandText(text) {
-                return true
-            }
-            if let content = part["content"] as? String, isClaudeLocalCommandText(content) {
-                return true
-            }
-            return false
-        }
-    }
-
-    private static func isClaudeLocalCommandText(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let localCommandTags = [
-            "command-args",
-            "command-message",
-            "command-name",
-            "local-command-caveat",
-            "local-command-stderr",
-            "local-command-stdout"
-        ]
-        return localCommandTags.contains { tag in
-            trimmed.range(
-                of: #"^<\#(tag)(?:\s[^>]*)?>"#,
-                options: .regularExpression
-            ) != nil
-        }
-    }
-
     private static func importedID(provider: CodingAgentProvider, sourceID: String) -> String {
         "history-\(provider.rawValue)-\(sourceID)"
     }
@@ -864,7 +700,7 @@ public enum AgentSessionHistoryImporter {
         }
     }
 
-    private static func readLinePrefix(from url: URL, maxLines: Int, maxBytes: Int) -> [String] {
+    static func readLinePrefix(from url: URL, maxLines: Int, maxBytes: Int) -> [String] {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
         defer { try? handle.close() }
 
@@ -950,7 +786,7 @@ public enum AgentSessionHistoryImporter {
         }
     }
 
-    private static func jsonObject(from line: String) -> [String: Any]? {
+    static func jsonObject(from line: String) -> [String: Any]? {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
@@ -1001,102 +837,7 @@ private struct CodexSessionCandidate {
     let fileSize: Int?
 }
 
-private struct CodexTranscriptMetadata {
-    let cwd: String?
-    let createdAt: Date?
-    let promptTitle: String?
-    let segmentTitle: String?
-    let segmentWasCleared: Bool
-}
-
-/// Keeps parsed metadata for the bounded set of recent transcript files.
-/// Index-title changes can reuse these entries; an appended or replaced
-/// transcript changes its size or modification date and is parsed again.
-public final class AgentSessionHistoryImportCache: @unchecked Sendable {
-    private struct Signature: Equatable {
-        let modifiedAt: Date
-        let fileSize: Int
-    }
-
-    private struct Entry<Value> {
-        let signature: Signature
-        let value: Value
-    }
-
-    private let lock = NSLock()
-    private var codex: [URL: Entry<CodexTranscriptMetadata>] = [:]
-    private var claude: [URL: Entry<ImportedAgentSession>] = [:]
-    private var parseCount = 0
-
-    public init() {}
-
-    /// A diagnostic counter used by import tests to prove cache hits avoid I/O.
-    var parsedTranscriptCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return parseCount
-    }
-
-    fileprivate func codexMetadata(
-        for url: URL,
-        modifiedAt: Date,
-        fileSize: Int?,
-        parse: () -> CodexTranscriptMetadata
-    ) -> CodexTranscriptMetadata {
-        let signature = fileSize.map { Signature(modifiedAt: modifiedAt, fileSize: $0) }
-        lock.lock()
-        let cached = codex[url]
-        lock.unlock()
-        if let signature, cached?.signature == signature, let cached {
-            return cached.value
-        }
-        let parsed = parse()
-        lock.lock()
-        parseCount += 1
-        if let signature {
-            codex[url] = Entry(signature: signature, value: parsed)
-        }
-        lock.unlock()
-        return parsed
-    }
-
-    fileprivate func claudeSession(
-        for url: URL,
-        modifiedAt: Date,
-        fileSize: Int?,
-        parse: () -> ImportedAgentSession?
-    ) -> ImportedAgentSession? {
-        let signature = fileSize.map { Signature(modifiedAt: modifiedAt, fileSize: $0) }
-        lock.lock()
-        let cached = claude[url]
-        lock.unlock()
-        if let signature, cached?.signature == signature, let cached {
-            return cached.value
-        }
-        let parsed = parse()
-        lock.lock()
-        parseCount += 1
-        if let signature, let parsed {
-            claude[url] = Entry(signature: signature, value: parsed)
-        }
-        lock.unlock()
-        return parsed
-    }
-
-    fileprivate func retainCodex(_ urls: Set<URL>) {
-        lock.lock()
-        codex = codex.filter { urls.contains($0.key) }
-        lock.unlock()
-    }
-
-    fileprivate func retainClaude(_ urls: Set<URL>) {
-        lock.lock()
-        claude = claude.filter { urls.contains($0.key) }
-        lock.unlock()
-    }
-}
-
-private extension String {
+extension String {
     var nilIfEmpty: String? {
         isEmpty ? nil : self
     }

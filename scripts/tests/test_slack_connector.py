@@ -293,7 +293,7 @@ class ConnectorTests(unittest.IsolatedAsyncioTestCase):
         self.slack.call = original
         await self.connector.post_once("cancelled", PRINCIPAL, "100.1", "Fixture")
         self.assertFalse(self.slack.calls)
-        with patch("banyan_slack.connector.tempfile.mkstemp", side_effect=OSError("Fixture failure")):
+        with patch("banyan_slack.connector_state.tempfile.mkstemp", side_effect=OSError("Fixture failure")):
             with self.assertRaises(Unavailable):
                 await self.connector.post_once("storage-failure", PRINCIPAL, "100.1", "Fixture")
         self.assertTrue(self.connector.journal.failed)
