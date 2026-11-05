@@ -46,6 +46,7 @@ struct PuckToolDetailBlock: View {
 struct PuckToolPreview {
     let lines: [String]
     let hiddenLineCount: Int
+    let language: CodeBlockLanguage?
 }
 
 struct PuckToolGroupSummary {
@@ -227,12 +228,18 @@ extension PuckToolActivity {
     }
 
     var preview: PuckToolPreview? {
-        let lines = displayOutputLines
-        guard !lines.isEmpty else { return nil }
-        let limit = 2
+        let output = displayOutput
+        guard !output.isEmpty else { return nil }
+        let presentation = PuckToolTextPresentation(text: output)
+        let isJSON = presentation.language == .json || presentation.language == .jsonl
+        // Format before clipping so nested results stay readable and the
+        // disclosure counts the same lines as the expanded output.
+        let lines = (isJSON ? presentation.text : output).components(separatedBy: "\n")
+        let limit = isJSON ? 8 : 2
         return PuckToolPreview(
             lines: Array(lines.prefix(limit)),
-            hiddenLineCount: max(0, lines.count - limit)
+            hiddenLineCount: max(0, lines.count - limit),
+            language: isJSON ? presentation.language : nil
         )
     }
 }

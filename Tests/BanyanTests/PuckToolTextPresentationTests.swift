@@ -1,3 +1,4 @@
+import BanyanCore
 import Testing
 @testable import Banyan
 
@@ -68,4 +69,58 @@ import Testing
     """)
     #expect(diff.language == .diff)
     #expect(diff.text.hasPrefix("--- a/file.swift"))
+}
+
+@Test func toolPreviewFormatsJSONBeforeCountingHiddenLines() throws {
+    let tool = PuckToolActivity(
+        callID: "workers", name: "exec_command",
+        output: #"[{"id":"worker-1","usage":{"requests":2,"ok":true}}]"#,
+        state: .succeeded
+    )
+
+    let preview = try #require(tool.preview)
+
+    #expect(preview.language == .json)
+    #expect(preview.lines == [
+        "[", "  {", "    \"id\": \"worker-1\",", "    \"usage\": {",
+        "      \"requests\": 2,", "      \"ok\": true", "    }", "  }",
+    ])
+    #expect(preview.hiddenLineCount == 1)
+}
+
+@Test func toolPreviewFormatsConsecutiveJSONResultsAfterRemovingShellWrappers() throws {
+    let tool = PuckToolActivity(
+        callID: "search", name: "exec_command",
+        output: """
+        exit code: 0
+        --- stdout ---
+        {"error":{"code":"runtime","message":"attempt to write a readonly database"}}
+        [{"number":123,"state":"MERGED"}]
+        """,
+        state: .succeeded
+    )
+
+    let preview = try #require(tool.preview)
+
+    #expect(preview.language == .jsonl)
+    #expect(preview.lines == [
+        "{", "  \"error\": {", "    \"code\": \"runtime\",",
+        "    \"message\": \"attempt to write a readonly database\"", "  }", "}", "", "[",
+    ])
+    #expect(preview.hiddenLineCount == 5)
+}
+
+@Test func toolPreviewKeepsPlainAndIncompleteJSONOutputCompact() throws {
+    for output in [
+        "Building\nTests passed\nDone",
+        "{\"error\":{\"code\":\"runtime\"\noutput truncated\nDone",
+    ] {
+        let tool = PuckToolActivity(
+            callID: "command", name: "exec_command", output: output, state: .succeeded
+        )
+        let preview = try #require(tool.preview)
+        #expect(preview.language == nil)
+        #expect(preview.lines == Array(output.components(separatedBy: "\n").prefix(2)))
+        #expect(preview.hiddenLineCount == 1)
+    }
 }

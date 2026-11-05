@@ -470,18 +470,34 @@ struct PuckTimelineRow: View {
 
     private func outputPreview(_ preview: PuckToolPreview) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(preview.lines.enumerated()), id: \.offset) { index, line in
+            if let language = preview.language {
                 HStack(alignment: .top, spacing: 8) {
-                    Text(index == 0 ? "└" : " ")
+                    Text("└")
                         .font(typography.detailFont)
                         .foregroundStyle(.tertiary)
                         .frame(width: 12, alignment: .leading)
-                    Text(line.isEmpty ? " " : line)
-                        .font(typography.font)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    CodeBlockView(
+                        text: preview.lines.joined(separator: "\n"),
+                        language: language.rawValue,
+                        font: typography.font,
+                        previewHeight: CGFloat(preview.lines.count) * typography.detailLineHeight + 16,
+                        showsHeader: false
+                    )
+                }
+            } else {
+                ForEach(Array(preview.lines.enumerated()), id: \.offset) { index, line in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(index == 0 ? "└" : " ")
+                            .font(typography.detailFont)
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 12, alignment: .leading)
+                        Text(line.isEmpty ? " " : line)
+                            .font(typography.font)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             if preview.hiddenLineCount > 0 {

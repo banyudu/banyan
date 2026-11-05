@@ -223,6 +223,45 @@ struct PuckTranscriptUITests {
         #expect(!text.contains(#"{"class":"worker""#))
     }
 
+    @Test func nestedToolPreviewFormatsJSONWithoutExpandingItsDetails() async throws {
+        let items = [
+            PuckTimelineItem(id: "first", role: .tool, content: .tool(PuckToolActivity(
+                callID: "first", name: "exec_command", output: "First result", state: .succeeded
+            ))),
+            PuckTimelineItem(id: "search", role: .tool, content: .tool(PuckToolActivity(
+                callID: "search", name: "exec_command",
+                arguments: #"{"cmd":"search issues; list changes"}"#,
+                output: """
+                exit code: 0
+                --- stdout ---
+                {"error":{"code":"runtime","message":"attempt to write a readonly database"}}
+                [{"number":123,"state":"MERGED"}]
+                """,
+                state: .succeeded
+            ))),
+        ]
+
+        let text = try await render(
+            // Opening the first item exposes the group, leaving the second
+            // result in the nested preview state shown in the regression.
+            PuckTimelineRows(items: items, initiallyExpandedItemIDs: ["first"])
+                .padding(20)
+                .frame(width: 800, height: 500, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: NSSize(width: 800, height: 500),
+            name: "nested-tool-json-preview"
+        )
+
+        let lines = text.components(separatedBy: "\n")
+        #expect(text.contains("Ran 2 commands"))
+        #expect(lines.contains { $0.contains("runtime") && !$0.contains("readonly") },
+                "JSON fields should occupy separate lines: \(text)")
+        #expect(lines.contains { $0.contains("readonly database") && !$0.contains("runtime") })
+        #expect(text.contains("+5 lines"))
+        #expect(!text.contains("ARGUMENTS"))
+        #expect(!text.contains("MERGED"))
+    }
+
     @Test func assistantTaggedJSONShowsItsKindAboveTheFormattedPayload() async throws {
         let message = """
         Investigation complete
