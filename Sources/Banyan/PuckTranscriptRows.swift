@@ -275,7 +275,7 @@ private struct PuckToolGroupRow: View {
                         .frame(width: 12, alignment: .leading)
                         .accessibilityHidden(true)
                     Text(summary.title)
-                        .font(typography.semiboldFont)
+                        .font(typography.font)
                         .foregroundStyle(summary.tint)
                     if let detail = summary.detail {
                         Text(detail)
@@ -435,7 +435,7 @@ struct PuckTimelineRow: View {
             if item.truncated || tool.state == .truncated {
                 Label("Output was truncated by puckd.", systemImage: "scissors")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
                     .padding(.leading, 20)
                     .padding(.top, 5)
             }
@@ -448,10 +448,11 @@ struct PuckTimelineRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             marker("•", emphasis: .secondary)
             Text(tool.actionLabel)
-                .font(typography.semiboldFont)
+                .font(typography.font)
                 .foregroundStyle(tool.state.presentation.tint)
             Text(tool.displayTitle)
                 .font(typography.font)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if tool.state == .running {
@@ -483,6 +484,7 @@ struct PuckTimelineRow: View {
                         previewHeight: CGFloat(preview.lines.count) * typography.detailLineHeight + 16,
                         showsHeader: false
                     )
+                    .opacity(0.75)
                 }
             } else {
                 ForEach(Array(preview.lines.enumerated()), id: \.offset) { index, line in

@@ -97,10 +97,8 @@ struct PuckToolGroupSummary {
     }
 
     var tint: Color {
-        if isRunning { return .blue }
-        if failedCount > 0 { return .red }
-        if isTruncated { return .orange }
-        return .green
+        if !isRunning, failedCount > 0 { return .red.opacity(0.7) }
+        return .secondary
     }
 
     var accessibilityLabel: String {
@@ -254,13 +252,13 @@ extension PuckToolState {
     var presentation: PuckToolStatePresentation {
         switch self {
         case .running:
-            PuckToolStatePresentation(label: "Running", systemImage: "arrow.triangle.2.circlepath", tint: .blue)
+            PuckToolStatePresentation(label: "Running", systemImage: "arrow.triangle.2.circlepath", tint: .secondary)
         case .succeeded:
-            PuckToolStatePresentation(label: "Succeeded", systemImage: "checkmark.circle.fill", tint: .green)
+            PuckToolStatePresentation(label: "Succeeded", systemImage: "checkmark.circle.fill", tint: .secondary)
         case .failed:
-            PuckToolStatePresentation(label: "Failed", systemImage: "xmark.octagon.fill", tint: .red)
+            PuckToolStatePresentation(label: "Failed", systemImage: "xmark.octagon.fill", tint: .red.opacity(0.7))
         case .truncated:
-            PuckToolStatePresentation(label: "Truncated", systemImage: "exclamationmark.triangle.fill", tint: .orange)
+            PuckToolStatePresentation(label: "Truncated", systemImage: "exclamationmark.triangle.fill", tint: .secondary)
         }
     }
 }
