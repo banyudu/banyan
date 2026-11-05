@@ -58,6 +58,17 @@ generalize them before writing them into the repo.
 
 ## Engineering conventions
 
+- Maintained code files have a hard limit of 1,000 lines, including comments and
+  blank lines. Aim for 500 lines; split by responsibility before adding more.
+  Run `python3 scripts/check-file-size.py` before committing (`--warn` also lists
+  files over the 500-line guideline). CI enforces the same check. Source, tests,
+  scripts, workflows, and the owned PuckSwift package are covered. Documentation,
+  lockfiles, ignored generated/build output, and vendored SwiftTerm are excluded.
+  There are no grandfathered oversized files. Do not compress code or add
+  exemptions to evade the limit. Keep file-local helpers private; Swift members
+  shared across same-type extension files may be module-internal, never public
+  solely to support a split.
+
 - Ship workflow: "ship", "ship it", or the `ship` skill means the full delivery
   below, not just a commit. This repo ships with the skill's fast method
   (commit on the current branch, push, no PR); `git config ship.method fast`

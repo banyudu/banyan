@@ -1,5 +1,23 @@
 # Banyan Testing Model
 
+## Source size
+
+Run `python3 scripts/check-file-size.py` from the checkout before committing.
+The `source-size` CI job rejects maintained code files above 1,000 lines,
+including comments and blank lines. `--warn` also lists files above the
+nonblocking 500-line guideline. Split by responsibility instead of compressing
+code. There are no existing-file exceptions.
+
+The check includes tracked and untracked nonignored source files, tests,
+scripts (including extensionless scripts with a shebang), workflows, and the
+owned `Packages/PuckSwift` package. Documentation, lockfiles, ignored generated
+output/dependencies, and vendored `Packages/SwiftTerm` are excluded. Recognized
+code extensions are listed in `scripts/check-file-size.py`; add new languages
+there when introducing them. Run `python3 scripts/tests/test_file_size.py` to
+verify the checker against disposable Git repositories.
+
+## Runtime and UI
+
 Banyan uses two testing layers:
 
 1. Object-oriented UI automation through stable accessibility identifiers.

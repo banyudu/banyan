@@ -6,6 +6,15 @@ on:
   pull_request:
 
 jobs:
+  source-size:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test file-size enforcement
+        run: python3 scripts/tests/test_file_size.py
+      - name: Enforce 1,000 lines per maintained code file
+        run: python3 scripts/check-file-size.py
+
   build-and-test:
     runs-on: ubuntu-22.04
 
