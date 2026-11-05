@@ -1,7 +1,7 @@
 # Code block highlighting
 
 `CodeBlockView` is the single native renderer for assistant Markdown fences,
-Codex output, and Puck tool details. It provides:
+tagged JSON results, Codex output, and Puck tool details. It provides:
 
 - Optional language metadata and a small language label.
 - Copy-to-clipboard and selectable text.
@@ -13,6 +13,13 @@ Codex output, and Puck tool details. It provides:
 The Markdown parser keeps a fence's full info string as its language metadata.
 `CodeBlockLanguage` then normalizes the first token, leading dots/braces, and
 common aliases such as `js`, `tsx`, `zsh`, `yml`, `patch`, and `language-html`.
+
+Standalone `[[name]]` / `[[/name]]` envelopes containing a valid JSON object or
+array also use the JSON code view, including when adjacent to prose or a list.
+The wrapper and payload remain unchanged for selection and copying. Incomplete,
+mismatched, non-JSON, and oversized envelopes remain ordinary text; explicit
+Markdown fences keep their declared language. Envelope detection uses the same
+character and line limits as highlighting.
 
 ## Splash spike
 

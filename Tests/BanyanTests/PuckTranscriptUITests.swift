@@ -223,6 +223,32 @@ struct PuckTranscriptUITests {
         #expect(!text.contains(#"{"class":"worker""#))
     }
 
+    @Test func assistantTaggedJSONUsesTheCodeBlockView() async throws {
+        let message = """
+        Investigation complete
+        [[investigation-result]]
+        {"verdict":"needs_more_evidence","confidence":0.91,"root_cause":null}
+        [[/investigation-result]]
+        More evidence is needed
+        """
+        let text = try await render(
+            PuckTimelineRows(items: [
+                PuckTimelineItem(id: "assistant-result", role: .assistant, content: .assistant(message)),
+            ])
+                .padding(20)
+                .frame(width: 900, height: 380, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            size: NSSize(width: 900, height: 380),
+            name: "assistant-tagged-json"
+        )
+
+        #expect(text.contains("JSON"))
+        #expect(text.contains("investigation-result"))
+        #expect(text.contains("confidence"))
+        #expect(text.contains("Investigation complete"))
+        #expect(text.contains("More evidence is needed"))
+    }
+
     @Test func followLogicKeepsStreamingAtTheEndButRespectsAUserScroll() {
         #expect(PuckTranscriptFollowLogic.shouldFollow(
             previousAtBottom: true,

@@ -410,6 +410,12 @@ enum MarkdownBlockParser {
                 continue
             }
 
+            if let tagged = parseTaggedJSONBlock(lines: lines, startIndex: index) {
+                append(.codeBlock(language: "json", text: tagged.text))
+                index = tagged.nextIndex
+                continue
+            }
+
             if let heading = heading(in: line) {
                 append(.heading(level: heading.level, text: heading.text))
                 index += 1
@@ -562,6 +568,42 @@ enum MarkdownBlockParser {
         return (fence.language, codeLines.joined(separator: "\n"), index)
     }
 
+    /// Agent result envelopes are not Markdown fences, but their JSON payload
+    /// should use the same code view. Keep the markers and payload verbatim so
+    /// selecting or copying the block preserves the original result.
+    private static func parseTaggedJSONBlock(
+        lines: [String],
+        startIndex: Int
+    ) -> (text: String, nextIndex: Int)? {
+        let opening = lines[startIndex].trimmingCharacters(in: .whitespaces)
+        guard opening.hasPrefix("[["), opening.hasSuffix("]]"), opening.count > 4 else {
+            return nil
+        }
+        let name = opening.dropFirst(2).dropLast(2)
+        guard let first = name.first, first.isASCII, first.isLetter,
+              name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "_.-".contains($0)) }) else {
+            return nil
+        }
+
+        let closing = "[[/\(name)]]"
+        var characterCount = lines[startIndex].count
+        let endIndex = min(lines.count, startIndex + CodeBlockHighlightPolicy.maximumLines)
+        for index in (startIndex + 1)..<endIndex {
+            characterCount += lines[index].count + 1
+            guard characterCount <= CodeBlockHighlightPolicy.maximumCharacters else { return nil }
+            if lines[index].trimmingCharacters(in: .whitespaces) == closing {
+                let payload = lines[(startIndex + 1)..<index].joined(separator: "\n")
+                guard let data = payload.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data),
+                      object is [String: Any] || object is [Any] else {
+                    return nil
+                }
+                return (lines[startIndex...index].joined(separator: "\n"), index + 1)
+            }
+        }
+        return nil
+    }
+
     private static func parseList(
         lines: [String],
         startIndex: Int,
@@ -588,6 +630,7 @@ enum MarkdownBlockParser {
             }
 
             if fenceStart(in: line) != nil
+                || parseTaggedJSONBlock(lines: lines, startIndex: index) != nil
                 || heading(in: line) != nil
                 || isHorizontalRule(line)
                 || blockquoteText(in: line) != nil {
@@ -620,6 +663,7 @@ enum MarkdownBlockParser {
             }
             if !paragraphLines.isEmpty,
                (fenceStart(in: line) != nil
+                || parseTaggedJSONBlock(lines: lines, startIndex: index) != nil
                 || heading(in: line) != nil
                 || isHorizontalRule(line)
                 || blockquoteText(in: line) != nil
