@@ -34,7 +34,10 @@ struct ProjectNewSessionButton: View {
                     }
                 }
             } label: {
-                NewSessionLaunchIcon(launch: current)
+                // Native menus use the image's intrinsic size, ignoring the
+                // frame in NewSessionLaunchIcon. Use the same 16pt images as
+                // the menu items for both provider and custom artwork.
+                current.menuIconImage
             } primaryAction: {
                 store.spawnSession(inProjectGroup: groupID, launch: current)
             }
