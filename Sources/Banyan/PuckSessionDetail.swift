@@ -30,12 +30,10 @@ struct PuckSessionDetail: View {
     var body: some View {
         let timeline = session.timeline
         VStack(alignment: .leading, spacing: 0) {
-            header
             if let notice = session.cancellationNotice {
-                Divider()
                 cancellationBanner(notice)
+                Divider()
             }
-            Divider()
             transcript(timeline)
             if let pending = session.pendingApproval, !session.decisionInFlight {
                 Divider()
@@ -47,6 +45,8 @@ struct PuckSessionDetail: View {
             }
             Divider()
             composer(usage: timeline.usage)
+            Divider()
+            footer
         }
         .onAppear {
             session.startFollowing()
@@ -74,7 +74,7 @@ struct PuckSessionDetail: View {
         .accessibilityIdentifier(AccessibilityID.puckSessionDetail)
     }
 
-    private var header: some View {
+    private var footer: some View {
         HStack(spacing: 10) {
             Text(runtimeSummary)
                 .font(.caption)
