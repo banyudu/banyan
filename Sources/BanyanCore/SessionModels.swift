@@ -70,7 +70,7 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
         case .running: return "⚙️"
         case .executing: return "🔧"
         case .longRunningShell: return "⏳"
-        case .subagents: return "🧩"
+        case .subagents: return "🐝"
         case .needInput: return "✋"
         case .asking: return "❓"
         case .review: return "👀"
