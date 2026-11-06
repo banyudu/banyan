@@ -48,7 +48,7 @@ struct PuckSessionDetail: View {
             Divider()
             footer
         }
-        .environment(\.markdownLinkEnvironment, session.environment)
+        .sessionLinks(context: session.linkContext)
         .onAppear {
             session.startFollowing()
             DispatchQueue.main.async {
@@ -405,11 +405,11 @@ struct PuckSessionDetail: View {
     private func questionStem(_ question: PuckQuestion) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if !question.header.isEmpty {
-                Text(question.header)
+                SessionLinkedText(question.header)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            Text(question.question)
+            SessionLinkedText(question.question)
                 .font(transcriptTypography.font)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -473,7 +473,7 @@ struct PuckSessionDetail: View {
     @ViewBuilder
     private func quietCodePreview(_ text: String, maximumVisibleLines: Int, maximumHeight: CGFloat) -> some View {
         let lineCount = text.split(separator: "\n", omittingEmptySubsequences: false).count
-        let preview = Text(text)
+        let preview = SessionLinkedText(text)
             .font(transcriptTypography.font)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -511,10 +511,10 @@ struct PuckSessionDetail: View {
                 Text("\(number).")
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
-                Text(option.label)
+                SessionLinkedText(option.label)
                     .font(.callout.weight(isSelected ? .medium : .regular))
                 if !option.description.isEmpty {
-                    Text(option.description)
+                    SessionLinkedText(option.description)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -581,7 +581,7 @@ struct PuckSessionDetail: View {
     private func composer(usage: PuckUsage?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let error = session.daemonError {
-                Text(error)
+                SessionLinkedText(error)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)

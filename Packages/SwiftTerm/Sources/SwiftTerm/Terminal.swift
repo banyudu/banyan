@@ -6001,22 +6001,7 @@ open class Terminal {
         guard let lineMap = buildGhosttyImplicitLineMap(at: position, in: buffer) else {
             return nil
         }
-        guard let regex = Self.ghosttyImplicitLinkRegex else {
-            return nil
-        }
-
-        let searchRange = NSRange(lineMap.text.startIndex..<lineMap.text.endIndex, in: lineMap.text)
-        let matches = regex.matches(in: lineMap.text, options: [], range: searchRange)
-        for match in matches {
-            guard match.range.length > 0,
-                  let textRange = Range(match.range, in: lineMap.text)
-            else {
-                continue
-            }
-            if suppressGhosttyLikeMatch(textRange, in: lineMap.text) {
-                continue
-            }
-
+        for textRange in Self.implicitLinkRanges(in: lineMap.text) {
             let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
             let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
             guard startOffset < lineMap.cells.count else {
@@ -6237,8 +6222,7 @@ open class Terminal {
 
     private func uncachedImplicitLinkRowRanges(row: Int, in buffer: Buffer) -> [Range<Int>]
     {
-        guard let regex = Self.ghosttyImplicitLinkRegex,
-              rowMayContainImplicitLink(row, in: buffer),
+        guard rowMayContainImplicitLink(row, in: buffer),
               implicitGroupMayContainLink(around: row, in: buffer),
               let lineMap = buildGhosttyImplicitLineMap(row: row, targetCol: nil, in: buffer),
               Self.lineMapMayContainLink(lineMap.text)
@@ -6247,17 +6231,7 @@ open class Terminal {
         }
 
         var ranges: [Range<Int>] = []
-        let searchRange = NSRange(lineMap.text.startIndex..<lineMap.text.endIndex, in: lineMap.text)
-        for match in regex.matches(in: lineMap.text, options: [], range: searchRange) {
-            guard match.range.length > 0,
-                  let textRange = Range(match.range, in: lineMap.text)
-            else {
-                continue
-            }
-            if suppressGhosttyLikeMatch(textRange, in: lineMap.text) {
-                continue
-            }
-
+        for textRange in Self.implicitLinkRanges(in: lineMap.text) {
             let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
             let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
             guard startOffset < lineMap.cells.count else {
@@ -6397,73 +6371,6 @@ open class Terminal {
         let lastCol: Int
         let lastChar: Character
     }
-
-    // Ghostty-style URL/path pattern adapted for ICU regex.
-    // Oniguruma uses a variable-length lookbehind in one branch; we keep
-    // compatibility by applying an equivalent post-match suppression rule.
-    private static let ghosttyImplicitLinkRegex: NSRegularExpression? = {
-        let urlSchemes = #"https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:"#
-        let ipv6URLPattern = #"(?:\[[:0-9a-fA-F]+(?:[:0-9a-fA-F]*)+\](?::[0-9]+)?)"#
-        let schemeURLChars = #"[\w\-.~:/?#@!$&*+,;=%]"#
-        let pathChars = #"[\w\-.~:\/?#@!$&*+;=%]"#
-        let optionalBracketedWordSuffix = #"(?:[\(\[]\w*[\)\]])?"#
-        let noTrailingPunctuation = #"(?<![,.])"#
-        let noTrailingColon = #"(?<!:)"#
-        let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
-        let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
-        let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
-        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
-        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
-
-        let schemeURLBranch =
-            "(?:" + urlSchemes + ")" +
-            "(?:" + ipv6URLPattern + "|" + schemeURLChars + "+" + optionalBracketedWordSuffix + ")+" +
-            noTrailingPunctuation
-
-        let rootedOrRelativePathPrefix = #"(?:\.\.\/|\.\/|(?<!\w)~\/|(?:[\w][\w\-.]*\/)*(?<!\w)\$[A-Za-z_]\w*\/|\.[\w][\w\-.]*\/|(?<![\w~\/])\/(?!\/))"#
-        let rootedOrRelativePathBranch =
-            rootedOrRelativePathPrefix +
-            "(?:" +
-            dottedPathLookahead +
-            pathChars + "+" +
-            dottedPathSpaceSegments +
-            noTrailingColon +
-            trailingSpacesAtEOL +
-            "|" +
-            nonDottedPathLookahead +
-            pathChars + "+" +
-            anyPathSpaceSegments +
-            noTrailingColon +
-            trailingSpacesAtEOL +
-            ")"
-
-        // Ghostty uses (?<!\$\d*) here, which is unsupported by ICU.
-        // We enforce the same intent by skipping any match preceded by '$'.
-        let bareRelativePathPrefix = #"(?<!\w)[\w][\w\-.]*\/"#
-        let bareRelativePathBranch =
-            dottedPathLookahead +
-            bareRelativePathPrefix +
-            pathChars + "+" +
-            dottedPathSpaceSegments +
-            noTrailingColon +
-            trailingSpacesAtEOL
-
-        // Bare `#123` references, the form agents print for pull requests and
-        // issues (`PR #9326`). The `#` must not follow a word character or a
-        // path/URL/identifier character, and the digits must not run into a
-        // word character or hyphen, so hex colors, URL fragments, and embedded
-        // identifiers (`#ff0000`, `owner/repo#123`, `page#123`, `#123abc`) are
-        // left alone.
-        let referenceNumberBranch = #"(?<![\w$&/#.@=:%-])#\d+(?![\w/-])"#
-
-        // Bare Linear issue IDs are implicit links too. Keep the boundaries
-        // aligned with `LinearIssueReference.issueID(in:)` so an ID embedded in a
-        // larger alphanumeric token is left alone.
-        let linearIssueBranch = #"(?<![A-Za-z0-9])[A-Za-z]{2,5}-[0-9]+(?![A-Za-z0-9])"#
-
-        let regex = schemeURLBranch + "|" + rootedOrRelativePathBranch + "|" + bareRelativePathBranch + "|" + referenceNumberBranch + "|" + linearIssueBranch
-        return try? NSRegularExpression(pattern: regex, options: [])
-    }()
 
     private static let ghosttyContinuationCharacters = CharacterSet(
         charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?#[]@!$&*+,;=%()"
@@ -6712,9 +6619,6 @@ open class Terminal {
         in buffer: Buffer
     ) -> Bool
     {
-        guard let regex = Self.ghosttyImplicitLinkRegex else {
-            return false
-        }
         guard upper >= 0, upper < buffer.lines.count, lower >= 0, lower < buffer.lines.count else {
             return false
         }
@@ -6743,20 +6647,11 @@ open class Terminal {
 
         let candidate = upperText + lowerText
         let seamOffset = upperText.utf16.count
-        let searchRange = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
-        for match in regex.matches(in: candidate, options: [], range: searchRange) {
-            let matchStart = match.range.location
-            let matchEnd = match.range.location + match.range.length
-            guard matchStart < seamOffset, matchEnd > seamOffset else {
-                continue
+        for range in Self.implicitLinkRanges(in: candidate) {
+            let match = NSRange(range, in: candidate)
+            if match.location < seamOffset, NSMaxRange(match) > seamOffset {
+                return true
             }
-            guard let textRange = Range(match.range, in: candidate) else {
-                continue
-            }
-            if suppressGhosttyLikeMatch(textRange, in: candidate) {
-                continue
-            }
-            return true
         }
 
         return false
@@ -6824,14 +6719,6 @@ open class Terminal {
             col += 1
         }
         return lineLimit
-    }
-
-    private func suppressGhosttyLikeMatch(_ range: Range<String.Index>, in text: String) -> Bool
-    {
-        guard range.lowerBound > text.startIndex else {
-            return false
-        }
-        return text[text.index(before: range.lowerBound)] == "$"
     }
 
     func getText (start: Position, end: Position, buffer: Buffer) -> String

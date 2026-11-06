@@ -377,7 +377,7 @@ struct PuckTimelineRow: View {
     private func userRow(_ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             marker("›", emphasis: .secondary)
-            Text(text)
+            SessionLinkedText(text)
                 .font(typography.font)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -450,7 +450,7 @@ struct PuckTimelineRow: View {
             Text(tool.actionLabel)
                 .font(typography.font)
                 .foregroundStyle(tool.state.presentation.tint)
-            Text(tool.displayTitle)
+            SessionLinkedText(tool.displayTitle)
                 .font(typography.font)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -483,7 +483,8 @@ struct PuckTimelineRow: View {
                         syntaxSections: preview.syntaxSections,
                         font: typography.font,
                         previewHeight: CGFloat(preview.lines.count) * typography.detailLineHeight + 16,
-                        showsHeader: false
+                        showsHeader: false,
+                        detectsLinks: true
                     )
                     .opacity(0.75)
                 }
@@ -494,7 +495,7 @@ struct PuckTimelineRow: View {
                             .font(typography.detailFont)
                             .foregroundStyle(.tertiary)
                             .frame(width: 12, alignment: .leading)
-                        Text(line.isEmpty ? " " : line)
+                        SessionLinkedText(line.isEmpty ? " " : line)
                             .font(typography.font)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
@@ -561,7 +562,7 @@ struct PuckTimelineRow: View {
                 Text(title)
                     .font(typography.captionFont.weight(.bold))
                     .foregroundStyle(tint)
-                Text(text)
+                SessionLinkedText(text)
                     .font(typography.font)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -665,7 +666,7 @@ private struct PuckTimelineNoticeRow: View {
                 Text(notice.title)
                     .font(typography.captionFont.weight(.bold))
                     .foregroundStyle(tint)
-                Text(notice.text)
+                SessionLinkedText(notice.text)
                     .font(typography.font)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

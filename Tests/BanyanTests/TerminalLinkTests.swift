@@ -4,7 +4,7 @@ import Testing
 
 @MainActor
 @Test func terminalLinkURLTurnsAbsolutePathIntoFileURL() {
-    let url = TerminalSession.terminalLinkURL("/Users/example/math-worksheets/worksheet.pdf")
+    let url = SessionLinkResolver.url("/Users/example/math-worksheets/worksheet.pdf")
 
     #expect(url == URL(fileURLWithPath: "/Users/example/math-worksheets/worksheet.pdf"))
     #expect(url?.isFileURL == true)
@@ -12,7 +12,7 @@ import Testing
 
 @MainActor
 @Test func terminalLinkURLResolvesRelativePathsAgainstTheTerminalDirectory() {
-    let url = TerminalSession.terminalLinkURL(
+    let url = SessionLinkResolver.url(
         "docs/design/diagrams/puck-boundary.svg",
         relativeTo: "/Users/example/project"
     )
@@ -23,30 +23,30 @@ import Testing
 
 @MainActor
 @Test func terminalLinkURLNormalizesRelativePathComponents() {
-    let url = TerminalSession.terminalLinkURL("../README.md", relativeTo: "/Users/example/project/docs")
+    let url = SessionLinkResolver.url("../README.md", relativeTo: "/Users/example/project/docs")
 
     #expect(url == URL(fileURLWithPath: "/Users/example/project/README.md"))
 }
 
 @MainActor
 @Test func terminalLinkURLAcceptsWebURLsWithoutUsingTheTerminalDirectory() {
-    #expect(TerminalSession.terminalLinkURL("https://example.com/path")?.absoluteString == "https://example.com/path")
-    #expect(TerminalSession.terminalLinkURL("https://example.com/path", relativeTo: "/Users/example/project")?.absoluteString == "https://example.com/path")
+    #expect(SessionLinkResolver.url("https://example.com/path")?.absoluteString == "https://example.com/path")
+    #expect(SessionLinkResolver.url("https://example.com/path", relativeTo: "/Users/example/project")?.absoluteString == "https://example.com/path")
 }
 
 @MainActor
 @Test func terminalLinkURLRejectsRelativePathsWithoutADirectoryToResolveAgainst() {
-    #expect(TerminalSession.terminalLinkURL("notes/worksheet.pdf") == nil)
+    #expect(SessionLinkResolver.url("notes/worksheet.pdf") == nil)
 }
 
 @MainActor
 @Test func referenceNumberReadsBareHashReferences() {
-    #expect(TerminalSession.referenceNumber(in: "#9326") == 9326)
-    #expect(TerminalSession.referenceNumber(in: "  #123  ") == 123)
-    #expect(TerminalSession.referenceNumber(in: "#") == nil)
-    #expect(TerminalSession.referenceNumber(in: "#12a") == nil)
-    #expect(TerminalSession.referenceNumber(in: "#+12") == nil)
-    #expect(TerminalSession.referenceNumber(in: "https://github.com/example/repo/pull/1") == nil)
+    #expect(SessionLinkResolver.referenceNumber(in: "#9326") == 9326)
+    #expect(SessionLinkResolver.referenceNumber(in: "  #123  ") == 123)
+    #expect(SessionLinkResolver.referenceNumber(in: "#") == nil)
+    #expect(SessionLinkResolver.referenceNumber(in: "#12a") == nil)
+    #expect(SessionLinkResolver.referenceNumber(in: "#+12") == nil)
+    #expect(SessionLinkResolver.referenceNumber(in: "https://github.com/example/repo/pull/1") == nil)
 }
 
 @MainActor

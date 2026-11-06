@@ -79,12 +79,6 @@ public struct LinearIssueReference: Equatable {
         return String(value[range]).uppercased()
     }
 
-    /// Ranges of every issue ID, preserving the source's spelling and indices.
-    public static func issueIDRanges(in value: String) -> [Range<String.Index>] {
-        issueIDRegex.matches(in: value, range: NSRange(value.startIndex..., in: value))
-            .compactMap { Range($0.range(at: 1), in: value) }
-    }
-
     public static func issueURL(for id: String, environment: [String: String]) -> String {
         let baseURL: String
         if let configuredBaseURL = environment["BANYAN_LINEAR_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),

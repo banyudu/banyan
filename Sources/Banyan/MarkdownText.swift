@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MarkdownText: View {
     @Environment(\.markdownLinkEnvironment) private var linkEnvironment
+    @Environment(\.sessionLinkContext) private var linkContext
     private let blocks: [MarkdownBlock]
     let style: MarkdownTextStyle
     let onToggleTask: ((Int) -> Void)?
@@ -170,7 +171,7 @@ struct MarkdownText: View {
     }
 
     private func inlineText(_ value: String) -> Text {
-        Text(MarkdownInlineText.parse(value, environment: linkEnvironment))
+        Text(MarkdownInlineText.parse(value, environment: linkEnvironment, includesSessionReferences: linkContext != nil))
     }
 
     private func headingTopPadding(level: Int) -> CGFloat {

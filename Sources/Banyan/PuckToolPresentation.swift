@@ -33,7 +33,8 @@ struct PuckToolDetailBlock: View {
                 language: presentation.languageIdentifier,
                 syntaxSections: presentation.syntaxSections,
                 font: typography.font,
-                previewHeight: previewHeight(for: presentation.text)
+                previewHeight: previewHeight(for: presentation.text),
+                detectsLinks: true
             )
         }
     }

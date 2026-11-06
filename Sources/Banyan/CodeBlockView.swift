@@ -13,6 +13,7 @@ struct CodeBlockView: View {
     private let minimumHeight: CGFloat
     private let previewHeight: CGFloat
     private let showsHeader: Bool
+    private let detectsLinks: Bool
 
     @State private var isExpanded = false
     @State private var copied = false
@@ -27,7 +28,8 @@ struct CodeBlockView: View {
         font: Font = .system(.caption, design: .monospaced),
         minimumHeight: CGFloat = 30,
         previewHeight: CGFloat = 220,
-        showsHeader: Bool = true
+        showsHeader: Bool = true,
+        detectsLinks: Bool = false
     ) {
         self.displayText = CodexConversationText.plain(text)
         self.requestedLanguage = language
@@ -39,6 +41,7 @@ struct CodeBlockView: View {
         self.minimumHeight = minimumHeight
         self.previewHeight = previewHeight
         self.showsHeader = showsHeader
+        self.detectsLinks = detectsLinks
     }
 
     var body: some View {
@@ -123,7 +126,9 @@ struct CodeBlockView: View {
 
     private var textContent: some View {
         Group {
-            if let highlightedText {
+            if detectsLinks {
+                SessionLinkedText(highlightedText ?? AttributedString(displayText))
+            } else if let highlightedText {
                 Text(highlightedText)
             } else {
                 Text(displayText)
