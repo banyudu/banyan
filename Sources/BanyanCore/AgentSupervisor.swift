@@ -152,15 +152,16 @@ public struct AgentSupervisor: Sendable {
         // an `opencode` child of the shell). Do not count that representation
         // twice, but do count the pane's agent when a different agent appears
         // below it.
+        let helperPIDs = Self.agentHelperPIDs(in: descendants)
+        let agentCandidates = descendants.filter { !helperPIDs.contains($0.pid) }
         let rootAgentProvider = CodingAgentProvider.detect(in: pane.currentCommand)
         let rootAgentProcessCount = if let rootAgentProvider,
-                                        !descendants.contains(where: { $0.supportedAgentProvider == rootAgentProvider }) {
+                                        !agentCandidates.contains(where: { $0.supportedAgentProvider == rootAgentProvider }) {
             1
         } else {
             0
         }
-        let agentProcessCount = Self.logicalAgentProcessCount(in: descendants)
-        let helperPIDs = Self.agentHelperPIDs(in: descendants)
+        let agentProcessCount = Self.logicalAgentProcessCount(in: agentCandidates)
         let externalProcesses = descendants.filter { process in
             process.pid != pane.rootPID
                 && !process.isExited
@@ -337,7 +338,7 @@ public struct AgentSupervisor: Sendable {
         return CodingAgentProvider.detect(in: launchCommand)
     }
 
-    /// PIDs of the persistent MCP-server helpers a coding agent spawns and keeps
+    /// PIDs of the persistent server helpers a coding agent spawns and keeps
     /// alive across turns, plus any workers they fork. An MCP server is launched
     /// as a direct child of the agent process at startup and lives for the whole
     /// session, so — unlike a genuine command execution — it must not pin the
@@ -347,11 +348,19 @@ public struct AgentSupervisor: Sendable {
     static func agentHelperPIDs(in descendants: [ProcessInfoRow]) -> Set<Int> {
         let agentPIDs = Set(descendants.filter(\.isSupportedAgent).map(\.pid))
         guard !agentPIDs.isEmpty else { return [] }
+        let runtimeHelperPIDs = Set(descendants.filter(\.isCodexRuntimeHelper).map(\.pid))
 
         var helperPIDs = Set(
             descendants
                 .filter { process in
-                    agentPIDs.contains(process.parentPID) && process.isLikelyMCPServer
+                    (agentPIDs.contains(process.parentPID) && process.isLikelyMCPServer
+                        // An agent's prompt can mention MCP without making it
+                        // a server. Require the actual subcommand in that case.
+                        && (!process.isSupportedAgent || process.isCodexServer(subcommand: "mcp-server")))
+                        // Computer-use runtimes keep a Codex app-server alive
+                        // across turns. Only that server subtree is plumbing:
+                        // real CLI agents/commands launched by the runtime count.
+                        || (runtimeHelperPIDs.contains(process.parentPID) && process.isCodexServer(subcommand: "app-server"))
                 }
                 .map(\.pid)
         )
@@ -743,6 +752,15 @@ public struct ProcessInfoRow: Sendable {
     let isTmuxPlumbing: Bool
     let isNodeAgentLauncher: Bool
     let isLikelyMCPServer: Bool
+
+    fileprivate func isCodexServer(subcommand: String) -> Bool {
+        guard !isExited, ExecutablePath.lowercasedName(commandName) == "codex" else { return false }
+        if let argumentVector {
+            return argumentVector.dropFirst().first == subcommand
+        }
+        // Older snapshots and test fixtures may only have flattened argv.
+        return arguments.split(maxSplits: 2, whereSeparator: \.isWhitespace).dropFirst().first.map(String.init) == subcommand
+    }
 
     public init(
         pid: Int,
