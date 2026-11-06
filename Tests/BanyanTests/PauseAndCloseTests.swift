@@ -20,6 +20,29 @@ import Testing
         try store.setWorkflow(id: "managed", workflow: .init(owner: "workit", jobID: "job-a", revision: revision, state: state))
     }
 
+    @Test func idleAgentWithUnfinishedWorkflowDoesNotClaimToBeRunning() throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        let session = try managed(store, state: .working)
+        session.status = .needInput
+        store.requestClose(id: session.id)
+
+        #expect(store.pendingCloseTitle == "Close idle agent?")
+        #expect(store.pendingCloseMessage.hasPrefix("The agent is waiting for input. Its workflow is still unfinished."))
+        #expect(!store.pendingCloseMessage.contains("children running"))
+        #expect(store.pendingCloseCanPause)
+        #expect(store.canHideAndKeepWorking(session))
+        #expect(throws: (any Error).self) { try store.close(id: session.id) }
+        #expect(fixture.backend.killed.isEmpty)
+        #expect(session.workflow?.state == .working)
+
+        session.status = .executing
+        #expect(store.pendingCloseTitle == "Close running agent?")
+        #expect(!store.pendingCloseMessage.contains("The agent is waiting for input."))
+    }
+
     @Test(arguments: SessionWorkflow.State.allCases)
     func actionPolicyAndOrdinaryClose(state: SessionWorkflow.State) throws {
         let fixture = try WorkflowStoreFixture()

@@ -62,6 +62,29 @@ import Testing
         #expect(throws: (any Error).self) { try overview(stop: String(repeating: "x", count: 1001)) }
     }
 
+    @Test func runtimeActivityOverridesWorkingPresentationWithoutCompletingWorkflow() throws {
+        for status in [SessionStatus.needInput, .idle, .review, .completed] {
+            let nodes = [node("worker", job: "worker", status: status)]
+            let feed = try phasedOverview([
+                phasedJob("worker", phase: "merged", attention: "watch", group: "working"),
+            ])
+            for overview in [nil, feed] {
+                let entry = try #require(SessionWorkTree.summaries(nodes: nodes, overview: overview)["worker"]?.own)
+                #expect(entry.kind == .idle)
+                #expect(entry.managed)
+                #expect(entry.label.contains(overview == nil ? "workflow unfinished" : "Merged · 0/2 AC"))
+                if status == .needInput { #expect(entry.label.hasPrefix("Waiting for input")) }
+                #expect(nodes[0].workflow?.state == .working)
+                #expect(nodes[0].workflow?.state.permitsClose == false)
+            }
+        }
+
+        let active = [node("worker", job: "worker", status: .executing)]
+        #expect(SessionWorkTree.summaries(nodes: active, overview: nil)["worker"]?.own.kind == .working)
+        let blocked = [node("worker", job: "job", status: .needInput)]
+        #expect(SessionWorkTree.summaries(nodes: blocked, overview: try overview())["worker"]?.own.kind == .blocked)
+    }
+
     @Test func duplicateJobsAndCyclesCannotInflateGroupCounts() {
         let nodes = [node("parent"), node("worker", parent: "parent", job: "same"),
             node("duplicate", parent: "worker", job: "same"), node("worker", parent: "parent", job: "same")]

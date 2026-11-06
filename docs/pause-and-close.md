@@ -10,6 +10,11 @@ and cancelled sessions use ordinary close. The destructive force-close override
 for an unfinished workflow or unreadable recovery journal still requires
 holding Command. Other workflow owners must resolve their own holds.
 
+An agent waiting at its prompt is shown as idle in the close confirmation, even
+when its workflow is still unfinished. The sidebar also distinguishes that idle
+runtime from a saved working projection. Idle does not verify the issue or stop
+automatic continuation; **Pause and Close** still pauses the workflow first.
+
 ## Trusted configuration
 
 Configure `~/.banyan/workit.json` in the home directory used by Banyan:

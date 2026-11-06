@@ -98,6 +98,22 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
                 ? "Merged · \(job?.progress.passed ?? 0)/\(job?.progress.total ?? 0) AC"
                 : "Merged"
         }
+        // Owner workflow state describes unfinished delivery, not whether the
+        // agent is executing a turn. Preserve explicit waits/holds/completion,
+        // but do not show a saved "working" projection as current activity.
+        if nextKind == .working, !node.status.isActivelyWorking {
+            let activity: String
+            switch node.status {
+            case .needInput: nextKind = .idle; activity = "Waiting for input"
+            case .asking: nextKind = .decision; activity = "Input requested"
+            case .review: nextKind = .idle; activity = "Ready for review"
+            case .failed: nextKind = .blocked; activity = "Session failed"
+            case .completed, .closed: nextKind = .idle; activity = "Agent finished"
+            default: nextKind = .idle; activity = "Idle"
+            }
+            nextLabel = job?.phase == .merged
+                ? "\(activity) · \(nextLabel)" : "\(activity) · workflow unfinished"
+        }
         kind = nextKind; label = nextLabel; detail = nextDetail
     }
 }

@@ -61,11 +61,30 @@ extension SessionStore {
         pendingCloseSession.map { pauseCloseInFlightIDs.contains($0.id) } ?? false
     }
 
+    var pendingCloseTitle: String {
+        if pendingCloseHasOngoingAgent {
+            return pendingCloseSession?.status.isActivelyWorking == true
+                ? "Close running agent?" : "Close idle agent?"
+        }
+        return pendingCloseHasActiveChildren ? "Close parent session?" : "Close session?"
+    }
+
     var pendingCloseMessage: String {
         guard let session = pendingCloseSession else { return "" }
         var details: [String] = []
+        if pendingCloseHasOngoingAgent, !session.status.isActivelyWorking {
+            switch session.status {
+            case .needInput: details.append("The agent is waiting for input.")
+            case .asking: details.append("The agent is waiting for an answer.")
+            case .review: details.append("The agent has output ready for review.")
+            default: details.append("The agent is idle.")
+            }
+            if session.workflow?.state.permitsClose == false {
+                details.append("Its workflow is still unfinished.")
+            }
+        }
         if canHideAndKeepWorking(session) {
-            details.append("Keep Working in Background leaves this conversation and its children running. Its compact row stays in Sessions; select it to return. Child sessions are collapsed. The close options below stop continuation.")
+            details.append("Keep Open in Background keeps this conversation available for automatic continuation. Its compact row stays in Sessions; select it to return. Child sessions are collapsed.")
         }
         if pendingCloseCanPause {
             details.append("Pause and Close leaves the issue unfinished and stops future automatic continuation. It does not verify or cancel the issue.")
@@ -79,7 +98,7 @@ extension SessionStore {
         }
         details.append(session.closeConsequence)
         if pendingCloseHasOngoingAgent {
-            details.append("Any running coding-agent process in that session will be terminated.")
+            details.append("The coding-agent process in that session will be terminated.")
         }
         if pendingCloseHasActiveChildren {
             details.append("Child sessions will be detached to the same level as this parent session.")

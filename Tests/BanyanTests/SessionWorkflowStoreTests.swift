@@ -155,7 +155,11 @@ import Testing
             revision: 6, state: .working))
         #expect(publications > 0)
         #expect(store.workOverviewRefreshTask != nil)
+        #expect(store.sessionWorkSummaries[session.id]?.own.label == "Agent finished · workflow unfinished")
+        session.status = .executing
         #expect(store.sessionWorkSummaries[session.id]?.own.label == "Working")
+        session.status = .needInput
+        #expect(store.sessionWorkSummaries[session.id]?.own.label == "Waiting for input · workflow unfinished")
         store.workOverviewRefreshTask?.cancel()
     }
 

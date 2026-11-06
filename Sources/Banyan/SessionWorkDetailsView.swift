@@ -144,7 +144,8 @@ extension SessionWorkSummary.GroupStatus.Category {
 
 extension SessionWorkEntry {
     var badgeCategory: SessionWorkSummary.GroupStatus.Category {
-        if let phase { .phase(phase) } else { .kind(kind) }
+        if kind == .idle { .kind(.idle) }
+        else if let phase { .phase(phase) } else { .kind(kind) }
     }
 
     var badgeSystemImage: String { badgeCategory.systemImage }

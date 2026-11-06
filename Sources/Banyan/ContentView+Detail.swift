@@ -28,7 +28,7 @@ extension ContentView {
         let availability = closeConfirmationAvailability
         Button("Cancel", role: .cancel) {}
         if let session = store.pendingCloseSession, store.canHideAndKeepWorking(session) {
-            Button("Keep Working in Background") { store.confirmPendingHideAndKeepWorking() }
+            Button("Keep Open in Background") { store.confirmPendingHideAndKeepWorking() }
                 .modifier(DefaultActionModifier(enabled: availability.backgroundIsDefault))
         }
         if store.pendingCloseCanPause {
@@ -92,13 +92,7 @@ extension ContentView {
     }
 
     var closeConfirmationTitle: String {
-        if store.pendingCloseHasOngoingAgent {
-            return "Close running agent?"
-        }
-        if store.pendingCloseHasActiveChildren {
-            return "Close parent session?"
-        }
-        return "Close session?"
+        store.pendingCloseTitle
     }
 
     var selectedPullRequestHelp: String {

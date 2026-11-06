@@ -1040,10 +1040,10 @@ It refreshes on opening, app activation, and the refresh button. Errors retain
 previous results with a stale-results notice; no tracker or workflow mutation
 occurs when opening the view. Missing or closed conversations do not remove jobs.
 
-For an active managed conversation, the close dialog offers **Keep Working in
+For an active managed conversation, the close dialog offers **Keep Open in
 Background**. Its compact row remains in Sessions with a background indicator,
-and its children collapse while work continues. The selected sidebar does not
-change. Future children inherit background membership. Selecting the conversation
+and its children collapse while automatic continuation remains available. The
+selected sidebar does not change. Future children inherit background membership. Selecting the conversation
 brings it back. Backgrounding never pauses, suspends,
 closes, terminates, or verifies the job; **Pause and Close** retains its existing
 meaning. Active managed native threads retain their observation subscription so

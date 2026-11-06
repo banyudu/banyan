@@ -36,6 +36,21 @@ import Testing
         let waiting = try #require(summaries["waiting"])
         #expect(waiting.descendants.isEmpty)
         #expect(waiting.own.badgeSystemImage == "clock.fill")
+
+        var idleJob = jobs[0]
+        idleJob["group"] = "working"
+        idleJob["attention"] = "watch"
+        idleJob["display"] = ["kind": "working", "label": "Verifying"]
+        let idleFeed = try WorkitOverview.decode(JSONSerialization.data(withJSONObject: [
+            "version": 1, "generatedAt": "2026-01-01T00:00:00Z", "total": 1,
+            "truncated": false, "jobs": [idleJob],
+        ]))
+        let idle = try #require(SessionWorkTree.summaries(nodes: [
+            .init(id: "merged", parentID: nil, title: "Merged", status: .needInput,
+                  workflow: .init(owner: "workit", jobID: "merged-job", revision: 1, state: .working))
+        ], overview: idleFeed)["merged"])
+        #expect(idle.own.badgeSystemImage == "moon.zzz.fill")
+        #expect(idle.own.label == "Waiting for input · Merged · 4/5 AC")
     }
 
     @Test func equatableRowsKeepSessionSelectionAndWorkUpdatesLive() async throws {
