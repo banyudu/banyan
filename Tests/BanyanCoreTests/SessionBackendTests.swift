@@ -21,11 +21,15 @@ import Testing
     #expect(status("parked") == .asking)
     #expect(status("interrupted") == .failed)
     // Idle and hibernated read the same: a finished turn has a result to
-    // read, an untouched session has nothing yet.
+    // read, an untouched session has nothing yet. History alone never claims
+    // the input-required state; only a pending ask does.
     #expect(status("idle") == .idle)
     #expect(status("hibernated") == .idle)
-    #expect(status("idle", history: 2) == .needInput)
-    #expect(status("hibernated", history: 2) == .needInput)
+    #expect(status("idle", history: 2) == .review)
+    #expect(status("hibernated", history: 2) == .review)
+    #expect(!status("idle", history: 2).isAwaitingHumanAnswer)
+    #expect(!SessionLifecyclePolicy.needsAttention(status: status("hibernated", history: 9),
+                                                    isImportedHistory: false, isSuspended: false))
     // A pending ask outranks whatever position arrives alongside it.
     #expect(status("running", approval: true) == .asking)
     #expect(status("idle", history: 1, question: true) == .asking)
@@ -45,7 +49,7 @@ import Testing
         "cwd": "/tmp", "model": "model", "position": "idle", "history_items": 3
     ])
     #expect(summary.historyItems == 3)
-    #expect(PuckSessionStatusPolicy.status(for: summary) == .needInput)
+    #expect(PuckSessionStatusPolicy.status(for: summary) == .review)
 
     // A daemon that predates the field reports no history.
     let older = try PuckSessionSummary([

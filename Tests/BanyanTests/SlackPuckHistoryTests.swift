@@ -26,7 +26,7 @@ func slackPuckHistoryReadsBoundedDaemonEventsWithoutStartingOrFollowing() async 
     ])
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
     func request(_ cursor: String? = nil) throws -> SlackBrowserRequest {
@@ -58,7 +58,7 @@ func slackPuckHistoryUsesDaemonPagesWithoutStartingOrFollowing() async throws {
         .init(id: "1", kind: "user", text: "earliest")], nextCursor: nil), cursor: "older")
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
     func request(_ cursor: String? = nil) throws -> SlackBrowserRequest {
@@ -84,7 +84,7 @@ func slackPuckFollowupUsesDaemonAdmissionAndNeverRepeatsAfterDisable() async thr
     daemon.put(summary)
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
@@ -116,7 +116,7 @@ func slackPuckFollowupAcceptsKnownInactiveDaemonStates(position: String) async t
     daemon.put(summary)
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
@@ -138,7 +138,7 @@ func slackPuckFollowupRejectsAChangedDaemonBinding() async throws {
     daemon.put(original)
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([original])
+    store.openListedPuckSessions([original])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     let identity = SlackConversationIdentity(kind: "puck", conversationID: original.id, generation: "puck")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
@@ -162,7 +162,7 @@ func slackPuckFollowupDoesNotRetryAnUncertainDaemonError() async throws {
     daemon.turnError = .server(.init(code: "fixture", message: "uncertain daemon outcome"))
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
@@ -185,7 +185,7 @@ func availabilityChangeAfterClaimFencesPuckFollowupBeforeDaemonDispatch(action: 
     daemon.put(summary)
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
@@ -219,7 +219,7 @@ func slackPuckApprovalUsesExactCurrentCallAndDoesNotReplay() async throws {
     daemon.put(summary, transcript: [.init(cursor: 1, kind: "text_delta", text: "prior context")])
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
@@ -265,7 +265,7 @@ func slackAwayObservesANewPuckRequestWithoutAStatusTransition() async throws {
     daemon.put(summary)
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
     _ = try store.slackAwayJournal.configure(principal: principal, enabled: nil, sessionID: summary.id,
@@ -310,7 +310,7 @@ func slackPuckQuestionPreservesMultipleAndCustomSelectionsAndReceipt() async thr
     daemon.put(summary)
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
@@ -352,7 +352,7 @@ func fakeSlackAwayCatchupAnswersAnExistingPuckApprovalThroughHTTP() async throws
     daemon.put(summary, transcript: [.init(cursor: 1, kind: "text_delta", text: "prior context")])
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
     let server = ControlServer(store: store, host: store.host, port: .any)
@@ -393,7 +393,7 @@ func puckDecisionRechecksDesktopResolutionAndDisableBeforeDispatch() async throw
     daemon.put(summary)
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     let identity = SlackConversationIdentity(kind: "puck", conversationID: summary.id, generation: "puck")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
@@ -464,7 +464,7 @@ func fakeSlackPuckQuestionFormReachesTheExactDaemonRequestThroughHTTP() async th
     daemon.put(summary)
     let store = fixture.makeStore()
     defer { store.stopPuckObservation(); store.flushPendingSessionSaves() }
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let principal = CodexRemotePrincipal(workspace: "T_TEST", channel: "C_TEST", user: "U_TEST")
     try store.codexRemote.configure(.init(enabled: true, allowed: [principal]))
     let server = ControlServer(store: store, host: store.host, port: .any)

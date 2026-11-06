@@ -219,6 +219,23 @@ Create one from a configured agent profile, or from the sidebar footer's
 **Custom Session...** sheet with the **Puck** runtime, a provider, and an
 optional account label and model.
 
+The **Sessions** list is your working set. `puckd` also holds sessions that
+other frontends and background tasks started; those take no row and no jump
+key. A compact **background Puck sessions** entry above the sidebar footer
+counts them, turns orange while one has a pending approval or question, and
+lists them with asks first. Choosing one adds it to the sidebar, as do
+`banyan://puck/SESSION_ID` links, ask notifications, and `banyanctl puck turn`.
+An idle session with history shows **Review**: a result is available. Only a
+pending ask shows that input is needed, and neither says whether an owning
+task succeeded.
+
+Earlier versions added every daemon session to the sidebar. The background
+entry offers **Review rows added automatically…** for those restored rows.
+Pick the rows to remove, or **Select All**; rows you named, the selected row,
+session trees, and workflow-managed rows are kept. Removing a row never
+cancels its turn or deletes its transcript, and the session stays openable
+from the background list.
+
 Selecting a puck session shows its transcript, any pending approval or
 question, and a message field. Banyan follows the daemon's event stream only
 while the session is on screen. One `session.watch` connection keeps sidebar
@@ -236,8 +253,8 @@ reconcile summaries, and replay durable events after a daemon restart. Empty
 sessions emit no creation event, so Banyan also reconciles the catalog once a
 minute at the desk or every five minutes in the background. Closing a puck
 session in Banyan confirms removal from the sidebar; the session stays in
-`puckd`, and **Reopen** brings it back. **Remove** also keeps a later listing
-from adding it again. Terminal-only actions — Restart, Find, and
+`puckd`, and **Reopen** brings it back. **Remove** drops the row; listings
+never add rows, so it stays in the background list until opened. Terminal-only actions — Restart, Find, and
 `banyanctl output`, `send`, and `answer` — do not apply to puck sessions; use
 `banyanctl puck turn`, `decide`, and `answer` for those.
 

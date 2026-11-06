@@ -109,6 +109,11 @@ extension ContentView {
 
             Spacer(minLength: 0)
 
+            if store.showsPuckBackgroundEntry {
+                Divider()
+                PuckBackgroundSessionsEntry(store: store)
+            }
+
             if !store.pendingHandoffJobs.isEmpty {
                 Divider()
                 PendingHandoffJobsView(jobs: store.pendingHandoffJobs)

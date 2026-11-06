@@ -293,14 +293,22 @@ final class SessionStore: ObservableObject {
     /// Whether the last daemon snapshot succeeded. A watch drives live state;
     /// sparse listings discover empty sessions, which emit no creation event.
     var isPuckDaemonReachable = false
-    /// Daemon sessions removed from Banyan. The daemon keeps them, so without
-    /// this the next listing would bring them back as new rows.
-    var dismissedPuckSessionIDs: Set<String> = [] {
+    /// Daemon sessions outside the working set: listed by `puckd`, with no live
+    /// sidebar row. Rebuilt from every listing, so nothing about them persists.
+    @Published var backgroundPuckSummaries: [PuckSessionSummary] = []
+    /// The daemon's last complete listing, to re-derive the background list
+    /// when the working set changes between listings.
+    var lastPuckSummaries: [PuckSessionSummary] = []
+    /// Puck rows restored from a build that added every listed daemon session
+    /// to the sidebar, so their origin is unknown. Cleared per row by an
+    /// explicit open or turn, or by removing the row.
+    @Published var legacyPuckSessionIDs: Set<String> = [] {
         didSet {
-            guard dismissedPuckSessionIDs != oldValue else { return }
-            persistence.saveDismissedPuckSessionIDs(dismissedPuckSessionIDs)
+            guard legacyPuckSessionIDs != oldValue else { return }
+            persistence.saveLegacyPuckSessionIDs(legacyPuckSessionIDs)
         }
     }
+    @Published var isPuckCleanupPresented = false
     /// The command palette's picked agent profile. `nil` is Auto: actions fall
     /// back to their default (e.g. New Session copies the current session).
     /// Persisted in `UserDefaults` so the pick survives relaunches.
@@ -704,7 +712,6 @@ final class SessionStore: ObservableObject {
         }
         sidebarScope = defaults.string(forKey: Self.sidebarScopeDefaultsKey)
             .flatMap(SessionSidebarScope.init(rawValue:)) ?? .focus
-        dismissedPuckSessionIDs = persistence.loadDismissedPuckSessionIDs()
         let launchConfiguration = SessionLaunchProfileLoader.load(
             homeDirectory: host.homeDirectory
         )

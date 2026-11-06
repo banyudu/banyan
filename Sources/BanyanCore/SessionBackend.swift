@@ -101,9 +101,10 @@ public enum PuckSessionStatusPolicy {
             return .failed
         default:
             // `idle` and `hibernated` are the same to a user: the agent waits for
-            // the next prompt. Like a terminal agent, a session with a finished
-            // turn has a result to read, while an untouched one does not.
-            return historyItems > 0 ? .needInput : .idle
+            // the next prompt. History means a result exists to read, not that
+            // anyone asked for input: only a pending ask says that, and it is
+            // handled above. Nor does it say whether an owning task succeeded.
+            return historyItems > 0 ? .review : .idle
         }
     }
 

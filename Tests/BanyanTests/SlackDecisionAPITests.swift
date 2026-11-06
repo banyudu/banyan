@@ -219,7 +219,7 @@ struct SlackDecisionAPITests {
         defer { store.stopPuckObservation(); store.flushPendingSessionSaves(); try? FileManager.default.removeItem(at: fixture.root) }
         let oldRow = try #require(store.sessions.first)
         try store.remove(id: oldRow.id)
-        store.applyPuckSummaries([puckSummary(id: "row", cwd: fixture.project.path)])
+        store.openListedPuckSessions([puckSummary(id: "row", cwd: fixture.project.path)])
         #expect(store.sessions.contains { $0.id == "row" && $0 !== oldRow })
         let identity = SlackConversationIdentity(kind: "puck", conversationID: "row", generation: "puck")
         let current = try #require(try store.slackDecisionJournal.observe(sessionID: "row", identity: identity,

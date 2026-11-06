@@ -10,7 +10,13 @@ extension SessionStore {
                 old.agentAdmission = nil
             }
             admissionPuckSessions[puck.id] = puck
-            puck.onAdmissionTurnStarting = { [weak self] in self?.startPuckObservation() }
+            puck.onAdmissionTurnStarting = { [weak self, weak puck] in
+                self?.startPuckObservation()
+                // A turn the user sends makes a restored row of unknown origin theirs.
+                if let self, let puck, self.legacyPuckSessionIDs.contains(puck.id) {
+                    self.legacyPuckSessionIDs.remove(puck.id)
+                }
+            }
             if [.executing, .asking, .subagents, .longRunningShell].contains(session.status) { agentAdmission.adopt(session.id) }
         }
         if let terminal = session as? TerminalSession {

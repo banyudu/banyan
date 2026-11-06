@@ -493,3 +493,15 @@ private struct EmptyPuckTestHistoryBackend: SessionHistoryBackend {
 
     func transcriptPreview(from url: URL, provider: CodingAgentProvider, maxMessages: Int) -> String { "" }
 }
+
+extension SessionStore {
+    /// Lists the daemon's sessions, then opens each one the way the user does
+    /// from the background list. A listing alone adds no rows.
+    @MainActor
+    func openListedPuckSessions(_ summaries: [PuckSessionSummary]) {
+        applyPuckSummaries(summaries)
+        for summary in summaries where !sessions.contains(where: { $0.id == summary.id }) {
+            openPuckSession(summary, select: false)
+        }
+    }
+}
