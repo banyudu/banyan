@@ -19,7 +19,8 @@ import Testing
              "createdAt": "2026-01-01T00:00:00Z", "progress": ["passed": 4, "total": 5],
              "nextAction": "Wait for deployment", "evidence": []],
             ["id": "waiting-job", "revision": 1, "sessionID": "waiting", "title": "Waiting",
-             "stage": "waiting", "group": "waiting",
+             "stage": "waiting-ci", "group": "waiting", "phase": "pr-open",
+             "nextWakeAt": "2025-12-31T23:59:00Z",
              "display": ["kind": "waiting", "label": "Waiting for CI"], "detail": "",
              "createdAt": "2026-01-01T00:00:00Z", "progress": ["passed": 0, "total": 4],
              "nextAction": "Wait for CI", "evidence": []],
@@ -36,6 +37,9 @@ import Testing
         let waiting = try #require(summaries["waiting"])
         #expect(waiting.descendants.isEmpty)
         #expect(waiting.own.badgeSystemImage == "clock.fill")
+        #expect(waiting.own.waitingForWorkit)
+        #expect(waiting.own.checkIsDue)
+        #expect(waiting.own.workStatusHelp.contains("Agent idle; Workit owns the next check"))
 
         var idleJob = jobs[0]
         idleJob["group"] = "working"
@@ -51,6 +55,30 @@ import Testing
         ], overview: idleFeed)["merged"])
         #expect(idle.own.badgeSystemImage == "moon.zzz.fill")
         #expect(idle.own.label == "Waiting for input · Merged · 4/5 AC")
+    }
+
+    @Test func managedWaitRendersDueCheckWithoutChangingThePRPhase() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("banyan-session-work-render")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let job: [String: Any] = ["id": "ci", "revision": 1, "sessionID": "ci", "title": "Check retry behavior",
+            "stage": "waiting-ci", "group": "waiting", "phase": "pr-open", "attention": "watch",
+            "display": ["kind": "waiting", "label": "Waiting for CI"], "detail": "CI is pending.",
+            "createdAt": "2026-01-01T00:00:00Z", "nextWakeAt": "2026-01-01T00:05:00Z",
+            "progress": ["passed": 0, "total": 2], "nextAction": "Wait for CI", "evidence": []]
+        let feed = try WorkitOverview.decode(JSONSerialization.data(withJSONObject: [
+            "version": 1, "generatedAt": "2026-01-01T00:06:00Z", "total": 1, "truncated": false, "jobs": [job]]))
+        let entry = try #require(SessionWorkTree.summaries(nodes: [
+            .init(id: "ci", parentID: nil, title: "Check retry behavior", status: .needInput,
+                  workflow: .init(owner: "workit", jobID: "ci", revision: 1, state: .waiting))
+        ], overview: feed)["ci"])
+        #expect(entry.own.phase == .prOpen)
+        try await render(VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Check retry behavior")
+                SessionWorkStatusButton(summary: entry, openSession: { _ in })
+            }
+            WorkJobRow(job: feed.jobs[0], canOpen: true, observedAt: WorkitJobSummary.date(feed.generatedAt), open: {})
+        }.padding(), size: NSSize(width: 420, height: 360), to: root.appendingPathComponent("waiting.png"))
     }
 
     @Test func equatableRowsKeepSessionSelectionAndWorkUpdatesLive() async throws {

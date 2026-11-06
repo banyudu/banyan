@@ -86,7 +86,8 @@ struct WorkJobList: View {
                     if !jobs.isEmpty {
                         Section("\(group.label) · \(jobs.count)") {
                             ForEach(jobs) { job in
-                                WorkJobRow(job: job, canOpen: job.sessionID.map(sessionIDs.contains) ?? false, isBackgrounded: job.sessionID.map(backgroundSessionIDs.contains) ?? false) {
+                                WorkJobRow(job: job, canOpen: job.sessionID.map(sessionIDs.contains) ?? false, isBackgrounded: job.sessionID.map(backgroundSessionIDs.contains) ?? false,
+                                    observedAt: WorkitJobSummary.date(snapshot.generatedAt)) {
                                     if let id = job.sessionID { openSession(id) }
                                 }
                             }
@@ -102,6 +103,7 @@ struct WorkJobRow: View {
     let job: WorkitJobSummary
     let canOpen: Bool
     var isBackgrounded = false
+    var observedAt: Date? = nil
     let open: () -> Void
 
     var body: some View {
@@ -131,8 +133,14 @@ struct WorkJobRow: View {
                 Text("Progress time unavailable").font(.caption2).foregroundStyle(.secondary)
             }
             if let date = WorkitJobSummary.date(job.nextWakeAt) {
-                Text("Next check \(date.formatted(date: .omitted, time: .shortened))")
+                Text("Eligible for check from \(date.formatted(date: .omitted, time: .shortened))")
                     .font(.caption2).foregroundStyle(.secondary)
+                if let due = job.externalCheckDate {
+                    Text(observedAt.map { due.isAtOrBefore($0) } == true
+                         ? "Workit check due at last refresh; waiting for the heartbeat."
+                         : "Workit will check on its heartbeat and resume the conversation when action is needed.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
             HStack {
                 if let url = WorkitJobSummary.webURL(job.issueURL) { Link("Issue", destination: url) }

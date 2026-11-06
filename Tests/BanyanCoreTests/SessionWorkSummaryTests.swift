@@ -172,6 +172,32 @@ import Testing
         #expect(SessionWorkTree.summaries(nodes: nodes, overview: feed)["waiting"]?.own.focusLane == .act)
     }
 
+    @Test func managedWaitUsesSnapshotTimeAndPreservesActiveOrHumanStatus() throws {
+        var job = phasedJob("waiting", phase: "pr-open", attention: "watch", group: "waiting",
+                            kind: "waiting", label: "Waiting for CI")
+        job["stage"] = "waiting-ci"
+        for (time, due) in [("2025-12-31T23:59:00Z", true), ("2026-01-01T00:05:00Z", false)] {
+            job["nextWakeAt"] = time
+            let feed = try phasedOverview([job])
+            for status in [SessionStatus.needInput, .idle, .executing, .asking, .failed] {
+                let entry = try #require(SessionWorkTree.summaries(nodes: [
+                    node("waiting", job: "waiting", state: .waiting, status: status)
+                ], overview: feed)["waiting"]?.own)
+                let waiting = status == .needInput || status == .idle
+                #expect(entry.waitingForWorkit == waiting)
+                #expect(entry.checkIsDue == (waiting && due))
+                #expect((entry.checkDueAt != nil) == waiting)
+                #expect(entry.phase == .prOpen)
+            }
+        }
+        job["nextWakeAt"] = "invalid"
+        let entry = try #require(SessionWorkTree.summaries(nodes: [node("waiting", job: "waiting", state: .waiting)],
+            overview: try phasedOverview([job]))["waiting"]?.own)
+        #expect(entry.waitingForWorkit)
+        #expect(entry.checkDueAt == nil)
+        #expect(!entry.checkIsDue)
+    }
+
     @Test func activeTerminalWorkOverridesSettledWorkitState() throws {
         let nodes = [node("verified", job: "verified", state: .verified, status: .executing)]
         let feed = try phasedOverview([

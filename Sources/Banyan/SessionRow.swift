@@ -629,7 +629,8 @@ struct SessionRow: View, Equatable {
     /// Without an agent, `.running` only means the terminal is alive,
     /// which the terminal icon already conveys.
     private var hidesStatusEmoji: Bool {
-        session.displayAgentProvider == nil && session.status == .running
+        (session.displayAgentProvider == nil && session.status == .running)
+            || workSummary?.own.waitingForWorkit == true
     }
 
     private func isOverChildSessionSummary(at location: CGPoint) -> Bool {

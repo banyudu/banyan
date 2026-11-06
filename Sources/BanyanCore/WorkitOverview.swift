@@ -92,6 +92,12 @@ public struct WorkitJobSummary: Decodable, Sendable, Equatable, Identifiable {
     public let display: Display?
     public let stopReason: String?
 
+    /// Eligibility for a heartbeat check, not a promised agent wake-up time.
+    public var externalCheckDate: Date? {
+        guard group == .waiting, ["waiting-ci", "waiting-deploy"].contains(stage) else { return nil }
+        return Self.date(nextWakeAt)
+    }
+
     public static func webURL(_ text: String?) -> URL? {
         guard let text, let url = URL(string: text), ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
               url.host != nil, url.user == nil, url.password == nil else { return nil }

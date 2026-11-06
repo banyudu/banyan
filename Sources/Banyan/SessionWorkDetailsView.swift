@@ -40,8 +40,8 @@ struct SessionWorkStatusButton: View {
                 }
         } else {
             statusLabel
-                .help(summary.own.label)
-                .accessibilityLabel(summary.own.label)
+                .help(summary.own.workStatusHelp)
+                .accessibilityLabel(summary.own.workStatusHelp)
                 .accessibilityIdentifier("session.\(summary.own.id).workflow")
         }
     }
@@ -74,7 +74,8 @@ struct SessionWorkStatusButton: View {
 
     private var ownBadge: some View {
         WorkStatusBadge(category: summary.own.badgeCategory,
-            emphasized: summary.own.needsAttention, label: summary.own.label)
+            emphasized: summary.own.needsAttention, label: summary.own.workStatusHelp,
+            text: summary.own.waitingForWorkit ? (summary.own.checkIsDue ? "Check due" : "Waiting") : nil)
     }
 }
 
@@ -83,6 +84,7 @@ private struct WorkStatusBadge: View {
     var count: Int? = nil
     var emphasized = false
     let label: String
+    var text: String? = nil
 
     private var tint: Color { emphasized ? .orange : category.tint }
 
@@ -95,6 +97,7 @@ private struct WorkStatusBadge: View {
                     .font(.system(size: 9, weight: .semibold))
                     .monospacedDigit()
             }
+            if let text { Text(text).font(.system(size: 9, weight: .medium)) }
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 4)
@@ -144,11 +147,22 @@ extension SessionWorkSummary.GroupStatus.Category {
 
 extension SessionWorkEntry {
     var badgeCategory: SessionWorkSummary.GroupStatus.Category {
-        if kind == .idle { .kind(.idle) }
+        if waitingForWorkit { .kind(.waiting) }
+        else if kind == .idle { .kind(.idle) }
         else if let phase { .phase(phase) } else { .kind(kind) }
     }
 
     var badgeSystemImage: String { badgeCategory.systemImage }
+
+    var workStatusHelp: String {
+        guard waitingForWorkit else { return label }
+        var help = "\(label). Agent idle; Workit owns the next check."
+        if let checkDueAt {
+            help += " Eligible from \(checkDueAt.formatted(date: .abbreviated, time: .shortened))."
+            if checkIsDue { help += " Check was due at the last refresh." }
+        }
+        return help + " The heartbeat checks external progress and resumes this session when action is needed."
+    }
 }
 
 struct SessionWorkDetailsView: View {
@@ -162,7 +176,8 @@ struct SessionWorkDetailsView: View {
                     Button { openSession(entry.id) } label: {
                         HStack(alignment: .top, spacing: 8) {
                             WorkStatusBadge(category: entry.badgeCategory,
-                                emphasized: entry.needsAttention, label: entry.label)
+                                emphasized: entry.needsAttention, label: entry.workStatusHelp,
+                                text: entry.waitingForWorkit ? (entry.checkIsDue ? "Check due" : "Waiting") : nil)
                             Text(entry.title).lineLimit(2).multilineTextAlignment(.leading)
                             if entry.background {
                                 Image(systemName: "moon").foregroundStyle(.secondary)

@@ -29,9 +29,12 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
     public let managed: Bool
     public let phase: WorkitJobSummary.Phase?
     public let focusLane: SessionFocusLane?
+    public let waitingForWorkit: Bool
+    public let checkDueAt: Date?
+    public let checkIsDue: Bool
     public var needsAttention: Bool { kind == .blocked || kind == .decision }
 
-    init(node: SessionWorkNode, job: WorkitJobSummary?) {
+    init(node: SessionWorkNode, job: WorkitJobSummary?, observedAt: Date? = nil) {
         id = node.id; title = node.title; background = node.background; managed = node.workflow != nil
         identity = node.workflow.map { "\($0.owner):\($0.jobID)" } ?? "session:\(node.id)"
         self.job = job
@@ -115,6 +118,11 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
                 ? "\(activity) · \(nextLabel)" : "\(activity) · workflow unfinished"
         }
         kind = nextKind; label = nextLabel; detail = nextDetail
+        waitingForWorkit = nextKind == .waiting && node.workflow?.owner == "workit"
+            && [.idle, .needInput, .completed].contains(node.status)
+            && (job == nil || ["waiting-ci", "waiting-deploy"].contains(job?.stage ?? ""))
+        checkDueAt = waitingForWorkit ? job?.externalCheckDate : nil
+        checkIsDue = checkDueAt.map { due in observedAt.map { due.isAtOrBefore($0) } ?? false } ?? false
     }
 }
 
@@ -192,6 +200,7 @@ public enum SessionWorkTree {
         let nodes = nodes.filter { $0.status != .closed }
         let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let jobs = Dictionary((overview?.jobs ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let observedAt = WorkitJobSummary.date(overview?.generatedAt)
         var result: [String: SessionWorkSummary] = [:]
         for node in byID.values {
             let job = node.workflow.flatMap { workflow -> WorkitJobSummary? in
@@ -199,7 +208,8 @@ public enum SessionWorkTree {
                       value.revision >= workflow.revision else { return nil }
                 return value
             }
-            result[node.id] = SessionWorkSummary(own: SessionWorkEntry(node: node, job: job))
+            result[node.id] = SessionWorkSummary(own: SessionWorkEntry(node: node, job: job,
+                observedAt: observedAt))
         }
         var seen: [String: Set<String>] = [:]
         // Stable input order keeps child navigation predictable across refreshes.
