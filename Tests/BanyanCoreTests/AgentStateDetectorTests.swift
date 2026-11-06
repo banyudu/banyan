@@ -66,3 +66,13 @@ import Testing
     #expect(detector.detect(in: "构建完成 ✅ 没有问题") == nil)
     #expect(detector.detect(in: "构建失败 — do you want to retry?")?.status == .asking)
 }
+
+@Test(arguments: ["› approved", "The change was approved.", "The app can initialize successfully."])
+func agentStateDetectorDefaultRulesIgnoreApprovalHistory(text: String) {
+    #expect(AgentStateDetector(rules: DetectorRule.defaultRules).detect(in: text) == nil)
+}
+
+@Test(arguments: ["Please approve this action", "Approve this command", "Approve?", "Approval required"])
+func agentStateDetectorDefaultRulesKeepApprovalRequests(text: String) {
+    #expect(AgentStateDetector(rules: DetectorRule.defaultRules).detect(in: text)?.status == .asking)
+}

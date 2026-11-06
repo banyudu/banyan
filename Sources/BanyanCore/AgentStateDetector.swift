@@ -132,8 +132,8 @@ public struct DetectorRule: Codable, Sendable {
 
     public static let defaultRules: [DetectorRule] = [
         DetectorRule(status: .asking, tone: .yellow, patterns: [
-            "do you want", "would you like", "should i", "can i",
-            "approve", "permission required", "approval required"
+            "do you want ", "would you like ", "should i ", "can i ",
+            "please approve", "approve this", "approve?", "permission required", "approval required"
         ]),
         DetectorRule(status: .needInput, tone: .yellow, patterns: [
             "needs input", "need input", "waiting for input", "press enter",

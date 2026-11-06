@@ -208,11 +208,8 @@ public struct AgentSupervisor: Sendable {
         if reading.looksLikeAgentExecuting {
             return result(.executing, .blue)
         }
-        // An untouched prompt outranks the question scan, which searches the whole
-        // captured window and therefore also sees scrollback from *before* a
-        // `/clear`. A cleared session whose old conversation happened to contain a
-        // phrase like "should I merge…" would otherwise stay pinned to `.asking`
-        // forever; nothing below the banner can be a live question.
+        // An untouched prompt outranks the question scan: a short cleared pane
+        // can still include an old question in its recent scrollback.
         if reading.looksLikeUntouchedAgentPrompt {
             return result(.idle, .neutral)
         }
@@ -398,7 +395,19 @@ public struct AgentSupervisor: Sendable {
     }
 
     static func looksLikeAgentQuestion(_ text: String) -> Bool {
-        let lowercased = text.lowercased()
+        let lines = text.lowercased().split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        // Use the same recent activity region as execution detection. Historical
+        // questions, echoed user input and the composer/footer are not live asks.
+        var responseLines = liveActivityLines(lines)
+        // The final Codex composer was removed above. Any earlier prompt marks
+        // submitted input, so questions answered by that input are history.
+        if let submitted = responseLines.lastIndex(where: { $0.hasPrefix("›") }) {
+            responseLines = responseLines.suffix(from: submitted + 1)
+        }
+        let recentLines = responseLines.suffix(14).filter { !isPromptRow($0) }
+        let recentText = recentLines.joined(separator: "\n")
         let questionPhrases = [
             "do you want",
             "would you like",
@@ -411,15 +420,15 @@ public struct AgentSupervisor: Sendable {
             "allow this",
             "continue?"
         ]
-        if questionPhrases.contains(where: lowercased.contains) {
+        if questionPhrases.contains(where: { phrase in
+            // "approved" and "can initialize" are not "approve" and "can I".
+            let pattern = "(?<!\\w)" + NSRegularExpression.escapedPattern(for: phrase) + "(?!\\w)"
+            return recentText.range(of: pattern, options: .regularExpression) != nil
+        }) {
             return true
         }
 
-        let trimmedLines = lowercased
-            .split(separator: "\n")
-            .suffix(8)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        return trimmedLines.contains { line in
+        return recentLines.suffix(8).contains { line in
             line.hasSuffix("?") && line.count >= 8
         }
     }
