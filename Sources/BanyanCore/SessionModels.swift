@@ -69,8 +69,8 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
         switch self {
         case .running, .executing, .subagents: return "🏃"
         case .longRunningShell: return "⏳"
-        case .needInput: return "✋"
-        case .asking: return "❓"
+        case .needInput: return "🙋"
+        case .asking: return "🤔"
         case .review: return "👀"
         case .idle: return "💤"
         case .completed: return "✅"

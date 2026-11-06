@@ -97,7 +97,7 @@ import Testing
     // OpenCode renders its live interrupt affordance as "esc interrupt" (no
     // "to") in the bottom status bar while a turn is in flight, and swaps it
     // for the cwd line when idle. Without the bare hint the session fell
-    // through to `.needInput` (✋) even while actively working.
+    // through to `.needInput` even while actively working.
     let workingText = [
         "",
         "",
