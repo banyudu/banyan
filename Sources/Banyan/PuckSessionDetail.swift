@@ -313,7 +313,7 @@ struct PuckSessionDetail: View {
                 in: RoundedRectangle(cornerRadius: 6, style: .continuous)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.banyanPlainLabelOnly)
         .onHover { hovering in
             if hovering { approvalSelection = choice }
         }
@@ -534,7 +534,7 @@ struct PuckSessionDetail: View {
                 in: RoundedRectangle(cornerRadius: 6, style: .continuous)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.banyanPlainLabelOnly)
         .onHover { hovering in
             if hovering {
                 hoveredQuestionRow = rowID

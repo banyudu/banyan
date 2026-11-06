@@ -153,7 +153,7 @@ struct MarkdownText: View {
                         .frame(width: 18, alignment: .leading)
                         .padding(.top, 1)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.banyanPlainLabelOnly)
                 .accessibilityLabel(isChecked ? "Completed" : "Not completed")
             } else {
                 Image(systemName: isChecked ? "checkmark.square.fill" : "square")

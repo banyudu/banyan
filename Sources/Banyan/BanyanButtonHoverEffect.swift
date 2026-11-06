@@ -60,6 +60,7 @@ struct BanyanButtonHoverEffect: ViewModifier {
         content
             .contentShape(Rectangle())
             .background(hoverBackground)
+            .modifier(BanyanButtonPointerStyle(isEnabled: isEnabled))
             .animation(.easeOut(duration: 0.12), value: isActive)
             .onHover(perform: setHovered)
             .onChange(of: isEnabled) { _, enabled in
@@ -90,6 +91,9 @@ struct BanyanButtonHoverEffect: ViewModifier {
         isHovered = nextValue
         onHoverChanged?(nextValue)
 
+        // SwiftUI owns the cursor on newer systems. Keep the existing fallback
+        // for macOS 14, where pointerStyle is unavailable.
+        if #available(macOS 15.0, *) { return }
         if nextValue, !hasPushedCursor {
             NSCursor.pointingHand.push()
             hasPushedCursor = true
@@ -106,6 +110,19 @@ struct BanyanButtonHoverEffect: ViewModifier {
         if hasPushedCursor {
             NSCursor.pop()
             hasPushedCursor = false
+        }
+    }
+}
+
+private struct BanyanButtonPointerStyle: ViewModifier {
+    let isEnabled: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.pointerStyle(isEnabled ? .link : nil)
+        } else {
+            content
         }
     }
 }

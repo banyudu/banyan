@@ -83,7 +83,7 @@ struct CodeBlockView: View {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .frame(width: 18, height: 18)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.banyanPlain)
             .foregroundStyle(.secondary)
             .help(copyActionLabel)
             .accessibilityLabel(copyActionLabel)
@@ -98,7 +98,7 @@ struct CodeBlockView: View {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.banyanPlain)
                 .foregroundStyle(.secondary)
                 .help(isExpanded ? "Collapse code" : "Expand code")
                 .accessibilityLabel(isExpanded ? "Collapse code" : "Expand code")

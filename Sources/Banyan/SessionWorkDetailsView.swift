@@ -174,7 +174,7 @@ struct SessionWorkDetailsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.banyanBorderless)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
