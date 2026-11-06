@@ -8,7 +8,6 @@ import Testing
     #expect(SessionStatus.asking.priority < SessionStatus.running.priority)
     #expect(SessionStatus.closed.label == "Closed")
     #expect(SessionStatus.completed.emoji == "✅")
-    #expect(SessionStatus.completed.systemImage == "checkmark.circle.fill")
     #expect(SessionTone.purple.label == "Purple")
     #expect(SortMode.updated.label == "Updated")
 }

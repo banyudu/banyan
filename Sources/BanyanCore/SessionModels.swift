@@ -81,24 +81,6 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
         }
     }
 
-    /// SF Symbol used by the macOS session rows for the same status the
-    /// terminal frontends render as `emoji`.
-    public var systemImage: String {
-        switch self {
-        case .running: return "gearshape.fill"
-        case .executing: return "wrench.and.screwdriver.fill"
-        case .longRunningShell: return "hourglass"
-        case .subagents: return "puzzlepiece.extension.fill"
-        case .needInput: return "hand.raised.fill"
-        case .asking: return "questionmark.bubble.fill"
-        case .review: return "eye.fill"
-        case .idle: return "moon.zzz.fill"
-        case .completed: return "checkmark.circle.fill"
-        case .failed: return "xmark.octagon.fill"
-        case .closed: return "archivebox.fill"
-        }
-    }
-
     public var priority: Int {
         switch self {
         case .asking: return 0

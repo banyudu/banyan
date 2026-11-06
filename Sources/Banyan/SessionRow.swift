@@ -231,12 +231,10 @@ struct SessionRow: View, Equatable {
                     .accessibilityIdentifier(AccessibilityID.sessionRowSuspendedBadge(session.id))
             }
 
-            if !session.isImportedHistory && session.status != .closed && !hidesStatusIcon && session.agentQueuePosition == nil {
-                Image(systemName: session.status.systemImage)
-                    .font(.system(size: 12, weight: .medium))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(session.status.sidebarTint)
-                    .frame(width: 14, height: 16)
+            if !session.isImportedHistory && session.status != .closed && !hidesStatusEmoji && session.agentQueuePosition == nil {
+                Text(session.status.emoji)
+                    .font(.system(size: 12))
+                    .frame(width: 16, height: 18)
                     .help(session.status.label)
                     .accessibilityLabel(session.status.label)
                     .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
@@ -625,7 +623,7 @@ struct SessionRow: View, Equatable {
 
     /// `.running` only ever means "a bare shell prompt", which the terminal icon
     /// already says — the gear next to it just reads as a settings affordance.
-    private var hidesStatusIcon: Bool {
+    private var hidesStatusEmoji: Bool {
         session.displayAgentProvider == nil && session.status == .running
     }
 
@@ -651,19 +649,6 @@ struct SessionRow: View, Equatable {
             if !isRenaming && !isOverChildSessionSummary(at: event.location) {
                 onSelect()
             }
-        }
-    }
-}
-
-extension SessionStatus {
-    var sidebarTint: Color {
-        switch self {
-        case .running, .executing, .longRunningShell, .review: .blue
-        case .subagents: .purple
-        case .needInput, .asking: .orange
-        case .completed: .green
-        case .failed: .red
-        case .idle, .closed: .secondary
         }
     }
 }

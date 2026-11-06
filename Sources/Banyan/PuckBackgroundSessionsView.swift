@@ -108,8 +108,8 @@ private struct PuckBackgroundSessionRow: View {
     var body: some View {
         let status = PuckSessionStatusPolicy.status(for: summary)
         HStack(spacing: 8) {
-            Image(systemName: status.systemImage)
-                .foregroundStyle(PuckBackgroundSessionPolicy.hasPendingAsk(summary) ? Color.orange : Color.secondary)
+            Text(status.emoji)
+                .font(.system(size: 12))
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
