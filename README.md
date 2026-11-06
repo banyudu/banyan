@@ -817,6 +817,14 @@ failed
 closed
 ```
 
+For terminal Codex sessions, the sidebar separates agent activity from Codex's
+reported background terminals. A dev server can keep running while the agent
+shows **Need Input**, with a small terminal-count badge. Hover the status emoji
+for both the agent state and background count. A new active turn still shows
+**Executing**; stopping the background terminals clears the badge. Sessions with
+reported background terminals are excluded from agent freezing, deep suspension,
+and verified-session cleanup so those operations do not interrupt the service.
+
 Supported tones:
 
 ```text

@@ -267,6 +267,7 @@ extension SessionStore {
                 throw WorkflowError.refused("retirement requires the unchanged verified child and acknowledged user input")
             }
             guard session.status == .closed || (selectedSessionID != session.id &&
+                session.backgroundTerminalCount == 0 &&
                 ![.running, .executing, .subagents, .longRunningShell, .asking].contains(session.status) && !session.isSuspended && !session.isFrozen &&
                 !session.isDeepSuspended && !session.isDeepResuming && !session.isDeepTerminating) else {
                 throw WorkflowError.refused("selected or suspended children are retained")
@@ -298,6 +299,7 @@ extension SessionStore {
             case .present(let snapshot):
                 let reading = try await readPaneOutput(id: session.id, lines: nil)
                 guard reading.paneID == snapshot.paneID, !snapshot.isInMode,
+                      reading.observation?.backgroundTerminalCount == 0,
                       SessionWorkflowPolicy.canWake(status: reading.status, isSuspended: false, isFrozen: false,
                         isDeepSuspended: false, hasObservation: reading.observation != nil,
                         isAgent: reading.observation?.provider != nil, hasHumanPrompt: reading.prompt != nil,

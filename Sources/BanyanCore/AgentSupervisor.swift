@@ -20,6 +20,7 @@ public struct AgentSupervisor: Sendable {
         public let visibleText: String?
         /// Kernel exit events for these processes wake deferred observations.
         public let liveProcessIDs: Set<Int32>
+        public let backgroundTerminalCount: Int
         public var codexRetryCandidate: CodexTerminalRetryCandidate?
 
         public init(
@@ -30,7 +31,8 @@ public struct AgentSupervisor: Sendable {
             modelIDIsExact: Bool = false,
             currentPath: String?,
             visibleText: String? = nil,
-            liveProcessIDs: Set<Int32> = []
+            liveProcessIDs: Set<Int32> = [],
+            backgroundTerminalCount: Int = 0
         ) {
             self.status = status
             self.tone = tone
@@ -40,6 +42,7 @@ public struct AgentSupervisor: Sendable {
             self.currentPath = currentPath
             self.visibleText = visibleText
             self.liveProcessIDs = liveProcessIDs
+            self.backgroundTerminalCount = backgroundTerminalCount
         }
     }
 
@@ -141,6 +144,7 @@ public struct AgentSupervisor: Sendable {
             nil
         }
         var provider = modelIdentity?.provider ?? baseProvider
+        var backgroundTerminalCount = 0
 
         // tmux reports the foreground command separately from the process
         // table. When the pane is backed by a login shell, both can describe
@@ -156,14 +160,6 @@ public struct AgentSupervisor: Sendable {
             0
         }
         let agentProcessCount = Self.logicalAgentProcessCount(in: descendants)
-        if rootAgentProcessCount + agentProcessCount > 1 {
-            if modelIdentity == nil, hasLiveOpenCode {
-                modelIdentity = readPane(pane).openCodeStatusBarIdentity
-                provider = modelIdentity?.provider ?? baseProvider
-            }
-            return result(.subagents, .purple)
-        }
-
         let helperPIDs = Self.agentHelperPIDs(in: descendants)
         let externalProcesses = descendants.filter { process in
             process.pid != pane.rootPID
@@ -176,7 +172,17 @@ public struct AgentSupervisor: Sendable {
                 && !helperPIDs.contains(process.pid)
         }
 
-        if !externalProcesses.isEmpty {
+        let backgroundReading = provider == .codex && !externalProcesses.isEmpty ? readPane(pane) : nil
+        backgroundTerminalCount = backgroundReading?.codexBackgroundTerminalCount ?? 0
+        if rootAgentProcessCount + agentProcessCount > 1 {
+            if modelIdentity == nil, hasLiveOpenCode {
+                modelIdentity = readPane(pane).openCodeStatusBarIdentity
+                provider = modelIdentity?.provider ?? baseProvider
+            }
+            return result(.subagents, .purple)
+        }
+
+        if !externalProcesses.isEmpty && backgroundTerminalCount == 0 {
             // The model database is the primary signal for OpenCode model
             // switches (e.g. deepseek -> muse-spark). When it misses, fall back
             // to the status bar even while executing, otherwise the icon stays
@@ -188,7 +194,9 @@ public struct AgentSupervisor: Sendable {
             return result(.executing, .blue)
         }
 
-        let reading = readPane(pane)
+        // A reported background terminal can outlive a turn. The live turn
+        // indicator and prompt still decide what the agent itself is doing.
+        let reading = backgroundReading ?? readPane(pane)
         if modelIdentity == nil, hasLiveOpenCode {
             modelIdentity = reading.openCodeStatusBarIdentity
             provider = modelIdentity?.provider ?? baseProvider
@@ -222,7 +230,8 @@ public struct AgentSupervisor: Sendable {
                 modelIDIsExact: modelIdentity?.isExactModelID ?? false,
                 currentPath: pane.currentPath,
                 visibleText: capturedText,
-                liveProcessIDs: liveProcessIDs
+                liveProcessIDs: liveProcessIDs,
+                backgroundTerminalCount: backgroundTerminalCount
             )
             if status == .needInput, provider == .codex, !pane.isInMode,
                let capturedText, let prompt = CodexTerminalRetryPrompt.parse(capturedText),
@@ -869,6 +878,7 @@ final class PaneReading: @unchecked Sendable {
     private var executing: Bool?
     private var untouchedPrompt: Bool?
     private var question: Bool?
+    private var backgroundTerminalCount: Int?
     // Doubly optional: the inner `nil` is "no identity in this pane", the outer
     // is "not looked yet".
     private var statusBarIdentity: OpenCodeRuntimeIdentity??
@@ -887,6 +897,15 @@ final class PaneReading: @unchecked Sendable {
 
     var looksLikeAgentQuestion: Bool {
         memoized(\.question) { AgentSupervisor.looksLikeAgentQuestion($0) }
+    }
+
+    var codexBackgroundTerminalCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        if let backgroundTerminalCount { return backgroundTerminalCount }
+        let count = CodexBackgroundTerminalStatus.count(in: text)
+        backgroundTerminalCount = count
+        return count
     }
 
     var openCodeStatusBarIdentity: OpenCodeRuntimeIdentity? {

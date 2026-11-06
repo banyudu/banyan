@@ -127,7 +127,8 @@ extension SessionStore {
                     }, agentPID: agent.pid)).inspect(
                     tmuxSessionName: target.tmuxSessionName, launchCommand: target.command, currentStatus: target.status,
                     cwd: target.cwd, sessionStartedAt: target.createdAt, environment: target.environment)
-                guard let result, AgentInactivityPolicy.permitsSuspension(status: result.status, focused: false,
+                guard let result, result.backgroundTerminalCount == 0,
+                      AgentInactivityPolicy.permitsSuspension(status: result.status, focused: false,
                     visible: false, quietSeconds: Date().timeIntervalSince(max(activity, lastInteraction)), threshold: threshold),
                       AgentProcessFreezer.isQuiet(first, second, ticket: plan, elapsed: ProcessInfo.processInfo.systemUptime - started),
                       let fresh = backend.primaryPaneSnapshot(named: target.tmuxSessionName), fresh.paneID == pane.paneID,
@@ -233,6 +234,7 @@ extension SessionStore {
         (automatic && terminal.workflow?.state.permitsWake == true)
             || terminal.id == selectedSessionID || terminal.id == selection.selectedSessionID || terminal.freezeInputInFlight > 0
             || terminal.status == .closed || ![.idle, .needInput].contains(terminal.status)
+            || terminal.backgroundTerminalCount > 0
     }
 
     func runDeepSuspendPass(now: Date = Date(), underPressure: Bool = false) {

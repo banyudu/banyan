@@ -2,6 +2,14 @@ import Foundation
 import BanyanCore
 
 extension BanyanSession {
+    var backgroundTerminalLabel: String {
+        "\(backgroundTerminalCount) background terminal\(backgroundTerminalCount == 1 ? "" : "s")"
+    }
+
+    var statusHelp: String {
+        backgroundTerminalCount > 0 ? "\(status.label) · \(backgroundTerminalLabel)" : status.label
+    }
+
     var displayTitle: String {
         let key = DisplayTitleKey(
             title: title,

@@ -21,6 +21,10 @@ struct AgentDeepSuspendTests {
         #expect(rows.contains { $0.pid == Int(f.agentPID) && $0.parentPID == innerHost.pid })
         let shellIdentity = try #require(AgentProcessSample.read(pid: Int32(shell.pid))?.identity)
         let background = try #require(f.backgroundIdentity())
+        f.session.backgroundTerminalCount = 1
+        await #expect(throws: (any Error).self) { try await f.store.deepSuspendAgent(id: f.session.id) }
+        #expect(AgentProcessSample.read(pid: f.agentPID) != nil)
+        f.session.backgroundTerminalCount = 0
         try await f.store.deepSuspendAgent(id: f.session.id)
         #expect(AgentProcessSample.presence(of: try #require(f.session.suspendTicket).agent) == .exited)
         #expect(f.session.suspendTicket?.agent.pid == f.agentPID)

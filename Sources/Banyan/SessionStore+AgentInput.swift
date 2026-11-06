@@ -249,7 +249,8 @@ extension SessionStore {
                     provider: result.provider,
                     modelID: result.modelID,
                     modelIDIsExact: result.modelIDIsExact,
-                    currentPath: result.currentPath
+                    currentPath: result.currentPath,
+                    backgroundTerminalCount: result.backgroundTerminalCount
                 )
             },
             isSuspended: false,

@@ -210,6 +210,12 @@ extension SessionStore {
                     currentPath: result.currentPath)
                 session.needsRecovery = true
             }
+            let backgroundCount = session.status == .closed ? 0 : result.backgroundTerminalCount
+            if session.backgroundTerminalCount != backgroundCount {
+                session.backgroundTerminalCount = backgroundCount
+                // Background work also changes the verified-session cleanup menu.
+                if session.workflow?.state == .verified { objectWillChange.send() }
+            }
             guard let reconciliation = SessionObservationPolicy.reconcile(
                       currentStatus: session.status,
                       currentTone: session.tone,

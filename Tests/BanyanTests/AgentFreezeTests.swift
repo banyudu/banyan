@@ -66,6 +66,10 @@ struct AgentFreezeTests {
         await #expect(throws: (any Error).self) { try await f.store.freezeAgent(id: f.session.id) }
         f.session.isSuspended = false
         f.session.lastFreezeInteractionAt = .distantPast
+        f.session.backgroundTerminalCount = 1
+        await #expect(throws: (any Error).self) { try await f.store.freezeAgent(id: f.session.id) }
+        #expect(!f.session.isFrozen)
+        f.session.backgroundTerminalCount = 0
         try await f.store.freezeAgent(id: f.session.id)
         let ticket = try #require(f.session.frozenTicket)
         try await waitForPuckState { f.allStopped(ticket) }

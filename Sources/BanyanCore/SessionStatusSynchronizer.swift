@@ -40,6 +40,7 @@ public struct SessionStatusObservation: Sendable, Equatable {
     public let modelIDIsExact: Bool
     public let currentPath: String?
     public let liveProcessIDs: Set<Int32>
+    public let backgroundTerminalCount: Int
     public let codexRetryCandidate: CodexTerminalRetryCandidate?
     /// A scoped Away observer may track prompt identity without retaining text.
     public let promptObserved: Bool
@@ -55,6 +56,7 @@ public struct SessionStatusObservation: Sendable, Equatable {
         modelIDIsExact: Bool = false,
         currentPath: String?,
         liveProcessIDs: Set<Int32> = [],
+        backgroundTerminalCount: Int = 0,
         codexRetryCandidate: CodexTerminalRetryCandidate? = nil,
         promptObserved: Bool = false, promptFootprint: String? = nil, promptActivationID: String? = nil
     ) {
@@ -66,6 +68,7 @@ public struct SessionStatusObservation: Sendable, Equatable {
         self.modelIDIsExact = modelIDIsExact
         self.currentPath = currentPath
         self.liveProcessIDs = liveProcessIDs
+        self.backgroundTerminalCount = backgroundTerminalCount
         self.codexRetryCandidate = codexRetryCandidate
         self.promptObserved = promptObserved; self.promptFootprint = promptFootprint; self.promptActivationID = promptActivationID
     }
@@ -142,6 +145,7 @@ public struct SessionStatusSynchronizer: Sendable {
                 modelIDIsExact: result.modelIDIsExact,
                 currentPath: result.currentPath,
                 liveProcessIDs: result.liveProcessIDs,
+                backgroundTerminalCount: result.backgroundTerminalCount,
                 codexRetryCandidate: result.codexRetryCandidate,
                 promptObserved: promptSessionIDs.contains(input.id) && result.visibleText != nil,
                 promptFootprint: promptSessionIDs.contains(input.id)

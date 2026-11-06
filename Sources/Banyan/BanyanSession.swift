@@ -81,11 +81,16 @@ class BanyanSession: ObservableObject, Identifiable {
     }
     @Published var status: SessionStatus {
         didSet {
-            if status == .closed { codexAutoRetry.cancel() }
+            if status == .closed {
+                codexAutoRetry.cancel()
+                backgroundTerminalCount = 0
+            }
             onHistoryRelevantChange?()
         }
     }
     @Published var tone: SessionTone
+    /// Live supervisor metadata, kept separate from agent activity and not persisted.
+    @Published var backgroundTerminalCount = 0
     @Published var updatedAt: Date {
         didSet { onHistoryRelevantChange?() }
     }

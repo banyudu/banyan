@@ -30,7 +30,7 @@ extension SessionStore {
     }
 
     var verifiedWorkflowSessionIDs: [String] {
-        sessions.filter { $0.workflowRecoveryError == nil && $0.coordinationRecoveryError == nil &&
+        sessions.filter { $0.backgroundTerminalCount == 0 && $0.workflowRecoveryError == nil && $0.coordinationRecoveryError == nil &&
             $0.workflow?.wake?.status != .pending && $0.workflow?.wake?.status != .uncertain &&
             SessionWorkflowPolicy.shouldCloseVerified(workflow: $0.workflow, status: $0.status) }.map(\.id)
     }

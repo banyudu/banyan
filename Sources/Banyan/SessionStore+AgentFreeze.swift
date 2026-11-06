@@ -89,7 +89,7 @@ extension SessionStore {
                     tmuxSessionName: target.tmuxSessionName, launchCommand: target.command,
                     currentStatus: target.status, cwd: target.cwd, sessionStartedAt: target.createdAt,
                     environment: target.environment, paneSnapshot: fresh)
-                guard let result, result.provider != nil,
+                guard let result, result.provider != nil, result.backgroundTerminalCount == 0,
                       AgentInactivityPolicy.permitsSuspension(status: result.status, focused: false, visible: false,
                           quietSeconds: Date().timeIntervalSince(max(activity, lastInteraction)), threshold: threshold) else {
                     throw AgentFreezeError.unsafe("Agent is mid-turn or has not been quiet long enough")
@@ -150,6 +150,7 @@ extension SessionStore {
         (automatic && terminal.workflow?.state.permitsWake == true)
             || terminal.id == selectedSessionID || terminal.id == selection.selectedSessionID
             || terminal.freezeInputInFlight > 0 || terminal.status == .closed || terminal.isSuspended
+            || terminal.backgroundTerminalCount > 0
             || ![.idle, .needInput].contains(terminal.status)
     }
 

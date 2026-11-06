@@ -92,6 +92,12 @@ import Testing
             return try #require(bitmap.representation(using: .png, properties: [:]))
         }
         let initial = try await pixels()
+        session.backgroundTerminalCount = 1
+        #expect(original == row()) // Runtime badge changes are observed by the row.
+        #expect(session.statusHelp == "Need Input · 1 background terminal")
+        #expect(try await pixels() != initial)
+        session.backgroundTerminalCount = 0
+        #expect(try await pixels() == initial)
         shortcuts.updateVisibleSessionIDs([session.id])
         #expect(original == row()) // Viewport changes only dirty the badge.
         #expect(shortcuts.sessionID(for: 1) == session.id)
@@ -132,6 +138,7 @@ import Testing
             titleURL: "https://github.com/example/project/issues/1", cwd: root.path, command: "", status: .needInput,
             parentSessionID: parent.id, agentProvider: .codex, telemetry: banyanTestTelemetry, host: host)
         worker.workflow = .init(owner: "workit", jobID: "upload", revision: 3, state: .needsYou)
+        worker.backgroundTerminalCount = 1
         let review = BanyanSession(id: "review", title: "Review retry behavior", cwd: root.path, command: "", status: .executing,
             parentSessionID: worker.id, agentProvider: .codex, telemetry: banyanTestTelemetry, host: host)
         let job: [String: Any] = ["id": "upload", "revision": 3, "sessionID": "worker", "title": worker.title,

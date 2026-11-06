@@ -235,9 +235,14 @@ struct SessionRow: View, Equatable {
                 Text(session.status.emoji)
                     .font(.system(size: 12))
                     .frame(width: 16, height: 18)
-                    .help(session.status.label)
-                    .accessibilityLabel(session.status.label)
+                    .help(session.statusHelp)
+                    .accessibilityLabel(session.statusHelp)
                     .accessibilityIdentifier(AccessibilityID.sessionRowStatus(session.id))
+            }
+
+            if !session.isImportedHistory && session.status != .closed && session.backgroundTerminalCount > 0 {
+                SessionBackgroundTerminalBadge(count: session.backgroundTerminalCount, label: session.backgroundTerminalLabel)
+                    .accessibilityIdentifier("session.\(session.id).backgroundTerminals")
             }
 
             if isRenaming {
@@ -396,11 +401,11 @@ struct SessionRow: View, Equatable {
                     Button(session.isDeepSuspended ? "Resume Agent" : "Deep Suspend Agent") {
                         onSetDeepSuspended(!session.isDeepSuspended)
                     }
-                    .disabled(session.isDeepResuming || (!session.isDeepSuspended && (isSelected || session.isSuspended || ![.idle, .needInput].contains(session.status))))
+                    .disabled(session.isDeepResuming || (!session.isDeepSuspended && (isSelected || session.isSuspended || session.backgroundTerminalCount > 0 || ![.idle, .needInput].contains(session.status))))
                     Button(session.isFrozen ? "Unfreeze Agent" : "Freeze Agent") {
                         onSetFrozen(!session.isFrozen)
                     }
-                    .disabled(!session.isFrozen && (isSelected || session.isSuspended || ![.idle, .needInput].contains(session.status)))
+                    .disabled(!session.isFrozen && (isSelected || session.isSuspended || session.backgroundTerminalCount > 0 || ![.idle, .needInput].contains(session.status)))
                     if !session.isFrozen {
                         Button("Resume Stopped Agent") { onSetFrozen(false) }
                     }

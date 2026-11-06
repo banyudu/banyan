@@ -194,6 +194,7 @@ extension ControlServer {
             "command": session.command,
             "status": session.status.rawValue,
             "statusEmoji": session.status.emoji,
+            "backgroundTerminalCount": session.backgroundTerminalCount,
             "tone": session.tone.rawValue,
             "parent": session.parentSessionID ?? "",
             "isRestored": session.isRestored,
