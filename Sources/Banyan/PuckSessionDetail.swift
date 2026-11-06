@@ -48,6 +48,7 @@ struct PuckSessionDetail: View {
             Divider()
             footer
         }
+        .environment(\.markdownLinkEnvironment, session.environment)
         .onAppear {
             session.startFollowing()
             DispatchQueue.main.async {

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MarkdownText: View {
+    @Environment(\.markdownLinkEnvironment) private var linkEnvironment
     private let blocks: [MarkdownBlock]
     let style: MarkdownTextStyle
     let onToggleTask: ((Int) -> Void)?
@@ -169,13 +170,7 @@ struct MarkdownText: View {
     }
 
     private func inlineText(_ value: String) -> Text {
-        let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace
-        )
-        if let attributed = try? AttributedString(markdown: value, options: options) {
-            return Text(attributed)
-        }
-        return Text(value)
+        Text(MarkdownInlineText.parse(value, environment: linkEnvironment))
     }
 
     private func headingTopPadding(level: Int) -> CGFloat {
