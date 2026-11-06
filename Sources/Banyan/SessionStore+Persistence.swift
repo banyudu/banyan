@@ -25,6 +25,7 @@ extension SessionStore {
         // and that resolution is what a cold start spends its time on.
         persistence.pruneExpiredSessions(retentionDays: sessionRetentionDays)
         let snapshots = persistence.load()
+        recentProjectHistory.seed(from: snapshots)
         let liveTmuxSessionNames = Set(tmuxBackend.listBanyanSessions())
         var loadedTmuxSessionNames = Set<String>()
         // Hundreds of historical rows often share a cwd. Repository context is a

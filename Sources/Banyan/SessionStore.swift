@@ -114,6 +114,7 @@ final class SessionStore: ObservableObject {
             resumeFrozenForInteraction(id: selectedSessionID)
             selection.syncFromStore(selectedSessionID)
             if oldValue != selectedSessionID {
+                if let selectedSession { rememberRecentProject(for: selectedSession, usedAt: Date()) }
                 sidebarGroupsRevision &+= 1
                 sessionSwitchRequestedAt = .now()
                 telemetry.beginSessionSwitch(
@@ -385,6 +386,7 @@ final class SessionStore: ObservableObject {
     let makeControlServer: (SessionStore, HostRuntimeContext) -> ControlServer
     var didStartRuntime = false
     let persistence: any SessionStorePersistenceBackend
+    let recentProjectHistory: RecentProjectHistory
     /// Shared memory of `gh` reference lookups, so a click on a `#123` that has
     /// already been resolved does not spend another GitHub API call.
     let githubReferenceCache: GitHubReferenceCache
@@ -600,6 +602,8 @@ final class SessionStore: ObservableObject {
             homeDirectory: host.homeDirectory.path
         )
         self.persistence = persistence
+        self.recentProjectHistory = RecentProjectHistory(persistence: persistence,
+            queue: sessionPersistenceQueue, environment: host.environment, homeDirectory: host.homeDirectory.path)
         self.githubReferenceCache = GitHubReferenceCache(persistence: persistence)
         self.tmuxBackend = tmuxBackend
         self.slackTerminalContext = TerminalConversationContextReader(backend: tmuxBackend, inspector: CodexTUIProcessInspector(),

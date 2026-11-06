@@ -1,14 +1,19 @@
 import BanyanCore
 import Foundation
 
-struct CommandPaletteProject: Identifiable, Sendable {
+struct CommandPaletteProject: Identifiable, Equatable, Sendable {
     let id: String
     let title: String
     let cwd: String
 }
 
 extension SessionStore {
-    /// Snapshot live projects independently of Focus, folded rows, and sidebar search.
+    func rememberRecentProject(for session: BanyanSession, usedAt: Date) {
+        guard !session.isImportedHistory, session.status != .closed else { return }
+        recentProjectHistory.record(cwd: session.cwd, usedAt: usedAt)
+    }
+
+    /// Include live and recent projects independently of Focus, folded rows, and sidebar search.
     /// Resolve roots off the main actor once per palette opening, not on each keystroke.
     func commandPaletteProjects() async -> [CommandPaletteProject] {
         let active = visibleSessions.filter { !$0.isImportedHistory }
@@ -25,7 +30,7 @@ extension SessionStore {
             )
         }
         let environment = environment
-        return await Task.detached(priority: .userInitiated) {
+        let live = await Task.detached(priority: .userInitiated) {
             candidates.map { project in
                 CommandPaletteProject(
                     id: project.id,
@@ -34,6 +39,12 @@ extension SessionStore {
                 )
             }
         }.value
+        var paths = Set(live.map(\.cwd))
+        let recent = await recentProjectHistory.projects().compactMap { project -> CommandPaletteProject? in
+            guard seen.insert(project.id).inserted, paths.insert(project.cwd).inserted else { return nil }
+            return CommandPaletteProject(id: project.id, title: project.title, cwd: project.cwd)
+        }
+        return live + recent
     }
 
     func projectCommandPaletteItems(for projects: [CommandPaletteProject]) -> [CommandPaletteItem] {

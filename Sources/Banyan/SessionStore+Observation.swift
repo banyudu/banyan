@@ -5,6 +5,9 @@ import SwiftUI
 
 extension SessionStore {
     func attach(_ session: BanyanSession) {
+        rememberRecentProject(for: session, usedAt: session.updatedAt)
+        var previousProject = CommandPaletteProject(id: session.projectGroupID,
+            title: session.projectGroupTitle, cwd: session.cwd)
         session.autoRetryCodexFailures = autoRetryCodexFailures
         configureAgentAdmission(session)
         if let puck = session as? PuckSession {
@@ -87,6 +90,12 @@ extension SessionStore {
         session.onDidChange = { [weak self, weak session] in
             if let session { EnergyTrace.count("session.didChange", sessionID: session.id) }
             if let self, let session {
+                let project = CommandPaletteProject(id: session.projectGroupID,
+                    title: session.projectGroupTitle, cwd: session.cwd)
+                if project != previousProject {
+                    previousProject = project
+                    self.rememberRecentProject(for: session, usedAt: Date())
+                }
                 self.noteSidebarHistoryChange(for: session)
                 let unavailable = session.status == .closed || session.isSuspended || session.isFrozen || session.isDeepSuspended
                 if unavailable != wasUnavailable {

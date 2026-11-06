@@ -49,6 +49,8 @@ protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
     func saveSession(_ snapshot: SessionSnapshot, sortOrder: Int)
     func loadWorkspace(defaults: WorkspaceSnapshot) -> WorkspaceSnapshot
     func saveWorkspace(_ workspace: WorkspaceSnapshot)
+    func loadRecentProjects() -> [RecentProject]?
+    func saveRecentProjects(_ projects: [RecentProject])
     func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot?
     func saveLinearIssueListCache(_ snapshot: LinearIssueListCacheSnapshot)
     func loadGitHubReferenceCache() -> GitHubReferenceCacheSnapshot?
@@ -130,6 +132,18 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
             return nil
         }
         return Set(ids)
+    }
+
+    func loadRecentProjects() -> [RecentProject]? {
+        guard let raw = sessionDatabase.loadState()["recentProjects"],
+              let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode([RecentProject].self, from: data)
+    }
+
+    func saveRecentProjects(_ projects: [RecentProject]) {
+        guard let data = try? JSONEncoder().encode(projects),
+              let raw = String(data: data, encoding: .utf8) else { return }
+        sessionDatabase.saveState(["recentProjects": raw])
     }
 
     func saveLegacyPuckSessionIDs(_ ids: Set<String>) {
