@@ -67,7 +67,7 @@ public enum SessionStatus: String, CaseIterable, Identifiable, Codable, Sendable
 
     public var emoji: String {
         switch self {
-        case .running: return "⚙️"
+        case .running: return "🏃"
         case .executing: return "🔧"
         case .longRunningShell: return "⏳"
         case .subagents: return "🐝"

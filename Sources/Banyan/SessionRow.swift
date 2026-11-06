@@ -621,8 +621,8 @@ struct SessionRow: View, Equatable {
         !isSelected && (isHistory || session.isSuspended)
     }
 
-    /// `.running` only ever means "a bare shell prompt", which the terminal icon
-    /// already says — the gear next to it just reads as a settings affordance.
+    /// Without an agent, `.running` only means the terminal is alive,
+    /// which the terminal icon already conveys.
     private var hidesStatusEmoji: Bool {
         session.displayAgentProvider == nil && session.status == .running
     }
