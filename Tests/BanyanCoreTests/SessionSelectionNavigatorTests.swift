@@ -196,7 +196,7 @@ import Testing
     ) == nil)
 }
 
-/// The composition the app actually runs: sidebar order + `needsAttention`.
+/// The composition the app actually runs: sidebar order + navigation candidates.
 private struct RosterEntry {
     let id: String
     let status: SessionStatus
@@ -214,7 +214,9 @@ private let roster: [RosterEntry] = [
     RosterEntry(id: "executing", status: .executing),
     RosterEntry(id: "failed", status: .failed),
     RosterEntry(id: "imported-asking", status: .asking, isImportedHistory: true),
-    RosterEntry(id: "parked-asking", status: .asking, isSuspended: true)
+    RosterEntry(id: "parked-asking", status: .asking, isSuspended: true),
+    RosterEntry(id: "imported-idle", status: .idle, isImportedHistory: true),
+    RosterEntry(id: "parked-idle", status: .idle, isSuspended: true)
 ]
 
 private func nextNeedingAttention(from selectedID: String?) -> String? {
@@ -223,7 +225,7 @@ private func nextNeedingAttention(from selectedID: String?) -> String? {
         selectedID: selectedID,
         direction: .next,
         includingSelection: false,
-        isMatch: needsAttention
+        isMatch: isNavigationCandidate
     )
 }
 
@@ -233,30 +235,30 @@ private func previousNeedingAttention(from selectedID: String?) -> String? {
         selectedID: selectedID,
         direction: .previous,
         includingSelection: false,
-        isMatch: needsAttention
+        isMatch: isNavigationCandidate
     )
 }
 
-private func needsAttention(_ id: String) -> Bool {
+private func isNavigationCandidate(_ id: String) -> Bool {
     guard let entry = roster.first(where: { $0.id == id }) else { return false }
-    return SessionLifecyclePolicy.needsAttention(
+    return SessionLifecyclePolicy.isAttentionNavigationCandidate(
         status: entry.status,
         isImportedHistory: entry.isImportedHistory,
         isSuspended: entry.isSuspended
     )
 }
 
-@Test func attentionNavigationSkipsBusyQuietAndImportedSessions() {
+@Test func attentionNavigationIncludesIdleAndSkipsBusyAndImportedSessions() {
     #expect(nextNeedingAttention(from: "running") == "asking")
-    #expect(nextNeedingAttention(from: "asking") == "need-input")
+    #expect(nextNeedingAttention(from: "asking") == "idle")
     #expect(nextNeedingAttention(from: "idle") == "need-input")
     #expect(nextNeedingAttention(from: "need-input") == "failed")
     #expect(nextNeedingAttention(from: "executing") == "failed")
 }
 
 @Test func attentionNavigationWrapsPastTheEndOfTheRoster() {
-    // The roster ends with two sessions that are never targets, so the wrap has
-    // to walk through both and keep going back to the top of the list.
+    // The roster ends with imported and parked sessions that are never targets,
+    // so the wrap has to walk through them and return to the top of the list.
     #expect(nextNeedingAttention(from: "failed") == "asking")
     #expect(nextNeedingAttention(from: "imported-asking") == "asking")
     #expect(nextNeedingAttention(from: "parked-asking") == "asking")
@@ -274,12 +276,12 @@ private func needsAttention(_ id: String) -> Bool {
 @Test func attentionNavigationReversesThroughTheSameSessions() {
     #expect(previousNeedingAttention(from: "failed") == "need-input")
     #expect(previousNeedingAttention(from: "executing") == "need-input")
-    #expect(previousNeedingAttention(from: "need-input") == "asking")
+    #expect(previousNeedingAttention(from: "need-input") == "idle")
     #expect(previousNeedingAttention(from: "idle") == "asking")
 }
 
-@Test func attentionNavigationStaysPutWhenNothingElseIsWaiting() {
-    let calm = ["running", "asking", "idle"]
+@Test func attentionNavigationStaysPutWhenNothingElseMatches() {
+    let calm = ["running", "asking", "executing"]
     let isMatch: (String) -> Bool = { $0 == "asking" }
 
     #expect(SessionSelectionNavigator.matchingID(
@@ -298,8 +300,8 @@ private func needsAttention(_ id: String) -> Bool {
     ) == nil)
 }
 
-// Attention navigation targets a session blocked on a human, unless the
-// actual question waits further down its subtree — then the chord skips the
+// Attention navigation targets idle sessions or ones blocked on a human, unless
+// the actual question waits further down its subtree — then the chord skips the
 // parent and lands where input is needed. A parent with nothing waiting below
 // it stays a target.
 private let hierarchyRoster: [SessionRelationshipItem] = [
@@ -340,7 +342,7 @@ private func previousAttentionTarget(from selectedID: String?) -> String? {
 
 private func isAttentionTarget(_ id: String) -> Bool {
     guard let entry = hierarchyRoster.first(where: { $0.id == id }) else { return false }
-    guard SessionLifecyclePolicy.needsAttention(
+    guard SessionLifecyclePolicy.isAttentionNavigationCandidate(
         status: entry.status,
         isImportedHistory: entry.isImportedHistory,
         isSuspended: entry.isSuspended

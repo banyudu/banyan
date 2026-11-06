@@ -45,7 +45,7 @@ enum NavigationCommandPaletteItems {
                 id: "navigation.next-needs-attention",
                 category: "Navigation",
                 title: "Next Session Needing Attention",
-                detail: "Jump to a session waiting on a decision",
+                detail: "Jump to an idle session or one waiting on a decision",
                 shortcut: SessionAttentionShortcuts.next.display,
                 action: onNextNeedingAttention
             ),
@@ -53,7 +53,7 @@ enum NavigationCommandPaletteItems {
                 id: "navigation.previous-needs-attention",
                 category: "Navigation",
                 title: "Previous Session Needing Attention",
-                detail: "Jump back to a session waiting on a decision",
+                detail: "Jump back to an idle session or one waiting on a decision",
                 shortcut: SessionAttentionShortcuts.previous.display,
                 action: onPreviousNeedingAttention
             ),

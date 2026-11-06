@@ -431,6 +431,8 @@ agent's draft and runs the session action locally:
 - `/find`, `/rename`, `/close`, and `/sessions` manage the current view.
 - `/next`, `/previous` (or `/prev`), `/attention`, `/previous-attention`, and
   `/workable` move between sessions.
+  Attention navigation (`⌘⌥J` / `⌘⌥K`) includes idle, asking, waiting-for-input,
+  and failed sessions, skipping parked sessions and imported history.
 
 Agent-owned commands such as `/clear`, `/compact`, `/review`, `/status`,
 `/model`, and `/init` are not intercepted. They continue to the running agent

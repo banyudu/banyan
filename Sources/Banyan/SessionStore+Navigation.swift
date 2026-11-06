@@ -135,11 +135,11 @@ extension SessionStore {
         selectSessionNeedingAttention(direction: .previous)
     }
 
-    /// Moves to the nearest session blocked on a decision, wrapping around the
-    /// sidebar order. A parent whose subtree still holds the waiting question
-    /// is skipped so the chord lands where input is actually needed; a parent
+    /// Moves to the nearest idle session or one blocked on a decision, wrapping
+    /// around sidebar order. A parent whose subtree holds a waiting question is
+    /// skipped so the chord lands where input is actually needed; a parent
     /// with nothing waiting below it stays a stop. The current selection is
-    /// excluded, so pressing the chord while sitting on the only waiting
+    /// excluded, so pressing the chord while sitting on the only eligible
     /// session stays put instead of silently reselecting it.
     func selectSessionNeedingAttention(direction: SessionSelectionDirection) {
         guard let id = SessionSelectionNavigator.matchingID(
@@ -168,7 +168,7 @@ extension SessionStore {
         for session in sessions {
             guard session.id != selectedID,
                   session.status != .closed,
-                  SessionLifecyclePolicy.needsAttention(
+                  SessionLifecyclePolicy.isAttentionNavigationCandidate(
                       status: session.status,
                       isImportedHistory: session.isImportedHistory,
                       isSuspended: session.isSuspended
@@ -249,7 +249,7 @@ extension SessionStore {
 
     private func isSessionNeedingAttention(_ id: String) -> Bool {
         guard let session = sessions.first(where: { $0.id == id }) else { return false }
-        guard SessionLifecyclePolicy.needsAttention(
+        guard SessionLifecyclePolicy.isAttentionNavigationCandidate(
             status: session.status,
             isImportedHistory: session.isImportedHistory,
             isSuspended: session.isSuspended

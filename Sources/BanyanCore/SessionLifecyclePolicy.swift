@@ -43,6 +43,22 @@ public enum SessionLifecyclePolicy {
             && [.asking, .needInput, .failed].contains(status)
     }
 
+    /// Navigation also visits idle sessions, which are ready for another task.
+    /// Keep the attention signal separate so idle children do not hide a
+    /// parent's pending question and remote attention filters stay unchanged.
+    public static func isAttentionNavigationCandidate(
+        status: SessionStatus,
+        isImportedHistory: Bool,
+        isSuspended: Bool
+    ) -> Bool {
+        if status == .idle { return !isImportedHistory && !isSuspended }
+        return needsAttention(
+            status: status,
+            isImportedHistory: isImportedHistory,
+            isSuspended: isSuspended
+        )
+    }
+
     /// A suspended session is an explicit gate rather than something inferred
     /// from status: parking leaves the tmux session and its agent running, so a
     /// parked row still looks started/restored and would otherwise keep paying

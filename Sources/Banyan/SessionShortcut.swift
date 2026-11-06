@@ -49,7 +49,7 @@ struct SessionShortcut {
     }
 }
 
-/// Moves selection to the nearest session that is waiting on a decision.
+/// Moves selection to the nearest idle session or one waiting on a decision.
 ///
 /// `⌥` reads as "same direction as ⌘J/⌘K, narrower set". The obvious `⌘⇧J` /
 /// `⌘⇧K` mirror belongs to project navigation, while the rest of `⌘⇧`+letter is
