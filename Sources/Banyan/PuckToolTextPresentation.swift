@@ -7,6 +7,15 @@ import Foundation
 struct PuckToolTextPresentation: Equatable {
     let text: String
     let language: CodeBlockLanguage?
+    let syntaxSections: [CodeBlockSyntaxSection]?
+
+    var containsJSON: Bool {
+        language == .json || language == .jsonl || syntaxSections != nil
+    }
+
+    var languageIdentifier: String? {
+        language?.rawValue ?? (syntaxSections == nil ? nil : "JSON + Text")
+    }
 
     init(text: String, explicitLanguage: String? = nil) {
         let plain = CodexConversationText.plain(text)
@@ -27,6 +36,8 @@ struct PuckToolTextPresentation: Equatable {
             self.init(text: plain, language: .diff)
         } else if let formatted = JSONTextFormatter.prettyPrintedLines(trimmed) {
             self.init(text: formatted, language: .jsonl)
+        } else if let sections = JSONTextFormatter.embeddedSections(plain) {
+            self.init(text: sections.map(\.text).joined(), language: nil, syntaxSections: sections)
         } else if Self.looksLikeYAML(trimmed) {
             self.init(text: plain, language: .yaml)
         } else {
@@ -34,9 +45,14 @@ struct PuckToolTextPresentation: Equatable {
         }
     }
 
-    private init(text: String, language: CodeBlockLanguage?) {
+    private init(
+        text: String,
+        language: CodeBlockLanguage?,
+        syntaxSections: [CodeBlockSyntaxSection]? = nil
+    ) {
         self.text = text
         self.language = language
+        self.syntaxSections = syntaxSections
     }
 
     private static func formatted(

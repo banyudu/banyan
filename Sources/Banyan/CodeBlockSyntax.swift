@@ -115,6 +115,11 @@ struct SyntaxHighlightSpan: Equatable, Sendable {
     }
 }
 
+struct CodeBlockSyntaxSection: Hashable, Sendable {
+    let text: String
+    let language: CodeBlockLanguage?
+}
+
 enum CodeBlockHighlightPolicy {
     static let maximumCharacters = 40_000
     static let maximumLines = 2_000
@@ -144,6 +149,14 @@ enum CodeBlockHighlightPolicy {
 }
 
 enum CodeBlockSyntaxHighlighter {
+    static func highlight(_ sections: [CodeBlockSyntaxSection]) -> [SyntaxHighlightSpan]? {
+        guard CodeBlockHighlightPolicy.canHighlight(sections.map(\.text).joined()) else { return nil }
+        return sections.flatMap { section in
+            section.language.flatMap { highlight(section.text, language: $0) }
+                ?? [SyntaxHighlightSpan(section.text)]
+        }
+    }
+
     static func highlight(_ text: String, languageIdentifier: String?) -> [SyntaxHighlightSpan]? {
         guard let language = CodeBlockLanguage(identifier: languageIdentifier) else { return nil }
         return highlight(text, language: language)

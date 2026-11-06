@@ -471,7 +471,7 @@ struct PuckTimelineRow: View {
 
     private func outputPreview(_ preview: PuckToolPreview) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            if let language = preview.language {
+            if preview.language != nil || preview.syntaxSections != nil {
                 HStack(alignment: .top, spacing: 8) {
                     Text("└")
                         .font(typography.detailFont)
@@ -479,7 +479,8 @@ struct PuckTimelineRow: View {
                         .frame(width: 12, alignment: .leading)
                     CodeBlockView(
                         text: preview.lines.joined(separator: "\n"),
-                        language: language.rawValue,
+                        language: preview.language?.rawValue,
+                        syntaxSections: preview.syntaxSections,
                         font: typography.font,
                         previewHeight: CGFloat(preview.lines.count) * typography.detailLineHeight + 16,
                         showsHeader: false

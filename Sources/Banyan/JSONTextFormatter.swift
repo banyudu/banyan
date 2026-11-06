@@ -21,6 +21,78 @@ enum JSONTextFormatter {
         return formatted.joined(separator: "\n\n")
     }
 
+    /// Recognize complete containers on their own lines within command output.
+    /// Scan once, respecting quoted braces, and validate before changing text.
+    /// Keeping each section's language lets log/error lines remain uncolored.
+    static func embeddedSections(_ text: String) -> [CodeBlockSyntaxSection]? {
+        var sections: [CodeBlockSyntaxSection] = []
+        var plainStart = text.startIndex
+        var containerStart: String.Index?
+        var closingBrackets: [Character] = []
+        var inString = false
+        var escaped = false
+
+        for line in text.split(omittingEmptySubsequences: false, whereSeparator: {
+            $0 == "\n" || $0 == "\r\n" || $0 == "\r"
+        }) {
+            if containerStart == nil {
+                let first = line.first { !$0.isWhitespace }
+                guard first == "{" || first == "[" else { continue }
+                containerStart = line.startIndex
+            }
+
+            var complete = false
+            var invalid = false
+            for character in line {
+                if complete {
+                    if !character.isWhitespace { invalid = true; break }
+                } else if inString {
+                    if escaped {
+                        escaped = false
+                    } else if character == "\\" {
+                        escaped = true
+                    } else if character == "\"" {
+                        inString = false
+                    }
+                } else {
+                    switch character {
+                    case "\"": inString = true
+                    case "{": closingBrackets.append("}")
+                    case "[": closingBrackets.append("]")
+                    case "}", "]":
+                        if closingBrackets.popLast() != character { invalid = true }
+                        complete = closingBrackets.isEmpty
+                    default: break
+                    }
+                    if invalid { break }
+                }
+            }
+
+            // JSON strings cannot contain literal line breaks.
+            invalid = invalid || inString
+            if complete, !invalid, let start = containerStart,
+               let formatted = prettyPrinted(String(text[start..<line.endIndex])) {
+                if plainStart < start {
+                    sections.append(CodeBlockSyntaxSection(text: String(text[plainStart..<start]), language: nil))
+                }
+                sections.append(CodeBlockSyntaxSection(text: formatted, language: .json))
+                plainStart = line.endIndex
+            }
+            if complete || invalid {
+                containerStart = nil
+                closingBrackets.removeAll(keepingCapacity: true)
+                inString = false
+                escaped = false
+            }
+        }
+
+        guard !sections.isEmpty else { return nil }
+        if plainStart < text.endIndex {
+            sections.append(CodeBlockSyntaxSection(text: String(text[plainStart...]), language: nil))
+        }
+        return sections
+    }
+
     private static func isJSONContainer(_ text: String) -> Bool {
         guard let data = text.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) else {

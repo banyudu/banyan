@@ -28,6 +28,100 @@ import Testing
     #expect(presentation.text.contains("}\n\n{"))
 }
 
+@Test func toolTextPresentationFormatsJSONLinesMixedWithErrors() throws {
+    let raw = #"{"ahead_by":0,"behind_by":22,"status":"behind"}"# + "\n"
+        + #"{"message":"fix: wait for cleanup\n\nDetails","ok":true}"# + "\n"
+        + "HTTP 404: workflow not found (https://api.example.com/actions/workflows/build.yml)"
+
+    let presentation = PuckToolTextPresentation(text: raw)
+    let sections = try #require(presentation.syntaxSections)
+    let spans = try #require(CodeBlockSyntaxHighlighter.highlight(sections))
+
+    #expect(presentation.containsJSON)
+    #expect(presentation.languageIdentifier == "JSON + Text")
+    #expect(presentation.text == """
+    {
+      "ahead_by": 0,
+      "behind_by": 22,
+      "status": "behind"
+    }
+    {
+      "message": "fix: wait for cleanup\\n\\nDetails",
+      "ok": true
+    }
+    HTTP 404: workflow not found (https://api.example.com/actions/workflows/build.yml)
+    """)
+    #expect(spans.map(\.text).joined() == presentation.text)
+    #expect(spans.contains { $0.text == "\"ahead_by\"" && $0.kind == .key })
+    #expect(spans.contains { $0.text.contains("HTTP 404") && $0.kind == nil })
+}
+
+@Test func toolTextPresentationFindsMultilineNestedJSONBetweenLogs() throws {
+    let raw = #"""
+    Fetching results...
+    {
+      "data":{"items":[{"text":"braces } [ and \"quotes\"","path":"a\\b"}]},
+      "empty":[]
+    }
+    Done: 1 result
+    [{"next":false}]
+    """#
+
+    let presentation = PuckToolTextPresentation(text: raw)
+    let sections = try #require(presentation.syntaxSections)
+
+    #expect(sections.filter { $0.language == .json }.count == 2)
+    #expect(presentation.text.hasPrefix("Fetching results...\n{\n  \"data\": {\n"))
+    #expect(presentation.text.contains(#""text": "braces } [ and \"quotes\""#))
+    #expect(presentation.text.contains(#""path": "a\\b""#))
+    #expect(presentation.text.contains("\nDone: 1 result\n[\n  {\n    \"next\": false"))
+}
+
+@Test func toolTextPresentationPreservesNonJSONAndExplicitLanguages() {
+    for raw in [
+        "Starting\n{not JSON}\nDone",
+        "Starting\n{\"value\": 1\noutput truncated",
+        "Starting\n{\"value\": 1} trailing log",
+        "Starting\nlog prefix {\"value\": 1}",
+    ] {
+        let presentation = PuckToolTextPresentation(text: raw)
+        #expect(presentation.syntaxSections == nil)
+        #expect(presentation.text == raw)
+    }
+
+    let shell = "echo done\n{\"value\":1}"
+    let explicit = PuckToolTextPresentation(text: shell, explicitLanguage: "shell")
+    #expect(explicit.text == shell)
+    #expect(explicit.language == .shell)
+    #expect(explicit.syntaxSections == nil)
+
+    let diff = "diff --git a/result b/result\n{\"value\":1}\n-old\n+new"
+    let presentation = PuckToolTextPresentation(text: diff)
+    #expect(presentation.language == .diff)
+    #expect(presentation.text == diff)
+    #expect(presentation.syntaxSections == nil)
+}
+
+@Test func toolTextPresentationPreservesLogWhitespaceAndInvalidJSON() throws {
+    let raw = "  Starting  \r\n{broken}\r\n  {\"ok\":true}\r\n\r\n  Done  "
+    let presentation = PuckToolTextPresentation(text: raw)
+    let sections = try #require(presentation.syntaxSections)
+
+    #expect(sections.filter { $0.language == .json }.count == 1)
+    // The transcript's existing plain-text normalization removes carriage returns.
+    #expect(presentation.text == "  Starting  \n{broken}\n{\n  \"ok\": true\n}\n\n  Done  ")
+}
+
+@Test func toolTextPresentationLeavesTruncatedJSONAfterCompleteResultsUntouched() throws {
+    let raw = "{\"ok\":true}\n{\"partial\":[1,2\noutput truncated"
+    let presentation = PuckToolTextPresentation(text: raw)
+    let sections = try #require(presentation.syntaxSections)
+    let spans = try #require(CodeBlockSyntaxHighlighter.highlight(sections))
+
+    #expect(presentation.text == "{\n  \"ok\": true\n}\n{\"partial\":[1,2\noutput truncated")
+    #expect(spans.contains { $0.text == "\n{\"partial\":[1,2\noutput truncated" && $0.kind == nil })
+}
+
 @Test func toolTextPresentationHighlightsYAMLWithoutRewritingIt() {
     let raw = """
     name: banyan
@@ -123,4 +217,38 @@ import Testing
         #expect(preview.lines == Array(output.components(separatedBy: "\n").prefix(2)))
         #expect(preview.hiddenLineCount == 1)
     }
+}
+
+@Test func toolPreviewClipsMixedJSONSectionsWithoutLosingHighlighting() throws {
+    let tool = PuckToolActivity(
+        callID: "command", name: "exec_command",
+        output: "Fetching\n{\"data\":{\"items\":[1,2,3],\"ok\":true}}\nHTTP 404: missing",
+        state: .succeeded
+    )
+    let presentation = PuckToolTextPresentation(text: tool.displayOutput)
+    let preview = try #require(tool.preview)
+    let sections = try #require(preview.syntaxSections)
+    let spans = try #require(CodeBlockSyntaxHighlighter.highlight(sections))
+
+    #expect(preview.lines.count == 8)
+    #expect(preview.hiddenLineCount == presentation.text.components(separatedBy: "\n").count - 8)
+    #expect(sections.map(\.text).joined() == preview.lines.joined(separator: "\n"))
+    #expect(spans.map(\.text).joined() == preview.lines.joined(separator: "\n"))
+    #expect(spans.contains { $0.text == "Fetching\n" && $0.kind == nil })
+    #expect(spans.contains { $0.text == "\"items\"" && $0.kind == .key })
+    #expect(!spans.contains { $0.text.contains("HTTP 404") })
+}
+
+@Test func toolPreviewKeepsShortMixedOutputComplete() throws {
+    let tool = PuckToolActivity(
+        callID: "command", name: "exec_command",
+        output: "{\"ok\":true}\nHTTP 404: missing", state: .succeeded
+    )
+    let preview = try #require(tool.preview)
+    let sections = try #require(preview.syntaxSections)
+    let spans = try #require(CodeBlockSyntaxHighlighter.highlight(sections))
+
+    #expect(preview.hiddenLineCount == 0)
+    #expect(preview.lines == ["{", "  \"ok\": true", "}", "HTTP 404: missing"])
+    #expect(spans.contains { $0.text == "\nHTTP 404: missing" && $0.kind == nil })
 }

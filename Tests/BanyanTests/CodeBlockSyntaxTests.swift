@@ -68,6 +68,14 @@ import Testing
     #expect(CodeBlockSyntaxHighlighter.highlight(oversized, languageIdentifier: "swift") == nil)
 }
 
+@Test func syntaxHighlighterAppliesSizeLimitAcrossMixedSections() {
+    let sections = [
+        CodeBlockSyntaxSection(text: String(repeating: "x", count: 25_000), language: nil),
+        CodeBlockSyntaxSection(text: String(repeating: "{}\n", count: 6_000), language: .json),
+    ]
+    #expect(CodeBlockSyntaxHighlighter.highlight(sections) == nil)
+}
+
 @Test func previewExpansionPolicyBoundsShortContent() {
     #expect(!CodeBlockHighlightPolicy.needsExpansion("let value = 1"))
     #expect(!CodeBlockHighlightPolicy.needsExpansion(Array(repeating: "line", count: 12).joined(separator: "\n")))

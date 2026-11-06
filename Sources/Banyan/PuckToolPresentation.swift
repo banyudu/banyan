@@ -30,7 +30,8 @@ struct PuckToolDetailBlock: View {
                 .foregroundStyle(.secondary)
             CodeBlockView(
                 text: presentation.text,
-                language: presentation.language?.rawValue,
+                language: presentation.languageIdentifier,
+                syntaxSections: presentation.syntaxSections,
                 font: typography.font,
                 previewHeight: previewHeight(for: presentation.text)
             )
@@ -47,6 +48,7 @@ struct PuckToolPreview {
     let lines: [String]
     let hiddenLineCount: Int
     let language: CodeBlockLanguage?
+    let syntaxSections: [CodeBlockSyntaxSection]?
 }
 
 struct PuckToolGroupSummary {
@@ -229,15 +231,26 @@ extension PuckToolActivity {
         let output = displayOutput
         guard !output.isEmpty else { return nil }
         let presentation = PuckToolTextPresentation(text: output)
-        let isJSON = presentation.language == .json || presentation.language == .jsonl
+        let isJSON = presentation.containsJSON
         // Format before clipping so nested results stay readable and the
         // disclosure counts the same lines as the expanded output.
         let lines = (isJSON ? presentation.text : output).components(separatedBy: "\n")
         let limit = isJSON ? 8 : 2
+        let visibleLines = Array(lines.prefix(limit))
+        var remaining = visibleLines.joined(separator: "\n").count
+        let sections = presentation.syntaxSections.map { sections in
+            sections.compactMap { section -> CodeBlockSyntaxSection? in
+                guard remaining > 0 else { return nil }
+                let text = String(section.text.prefix(remaining))
+                remaining -= text.count
+                return CodeBlockSyntaxSection(text: text, language: section.language)
+            }
+        }
         return PuckToolPreview(
-            lines: Array(lines.prefix(limit)),
+            lines: visibleLines,
             hiddenLineCount: max(0, lines.count - limit),
-            language: isJSON ? presentation.language : nil
+            language: isJSON ? presentation.language : nil,
+            syntaxSections: sections
         )
     }
 }

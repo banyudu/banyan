@@ -6,6 +6,7 @@ struct CodeBlockView: View {
     private let displayText: String
     private let requestedLanguage: String?
     private let language: CodeBlockLanguage?
+    private let syntaxSections: [CodeBlockSyntaxSection]?
     private let title: String?
     private let copyText: String?
     private let font: Font
@@ -20,6 +21,7 @@ struct CodeBlockView: View {
     init(
         text: String,
         language: String? = nil,
+        syntaxSections: [CodeBlockSyntaxSection]? = nil,
         title: String? = nil,
         copyText: String? = nil,
         font: Font = .system(.caption, design: .monospaced),
@@ -30,6 +32,7 @@ struct CodeBlockView: View {
         self.displayText = CodexConversationText.plain(text)
         self.requestedLanguage = language
         self.language = CodeBlockLanguage(identifier: language)
+        self.syntaxSections = syntaxSections
         self.title = title
         self.copyText = copyText.map(CodexConversationText.plain)
         self.font = font
@@ -142,8 +145,11 @@ struct CodeBlockView: View {
     }
 
     private var highlightRequest: CodeBlockHighlightRequest? {
-        guard let language, CodeBlockHighlightPolicy.canHighlight(displayText) else { return nil }
-        return CodeBlockHighlightRequest(text: displayText, language: language)
+        guard language != nil || syntaxSections != nil,
+              CodeBlockHighlightPolicy.canHighlight(displayText) else { return nil }
+        return CodeBlockHighlightRequest(sections: syntaxSections ?? [
+            CodeBlockSyntaxSection(text: displayText, language: language)
+        ])
     }
 
     private var canExpand: Bool {
@@ -151,6 +157,7 @@ struct CodeBlockView: View {
     }
 
     private var languageLabel: String {
+        if syntaxSections != nil { return requestedLanguage ?? "TEXT" }
         if let language { return language.displayName }
         guard let requestedLanguage,
               let token = requestedLanguage
@@ -192,8 +199,7 @@ private struct HighlightedCode {
 }
 
 private struct CodeBlockHighlightRequest: Hashable, Sendable {
-    let text: String
-    let language: CodeBlockLanguage
+    let sections: [CodeBlockSyntaxSection]
 }
 
 private actor CodeBlockHighlightCache {
@@ -207,7 +213,7 @@ private actor CodeBlockHighlightCache {
             touch(request)
             return cached
         }
-        guard let spans = CodeBlockSyntaxHighlighter.highlight(request.text, language: request.language) else {
+        guard let spans = CodeBlockSyntaxHighlighter.highlight(request.sections) else {
             return nil
         }
 
