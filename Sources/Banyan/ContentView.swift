@@ -123,6 +123,10 @@ struct ContentView: View {
             PreferencesSheet()
                 .environmentObject(store)
         }
+        .sheet(isPresented: $store.isPuckCleanupPresented) {
+            PuckCleanupSheet()
+                .environmentObject(store)
+        }
         .sheet(item: $codexHandoffSession, onDismiss: { store.focusSelectedTerminal() }) { session in
             CodexTUIHandoffView(store: store, session: session)
         }

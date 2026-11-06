@@ -229,6 +229,7 @@ extension SessionStore {
             selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
         saveSessions()
+        if session is PuckSession { refreshBackgroundPuckSummaries() }
     }
 
     func remove(id: String) throws {
@@ -256,9 +257,9 @@ extension SessionStore {
         }
         let parentSessionID = sessions[index].parentSessionID
         let promotedChildIDs = detachChildren(of: id, to: parentSessionID)
-        if sessions[index] is PuckSession {
-            dismissedPuckSessionIDs.insert(id)
-        }
+        // Removing a puck row only leaves the working set. Listings never add
+        // rows, so nothing has to keep the daemon's copy from coming back.
+        let isPuck = sessions[index] is PuckSession
         sessions[index].closeBackingSession()
         sessions[index].updatedAt = Date()
         promoteChildrenToParentSlot(closingID: id, promotedChildIDs: promotedChildIDs, removingParent: true)
@@ -266,6 +267,10 @@ extension SessionStore {
             selectedSessionID = replacementID ?? visibleSessions.first?.id
         }
         saveSessions()
+        if isPuck {
+            if legacyPuckSessionIDs.contains(id) { legacyPuckSessionIDs.remove(id) }
+            refreshBackgroundPuckSummaries()
+        }
     }
 
     func requestClose(id: String) {

@@ -76,7 +76,9 @@ extension SessionStore {
                 guard let binding = snapshot.puck else { continue }
                 if snapshot.agentSlotReserved { agentAdmission.adopt(snapshot.id) }
                 // Status comes back from the daemon on the first listing; until
-                // then the row shows what it last showed.
+                // then the row shows what it last showed. Earlier builds read
+                // any history as needing input, which only a pending ask means.
+                let restoredStatus = snapshot.status == .needInput ? SessionStatus.review : snapshot.status
                 let session = PuckSession(
                     id: snapshot.id,
                     binding: binding,
@@ -90,8 +92,8 @@ extension SessionStore {
                     generatedTitle: snapshot.generatedTitle,
                     isTitlePinned: snapshot.isTitlePinned,
                     cwd: snapshot.cwd,
-                    status: snapshot.status,
-                    tone: snapshot.tone,
+                    status: restoredStatus,
+                    tone: restoredStatus == snapshot.status ? snapshot.tone : PuckSessionStatusPolicy.tone(for: restoredStatus),
                     parentSessionID: snapshot.parentSessionID,
                     createdAt: snapshot.createdAt,
                     updatedAt: snapshot.updatedAt,
@@ -162,6 +164,7 @@ extension SessionStore {
                 loadedTmuxSessionNames.insert(session.tmuxSessionName)
             }
         }
+        classifyRestoredPuckRows()
         restoreWorkflows()
         restoreBackgroundPresentation()
         // Background roots remain discoverable in the familiar session tree.

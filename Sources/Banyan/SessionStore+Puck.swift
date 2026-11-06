@@ -6,7 +6,7 @@ import SwiftUI
 extension SessionStore {
     // MARK: - Puck sessions
 
-    /// Creates a daemon session and adds it to the session list once `puckd`
+    /// Creates a daemon session and adds it to the working set once `puckd`
     /// has it. A first prompt starts the first turn; if that fails the session
     /// still exists and the error says so.
     @discardableResult
@@ -68,10 +68,10 @@ extension SessionStore {
             host: host,
             githubReferenceCache: githubReferenceCache
         )
-        dismissedPuckSessionIDs.remove(session.id)
         attach(session)
         puckRowEpoch += 1
         insertCreatedSession(session, focusedSessionID: focusedSessionID)
+        noteBackgroundPuckSessionOpened(session.id)
         session.apply(summary: summary)
         if select {
             expandAncestors(of: session.id)
@@ -123,11 +123,12 @@ extension SessionStore {
         guard agentAdmission.acquireImmediately(id) else {
             throw ControlError.conflict(code: "agent_capacity_busy", message: "All \(maximumConcurrentAgents) agent slots are in use. Nothing was queued; retry later or send from the app's visible queue.")
         }
+        // Sending a turn here is an explicit choice to work in this session.
         if !sessions.contains(where: { $0 === session }) {
-            dismissedPuckSessionIDs.remove(id)
             sessions.append(session)
             puckRowEpoch += 1
         }
+        noteBackgroundPuckSessionOpened(id)
         session.reopen()
         // No suspension point lies between reservation and startTurn entering
         // its in-flight guard. Errors release only a definitively unused slot.
@@ -210,9 +211,7 @@ extension SessionStore {
                             self.applyPuckSummaries(summaries, closingMissing: false)
                             self.notePuckDaemonReachable(true)
                         case .event(let id, let event):
-                            guard let session = self.sessions.first(where: { $0.id == id }) as? PuckSession,
-                                  session.status != .closed, !session.isSuspended else { continue }
-                            self.attentionNotifier.notifyPuckAsk(session: session, event: event)
+                            self.routePuckWatchEvent(id: id, event: event)
                         }
                     }
                 } catch {
@@ -244,6 +243,11 @@ extension SessionStore {
 
     /// `closingMissing` is false for a listing that may predate a row Banyan
     /// added since, which would otherwise read as the daemon dropping it.
+    ///
+    /// A listing updates the rows Banyan already tracks, and never adds one:
+    /// the sidebar is the user's working set, and the daemon also holds
+    /// sessions other frontends and background tasks started. Those stay in
+    /// `backgroundPuckSummaries` until the user opens one.
     func applyPuckSummaries(_ summaries: [PuckSessionSummary], closingMissing: Bool = true) {
         let summariesByID = Dictionary(summaries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var didChangeStructure = false
@@ -261,35 +265,30 @@ extension SessionStore {
                 didChangeStructure = true
             }
         }
-        let knownIDs = Set(sessions.map(\.id))
-        for summary in summaries where !knownIDs.contains(summary.id)
-            && !dismissedPuckSessionIDs.contains(summary.id)
-            && !pendingPuckCreationIDs.contains(summary.id) {
-            adoptPuckSession(summary)
-            didChangeStructure = true
-        }
-        // A dismissal only has to outlive the daemon's copy of the session.
-        let forgotten = dismissedPuckSessionIDs.filter { summariesByID[$0] == nil }
-        if closingMissing, !forgotten.isEmpty {
-            dismissedPuckSessionIDs.subtract(forgotten)
-        }
+        updateBackgroundPuckSummaries(summaries)
         if didChangeStructure {
             saveSessions()
         }
     }
 
     /// Opens a `banyan://puck/<id>` link. Following a link is an explicit ask
-    /// to see that session, so it also brings back a closed or removed row,
-    /// and asks the daemon directly instead of waiting for the next listing.
+    /// to see that session, so it also brings back a closed or removed row, or
+    /// adds a background session to the working set. A session the last
+    /// listing described opens at once; otherwise the daemon is asked directly
+    /// instead of waiting for the next listing.
     func openPuckSession(id: String) {
         sidebarMode = .sessions
-        dismissedPuckSessionIDs.remove(id)
         if let session = sessions.first(where: { $0.id == id }) {
+            noteBackgroundPuckSessionOpened(id)
             if session.status == .closed {
                 try? respawn(id: id)
             } else {
                 userSelect(id: id)
             }
+            return
+        }
+        if let summary = backgroundPuckSummaries.first(where: { $0.id == id }) {
+            openPuckSession(summary)
             return
         }
         let daemon = puckDaemon
@@ -299,19 +298,47 @@ extension SessionStore {
                     try daemon.get(id)
                 }.value
                 guard let self else { return }
-                if !self.sessions.contains(where: { $0.id == id }) {
-                    self.adoptPuckSession(summary)
-                    self.saveSessions()
+                if self.sessions.contains(where: { $0.id == id }) {
+                    self.userSelect(id: id)
+                } else {
+                    self.openPuckSession(summary)
                 }
-                self.userSelect(id: id)
             } catch {
                 self?.puckSessionError = "Could not open puck session \(id): \(error.localizedDescription)"
             }
         }
     }
 
+    /// Adds a daemon session the user chose to the working set, as a row in
+    /// the project its workspace belongs to.
+    ///
+    /// A row removed earlier in this run is still the object admission
+    /// accounts with, so it comes back rather than a duplicate. Returns `nil`
+    /// when another runtime's row already has the ID.
+    @discardableResult
+    func openPuckSession(_ summary: PuckSessionSummary, select: Bool = true) -> PuckSession? {
+        let session: PuckSession
+        if let existing = sessions.first(where: { $0.id == summary.id }) {
+            guard let puck = existing as? PuckSession else { return nil }
+            session = puck
+        } else if let retained = admissionPuckSessions[summary.id] {
+            session = retained
+            sessions.append(retained)
+            puckRowEpoch += 1
+        } else {
+            session = adoptPuckSession(summary)
+        }
+        // A tracked row's own summary is at least as new as the listing this
+        // one came from, so reopening restores the status it last reported.
+        if session.status == .closed { session.reopen() }
+        noteBackgroundPuckSessionOpened(summary.id)
+        saveSessions()
+        if select { userSelect(id: summary.id) }
+        return session
+    }
+
     /// Adds a row for a daemon session Banyan did not start, such as one
-    /// created from Slack, in the project its workspace belongs to.
+    /// created from Slack. Only explicit opens and turns call this.
     @discardableResult
     private func adoptPuckSession(_ summary: PuckSessionSummary) -> PuckSession {
         let status = PuckSessionStatusPolicy.status(for: summary)

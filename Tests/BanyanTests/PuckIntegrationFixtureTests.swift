@@ -14,9 +14,11 @@ import Testing
     let fixture = try PuckStoreFixture(daemon: PuckDaemonClient())
     let store = fixture.makeStore()
     store.syncPuckSessions()
+    // A session another frontend started is background work until opened.
     try await waitForPuckFixture {
-        store.sessions.contains(where: { $0.id == id })
+        store.backgroundPuckSummaries.contains(where: { $0.id == id })
     }
+    store.openPuckSession(id: id)
     let session = try #require(store.sessions.first(where: { $0.id == id }) as? PuckSession)
     session.startFollowing()
     try await waitForPuckFixture {
@@ -43,9 +45,12 @@ import Testing
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
     store.syncPuckSessions()
+    // The ask is discoverable before the session has a row, and opening it
+    // reaches the same answer flow.
     try await waitForPuckFixture {
-        (store.sessions.first(where: { $0.id == id }) as? PuckSession)?.pendingQuestion?.callID == "question-1"
+        store.backgroundPuckSummaries.first(where: { $0.id == id })?.pendingQuestion?.callID == "question-1"
     }
+    store.openPuckSession(id: id)
     let session = try #require(store.sessions.first(where: { $0.id == id }) as? PuckSession)
     // A parked question is the user's to answer, like a terminal agent's prompt.
     #expect(session.status == .asking)
@@ -92,7 +97,8 @@ private enum PuckFixtureError: Error {
     let store = fixture.makeStore()
     store.startPuckObservation()
     defer { store.stopPuckObservation() }
-    try await waitForPuckFixture { store.sessions.contains(where: { $0.id == id }) }
+    try await waitForPuckFixture { store.backgroundPuckSummaries.contains(where: { $0.id == id }) }
+    store.openPuckSession(id: id)
     let session = try #require(store.sessions.first(where: { $0.id == id }) as? PuckSession)
     session.startFollowing()
     defer { session.stopFollowing() }
@@ -139,7 +145,8 @@ private func waitForDaemonPresence(_ daemon: PuckDaemonClient, present: Bool) as
     let store = fixture.makeStore()
     store.startPuckObservation()
     defer { store.stopPuckObservation() }
-    try await waitForPuckFixture { store.sessions.contains(where: { $0.id == id }) }
+    try await waitForPuckFixture { store.backgroundPuckSummaries.contains(where: { $0.id == id }) }
+    store.openPuckSession(id: id)
     let session = try #require(store.sessions.first(where: { $0.id == id }) as? PuckSession)
     session.startFollowing()
     defer { session.stopFollowing() }
@@ -155,6 +162,6 @@ private func waitForDaemonPresence(_ daemon: PuckDaemonClient, present: Bool) as
     try "resumed".write(toFile: resumed, atomically: true, encoding: .utf8)
     try await waitForPuckFixture {
         session.events.contains { $0.cursor > last && $0.kind == "turn_done" }
-            && session.status == .needInput
+            && session.status == .review
     }
 }

@@ -339,7 +339,7 @@ struct PuckTranscriptUITests {
         ])
         let summary = puckSummary(cwd: fixture.project.path, position: "parked", pendingQuestion: question)
         daemon.put(summary)
-        store.applyPuckSummaries([summary])
+        store.openListedPuckSessions([summary])
         let session = try #require(store.sessions.first as? PuckSession)
 
         let text = try await render(
@@ -365,7 +365,7 @@ struct PuckTranscriptUITests {
             PuckSessionEvent(cursor: 1, kind: "user_message", text: "First request"),
             PuckSessionEvent(cursor: 2, kind: "user_message", text: "Newest request"),
         ])
-        store.applyPuckSummaries([summary])
+        store.openListedPuckSessions([summary])
         let session = try #require(store.sessions.first as? PuckSession)
 
         _ = NSApplication.shared

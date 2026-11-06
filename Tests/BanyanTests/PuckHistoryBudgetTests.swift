@@ -14,7 +14,7 @@ struct PuckHistoryBudgetTests {
             puckSummary(id: "history-session-\(index)", cwd: fixture.project.path, historyItems: 10_000)
         }
         for summary in summaries { daemon.base.put(summary) }
-        store.applyPuckSummaries(summaries)
+        store.openListedPuckSessions(summaries)
         #expect(store.sessions.count == 300)
         #expect(daemon.historyRequests.isEmpty)
         #expect(summaries.allSatisfy { !daemon.base.isFollowed($0.id) })
@@ -27,7 +27,7 @@ struct PuckHistoryBudgetTests {
         let store = fixture.makeStore()
         let summary = puckSummary(id: "paged-session", cwd: fixture.project.path)
         daemon.base.put(summary)
-        store.applyPuckSummaries([summary])
+        store.openListedPuckSessions([summary])
         let session = try #require(store.sessions.first as? PuckSession)
         session.startFollowing()
         defer { session.stopFollowing() }
@@ -64,7 +64,7 @@ struct PuckHistoryBudgetTests {
         let store = fixture.makeStore()
         let summaries = (0..<12).map { puckSummary(id: "budget-session-\($0)", cwd: fixture.project.path) }
         for summary in summaries { daemon.base.put(summary) }
-        store.applyPuckSummaries(summaries)
+        store.openListedPuckSessions(summaries)
         let sessions = store.sessions.compactMap { $0 as? PuckSession }
         defer { sessions.forEach { $0.stopFollowing() } }
         for session in sessions {
@@ -90,7 +90,7 @@ struct PuckHistoryBudgetTests {
         let store = fixture.makeStore()
         let summary = puckSummary(id: "detached-history-session", cwd: fixture.project.path)
         daemon.base.put(summary)
-        store.applyPuckSummaries([summary])
+        store.openListedPuckSessions([summary])
         let session = try #require(store.sessions.first as? PuckSession)
         session.startFollowing()
         defer { session.stopFollowing() }
@@ -129,7 +129,7 @@ struct PuckHistoryBudgetTests {
         store.maximumConcurrentAgents = 1
         let summary = puckSummary(id: "rejected-turn", cwd: fixture.project.path)
         daemon.base.put(summary)
-        store.applyPuckSummaries([summary])
+        store.openListedPuckSessions([summary])
         let session = try #require(store.sessions.first as? PuckSession)
         session.onAdmissionTurnStarting = nil
         defer { store.agentAdmission.release(session.id); store.agentAdmission.release("next-slot") }
@@ -159,7 +159,7 @@ struct PuckHistoryBudgetTests {
         store.maximumConcurrentAgents = 1
         let summary = puckSummary(id: "queued-cancel-turn", cwd: fixture.project.path)
         daemon.base.put(summary)
-        store.applyPuckSummaries([summary])
+        store.openListedPuckSessions([summary])
         let session = try #require(store.sessions.first as? PuckSession)
         session.onAdmissionTurnStarting = nil
         let state = AdmissionBackgroundState()

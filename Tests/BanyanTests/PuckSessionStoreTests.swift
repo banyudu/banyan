@@ -8,7 +8,7 @@ import Testing
 /// runtime behind it differs, and these tests pin where it does.
 
 @MainActor
-@Test func daemonListingAddsPuckSessionsToTheSessionList() throws {
+@Test func openingAListedPuckSessionAddsItToTheSessionList() throws {
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
@@ -17,6 +17,8 @@ import Testing
     daemon.put(puckSummary(model: "gpt-5.5", cwd: fixture.project.path, position: "running"))
 
     store.applyPuckSummaries(try daemon.list())
+    #expect(store.sessions.isEmpty)
+    store.openPuckSession(id: try #require(store.backgroundPuckSummaries.first?.id))
 
     let session = try #require(store.sessions.first as? PuckSession)
     #expect(session.backendKind == .puck)
@@ -28,6 +30,8 @@ import Testing
     #expect(!session.displayTitle.contains(session.id))
     // Jump keys and the attention chord walk the sidebar rows.
     #expect(store.unifiedSidebarGroups.flatMap(\.items).map(\.id).contains(session.id))
+    #expect(store.selectedSessionID == session.id)
+    #expect(store.backgroundPuckSummaries.isEmpty)
 }
 
 @MainActor
@@ -36,12 +40,13 @@ import Testing
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
     let summary = puckSummary(cwd: fixture.project.path, position: "running")
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first)
 
+    // A finished turn leaves a result to read; nobody asked for input.
     store.applyPuckSummaries([summary.with(position: "idle", historyItems: 1)])
-    #expect(session.status == .needInput)
-    #expect(session.tone == .yellow)
+    #expect(session.status == .review)
+    #expect(!session.status.isAwaitingHumanAnswer)
 
     let approval = PuckPendingApproval(callID: "call-1", tool: "shell", arguments: "rm -rf build", expiresAtMS: 0)
     store.applyPuckSummaries([summary.with(position: "parked", pendingApproval: .some(approval))])
@@ -57,7 +62,7 @@ import Testing
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
-    store.applyPuckSummaries([puckSummary(cwd: fixture.project.path, position: "running")])
+    store.openListedPuckSessions([puckSummary(cwd: fixture.project.path, position: "running")])
     let session = try #require(store.sessions.first)
 
     daemon.isReachable = false
@@ -74,7 +79,7 @@ import Testing
     let store = fixture.makeStore()
     let summary = puckSummary(cwd: fixture.project.path, position: "running", historyItems: 1)
     daemon.put(summary)
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first)
 
     // Closing a puck session only stops Banyan from showing it, but every close
@@ -102,32 +107,36 @@ import Testing
 }
 
 @MainActor
-@Test func removedPuckSessionsStayRemovedUntilTheDaemonForgetsThem() throws {
+@Test func removedPuckSessionsStayRemovedAndCanBeOpenedAgain() throws {
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
     let summary = puckSummary(cwd: fixture.project.path)
     daemon.put(summary)
     let store = fixture.makeStore()
     store.loadPersistedSessionsIfNeeded()
-    store.applyPuckSummaries(try daemon.list())
+    store.openListedPuckSessions(try daemon.list())
 
     try store.remove(id: summary.id)
     store.applyPuckSummaries(try daemon.list())
     #expect(store.sessions.isEmpty)
+    #expect(store.backgroundPuckSummaries.map(\.id) == [summary.id])
 
-    // Across a relaunch too.
+    // Across a relaunch too, and after the daemon forgets and relists it.
     store.flushPendingSessionSaves()
     let relaunched = fixture.makeStore()
     relaunched.loadPersistedSessionsIfNeeded()
     relaunched.applyPuckSummaries(try daemon.list())
     #expect(relaunched.sessions.isEmpty)
-
-    // Once the daemon drops it, the dismissal has nothing left to hide.
     daemon.forget(summary.id)
     relaunched.applyPuckSummaries(try daemon.list())
     daemon.put(summary)
     relaunched.applyPuckSummaries(try daemon.list())
+    #expect(relaunched.sessions.isEmpty)
+
+    // Removing was presentation only: the daemon still has it to reopen.
+    relaunched.openPuckSession(id: summary.id)
     #expect(relaunched.sessions.map(\.id) == [summary.id])
+    #expect(relaunched.selectedSessionID == summary.id)
 }
 
 @MainActor
@@ -177,7 +186,7 @@ import Testing
     let store = fixture.makeStore()
     let summary = puckSummary(provider: "opencode-go", account: "work", model: "glm-4.6", cwd: fixture.project.path)
     daemon.put(summary)
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     store.userSelect(id: summary.id)
 
     // What Cmd-N runs.
@@ -199,7 +208,7 @@ import Testing
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
-    store.applyPuckSummaries([puckSummary(cwd: fixture.project.path)])
+    store.openListedPuckSessions([puckSummary(cwd: fixture.project.path)])
     let puck = try #require(store.sessions.first)
     let terminal = TerminalSession(
         id: "terminal-codex",
@@ -264,7 +273,7 @@ import Testing
     let daemon = FakePuckDaemon()
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
-    store.applyPuckSummaries([puckSummary(cwd: fixture.project.path)])
+    store.openListedPuckSessions([puckSummary(cwd: fixture.project.path)])
     let session = try #require(store.sessions.first)
 
     do {
@@ -282,7 +291,7 @@ import Testing
     let store = fixture.makeStore()
     let summary = puckSummary(cwd: fixture.project.path, position: "running")
     daemon.put(summary, transcript: [PuckSessionEvent(cursor: 1, kind: "turn_started")])
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
 
     session.startFollowing()
@@ -295,7 +304,7 @@ import Testing
         PuckSessionEvent(cursor: 2, kind: "turn_done", text: "done")
     ]), to: session.id)
     daemon.push(.summary(summary.with(position: "idle", historyItems: 1)), to: session.id)
-    try await waitForPuckState { session.status == .needInput }
+    try await waitForPuckState { session.status == .review }
     #expect(session.events.map(\.cursor) == [1, 2])
 
     // A dropped stream shows as lost, and following again reattaches.
@@ -320,7 +329,7 @@ import Testing
         PuckSessionEvent(cursor: 1, kind: "user_message", text: "Hello"),
         PuckSessionEvent(cursor: 2, kind: "assistant_message", text: "Hi there"),
     ])
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
 
     session.startFollowing()
@@ -345,7 +354,7 @@ import Testing
     let store = fixture.makeStore()
     let summary = puckSummary(cwd: fixture.project.path, position: "idle")
     daemon.put(summary)
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
 
     session.startFollowing()
@@ -392,7 +401,7 @@ import Testing
     daemon.put(summary, transcript: [
         PuckSessionEvent(cursor: 1, kind: "user_message", text: "Try again"),
     ])
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
 
     session.startFollowing()
@@ -421,7 +430,7 @@ import Testing
     let summary = puckSummary(cwd: fixture.project.path, position: "idle")
     daemon.put(summary)
     daemon.turnError = .rejected("busy")
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
 
     session.draft = "Do not lose this"
@@ -441,7 +450,7 @@ import Testing
     let summary = puckSummary(cwd: fixture.project.path, position: "idle")
     daemon.put(summary)
     daemon.turnError = .unavailable("Socket closed before an acknowledgement")
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
 
     session.draft = "Maybe delivered"
@@ -460,7 +469,7 @@ import Testing
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
     let summary = puckSummary(cwd: fixture.project.path)
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
     #expect(session.turnUnavailableReason == nil)
 
@@ -478,7 +487,7 @@ import Testing
     let fixture = try PuckStoreFixture(daemon: daemon)
     let store = fixture.makeStore()
     let summary = puckSummary(cwd: fixture.project.path, position: "running")
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
 
     #expect(session.turnPhase == .running)
@@ -525,7 +534,7 @@ import Testing
         PuckSessionEvent(cursor: 1, kind: "turn_started"),
         PuckSessionEvent(cursor: 2, kind: "assistant_message", text: "Working", itemID: "assistant-1"),
     ])
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
     session.startFollowing()
     try await waitForPuckState { session.followState == .following }
@@ -560,7 +569,7 @@ import Testing
     let approval = PuckPendingApproval(callID: "approval-1", tool: "shell", arguments: "ls", expiresAtMS: 0)
     let summary = puckSummary(cwd: fixture.project.path, position: "parked", pendingApproval: approval)
     daemon.put(summary)
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
     let gate = daemon.holdNextGet(after: 0)
 
@@ -591,7 +600,7 @@ import Testing
     ])
     let summary = puckSummary(cwd: fixture.project.path, position: "parked", pendingQuestion: question)
     daemon.put(summary)
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
     let gate = daemon.holdNextGet(after: 0)
 

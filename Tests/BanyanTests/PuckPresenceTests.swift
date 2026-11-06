@@ -45,15 +45,19 @@ import Testing
     let summary = puckSummary(cwd: fixture.project.path)
     daemon.put(summary)
     store.startPuckObservation()
-    try await waitForPuckState { store.sessions.count == 1 }
-    let session = try #require(store.sessions.first as? PuckSession)
+    // The watch discovers the session, which stays in the background until
+    // the user opens it.
+    try await waitForPuckState { store.backgroundPuckSummaries.count == 1 }
+    #expect(store.sessions.isEmpty)
+    let discovered = try #require(store.backgroundPuckSummaries.first)
+    let session = try #require(store.openPuckSession(discovered, select: false))
     #expect(!daemon.isFollowed(session.id))
     daemon.publishWatch(.snapshot([summary.with(position: "running")]))
     try await waitForPuckState { session.status == .executing }
 
     daemon.put(summary.with(position: "idle", historyItems: 2))
     daemon.dropWatchers()
-    try await waitForPuckState { daemon.watchCount >= 2 && session.status == .needInput }
+    try await waitForPuckState { daemon.watchCount >= 2 && session.status == .review }
     #expect(store.sessions.count == 1)
     #expect(session.events.isEmpty)
     #expect(!daemon.isFollowed(session.id))
@@ -65,7 +69,7 @@ import Testing
     let store = fixture.makeStore()
     let summary = puckSummary(cwd: fixture.project.path)
     daemon.put(summary, transcript: [PuckSessionEvent(cursor: 1, kind: "turn_done", text: "one")])
-    store.applyPuckSummaries([summary])
+    store.openListedPuckSessions([summary])
     let session = try #require(store.sessions.first as? PuckSession)
     session.startFollowing()
     defer { session.stopFollowing() }
@@ -94,7 +98,8 @@ import Testing
     let summary = puckSummary(cwd: fixture.project.path)
     daemon.put(summary)
     store.startPuckObservation()
-    try await waitForPuckState { store.sessions.count == 1 }
+    try await waitForPuckState { store.backgroundPuckSummaries.count == 1 }
+    store.openPuckSession(try #require(store.backgroundPuckSummaries.first), select: false)
     let created = try await store.createPuckSession(
         binding: PuckSessionBinding(provider: "codex"), cwd: fixture.project.path)
     daemon.publishWatch(.snapshot([summary.with(position: "running")]))

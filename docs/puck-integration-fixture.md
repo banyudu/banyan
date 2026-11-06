@@ -29,8 +29,8 @@ TUI's home for history discovery. Without this variable, Banyan's normal data
 directory behavior is unchanged.
 
 The same session is opened through the app's session store in a fresh Swift
-test process, where the daemon listing adds it as a `PuckSession` that the test
-then follows, the interactive BanyanTUI list and attach flow, and
+test process, where the daemon listing reports it as a background session that
+the test opens, as a user would, and then follows, the interactive BanyanTUI list and attach flow, and
 `banyanctl session list` and `puck attach`. A later turn must appear both in the
 followed session's structured events and in the fake Slack session thread. The
 app test then runs again in another process to verify replay after a frontend

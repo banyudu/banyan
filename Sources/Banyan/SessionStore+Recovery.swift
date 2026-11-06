@@ -20,6 +20,7 @@ extension SessionStore {
         }
         if let session = session as? PuckSession {
             session.reopen()
+            noteBackgroundPuckSessionOpened(id)
             selectedSessionID = id
             saveSessions()
             syncPuckSessions()

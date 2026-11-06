@@ -24,12 +24,33 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
         if canUseUserNotifications { UNUserNotificationCenter.current().delegate = self }
     }
 
-    func notifyPuckAsk(session: PuckSession, event: PuckSessionEvent) {
+    /// Returns whether the event is an ask still pending on that session,
+    /// whether or not this process can post notifications.
+    @discardableResult
+    func notifyPuckAsk(session: PuckSession, event: PuckSessionEvent) -> Bool {
+        notifyPuckAsk(id: session.id, title: session.title, cwd: session.cwd,
+                      approvalCallID: session.pendingApproval?.callID,
+                      questionCallID: session.pendingQuestion?.callID, event: event)
+    }
+
+    /// The same ask on a daemon session without a sidebar row. Clicking it
+    /// opens the session, which adds it to the working set.
+    @discardableResult
+    func notifyPuckAsk(summary: PuckSessionSummary, title: String, event: PuckSessionEvent) -> Bool {
+        notifyPuckAsk(id: summary.id, title: title, cwd: summary.cwd,
+                      approvalCallID: summary.pendingApproval?.callID,
+                      questionCallID: summary.pendingQuestion?.callID, event: event)
+    }
+
+    private func notifyPuckAsk(id: String, title: String, cwd: String, approvalCallID: String?,
+                               questionCallID: String?, event: PuckSessionEvent) -> Bool {
         guard ["approval_pending", "blocked_on_question"].contains(event.kind),
-              event.route == "interactive" else { return }
-        let pendingID = event.kind == "approval_pending" ? session.pendingApproval?.callID : session.pendingQuestion?.callID
-        guard let pendingID, pendingID == event.callID else { return }
-        deliver(session: session, label: "Needs an answer", key: "\(session.id):ask:\(event.cursor)")
+              event.route == "interactive" else { return false }
+        let pendingID = event.kind == "approval_pending" ? approvalCallID : questionCallID
+        guard let pendingID, pendingID == event.callID else { return false }
+        deliver(title: title, body: cwd, label: "Needs an answer", key: "\(id):ask:\(event.cursor)",
+                puckSessionID: id)
+        return true
     }
 
     func requestAuthorization() {
@@ -40,20 +61,21 @@ final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
     func notifyIfNeeded(session: BanyanSession, status: SessionStatus) {
         guard [.needInput, .failed, .review].contains(status) else { return }
         let key = "\(session.id):\(status.rawValue):\(session.updatedAt.timeIntervalSince1970.rounded())"
-        deliver(session: session, label: status.label, key: key)
+        deliver(title: session.title, body: session.cwd, label: status.label, key: key,
+                puckSessionID: session is PuckSession ? session.id : nil)
     }
 
-    private func deliver(session: BanyanSession, label: String, key: String) {
+    private func deliver(title: String, body: String, label: String, key: String, puckSessionID: String?) {
         guard canUseUserNotifications else { return }
         guard !notifiedKeys.contains(key) else { return }
         notifiedKeys.insert(key)
 
         let content = UNMutableNotificationContent()
-        content.title = "\(session.title): \(label)"
-        content.body = session.cwd
+        content.title = "\(title): \(label)"
+        content.body = body
         content.sound = .default
-        if session is PuckSession {
-            content.userInfo = ["url": "banyan://puck/\(session.id)"]
+        if let puckSessionID {
+            content.userInfo = ["url": "banyan://puck/\(puckSessionID)"]
         }
 
         let request = UNNotificationRequest(

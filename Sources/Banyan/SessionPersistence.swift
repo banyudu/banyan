@@ -53,16 +53,17 @@ protocol SessionStorePersistenceBackend: SessionPersistenceBackend {
     func saveLinearIssueListCache(_ snapshot: LinearIssueListCacheSnapshot)
     func loadGitHubReferenceCache() -> GitHubReferenceCacheSnapshot?
     func saveGitHubReferenceCache(_ snapshot: GitHubReferenceCacheSnapshot)
-    /// Daemon sessions removed from Banyan. `puckd` keeps them, so the next
-    /// listing would otherwise bring them back.
-    func loadDismissedPuckSessionIDs() -> Set<String>
-    func saveDismissedPuckSessionIDs(_ ids: Set<String>)
+    /// Puck rows of unknown origin, restored from a build that added every
+    /// listed daemon session to the sidebar. `nil` means the restored rows have
+    /// never been classified, so all of them are of unknown origin.
+    func loadLegacyPuckSessionIDs() -> Set<String>?
+    func saveLegacyPuckSessionIDs(_ ids: Set<String>)
 }
 
 struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
     private static let linearIssueListCacheKey = "linearIssueListCache"
     private static let githubReferenceCacheKey = "githubReferenceCache"
-    private static let dismissedPuckSessionIDsKey = "dismissedPuckSessionIDs"
+    private static let legacyPuckSessionIDsKey = "legacyPuckSessionIDs"
 
     private let sessionDatabase: SessionDatabase
 
@@ -122,19 +123,19 @@ struct SessionPersistence: SessionStorePersistenceBackend, Sendable {
         sessionDatabase.saveState(values)
     }
 
-    func loadDismissedPuckSessionIDs() -> Set<String> {
-        guard let rawIDs = sessionDatabase.loadState()[Self.dismissedPuckSessionIDsKey],
+    func loadLegacyPuckSessionIDs() -> Set<String>? {
+        guard let rawIDs = sessionDatabase.loadState()[Self.legacyPuckSessionIDsKey],
               let data = rawIDs.data(using: .utf8),
               let ids = try? JSONDecoder().decode([String].self, from: data) else {
-            return []
+            return nil
         }
         return Set(ids)
     }
 
-    func saveDismissedPuckSessionIDs(_ ids: Set<String>) {
+    func saveLegacyPuckSessionIDs(_ ids: Set<String>) {
         guard let data = try? JSONEncoder().encode(ids.sorted()),
               let rawIDs = String(data: data, encoding: .utf8) else { return }
-        sessionDatabase.saveState([Self.dismissedPuckSessionIDsKey: rawIDs])
+        sessionDatabase.saveState([Self.legacyPuckSessionIDsKey: rawIDs])
     }
 
     func loadLinearIssueListCache() -> LinearIssueListCacheSnapshot? {

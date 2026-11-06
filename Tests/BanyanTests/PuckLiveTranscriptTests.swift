@@ -13,7 +13,7 @@ struct PuckLiveTranscriptTests {
         let store = fixture.makeStore()
         let summary = puckSummary(cwd: fixture.project.path)
         daemon.put(summary)
-        store.applyPuckSummaries([summary])
+        store.openListedPuckSessions([summary])
         let session = try #require(store.sessions.first as? PuckSession)
         let window = NSWindow(contentRect: NSRect(x: -2_000, y: -2_000, width: 900, height: 500),
             styleMask: [.borderless], backing: .buffered, defer: false)
