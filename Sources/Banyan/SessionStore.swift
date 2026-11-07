@@ -328,6 +328,7 @@ final class SessionStore: ObservableObject {
     private static let paletteAgentProfileDefaultsKey = "commandPaletteAgentProfile"
     @Published var sessionLaunchConfigurationDiagnostic: String?
     @Published var paletteCommands: [PaletteCommand] = []
+    var linearDiscussionPromptTemplate: String?
     @Published var paletteConfigurationDiagnostic: String?
     /// The most recent palette command this app ran, so the sidebar can show
     /// that it happened, how it ended, and where its output went. Palette
@@ -729,6 +730,7 @@ final class SessionStore: ObservableObject {
             homeDirectory: host.homeDirectory
         )
         paletteCommands = paletteConfiguration.commands
+        linearDiscussionPromptTemplate = paletteConfiguration.linearDiscussionPrompt
         paletteConfigurationDiagnostic = paletteConfiguration.diagnostic
         refreshHandoffAvailability()
 

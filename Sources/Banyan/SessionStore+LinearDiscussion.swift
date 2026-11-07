@@ -2,17 +2,30 @@ import BanyanCore
 import Foundation
 
 private enum LinearIssueDiscussionPrompt {
-    static func make(issueID: String, issueURL: String) -> String {
-        """
-        我想先讨论 Linear issue \(issueID)，暂时不要开始实现。
-        请按顺序处理：
-        1. 阅读 issue 当前的标题、描述、验收标准、评论和关联信息：\(issueURL)
-        2. 查找能说明问题现状的当前证据，例如相关代码、文档、运行记录或讨论。记录每条证据的来源，明确区分事实和推测。
-        3. 根据已确认的证据补充 issue 的背景和上下文，例如问题现状、影响、复现线索、约束和依赖。保留原有目标与范围，不改变状态、优先级、负责人或验收标准。若无法可靠更新 Linear，就先把建议补充的内容发给我，并说明原因。
-        4. 再判断 issue 描述是否准确、合理、清楚且可执行，包括范围和验收标准；指出证据、假设、缺失信息、依赖和风险。先给我简明的中文结论，然后一次只问我一个最关键的问题。
+    private static let fallbackTemplate = """
+    请用中文围绕 Linear issue {{issue_id}} 讨论。先查看 issue 内容和可验证的当前证据，评估问题是否成立、描述是否清楚、范围是否合理、是否可执行，再给出简明结论并一次问我一个问题。
+    """
 
-        不要运行 workit、创建 worktree、修改代码或开始实现。如果无法访问 issue 或找不到证据，请直接说明并向我询问，不要猜测或声称已完成更新。
-        """
+    private static let fixedBoundaries = """
+    本次讨论不要调用 workit、创建 worktree、修改代码或开始实现。补充 issue 时只新增有来源的已确认背景，不改状态、优先级、负责人或验收标准。若无法访问或更新 Linear，请提供建议草稿并说明原因；不要猜测或声称已完成更新。
+    """
+
+    static func make(template: String?, issueID: String, issueURL: String) -> String {
+        let configuredTemplate = template?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source: String
+        if let configuredTemplate, !configuredTemplate.isEmpty {
+            source = configuredTemplate
+        } else {
+            source = fallbackTemplate
+        }
+        let includesIssueID = source.contains("{{issue_id}}")
+        let includesIssueURL = source.contains("{{issue_url}}")
+        var prompt = source
+            .replacingOccurrences(of: "{{issue_id}}", with: issueID)
+            .replacingOccurrences(of: "{{issue_url}}", with: issueURL)
+        if !includesIssueID { prompt += "\n\nLinear issue ID: \(issueID)" }
+        if !includesIssueURL { prompt += "\nLinear issue URL: \(issueURL)" }
+        return "\(prompt)\n\n\(fixedBoundaries)"
     }
 }
 
@@ -24,7 +37,11 @@ extension SessionStore {
         }
 
         let issueURL = LinearIssueReference.issueURL(for: issueID, environment: environment)
-        let prompt = LinearIssueDiscussionPrompt.make(issueID: issueID, issueURL: issueURL)
+        let prompt = LinearIssueDiscussionPrompt.make(
+            template: linearDiscussionPromptTemplate,
+            issueID: issueID,
+            issueURL: issueURL
+        )
         let title = "Discuss \(issueID)"
         let cwd = selectedSession?.cwd ?? homeDirectory
         let parentSessionID = selectedSession?.parentSessionID

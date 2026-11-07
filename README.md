@@ -491,6 +491,27 @@ identity so the session lands at the top level; `current` instead parents it to
 the session selected at launch time. The built-in quick-open
 "Start Session for `<ID>`" row always lands top-level.
 
+The same `palette.yml` can customize the prompt used by the built-in **Discuss
+`<Linear ID>`** command. Use a literal block so the template can span lines:
+`linear_discussion_prompt` is also read from `config.yml` as a fallback, but
+`palette.yml` wins when both define it and is preferred because `workit sync`
+can rewrite `config.yml`.
+
+```yaml
+linear_discussion_prompt: |
+  我想先讨论 Linear issue {{issue_id}}，暂时不要开始实现。
+  请先阅读 issue 当前的标题、描述、验收标准、评论和关联信息：{{issue_url}}
+  查找能说明问题现状的当前证据，例如相关代码、文档、运行记录或讨论，并记录来源。
+  根据确认的证据补充 issue 背景和上下文，再评估问题是否准确、合理、清楚且可执行。
+  请用中文给出简明结论，并一次问我一个最关键的问题。
+```
+
+`{{issue_id}}` and `{{issue_url}}` expand to the detected issue identifier and
+its configured Linear URL. If this key is absent or empty, Banyan uses its
+built-in prompt. The app always appends the discussion boundaries: no Workit,
+worktree, code edits, or implementation; issue updates are limited to confirmed
+context and evidence.
+
 ## Dev / Stable Builds
 
 Two channels, never running at the same time (they share control port 7842 and `state.sqlite`):

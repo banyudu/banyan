@@ -48,6 +48,9 @@ extension SessionStore {
         if paletteConfiguration.commands != paletteCommands {
             paletteCommands = paletteConfiguration.commands
         }
+        if paletteConfiguration.linearDiscussionPrompt != linearDiscussionPromptTemplate {
+            linearDiscussionPromptTemplate = paletteConfiguration.linearDiscussionPrompt
+        }
         if paletteConfiguration.diagnostic != paletteConfigurationDiagnostic {
             paletteConfigurationDiagnostic = paletteConfiguration.diagnostic
         }

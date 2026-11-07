@@ -147,9 +147,8 @@ extension PaletteCommand {
     }
 }
 
-/// Minimal strict YAML reader for the `palette_commands:` section, mirroring
-/// `SessionLaunchProfileLoader` so commands stay opaque strings without a
-/// general-purpose parser dependency.
+/// Minimal strict YAML reader for custom palette commands and the optional
+/// multiline Linear discussion prompt, without a general-purpose YAML dependency.
 enum PaletteCommandLoader {
     static func configURL(homeDirectory: URL) -> URL {
         homeDirectory.appendingPathComponent(".banyan/config.yml")
@@ -162,9 +161,8 @@ enum PaletteCommandLoader {
     }
 
     /// Load from `~/.banyan/palette.yml` first, then the `palette_commands:`
-    /// section of `~/.banyan/config.yml`. Both are optional; a missing file or
-    /// section yields no commands and no diagnostic. Duplicate IDs across the
-    /// two files keep the `palette.yml` entry and report a diagnostic.
+    /// section or discussion prompt in `~/.banyan/config.yml`. The dedicated
+    /// palette file takes precedence for both settings.
     static func load(
         homeDirectory: URL,
         fileManager: FileManager = .default
@@ -185,30 +183,56 @@ enum PaletteCommandLoader {
             diagnostics.append(diagnostic)
         }
         let combined = diagnostics.isEmpty ? nil : diagnostics.joined(separator: " ")
-        return PaletteCommandLoadResult(commands: commands, diagnostic: combined)
+        return PaletteCommandLoadResult(
+            commands: commands,
+            linearDiscussionPrompt: fromPalette.linearDiscussionPrompt ?? fromConfig.linearDiscussionPrompt,
+            diagnostic: combined
+        )
     }
 
     private static func loadFile(
         at url: URL,
         fileManager: FileManager
     ) -> PaletteCommandLoadResult {
+        let empty = PaletteCommandLoadResult(commands: [], linearDiscussionPrompt: nil, diagnostic: nil)
         guard fileManager.fileExists(atPath: url.path) else {
-            return PaletteCommandLoadResult(commands: [], diagnostic: nil)
+            return empty
         }
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else {
-            return PaletteCommandLoadResult(commands: [], diagnostic: nil)
+            return empty
         }
-        if !contents.contains("palette_commands:") {
-            return PaletteCommandLoadResult(commands: [], diagnostic: nil)
+        guard hasTopLevelKey("palette_commands", in: contents)
+            || hasTopLevelKey("linear_discussion_prompt", in: contents) else {
+            return empty
         }
         do {
-            return PaletteCommandLoadResult(commands: try parse(contents), diagnostic: nil)
+            return try parseFile(contents)
         } catch {
             return PaletteCommandLoadResult(
                 commands: [],
-                diagnostic: "Could not load palette commands from \(url.path): \(error.localizedDescription). Ignoring custom commands."
+                linearDiscussionPrompt: nil,
+                diagnostic: "Could not load palette settings from \(url.path): \(error.localizedDescription). Ignoring custom palette settings."
             )
         }
+    }
+
+    private static func parseFile(_ yaml: String) throws -> PaletteCommandLoadResult {
+        let commandsExist = hasTopLevelKey("palette_commands", in: yaml)
+        let prompt = try parseLinearDiscussionPrompt(yaml)
+        guard commandsExist || prompt != nil else {
+            throw ParseError(1, "expected palette_commands or linear_discussion_prompt")
+        }
+        let commands: [PaletteCommand]
+        if commandsExist {
+            commands = try parse(yaml)
+        } else {
+            commands = []
+        }
+        return PaletteCommandLoadResult(
+            commands: commands,
+            linearDiscussionPrompt: prompt,
+            diagnostic: nil
+        )
     }
 
     static func parse(_ yaml: String) throws -> [PaletteCommand] {
@@ -297,6 +321,69 @@ enum PaletteCommandLoader {
         }
     }
 
+    private static func parseLinearDiscussionPrompt(_ yaml: String) throws -> String? {
+        let lines = yaml.components(separatedBy: .newlines)
+        var prompt: String?
+        var found = false
+        var index = 0
+
+        while index < lines.count {
+            let rawLine = lines[index]
+            guard rawLine.first?.isWhitespace == false else {
+                index += 1
+                continue
+            }
+            let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
+            guard let separator = line.firstIndex(of: ":"),
+                  String(line[..<separator]).trimmingCharacters(in: .whitespaces) == "linear_discussion_prompt" else {
+                index += 1
+                continue
+            }
+            guard !found else { throw ParseError(index + 1, "duplicate linear_discussion_prompt") }
+            found = true
+            let lineNumber = index + 1
+            let value = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
+
+            if value == "|" || value == "|-" || value == "|+" {
+                index += 1
+                var blockLines: [String] = []
+                while index < lines.count {
+                    let blockLine = lines[index]
+                    if !blockLine.isEmpty && blockLine.first?.isWhitespace != true { break }
+                    blockLines.append(blockLine)
+                    index += 1
+                }
+                let indentation = blockLines
+                    .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                    .map { $0.prefix(while: \.isWhitespace).count }
+                    .min() ?? 0
+                prompt = blockLines.map { blockLine in
+                    guard !blockLine.trimmingCharacters(in: .whitespaces).isEmpty else { return "" }
+                    return String(blockLine.dropFirst(min(indentation, blockLine.prefix(while: \.isWhitespace).count)))
+                }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .newlines)
+            } else {
+                guard !value.hasPrefix("|") && !value.hasPrefix(">") else {
+                    throw ParseError(lineNumber, "use the literal block scalar '|' for linear_discussion_prompt")
+                }
+                prompt = try scalar(value, lineNumber: lineNumber)
+                index += 1
+            }
+        }
+
+        return prompt
+    }
+
+    private static func hasTopLevelKey(_ key: String, in yaml: String) -> Bool {
+        yaml.components(separatedBy: .newlines).contains { rawLine in
+            guard rawLine.first?.isWhitespace == false else { return false }
+            let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
+            guard let separator = line.firstIndex(of: ":") else { return false }
+            return String(line[..<separator]).trimmingCharacters(in: .whitespaces) == key
+        }
+    }
+
     private static func parseField(_ line: String, lineNumber: Int) throws -> [String: String] {
         guard let separator = line.firstIndex(of: ":") else { throw ParseError(lineNumber, "expected key: value") }
         let key = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
@@ -347,5 +434,6 @@ enum PaletteCommandLoader {
 
 struct PaletteCommandLoadResult {
     let commands: [PaletteCommand]
+    let linearDiscussionPrompt: String?
     let diagnostic: String?
 }
