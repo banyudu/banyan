@@ -428,6 +428,18 @@ public struct AgentSupervisor: Sendable {
             return true
         }
 
+        // Choice prompts can have a localized title with no question mark, while
+        // the TUI keeps this navigation footer in English. The complete footer is
+        // emitted only while a selectable menu is open, so it is a reliable ask
+        // signal independent of the question's language.
+        if recentLines.contains(where: { line in
+            line.contains("enter to select")
+                && line.contains("to navigate")
+                && line.contains("esc to cancel")
+        }) {
+            return true
+        }
+
         return recentLines.suffix(8).contains { line in
             line.hasSuffix("?") && line.count >= 8
         }
