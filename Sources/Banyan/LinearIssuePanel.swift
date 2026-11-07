@@ -96,9 +96,14 @@ struct LinearIssuePanel: View {
             Image(systemName: "list.bullet.rectangle")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(issue?.identifier ?? context.linearIssueID ?? "Linear")
+                Text(issueIdentifier ?? "Linear")
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
+                    .textSelection(.enabled)
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded { copyIssueIdentifier() }
+                    )
+                    .help("Select or double-click to copy Linear issue ID")
                 Text(headerSubtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -125,6 +130,16 @@ struct LinearIssuePanel: View {
             .accessibilityIdentifier(AccessibilityID.linearIssueOpenButton)
             .help("Open in Linear")
         }
+    }
+
+    private var issueIdentifier: String? {
+        issue?.identifier ?? context.linearIssueID
+    }
+
+    private func copyIssueIdentifier() {
+        guard let issueIdentifier, !issueIdentifier.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(issueIdentifier, forType: .string)
     }
 
     @ViewBuilder
