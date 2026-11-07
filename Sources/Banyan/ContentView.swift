@@ -199,6 +199,7 @@ struct ContentView: View {
                         onOpenLinearIssue: { issueID in
                             openLinearIssue(issueID)
                         },
+                        onDiscussLinearIssue: store.discussLinearIssue,
                         onStartLinearIssue: store.startLinearIssueSession,
                         onOpenPullRequest: { url in NSWorkspace.shared.open(url) },
                         fallbackPullRequestURL: store.selectedPullRequestURL,

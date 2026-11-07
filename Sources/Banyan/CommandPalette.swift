@@ -100,6 +100,7 @@ struct CommandPaletteView: View {
     let items: [CommandPaletteItem]
     let onDismiss: () -> Void
     let onOpenLinearIssue: (String) -> Void
+    let onDiscussLinearIssue: (String) -> Void
     let onStartLinearIssue: (String) -> Void
     let onOpenPullRequest: (URL) -> Void
     let fallbackPullRequestURL: URL?
@@ -141,6 +142,17 @@ struct CommandPaletteView: View {
             }
         }
         if let linearID = CommandPaletteTargetResolver.linearIssueID(in: query) {
+            items.insert(
+                CommandPaletteItem(
+                    id: "linear.quick-discuss.\(linearID)",
+                    category: "Linear · Discuss",
+                    title: "Discuss \(linearID)",
+                    detail: "Chat about issue clarity, scope, and feasibility",
+                    shortcut: "↩",
+                    action: { onDiscussLinearIssue(linearID) }
+                ),
+                at: 0
+            )
             items.insert(
                 CommandPaletteItem(
                     id: "linear.quick-open.\(linearID)",
