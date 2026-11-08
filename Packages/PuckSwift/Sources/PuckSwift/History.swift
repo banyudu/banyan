@@ -14,9 +14,13 @@ public struct PuckEngineCapabilities: Codable, Sendable {
     public let exactParkedRecovery: Bool
     public let pagedHistory: String
     public let addingCustomTools: Bool
+    /// Whether a turn's user message may carry images. Nil from daemons that
+    /// predate the `turn_images` feature.
+    public let imageInput: Bool?
     enum CodingKeys: String, CodingKey {
         case engine, ownsCodingLoop = "owns_coding_loop", replacesBuiltinTools = "replaces_builtin_tools"
         case exactParkedRecovery = "exact_parked_recovery", pagedHistory = "paged_history", addingCustomTools = "adding_custom_tools"
+        case imageInput = "image_input"
     }
 }
 public struct PuckCapabilities: Decodable, Sendable {
@@ -26,6 +30,12 @@ public struct PuckCapabilities: Decodable, Sendable {
     public let features: [String]
     public let engineCapabilities: [PuckEngineCapabilities]?
     enum CodingKeys: String, CodingKey { case version = "protocol", engines, defaultEngine = "default_engine", features, engineCapabilities = "engine_capabilities" }
+
+    /// Whether `session.turn` accepts `images` for a session on `engine`.
+    public func acceptsImages(engine: String) -> Bool {
+        features.contains("turn_images")
+            && engineCapabilities?.first { $0.engine.rawValue == engine }?.imageInput == true
+    }
 }
 public struct PuckResources: Codable, Sendable {
     public let sessions: Int; public let active: Int; public let queued: Int
@@ -53,14 +63,17 @@ public struct PuckHistoryItem: Codable, Sendable, Identifiable, Equatable {
     /// A Codex command is normalized to `exec_command` arguments,
     /// `{"cmd", "workdir"}`. A long value is a preview and sets `truncated`.
     public let arguments: String?
+    /// Images attached to a user message: daemon-owned file paths, or a
+    /// placeholder when the engine kept only inline image data.
+    public let images: [String]?
     enum CodingKeys: String, CodingKey {
-        case id, kind, text, truncated, arguments
+        case id, kind, text, truncated, arguments, images
         case turnID = "turn_id", toolName = "tool_name", callID = "call_id"
     }
     public init(id: String, turnID: String? = nil, kind: String, text: String, truncated: Bool = false,
-                toolName: String? = nil, callID: String? = nil, arguments: String? = nil) {
+                toolName: String? = nil, callID: String? = nil, arguments: String? = nil, images: [String]? = nil) {
         self.id = id; self.turnID = turnID; self.kind = kind; self.text = text; self.truncated = truncated
-        self.toolName = toolName; self.callID = callID; self.arguments = arguments
+        self.toolName = toolName; self.callID = callID; self.arguments = arguments; self.images = images
     }
 }
 public struct PuckHistoryPage: Codable, Sendable {
@@ -86,6 +99,7 @@ public struct PuckHistoryWindow: Sendable {
         items.reduce(0) { total, item in
             [item.id, item.text, item.toolName, item.callID, item.arguments]
                 .reduce(total + 128) { $0 + ($1?.utf8.count ?? 0) }
+                + (item.images ?? []).reduce(0) { $0 + $1.utf8.count }
         }
     }
     public init(maxItems: Int = 200, maxBytes: Int = 2 * 1_048_576) {
@@ -114,8 +128,8 @@ public struct PuckSessionSettings: Encodable, Sendable {
     public var exec: Bool = true
     public var fetch: Bool = true
     public var search: Bool = true
-    public var maxIterations: Int = 64
-    public var contextBytes: Int = 1_048_576
+    public var maxIterations: Int = 0
+    public var contextBytes: Int = 0
     enum CodingKeys: String, CodingKey { case approval, sandbox, exec, fetch, search
         case maxIterations = "max_iterations", contextBytes = "context_bytes" }
     public init() {}
@@ -183,9 +197,9 @@ public struct PuckClient: Sendable {
     public func create(_ options: PuckSessionOptions) async throws -> PuckSessionSummary { try await PuckBackgroundIO.run { try transport.create(options) } }
     public func list() async throws -> [PuckSessionSummary] { try await PuckBackgroundIO.run { try transport.list() } }
     public func get(_ id: String) async throws -> PuckSessionSummary { try await PuckBackgroundIO.run { try transport.get(id) } }
-    public func turn(_ id: String, prompt: String) async throws { try await PuckBackgroundIO.run { try transport.turn(id, prompt: prompt) } }
+    public func turn(_ id: String, prompt: String, images: [String] = []) async throws { try await PuckBackgroundIO.run { try transport.turn(id, prompt: prompt, images: images) } }
     public func history(_ id: String, cursor: String? = nil, limit: Int = 50) async throws -> PuckHistoryPage { try await PuckBackgroundIO.run { try transport.history(id, cursor: cursor, limit: limit) } }
-    public func decide(_ id: String, callID: String, decision: String) async throws { try await PuckBackgroundIO.run { try transport.decide(id, callID: callID, decision: decision) } }
+    public func decide(_ id: String, callID: String, decision: String, reason: String? = nil) async throws { try await PuckBackgroundIO.run { try transport.decide(id, callID: callID, decision: decision, reason: reason) } }
     public func answer(_ id: String, callID: String, selections: [PuckQuestionSelection]) async throws { try await PuckBackgroundIO.run { try transport.answer(id, callID: callID, selections: selections) } }
     public func cancel(_ id: String) async throws { try await PuckBackgroundIO.run { try transport.cancel(id) } }
     public func suspend(_ id: String) async throws { try await PuckBackgroundIO.run { try transport.suspend(id) } }

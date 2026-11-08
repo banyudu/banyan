@@ -111,19 +111,65 @@ struct PuckToolGroupSummary {
 
 extension PuckToolActivity {
     var actionLabel: String {
-        switch state {
-        case .running: "Running"
-        case .succeeded, .truncated: "Ran"
-        case .failed: "Failed"
+        if isFileChange {
+            switch state {
+            case .running: return "Editing"
+            case .succeeded, .truncated: return "Edited"
+            case .failed: return "Failed"
+            }
         }
+        switch state {
+        case .running: return "Running"
+        case .succeeded, .truncated: return "Ran"
+        case .failed: return "Failed"
+        }
+    }
+
+    var isFileChange: Bool {
+        ["apply_patch", "patch", "edit", "file_change"].contains(normalizedName)
+    }
+
+    /// A Codex `fileChange`: live from the item JSON in `arguments`, or from
+    /// a history row whose text is the change list.
+    var fileChanges: [PuckFileChange]? {
+        guard isFileChange else { return nil }
+        return PuckFileChanges.parse(arguments) ?? PuckFileChanges.parse(output)
+    }
+
+    private var normalizedName: String {
+        name.lowercased().replacingOccurrences(of: "-", with: "_")
+    }
+
+    private var argumentObject: [String: Any]? {
+        guard let arguments, let data = arguments.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// The call's own description for tools that are not commands or edits:
+    /// an MCP `server.tool`, or a web search query.
+    private var namedCallTitle: String? {
+        guard let object = argumentObject else { return nil }
+        if let server = object["server"] as? String, let tool = object["tool"] as? String {
+            return "\(server).\(tool)"
+        }
+        if normalizedName == "web_search", let query = object["query"] as? String, !query.isEmpty {
+            return query
+        }
+        return nil
     }
 
     var hasDetails: Bool {
         arguments?.isEmpty == false || !displayOutput.isEmpty
     }
 
+    /// Raw arguments are noise beside a rendered diff.
+    var showsArgumentDetails: Bool {
+        fileChanges == nil && arguments?.isEmpty == false
+    }
+
     var displayTitle: String {
-        commandText ?? displayName
+        if let changes = fileChanges { return PuckFileChanges.summary(changes) }
+        return commandText ?? namedCallTitle ?? displayName
     }
 
     var displayName: String {
@@ -193,7 +239,8 @@ extension PuckToolActivity {
     }
 
     var displayOutput: String {
-        displayOutputLines.joined(separator: "\n")
+        if let changes = fileChanges { return PuckFileChanges.unifiedDiff(changes) }
+        return displayOutputLines.joined(separator: "\n")
     }
 
     private var displayOutputLines: [String] {
@@ -236,8 +283,9 @@ extension PuckToolActivity {
         // Format before clipping so nested results stay readable and the
         // disclosure counts the same lines as the expanded output.
         let lines = (isJSON ? presentation.text : output).components(separatedBy: "\n")
-        let limit = isJSON ? 8 : 2
-        let visibleLines = Array(lines.prefix(limit))
+        let limit = isJSON ? 8 : fileChanges != nil ? 6 : 2
+        // A running command's newest output says more than its first lines.
+        let visibleLines = state == .running && !isJSON ? Array(lines.suffix(limit)) : Array(lines.prefix(limit))
         var remaining = visibleLines.joined(separator: "\n").count
         let sections = presentation.syntaxSections.map { sections in
             sections.compactMap { section -> CodeBlockSyntaxSection? in
@@ -250,7 +298,7 @@ extension PuckToolActivity {
         return PuckToolPreview(
             lines: visibleLines,
             hiddenLineCount: max(0, lines.count - limit),
-            language: isJSON ? presentation.language : nil,
+            language: isJSON || presentation.language == .diff ? presentation.language : nil,
             syntaxSections: sections
         )
     }

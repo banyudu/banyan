@@ -1,179 +1,6 @@
 import Foundation
 import PuckSwift
 
-public struct PuckTimelineLimits: Equatable, Sendable {
-    public let maxItems: Int
-    public let maxBytes: Int
-
-    public init(maxItems: Int = 200, maxBytes: Int = 2 * 1_048_576) {
-        self.maxItems = max(1, maxItems)
-        self.maxBytes = max(1024, maxBytes)
-    }
-}
-
-public enum PuckTimelineRole: String, Equatable, Sendable {
-    case user
-    case assistant
-    case tool
-    case error
-    case interruption
-    case unknown
-}
-
-public enum PuckToolState: String, Equatable, Sendable {
-    case running
-    case succeeded
-    case failed
-    case truncated
-}
-
-public struct PuckToolActivity: Equatable, Sendable {
-    public let callID: String
-    public let name: String
-    public let arguments: String?
-    public let output: String
-    public let state: PuckToolState
-
-    public init(
-        callID: String,
-        name: String,
-        arguments: String? = nil,
-        output: String = "",
-        state: PuckToolState
-    ) {
-        self.callID = callID
-        self.name = name
-        self.arguments = arguments
-        self.output = output
-        self.state = state
-    }
-}
-
-public enum PuckTimelineContent: Equatable, Sendable {
-    case user(String)
-    case assistant(String)
-    case tool(PuckToolActivity)
-    case error(String)
-    case interruption(String)
-    case unknown(kind: String, detail: String)
-}
-
-public struct PuckTimelineItem: Identifiable, Equatable, Sendable {
-    public let id: String
-    public let role: PuckTimelineRole
-    public let content: PuckTimelineContent
-    public let turnID: String?
-    public let firstCursor: UInt64?
-    public let lastCursor: UInt64?
-    public let truncated: Bool
-
-    public init(
-        id: String,
-        role: PuckTimelineRole,
-        content: PuckTimelineContent,
-        turnID: String? = nil,
-        firstCursor: UInt64? = nil,
-        lastCursor: UInt64? = nil,
-        truncated: Bool = false
-    ) {
-        self.id = id
-        self.role = role
-        self.content = content
-        self.turnID = turnID
-        self.firstCursor = firstCursor
-        self.lastCursor = lastCursor
-        self.truncated = truncated
-    }
-
-    public var text: String {
-        switch content {
-        case .user(let text), .assistant(let text), .error(let text), .interruption(let text):
-            return text
-        case .tool(let tool):
-            if !tool.output.isEmpty { return tool.output }
-            if let arguments = tool.arguments, !arguments.isEmpty { return arguments }
-            return tool.state == .running ? "Waiting for result" : "No output"
-        case .unknown(_, let detail):
-            return detail
-        }
-    }
-
-    public var title: String {
-        switch content {
-        case .user: return "You"
-        case .assistant: return "Assistant"
-        case .tool(let tool): return "Tool · \(tool.name) · \(tool.state.rawValue)"
-        case .error: return "Error"
-        case .interruption: return "Interrupted"
-        case .unknown(let kind, _): return "Unknown event · \(kind)"
-        }
-    }
-
-    public var retainedByteCount: Int {
-        var bytes = id.utf8.count + text.utf8.count + title.utf8.count + 128
-        bytes += turnID?.utf8.count ?? 0
-        if case .tool(let tool) = content {
-            bytes += tool.callID.utf8.count + tool.name.utf8.count
-            bytes += tool.arguments?.utf8.count ?? 0
-        }
-        return bytes
-    }
-}
-
-/// A turn-level failure or interruption. Notices stay separate from
-/// conversation items so replay, history, and live delivery collapse into one
-/// visible callout per underlying event.
-public struct PuckTimelineNotice: Identifiable, Equatable, Sendable {
-    public let id: String
-    public let role: PuckTimelineRole
-    public let text: String
-    public let turnID: String?
-    public let callID: String?
-    public let firstCursor: UInt64?
-    public let lastCursor: UInt64?
-    public let truncated: Bool
-
-    public init(
-        id: String,
-        role: PuckTimelineRole,
-        text: String,
-        turnID: String? = nil,
-        callID: String? = nil,
-        firstCursor: UInt64? = nil,
-        lastCursor: UInt64? = nil,
-        truncated: Bool = false
-    ) {
-        self.id = id
-        self.role = role
-        self.text = text
-        self.turnID = turnID
-        self.callID = callID
-        self.firstCursor = firstCursor
-        self.lastCursor = lastCursor
-        self.truncated = truncated
-    }
-
-    public var title: String {
-        role == .interruption ? "Turn interrupted" : "Turn error"
-    }
-}
-
-public struct PuckTimeline: Equatable, Sendable {
-    public let items: [PuckTimelineItem]
-    public let notices: [PuckTimelineNotice]
-    public let usage: PuckUsage?
-
-    public init(
-        items: [PuckTimelineItem],
-        notices: [PuckTimelineNotice] = [],
-        usage: PuckUsage? = nil
-    ) {
-        self.items = items
-        self.notices = notices
-        self.usage = usage
-    }
-}
-
 public enum PuckTimelineProjection {
     public static func project(
         history: [PuckHistoryItem],
@@ -201,10 +28,14 @@ private struct Builder {
         var fromHistory: Bool
         var matchedLive: Bool
         var isStream: Bool
+        var images: [String] = []
+        /// Live `tool_output_delta` text, replaced by the finished result.
+        var outputStreamed = false
+        var isReasoningStream = false
 
         var text: String {
             switch content {
-            case .user(let text), .assistant(let text), .error(let text), .interruption(let text):
+            case .user(let text), .assistant(let text), .reasoning(let text), .error(let text), .interruption(let text):
                 return text
             case .tool(let tool):
                 return tool.output.isEmpty ? tool.arguments ?? "" : tool.output
@@ -216,6 +47,7 @@ private struct Builder {
         var retainedByteCount: Int {
             var bytes = id.utf8.count + text.utf8.count + 128
             bytes += turnID?.utf8.count ?? 0
+            bytes += images.reduce(0) { $0 + $1.utf8.count }
             if case .tool(let tool) = content {
                 bytes += tool.callID.utf8.count + tool.name.utf8.count
                 bytes += tool.arguments?.utf8.count ?? 0
@@ -231,7 +63,9 @@ private struct Builder {
                 turnID: turnID,
                 firstCursor: firstCursor,
                 lastCursor: lastCursor,
-                truncated: truncated
+                truncated: truncated,
+                images: images,
+                isStreaming: isStream || isReasoningStream || outputStreamed
             )
         }
     }
@@ -265,7 +99,11 @@ private struct Builder {
         "turn_started", "turn_done", "usage", "hibernated", "approval_pending",
         "approval_decided", "blocked_on_question", "question_answered", "presence_changed",
         "history_changed", "lagged", "autonomy_parked", "merge_decision_needed", "plan_updated",
+        "model_retry",
     ]
+    /// The newest `tool_output_delta` text kept per command, so a chatty
+    /// command cannot crowd the transcript out of its byte budget.
+    static let maxStreamedOutputBytes = 64 * 1024
 
     private let limits: PuckTimelineLimits
     private var drafts: [Draft] = []
@@ -275,7 +113,9 @@ private struct Builder {
     private var toolIndex: [String: Int] = [:]
     private var seenCursors: Set<UInt64> = []
     private var streamIndex: Int?
+    private var reasoningStreams: [String: Int] = [:]
     private var usage: PuckUsage?
+    private var activity: String?
 
     init(limits: PuckTimelineLimits) {
         self.limits = limits
@@ -321,7 +161,8 @@ private struct Builder {
         PuckTimeline(
             items: drafts.map(\.timelineItem),
             notices: notices.map(\.notice),
-            usage: usage
+            usage: usage,
+            activity: activity
         )
     }
 
@@ -501,6 +342,10 @@ private struct Builder {
         case "assistant", "agent", "agent_message", "assistant_message", "plan":
             role = .assistant
             content = .assistant(text)
+        case "reasoning":
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            role = .reasoning
+            content = .reasoning(text)
         case "tool", "tool_result", "tool_start", "command", "file_change":
             role = .tool
             content = .tool(PuckToolActivity(
@@ -538,7 +383,8 @@ private struct Builder {
             toolCallID: toolCallID,
             fromHistory: true,
             matchedLive: false,
-            isStream: false
+            isStream: false,
+            images: role == .user ? item.images ?? [] : []
         ))
         if let toolCallID { toolIndex[toolCallID] = index }
     }
@@ -550,8 +396,19 @@ private struct Builder {
         switch event.kind {
         case "turn_started":
             streamIndex = nil
+            activity = nil
         case "turn_done":
             streamIndex = nil
+            activity = nil
+            finishStreams()
+        case "model_retry":
+            activity = event.message.map { "Reconnecting: \($0)" } ?? "Reconnecting…"
+        case "reasoning_delta":
+            appendReasoning(event, delta: true)
+        case "reasoning":
+            appendReasoning(event, delta: false)
+        case "tool_output_delta":
+            appendToolOutputDelta(event)
         case "usage":
             usage = event.usage ?? usage
         case "text_delta":
@@ -559,7 +416,7 @@ private struct Builder {
         case "assistant_message":
             appendMessage(role: .assistant, event: event, text: event.text ?? "")
         case "user_message":
-            appendMessage(role: .user, event: event, text: event.text ?? "")
+            appendMessage(role: .user, event: event, text: event.text ?? "", images: event.images)
         case "tool_start":
             appendToolStart(event)
         case "approval_pending":
@@ -569,6 +426,8 @@ private struct Builder {
         case "hosted_call":
             appendHostedCall(event)
         case "turn_error", "persistence_error", "audit_error":
+            activity = nil
+            finishStreams()
             let text = event.message ?? event.text ?? "Turn failed"
             appendNotice(
                 role: errorRole(for: text),
@@ -614,7 +473,8 @@ private struct Builder {
     private mutating func appendMessage(
         role: PuckTimelineRole,
         event: PuckSessionEvent,
-        text: String
+        text: String,
+        images: [String] = []
     ) {
         let keys = stableKeys(for: event)
         if let index = keys.compactMap({ stableIndex[$0] }).first {
@@ -664,7 +524,8 @@ private struct Builder {
             toolCallID: nil,
             fromHistory: false,
             matchedLive: false,
-            isStream: false
+            isStream: false,
+            images: images
         ))
         registerStableKeys(keys, at: index)
     }
@@ -740,8 +601,11 @@ private struct Builder {
         let state: PuckToolState = event.truncated ? .truncated : event.success == false ? .failed : .succeeded
         let name = event.tool ?? "tool"
         if let index = toolIndex[callID] ?? keys.compactMap({ stableIndex[$0] }).first {
+            let streamed = drafts[index].outputStreamed
+            drafts[index].outputStreamed = false
             updateTool(at: index) { tool in
-                let output = tool.output.isEmpty ? (event.output ?? "") : tool.output
+                let finished = event.output ?? ""
+                let output = tool.output.isEmpty || (streamed && !finished.isEmpty) ? finished : tool.output
                 return PuckToolActivity(
                     callID: callID,
                     name: tool.name == "tool" ? name : tool.name,
@@ -780,6 +644,84 @@ private struct Builder {
         ))
         registerStableKeys(keys, at: index)
         toolIndex[callID] = index
+    }
+
+    /// A reasoning summary streams as `reasoning_delta` text and finishes as
+    /// one journaled `reasoning` event with the same item ID.
+    private mutating func appendReasoning(_ event: PuckSessionEvent, delta: Bool) {
+        guard let text = event.text, !text.isEmpty else { return }
+        let keys = stableKeys(for: event)
+        let streamKey = event.itemID ?? "reasoning"
+        if let index = reasoningStreams[streamKey], drafts.indices.contains(index),
+           drafts[index].isReasoningStream, case .reasoning(let existing) = drafts[index].content {
+            drafts[index].content = .reasoning(delta ? existing + text : text)
+            drafts[index].lastCursor = event.cursor
+            if !delta {
+                drafts[index].isReasoningStream = false
+                reasoningStreams[streamKey] = nil
+                registerStableKeys(keys, at: index)
+            }
+            activity = PuckTimelineContent.reasoningHeading(drafts[index].text) ?? activity
+            return
+        }
+        if let index = keys.compactMap({ stableIndex[$0] }).first {
+            if !delta { drafts[index].matchedLive = true }
+            return
+        }
+        if !delta, keys.isEmpty,
+           let index = fallbackHistoryIndex(role: .reasoning, text: text, turnID: event.turnID) {
+            drafts[index].matchedLive = true
+            return
+        }
+        let index = appendDraft(Draft(
+            id: delta ? "reasoning:\(streamKey)" : keys.first.map { "item:\($0)" } ?? "event:\(event.cursor)",
+            role: .reasoning,
+            content: .reasoning(text),
+            turnID: event.turnID,
+            firstCursor: event.cursor,
+            lastCursor: event.cursor,
+            truncated: event.truncated,
+            stableKeys: delta ? [] : keys,
+            toolCallID: nil,
+            fromHistory: false,
+            matchedLive: false,
+            isStream: false,
+            isReasoningStream: delta
+        ))
+        if delta { reasoningStreams[streamKey] = index }
+        activity = PuckTimelineContent.reasoningHeading(text) ?? activity
+    }
+
+    /// Live command output. Only the newest text is kept; the finished
+    /// `tool_result` replaces it.
+    private mutating func appendToolOutputDelta(_ event: PuckSessionEvent) {
+        guard let delta = event.output ?? event.text, !delta.isEmpty,
+              let callID = event.callID, let index = toolIndex[callID], drafts.indices.contains(index),
+              case .tool(let tool) = drafts[index].content, tool.state == .running else { return }
+        var output = (drafts[index].outputStreamed ? tool.output : "") + delta
+        let excess = output.utf8.count - Self.maxStreamedOutputBytes
+        if excess > 0 {
+            let cut = output.utf8.index(output.utf8.startIndex, offsetBy: excess)
+            var tail = Substring(output[cut...])
+            if let newline = tail.firstIndex(of: "\n") { tail = tail[tail.index(after: newline)...] }
+            output = String(tail)
+        }
+        drafts[index].outputStreamed = true
+        drafts[index].content = .tool(PuckToolActivity(
+            callID: tool.callID,
+            name: tool.name,
+            arguments: tool.arguments,
+            output: output,
+            state: tool.state
+        ))
+    }
+
+    /// A finished or failed turn ends any summary still marked as streaming.
+    private mutating func finishStreams() {
+        for index in reasoningStreams.values where drafts.indices.contains(index) {
+            drafts[index].isReasoningStream = false
+        }
+        reasoningStreams = [:]
     }
 
     private mutating func appendHostedCall(_ event: PuckSessionEvent) {
@@ -944,6 +886,9 @@ private struct Builder {
         }
         if let current = streamIndex {
             streamIndex = current == index ? nil : current > index ? current - 1 : current
+        }
+        reasoningStreams = reasoningStreams.compactMapValues { current in
+            current == index ? nil : current > index ? current - 1 : current
         }
     }
 

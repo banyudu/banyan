@@ -103,6 +103,85 @@ struct SDKContractTests {
         #expect(resources.loadedThreadsTotal == 6)
     }
 
+    @Test func durableTaskContractDecodesAttemptsEvidenceAndCloseout() async throws {
+        let fixture = try SDKSocketFixture { peer, request in
+            switch request["method"] as? String {
+            case "daemon.capabilities": try peer.reply(request, result: sdkCapabilities())
+            case "task.get": try peer.reply(request, result: sdkTask())
+            default: throw SDKFixtureError.unexpectedMethod
+            }
+        }
+        defer { fixture.stop() }
+
+        let task = try await PuckClient(socketPath: fixture.path).task("task-fixture")
+        #expect(task.id == "task-fixture")
+        #expect(task.state == .readyForDecision)
+        #expect(task.acceptanceHash == "acceptance-hash")
+        #expect(task.capability.worktreeWrite)
+        #expect(!task.capability.merge)
+        #expect(task.currentAttemptValue?.baseSHA == "base-sha")
+        #expect(task.currentAttemptValue?.worktree == "/tmp/project-worktrees/attempt-1")
+        #expect(task.evidence.first?.payloadHash == "payload-hash")
+        #expect(task.acceptedDecision?.evidenceIDs == ["evidence-1"])
+        #expect(task.slack?.threadTS == "1700000000.000001")
+        #expect(task.closeout == nil)
+    }
+
+    @Test func durableTaskRequestsUseThePublicWireKeys() throws {
+        let fixture = try SDKSocketFixture { peer, request in
+            switch request["method"] as? String {
+            case "task.admit":
+                try peer.reply(request, result: [
+                    "task": sdkTask(), "candidate_id": "candidate-1",
+                    "deduplicated": false,
+                ])
+            case "task.evidence", "task.decide", "task.close":
+                try peer.reply(request, result: sdkTask())
+            default: throw SDKFixtureError.unexpectedMethod
+            }
+        }
+        defer { fixture.stop() }
+        let client = PuckDaemonClient(socketPath: fixture.path)
+        _ = try client.admitTask(PuckTaskAdmitRequest(
+            candidate: PuckTaskCandidate(
+                source: PuckTaskSource(kind: "slack", externalID: "C1:1700000000.000001"),
+                title: "Fix the fixture", workspace: "/tmp/project",
+                acceptance: [PuckAcceptanceCriterion(id: "tests", text: "Tests pass")]),
+            autoStart: true, prompt: "Start now"))
+        _ = try client.addTaskEvidence(PuckAddTaskEvidenceRequest(
+            taskID: "task-fixture", attemptID: "attempt-1", kind: "tests",
+            source: PuckEvidenceSource(kind: "test", reference: "cargo test"),
+            headSHA: "head-sha", payload: .object(["passed": .bool(true)]),
+            expectedRevision: 4, acceptanceHash: "acceptance-hash"))
+        _ = try client.decideTask(PuckTaskDecisionRequest(
+            taskID: "task-fixture", kind: "accept", outcome: "accepted",
+            actor: PuckTaskActor(name: "U1", kind: "slack"), evidenceIDs: ["evidence-1"]))
+        _ = try client.closeTask(PuckTaskCloseRequest(
+            taskID: "task-fixture", decisionID: "decision-1",
+            effectIdempotencyKey: "close-decision-1",
+            actor: PuckTaskActor(name: "U1", kind: "slack")))
+
+        let requests = fixture.requests
+        #expect(requests.compactMap { $0["method"] as? String } ==
+                ["task.admit", "task.evidence", "task.decide", "task.close"])
+        let admission = try #require(requests.first?["params"] as? [String: Any])
+        #expect(admission["auto_start"] as? Bool == true)
+        #expect(admission["prompt"] as? String == "Start now")
+        let candidate = try #require(admission["candidate"] as? [String: Any])
+        #expect(candidate["workspace"] as? String == "/tmp/project")
+        let evidence = try #require(requests[1]["params"] as? [String: Any])
+        #expect(evidence["task_id"] as? String == "task-fixture")
+        #expect(evidence["head_sha"] as? String == "head-sha")
+        #expect(evidence["expected_revision"] as? Int == 4)
+        let decision = try #require(requests[2]["params"] as? [String: Any])
+        #expect(decision["task_id"] as? String == "task-fixture")
+        #expect(decision["evidence_ids"] as? [String] == ["evidence-1"])
+        let close = try #require(requests[3]["params"] as? [String: Any])
+        #expect(close["decision_id"] as? String == "decision-1")
+        #expect(close["effect_idempotency_key"] as? String == "close-decision-1")
+        #expect(fixture.failures.isEmpty)
+    }
+
     @Test func historyRoundTripsOpaqueCursorAndStableItemIdentity() async throws {
         let fixture = try SDKSocketFixture { peer, request in
             let params = request["params"] as? [String: Any] ?? [:]
@@ -126,6 +205,44 @@ struct SDKContractTests {
         let params = try #require(fixture.requests.last?["params"] as? [String: Any])
         #expect(params["cursor"] as? String == first.nextCursor)
         #expect(params["limit"] as? Int == 17)
+    }
+
+    @Test func historyToolRowsPairByCallIDAndKeepCommandArguments() async throws {
+        let fixture = try SDKSocketFixture { peer, request in
+            try peer.reply(request, result: [
+                "session": "fixture-session", "source": "native", "order": "desc", "next_cursor": NSNull(),
+                "items": [
+                    ["id": "native-2", "turn_id": NSNull(), "kind": "tool_result", "text": "exit code: 0",
+                     "truncated": false, "call_id": "call-1"],
+                    ["id": "native-1", "turn_id": NSNull(), "kind": "tool_call", "text": "exec_command",
+                     "truncated": false, "tool_name": "exec_command", "call_id": "call-1",
+                     "arguments": "{\"cmd\":\"cat src/app/sitemap.ts\"}"],
+                ],
+            ])
+        }
+        defer { fixture.stop() }
+        let page = try await PuckClient(socketPath: fixture.path).history("fixture-session")
+        let result = try #require(page.items.first { $0.kind == "tool_result" })
+        let call = try #require(page.items.first { $0.kind == "tool_call" && $0.callID == result.callID })
+        #expect(result.callID == "call-1")
+        #expect(result.toolName == nil && result.arguments == nil)
+        #expect(call.toolName == "exec_command")
+        let arguments = try #require(call.arguments?.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: arguments) as? [String: Any])
+        #expect(object["cmd"] as? String == "cat src/app/sitemap.ts")
+    }
+
+    @Test func protocol21HistoryPayloadDecodesWithoutToolFields() throws {
+        let payload = Data("""
+        {"session":"fixture-session","source":"native","order":"desc","next_cursor":null,"items":[
+          {"id":"native-23","kind":"tool","text":"exec_command","truncated":false,"turn_id":null},
+          {"id":"native-24","kind":"tool","text":"exit code: 0","truncated":false,"turn_id":null}]}
+        """.utf8)
+        let page = try JSONDecoder().decode(PuckHistoryPage.self, from: payload)
+        #expect(page.items.map(\.id) == ["native-23", "native-24"])
+        #expect(page.items.allSatisfy { $0.toolName == nil && $0.callID == nil && $0.arguments == nil })
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(page.items[0])) as? [String: Any]
+        #expect(encoded.map { Set($0.keys) } == ["id", "kind", "text", "truncated"])
     }
 
     @Test func invalidHistoryLimitsFailBeforeConnecting() throws {
@@ -162,42 +279,6 @@ struct SDKContractTests {
         #expect(duplicate.isEmpty)
         #expect(completed.map(\.cursor) == [12])
         #expect(fixture.requests.count == 1)
-    }
-
-    @Test func eventDecodingRetainsStableIdentityStatusAndUsage() throws {
-        let event = try PuckSessionEvent([
-            "cursor": 19,
-            "data": [
-                "event": "tool_result",
-                "tool": "fixture-tool",
-                "call_id": "call-stable",
-                "output": "fixture output",
-                "success": false,
-                "truncated": true,
-                "item_id": "item-stable",
-                "history_ref": "history-stable",
-                "turn_id": "turn-stable",
-                "usage": [
-                    "usage": [
-                        "reported_requests": 3, "unreported_requests": 1,
-                        "input_tokens": 120, "output_tokens": 30,
-                        "cached_input_tokens": 80, "cache_unreported_requests": 2,
-                    ],
-                    "last": ["inputTokens": 40, "outputTokens": 10, "cachedInputTokens": 20],
-                ],
-                "future_flag": true,
-            ],
-        ])
-
-        #expect(event.itemID == "item-stable")
-        #expect(event.historyRef == "history-stable")
-        #expect(event.turnID == "turn-stable")
-        #expect(event.success == false)
-        #expect(event.truncated)
-        #expect(event.usage?.total.inputTokens == 120)
-        #expect(event.usage?.total.reportedRequests == 3)
-        #expect(event.usage?.last?.inputTokens == 40)
-        #expect(event.metadata["future_flag"] == "1")
     }
 
     @Test func liveGapReplaysDurablePagesAndSuppressesDuplicateNotification() throws {
@@ -444,6 +525,11 @@ struct SDKContractTests {
         let oversize = PuckHistoryItem(id: "large", kind: "assistant", text: String(repeating: "x", count: 10_000))
         window.replace(with: PuckHistoryPage(session: "fixture-session", source: "display", items: [oversize], nextCursor: nil))
         #expect(window.byteCount <= 2048)
+        let largeCall = PuckHistoryItem(id: "large-call", kind: "tool_call", text: "exec_command",
+                                        toolName: "exec_command", callID: "call-large",
+                                        arguments: String(repeating: "x", count: 10_000))
+        window.replace(with: PuckHistoryPage(session: "fixture-session", source: "native", items: [largeCall], nextCursor: nil))
+        #expect(window.items.isEmpty)
     }
 
     @Test func notificationBufferOverloadRequiresReconnect() throws {
@@ -634,194 +720,4 @@ struct SDKContractTests {
         } catch is CancellationError {}
         #expect(state.started == 4)
     }
-}
-
-private enum SDKFixtureError: Error { case socket(String), unexpectedMethod, invalidRequest }
-
-private func sdkWait(_ semaphore: DispatchSemaphore) async -> Bool {
-    await withCheckedContinuation { continuation in
-        DispatchQueue.global().async {
-            continuation.resume(returning: semaphore.wait(timeout: .now() + 3) == .success)
-        }
-    }
-}
-
-private func sdkEventually(_ condition: () -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(3)
-    while !condition() {
-        guard ContinuousClock.now < deadline else { throw SDKFixtureError.socket("timed out waiting for background operations") }
-        try await Task.sleep(for: .milliseconds(10))
-    }
-}
-
-private final class SDKBackgroundState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var activeCount = 0
-    private var startedCount = 0
-    private var rejectedCount = 0
-    private var finishedCount = 0
-    private var maximumCount = 0
-    var started: Int { lock.withLock { startedCount } }
-    var rejected: Int { lock.withLock { rejectedCount } }
-    var finished: Int { lock.withLock { finishedCount } }
-    var maximumActive: Int { lock.withLock { maximumCount } }
-    func begin() { lock.withLock { activeCount += 1; startedCount += 1; maximumCount = max(maximumCount, activeCount) } }
-    func end() { lock.withLock { activeCount -= 1; finishedCount += 1 } }
-    func reject() { lock.withLock { rejectedCount += 1 } }
-}
-
-private func sdkCapabilities(major: Int = 2) -> [String: Any] {
-    ["protocol": ["major": major, "minor": 0], "engines": ["codex", "native"],
-     "default_engine": "codex", "features": ["paged_history", "bounded_events"],
-     "engine_capabilities": [["engine": "codex", "owns_coding_loop": true, "replaces_builtin_tools": false,
-                              "exact_parked_recovery": false, "paged_history": "engine history", "adding_custom_tools": false]]]
-}
-private func sdkSummary() -> [String: Any] {
-    ["id": "fixture-session", "engine": "codex", "provider": "fixture-provider",
-     "account": "fixture-seat", "workspace": "/tmp/sdk-project", "cwd": "/tmp/sdk-project",
-     "model": "fixture-model", "position": "running", "history_items": 0]
-}
-private func sdkEvent(_ cursor: Int, text: String) -> [String: Any] {
-    ["cursor": cursor, "data": ["event": "assistant_message", "text": text]]
-}
-private func sdkAttached(cursor: Int, events: [[String: Any]] = []) -> [String: Any] {
-    ["summary": sdkSummary(), "cursor": cursor, "events": events, "history_api": false]
-}
-private func sdkPage(_ ids: [Int]) -> PuckHistoryPage {
-    PuckHistoryPage(session: "fixture-session", source: "display", items: ids.map {
-        PuckHistoryItem(id: "item-\($0)", kind: "assistant", text: "message \($0)")
-    }, nextCursor: "older")
-}
-
-private final class SDKSocketFixture: @unchecked Sendable {
-    let path: String
-    let detached = DispatchSemaphore(value: 0)
-    private let listener: Int32
-    private let lock = NSLock()
-    private var stopped = false
-    private var storedRequests: [[String: Any]] = []
-    private var storedFailures: [String] = []
-    private var peers: [SDKSocketPeer] = []
-    private let handler: (SDKSocketPeer, [String: Any]) throws -> Void
-    var requests: [[String: Any]] { lock.withLock { storedRequests } }
-    var failures: [String] { lock.withLock { storedFailures } }
-
-    init(handler: @escaping (SDKSocketPeer, [String: Any]) throws -> Void) throws {
-        self.handler = handler
-        path = "/tmp/puck-sdk-\(UUID().uuidString.prefix(12)).sock"
-        #if canImport(Darwin)
-        listener = socket(AF_UNIX, SOCK_STREAM, 0)
-        #else
-        listener = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
-        #endif
-        guard listener >= 0 else { throw SDKFixtureError.socket("socket") }
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        withUnsafeMutableBytes(of: &address.sun_path) { raw in raw.copyBytes(from: bytes); raw[bytes.count] = 0 }
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard result == 0, listen(listener, 16) == 0 else {
-            _ = close(listener); _ = unlink(path)
-            throw SDKFixtureError.socket("bind/listen")
-        }
-        Thread { [self] in
-            while !lock.withLock({ stopped }) {
-                let descriptor = accept(listener, nil, nil)
-                guard descriptor >= 0 else { break }
-                let peer = SDKSocketPeer(descriptor)
-                lock.withLock { peers.append(peer) }
-                DispatchQueue.global().async { [self] in
-                    defer { peer.closeSocket(); detached.signal() }
-                    do {
-                        while let request = try peer.readRequest() {
-                            lock.withLock { storedRequests.append(request) }
-                            try handler(peer, request)
-                        }
-                    } catch {
-                        lock.withLock { storedFailures.append(String(describing: error)) }
-                    }
-                }
-            }
-        }.start()
-    }
-
-    func stop() {
-        let active = lock.withLock { () -> [SDKSocketPeer] in
-            guard !stopped else { return [] }
-            stopped = true
-            _ = shutdown(listener, Int32(SHUT_RDWR))
-            _ = close(listener)
-            return peers
-        }
-        active.forEach { $0.disconnect() }
-        _ = unlink(path)
-    }
-    deinit { stop() }
-}
-
-private final class SDKSocketPeer: @unchecked Sendable {
-    private let descriptor: Int32
-    private let lock = NSLock()
-    private var closed = false
-    private var pending = Data()
-    init(_ descriptor: Int32) {
-        self.descriptor = descriptor
-        var timeout = timeval(tv_sec: 3, tv_usec: 0)
-        _ = setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        #if canImport(Darwin)
-        var noSignal: Int32 = 1
-        _ = setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
-        #endif
-    }
-    func readRequest() throws -> [String: Any]? {
-        while true {
-            guard !lock.withLock({ closed }) else { return nil }
-            if let newline = pending.firstIndex(of: 10) {
-                let data = Data(pending[..<newline]); pending.removeSubrange(...newline)
-                guard let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                    throw SDKFixtureError.invalidRequest
-                }
-                return request
-            }
-            var bytes = [UInt8](repeating: 0, count: 4096)
-            let count = bytes.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
-            if count < 0 && errno == EINTR { continue }
-            guard count > 0 else { return nil }
-            pending.append(contentsOf: bytes.prefix(count))
-        }
-    }
-    func reply(_ request: [String: Any], result: Any) throws {
-        try send(["jsonrpc": "2.0", "id": request["id"] ?? 1, "result": result])
-    }
-    func notify(cursor: Int, kind: String, text: String, transient: Bool = false) throws {
-        try send(["jsonrpc": "2.0", "method": "session.event", "params": [
-            "session": "fixture-session", "cursor": cursor,
-            "data": ["event": kind, "text": text, "transient": transient]
-        ]])
-    }
-    func send(_ value: [String: Any]) throws {
-        let data = try JSONSerialization.data(withJSONObject: value) + Data([10])
-        try sendBytes(data)
-    }
-    func sendBytes(_ data: Data) throws {
-        try data.withUnsafeBytes { bytes in
-            var sent = 0
-            while sent < bytes.count {
-                #if canImport(Darwin)
-                let count = write(descriptor, bytes.baseAddress!.advanced(by: sent), bytes.count - sent)
-                #else
-                let count = Glibc.send(descriptor, bytes.baseAddress!.advanced(by: sent), bytes.count - sent, Int32(MSG_NOSIGNAL))
-                #endif
-                if count < 0 && errno == EINTR { continue }
-                guard count > 0 else { throw SDKFixtureError.socket("write") }
-                sent += count
-            }
-        }
-    }
-    func disconnect() { lock.withLock { if !closed { _ = shutdown(descriptor, Int32(SHUT_RDWR)) } } }
-    func closeSocket() { lock.withLock { if !closed { closed = true; _ = close(descriptor) } } }
 }

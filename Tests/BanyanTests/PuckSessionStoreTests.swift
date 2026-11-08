@@ -556,7 +556,7 @@ import Testing
     #expect(session.historyItems.map(\.id) == ["assistant-1"])
     #expect(session.events.contains { $0.kind == "turn_error" && $0.text == "Turn cancelled by user" })
     #expect(session.timeline.notices.map(\.text) == ["Turn cancelled by user"])
-    #expect(session.cancellationNotice == "Turn stopped. This session and its history remain available.")
+    #expect(session.infoNotice == "Turn stopped. This session and its history remain available.")
     #expect(session.turnUnavailableReason == nil)
     #expect(session.status != .closed)
 }

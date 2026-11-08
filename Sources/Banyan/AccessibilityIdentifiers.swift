@@ -39,6 +39,11 @@ enum AccessibilityID {
     static let puckLoadOlderMessages = "banyan.puck.timeline.load-older"
     static let puckLatestMessages = "banyan.puck.timeline.latest"
     static let puckUsage = "banyan.puck.timeline.usage"
+    static let puckQueuedMessages = "banyan.puck.detail.queued"
+    static let puckSlashCommands = "banyan.puck.detail.slash-commands"
+    static let puckApprovalPanel = "banyan.puck.detail.approval"
+    static let puckApprovalFeedback = "banyan.puck.detail.approval.feedback"
+    static let puckQuestionPanel = "banyan.puck.detail.question"
 
     static func puckTimelineNotice(_ id: String) -> String {
         "banyan.puck.timeline.notice.\(id)"

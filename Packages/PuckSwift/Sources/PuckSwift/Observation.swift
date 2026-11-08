@@ -32,7 +32,7 @@ private final class PuckSocketObservation: PuckDaemonObservation, @unchecked Sen
                     guard state.adopt(connection) else { return }
                     // Register away before claiming interactivity. Puck treats a
                     // fresh registration as activity; using notify temporarily
-                    // avoids a false desk lease during a background reconnect.
+                    // avoids a false interactive lease during a background reconnect.
                     let identity = ["name": "client", "kind": "sdk", "capability": "notify"]
                     _ = try connection.request("session.watch", params: ["client": identity, "summary_only": true])
                     let presence = try connection.request("presence.away") as? [String: Any]
@@ -44,6 +44,11 @@ private final class PuckSocketObservation: PuckDaemonObservation, @unchecked Sen
                     // remain buffered on the subscribed socket.
                     continuation.yield(.snapshot(try client.list()))
                     while let message = try connection.nextNotification() {
+                        if let method = message["method"] as? String,
+                           method == "task.event" || method == "job.event" {
+                            continuation.yield(.snapshot(try client.list()))
+                            continue
+                        }
                         guard let params = message["params"] as? [String: Any],
                               let data = params["data"] as? [String: Any],
                               let kind = data["event"] as? String else {

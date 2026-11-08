@@ -23,6 +23,12 @@ struct PuckTranscriptTypography: Equatable {
         font.weight(.semibold)
     }
 
+    /// The same face for AppKit text views, such as the composer.
+    var nsFont: NSFont {
+        if let resolvedFontFamily, let font = NSFont(name: resolvedFontFamily, size: fontSize) { return font }
+        return .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    }
+
     var detailFontSize: Double {
         max(10, fontSize - 1)
     }
@@ -353,6 +359,8 @@ struct PuckTimelineRow: View {
             userRow(text)
         case .assistant(let text):
             assistantRow(text)
+        case .reasoning(let text):
+            reasoningRow(text)
         case .tool(let tool):
             toolRow(tool)
         case .error(let text):
@@ -377,10 +385,17 @@ struct PuckTimelineRow: View {
     private func userRow(_ text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             marker("›", emphasis: .secondary)
-            SessionLinkedText(text)
-                .font(typography.font)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                if !text.isEmpty {
+                    SessionLinkedText(text)
+                        .font(typography.font)
+                        .textSelection(.enabled)
+                }
+                if !item.images.isEmpty {
+                    PuckImageThumbnailStrip(paths: item.images, height: 96)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -402,6 +417,60 @@ struct PuckTimelineRow: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Assistant")
         .accessibilityIdentifier(AccessibilityID.puckTimelineItem(item.id))
+    }
+
+    /// Codex-style "thinking" summary: the heading stays visible, the body
+    /// expands on demand.
+    private func reasoningRow(_ text: String) -> some View {
+        let heading = PuckTimelineContent.reasoningHeading(text) ?? "Thinking"
+        let body = Self.reasoningBody(text, heading: heading)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    marker("•", emphasis: .tertiary)
+                    Text(heading)
+                        .font(typography.font.italic())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if item.isStreaming {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                    if !body.isEmpty {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.banyanPlainLabelOnly)
+            .disabled(body.isEmpty)
+            if !body.isEmpty {
+                PuckAnimatedDisclosure(isExpanded: isExpanded) {
+                    MarkdownText(body, style: typography.markdownStyle)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 20)
+                        .padding(.top, 6)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Thinking: \(heading)")
+        .accessibilityIdentifier(AccessibilityID.puckTimelineItem(item.id))
+    }
+
+    static func reasoningBody(_ text: String, heading: String) -> String {
+        var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["**\(heading)**", heading] where body.hasPrefix(prefix) {
+            body = String(body.dropFirst(prefix.count))
+            break
+        }
+        return body.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func toolRow(_ tool: PuckToolActivity) -> some View {
@@ -523,7 +592,7 @@ struct PuckTimelineRow: View {
     private func toolDetails(_ tool: PuckToolActivity) -> some View {
         let output = tool.displayOutput
         VStack(alignment: .leading, spacing: 10) {
-            if let arguments = tool.arguments, !arguments.isEmpty {
+            if tool.showsArgumentDetails, let arguments = tool.arguments {
                 PuckToolDetailBlock(
                     title: "Arguments",
                     text: arguments,
@@ -535,7 +604,7 @@ struct PuckTimelineRow: View {
                 PuckToolDetailBlock(
                     title: "Output",
                     text: output,
-                    language: output.hasPrefix("diff --git") ? "diff" : nil,
+                    language: output.hasPrefix("diff --git") || tool.fileChanges != nil ? "diff" : nil,
                     typography: typography
                 )
             } else if tool.state == .running {

@@ -17,6 +17,7 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
     struct Turn: Equatable {
         let id: String
         let prompt: String
+        var images: [String] = []
     }
 
     private let lock = NSLock()
@@ -30,6 +31,9 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
     private var recordedTurnAttempts = 0
     private var _turnError: PuckDaemonError?
     private var recordedDecisions: [String] = []
+    private var recordedReasons: [String?] = []
+    private var recordedCompactions: [String] = []
+    private var reportedCapabilities: PuckCapabilities?
     private var recordedAnswers: [[PuckQuestionSelection]] = []
     private var reachable = true
     private var turnGate: DispatchSemaphore?
@@ -65,6 +69,13 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
         set { locked { _turnError = newValue } }
     }
     var decisions: [String] { locked { recordedDecisions } }
+    var decisionReasons: [String?] { locked { recordedReasons } }
+    var compactions: [String] { locked { recordedCompactions } }
+    /// What `daemon.capabilities` reports; nil behaves like an older daemon.
+    var capabilitiesResult: PuckCapabilities? {
+        get { locked { reportedCapabilities } }
+        set { locked { reportedCapabilities = newValue } }
+    }
     var answers: [[PuckQuestionSelection]] { locked { recordedAnswers } }
 
     var isReachable: Bool {
@@ -190,12 +201,16 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
     }
 
     func turn(_ id: String, prompt: String) throws {
+        try turn(id, prompt: prompt, images: [])
+    }
+
+    func turn(_ id: String, prompt: String, images: [String]) throws {
         let gate = try locked {
             try checkReachable()
             guard let summary = summaries[id] else { throw PuckDaemonError.rejected("unknown session \(id)") }
             recordedTurnAttempts += 1
             if let error = _turnError { throw error }
-            recordedTurns.append(Turn(id: id, prompt: prompt))
+            recordedTurns.append(Turn(id: id, prompt: prompt, images: images))
             summaries[id] = summary.with(position: "running", historyItems: summary.historyItems + 1)
             return turnGate
         }
@@ -239,6 +254,28 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
             recordedDecisions.append(decision)
             summaries[id] = summary.with(position: "running", pendingApproval: .some(nil))
         }
+    }
+
+    /// Records the reason first: tests wait on `decisions`, which must stay
+    /// the last thing recorded before the call returns.
+    func decide(_ id: String, callID: String, decision: String, reason: String?) throws {
+        locked { recordedReasons.append(reason) }
+        try decide(id, callID: callID, decision: decision)
+    }
+
+    func compact(_ id: String) throws {
+        try locked {
+            try checkReachable()
+            guard summaries[id] != nil else { throw PuckDaemonError.rejected("unknown session \(id)") }
+            recordedCompactions.append(id)
+        }
+    }
+
+    func capabilities() throws -> PuckCapabilities {
+        guard let capabilities = locked({ reportedCapabilities }) else {
+            throw PuckDaemonError.rejected("fake puckd reports no capabilities")
+        }
+        return capabilities
     }
 
     func answer(_ id: String, callID: String, selections: [PuckQuestionSelection]) throws {
@@ -322,6 +359,7 @@ final class FakePuckObservation: PuckDaemonObservation, @unchecked Sendable {
 
 func puckSummary(
     id: String = "0f6c3a52-8c1e-4d7b-9a55-3b1f1d2e4c10",
+    engine: String = "native",
     provider: String = "codex",
     account: String = "default",
     model: String = "gpt-5.5",
@@ -333,6 +371,7 @@ func puckSummary(
 ) -> PuckSessionSummary {
     PuckSessionSummary(
         id: id,
+        engine: engine,
         provider: provider,
         account: account,
         workspace: cwd,
@@ -354,6 +393,7 @@ extension PuckSessionSummary {
     ) -> PuckSessionSummary {
         PuckSessionSummary(
             id: id,
+            engine: engine,
             provider: provider,
             account: account,
             workspace: workspace,
@@ -504,4 +544,21 @@ extension SessionStore {
             openPuckSession(summary, select: false)
         }
     }
+}
+
+/// Capabilities of a daemon that takes images on the Codex engine.
+func puckImageCapabilities() throws -> PuckCapabilities {
+    let object: [String: Any] = [
+        "protocol": ["major": 2, "minor": 3], "engines": ["codex", "native"], "default_engine": "codex",
+        "features": ["paged_history", "turn_images"],
+        "engine_capabilities": [
+            ["engine": "codex", "owns_coding_loop": true, "replaces_builtin_tools": false,
+             "exact_parked_recovery": false, "paged_history": "engine history",
+             "adding_custom_tools": false, "image_input": true],
+            ["engine": "native", "owns_coding_loop": false, "replaces_builtin_tools": true,
+             "exact_parked_recovery": true, "paged_history": "native history",
+             "adding_custom_tools": true, "image_input": false],
+        ],
+    ]
+    return try JSONDecoder().decode(PuckCapabilities.self, from: JSONSerialization.data(withJSONObject: object))
 }

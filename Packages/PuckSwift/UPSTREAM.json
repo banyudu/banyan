@@ -3,12 +3,18 @@
   "source_directory": "packages/PuckSwift",
   "sha256": {
     "Package.swift": "795ebc208f4bf0708b1f841046f41de03cadae014c43bc1aa701bb415422961a",
-    "README.md": "d92a024549e70607ce5b857452858f59e0ce472e4c3cc4a1a59e125e33941068",
+    "README.md": "1fefa989478e7898ad29e8488175165c050b4a9490d2527c020e216b0430c6aa",
     "Sources/PuckSwift/BackgroundIO.swift": "e67edd8ff4d61859c8792c1be73f236a5c1e3f4382008e538e3c57f97f63c41a",
-    "Sources/PuckSwift/Client.swift": "61d156117f667da5333b2b0bcde8aefd574f1b3e61c2faaac08a9361af901a11",
-    "Sources/PuckSwift/History.swift": "f9acef6387c5b3cb4a2eb328a4fe0590072eace1b4cd7777509218d94ca7c74a",
-    "Sources/PuckSwift/Observation.swift": "567d6bd3841e56290e10d30d82c6e8ba7d5a35aa9296141e0743e342738eff11",
+    "Sources/PuckSwift/Client.swift": "787ea34480942f26044df9b9ffd8922ae31425b4ab79bc4c5479295589dcde84",
+    "Sources/PuckSwift/Events.swift": "54e01bfd99104e0599b200207ef49f92dc8d4e78fbf994defadc4a01dde749a7",
+    "Sources/PuckSwift/History.swift": "bb1b3b0883f9a56b5509b162b6f661d6074af49a76addd0e0b1b9a53d9e4c8ce",
+    "Sources/PuckSwift/Observation.swift": "13e06c7357664672d2ec3bc88c6f3829835f5dddf942251b382d2a48a584708c",
+    "Sources/PuckSwift/SessionPresentation.swift": "229ade6360c6aa7f4cb8862a5569de3efd71edf59f56ea15ba552f60b9a230a4",
+    "Sources/PuckSwift/Tasks.swift": "335aded2d952df3e594355c96dad8a05d5b3b77c3f0112582591e88b035ee1b2",
     "Sources/PuckSwiftExample/main.swift": "79bb2c701e9c9e168f5334af84df5d62dfd916e950e03e157bc315a5034a4f1b",
-    "Tests/PuckSwiftTests/SDKContractTests.swift": "a9cc32dda0e925b586e19440439e64e059cd7c2d9874fa1cb9d25d891c0d03da"
+    "Tests/PuckSwiftTests/SDKContractTests.swift": "9adfa2fd81048b74603583eb56afc9d4168f2ef019d808d11bf367d9443ea9c7",
+    "Tests/PuckSwiftTests/SDKSocketFixture.swift": "288d2a5cc4e0b2aaaed75c469fa0136c3d13f17855be304d6618fc2925fdb92a",
+    "Tests/PuckSwiftTests/SessionPresentationTests.swift": "db743a1a7ee28c961a79c8e103392b7b0adc875a5199744bb8aa4f4cd83e9def",
+    "Tests/PuckSwiftTests/TurnInputTests.swift": "1238159cee60b49126231a6e83119288344b3ff4b2901edd4a19bf885730b94f"
   }
 }
