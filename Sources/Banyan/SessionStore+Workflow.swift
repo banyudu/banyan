@@ -55,7 +55,21 @@ extension SessionStore {
         return ids
     }
 
+    /// Records refusals on the session so a wait the owner cannot resume stops
+    /// looking like a quiet, healthy one.
     func wakeWorkflow(id: String, jobID: String, revision: Int, wakeID: String, text: String, coordination: Bool = false) async throws {
+        do {
+            try await deliverWorkflowWake(id: id, jobID: jobID, revision: revision, wakeID: wakeID, text: text,
+                coordination: coordination)
+            sessions.first { $0.id == id }?.workflowWakeRefusal = nil
+        } catch WorkflowError.refused(let reason) {
+            sessions.first { $0.id == id }?.workflowWakeRefusal = reason
+            throw WorkflowError.refused(reason)
+        }
+    }
+
+    private func deliverWorkflowWake(id: String, jobID: String, revision: Int, wakeID: String, text: String,
+                                     coordination: Bool) async throws {
         guard !wakeID.isEmpty, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               text.utf8.count <= 64 * 1024,
               let session = sessions.first(where: { $0.id == id }),

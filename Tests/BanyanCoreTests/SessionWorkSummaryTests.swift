@@ -198,6 +198,26 @@ import Testing
         #expect(!entry.checkIsDue)
     }
 
+    @Test func wakeRefusalShowsOnlyWhileWorkitOwnsAnIdleWait() throws {
+        var job = phasedJob("waiting", phase: "pr-open", attention: "watch", group: "waiting",
+                            kind: "waiting", label: "Waiting for CI")
+        job["stage"] = "waiting-ci"
+        let feed = try phasedOverview([job])
+        for (status, shown) in [(SessionStatus.needInput, true), (.idle, true), (.executing, false), (.asking, false)] {
+            let refused = SessionWorkNode(id: "waiting", parentID: nil, title: "waiting", status: status,
+                workflow: .init(owner: "workit", jobID: "waiting", revision: 1, state: .waiting),
+                wakeRefusal: "agent is busy, unobserved, or awaiting human input")
+            let entry = try #require(SessionWorkTree.summaries(nodes: [refused], overview: feed)["waiting"]?.own)
+            #expect((entry.wakeRefusal != nil) == shown)
+        }
+        // Without a refusal the wait stays the quiet, healthy kind.
+        let quiet = try #require(SessionWorkTree.summaries(nodes: [
+            node("waiting", job: "waiting", state: .waiting)
+        ], overview: feed)["waiting"]?.own)
+        #expect(quiet.waitingForWorkit)
+        #expect(quiet.wakeRefusal == nil)
+    }
+
     @Test func activeTerminalWorkOverridesSettledWorkitState() throws {
         let nodes = [node("verified", job: "verified", state: .verified, status: .executing)]
         let feed = try phasedOverview([

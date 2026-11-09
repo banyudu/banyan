@@ -40,6 +40,15 @@ import Testing
         #expect(waiting.own.waitingForWorkit)
         #expect(waiting.own.checkIsDue)
         #expect(waiting.own.workStatusHelp.contains("Agent idle; Workit owns the next check"))
+        #expect(waiting.own.workitBadgeText == "Check due")
+        #expect(!waiting.own.badgeEmphasized)
+        let refused = try #require(SessionWorkTree.summaries(nodes: nodes.map {
+            $0.id == "waiting" ? SessionWorkNode(id: $0.id, parentID: $0.parentID, title: $0.title, status: $0.status,
+                workflow: $0.workflow, wakeRefusal: "agent is busy, unobserved, or awaiting human input") : $0
+        }, overview: feed)["waiting"])
+        #expect(refused.own.workitBadgeText == "Wake refused")
+        #expect(refused.own.badgeEmphasized)
+        #expect(refused.own.workStatusHelp.contains("could not resume this session: agent is busy"))
 
         var idleJob = jobs[0]
         idleJob["group"] = "working"

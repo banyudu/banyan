@@ -353,6 +353,34 @@ import Testing
         #expect(fixture.backend.sent.isEmpty)
     }
 
+    @Test func refusedWakeStaysVisibleUntilAWakeSucceedsOrTheAgentWorks() async throws {
+        let fixture = try WorkflowStoreFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = fixture.makeStore()
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        try store.setWorkflow(id: "managed", workflow: SessionWorkflow(owner: "workit", jobID: "job-a", revision: 3,
+            state: .waiting, wake: .init(id: "wake-a", status: .delivered)))
+        let session = try #require(store.sessions.first { $0.id == "managed" })
+        func refuse() async {
+            session.isSuspended = true
+            await #expect(throws: WorkflowError.self) {
+                try await store.wakeWorkflow(id: "managed", jobID: "job-a", revision: 3, wakeID: "wake-b", text: "Continue")
+            }
+            session.isSuspended = false
+        }
+        await refuse()
+        #expect(session.workflowWakeRefusal == "session is closed, parked, frozen or unavailable")
+        #expect(store.workNode(for: session).wakeRefusal == session.workflowWakeRefusal)
+        // The already-delivered receipt is a successful no-op wake.
+        try await store.wakeWorkflow(id: "managed", jobID: "job-a", revision: 3, wakeID: "wake-a", text: "Continue")
+        #expect(session.workflowWakeRefusal == nil)
+        await refuse()
+        session.status = .executing
+        #expect(session.workflowWakeRefusal == nil)
+        #expect(fixture.backend.sent.isEmpty)
+    }
+
     @Test func unavailableConversationIdentityNeverReplaysTheOriginalCommand() async throws {
         let fixture = try WorkflowStoreFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

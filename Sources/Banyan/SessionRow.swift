@@ -627,10 +627,11 @@ struct SessionRow: View, Equatable {
     }
 
     /// Without an agent, `.running` only means the terminal is alive,
-    /// which the terminal icon already conveys.
+    /// which the terminal icon already conveys. A Workit wait replaces the
+    /// emoji with its badge, unless Workit cannot wake the agent.
     private var hidesStatusEmoji: Bool {
         (session.displayAgentProvider == nil && session.status == .running)
-            || workSummary?.own.waitingForWorkit == true
+            || (workSummary?.own.waitingForWorkit == true && workSummary?.own.wakeRefusal == nil)
     }
 
     private func isOverChildSessionSummary(at location: CGPoint) -> Bool {

@@ -81,6 +81,8 @@ class BanyanSession: ObservableObject, Identifiable {
     }
     @Published var status: SessionStatus {
         didSet {
+            // A new turn means the agent is no longer stranded, however it resumed.
+            if status.isActivelyWorking { workflowWakeRefusal = nil }
             if status == .closed {
                 codexAutoRetry.cancel()
                 backgroundTerminalCount = 0
@@ -137,6 +139,11 @@ class BanyanSession: ObservableObject, Identifiable {
     @Published var agentSessionID: String?
     @Published var workflow: SessionWorkflow? { didSet { onHistoryRelevantChange?() } }
     @Published var workflowRecoveryError: String? { didSet { onHistoryRelevantChange?() } }
+    /// Live only: the reason Banyan refused the owner's latest wake. Repeated
+    /// identical refusals do not republish.
+    @Published var workflowWakeRefusal: String? {
+        didSet { if workflowWakeRefusal != oldValue { onHistoryRelevantChange?() } }
+    }
     @Published var coordinationRecoveryError: String? { didSet { onHistoryRelevantChange?() } }
     var coordinationFailureID: String?
     var coordinationRecoveryInspection: CoordinationRecoveryInspection?

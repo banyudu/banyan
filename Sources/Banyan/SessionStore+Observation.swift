@@ -58,9 +58,14 @@ extension SessionStore {
             // owner. They are absent from the work tree, and workflow metadata
             // does not affect history ordering/filtering. Keep row observation
             // local instead of rebuilding the sidebar and fetching Workit again.
-            let workflowOnly = node.status == previous.status && node.workflow != previous.workflow &&
-                node.title == previous.title && node.parentID == previous.parentID &&
-                node.recoveryError == previous.recoveryError
+            let sameShape = node.status == previous.status && node.title == previous.title &&
+                node.parentID == previous.parentID && node.recoveryError == previous.recoveryError
+            // A refused or recovered wake changes only the row's badge.
+            if sameShape, node.workflow == previous.workflow, node.wakeRefusal != previous.wakeRefusal {
+                self.workSummaryRevision &+= 1
+                return
+            }
+            let workflowOnly = sameShape && node.workflow != previous.workflow
             if workflowOnly, node.status == .closed {
                 EnergyTrace.count("sidebar.closedWorkflowSkipped", sessionID: session.id)
                 return

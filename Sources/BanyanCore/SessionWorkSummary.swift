@@ -9,10 +9,15 @@ public struct SessionWorkNode: Sendable, Equatable {
     public let workflow: SessionWorkflow?
     public let background: Bool
     public let recoveryError: Bool
+    /// Why Banyan refused the owner's most recent wake, until a wake succeeds
+    /// or the agent starts another turn.
+    public let wakeRefusal: String?
     public init(id: String, parentID: String?, title: String, status: SessionStatus,
-                workflow: SessionWorkflow?, background: Bool = false, recoveryError: Bool = false) {
+                workflow: SessionWorkflow?, background: Bool = false, recoveryError: Bool = false,
+                wakeRefusal: String? = nil) {
         self.id = id; self.parentID = parentID; self.title = title; self.status = status
         self.workflow = workflow; self.background = background; self.recoveryError = recoveryError
+        self.wakeRefusal = wakeRefusal
     }
 }
 
@@ -32,6 +37,9 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
     public let waitingForWorkit: Bool
     public let checkDueAt: Date?
     public let checkIsDue: Bool
+    /// Set only while Workit owns the wait: its scheduled wake could not reach
+    /// the agent, so nothing will resume this session on its own.
+    public let wakeRefusal: String?
     public var needsAttention: Bool { kind == .blocked || kind == .decision }
 
     init(node: SessionWorkNode, job: WorkitJobSummary?, observedAt: Date? = nil) {
@@ -123,6 +131,7 @@ public struct SessionWorkEntry: Identifiable, Sendable, Equatable {
             && (job == nil || ["waiting-ci", "waiting-deploy"].contains(job?.stage ?? ""))
         checkDueAt = waitingForWorkit ? job?.externalCheckDate : nil
         checkIsDue = checkDueAt.map { due in observedAt.map { due.isAtOrBefore($0) } ?? false } ?? false
+        wakeRefusal = waitingForWorkit ? node.wakeRefusal : nil
     }
 }
 

@@ -74,8 +74,8 @@ struct SessionWorkStatusButton: View {
 
     private var ownBadge: some View {
         WorkStatusBadge(category: summary.own.badgeCategory,
-            emphasized: summary.own.needsAttention, label: summary.own.workStatusHelp,
-            text: summary.own.waitingForWorkit ? (summary.own.checkIsDue ? "Check due" : "Waiting") : nil)
+            emphasized: summary.own.badgeEmphasized, label: summary.own.workStatusHelp,
+            text: summary.own.workitBadgeText)
     }
 }
 
@@ -154,8 +154,20 @@ extension SessionWorkEntry {
 
     var badgeSystemImage: String { badgeCategory.systemImage }
 
+    var badgeEmphasized: Bool { needsAttention || wakeRefusal != nil }
+
+    var workitBadgeText: String? {
+        guard waitingForWorkit else { return nil }
+        if wakeRefusal != nil { return "Wake refused" }
+        return checkIsDue ? "Check due" : "Waiting"
+    }
+
     var workStatusHelp: String {
         guard waitingForWorkit else { return label }
+        if let wakeRefusal {
+            return "\(label). Workit's scheduled check could not resume this session: \(wakeRefusal)."
+                + " Workit retries on its next heartbeat. Clear any draft or dialog in the agent, or continue the session yourself."
+        }
         var help = "\(label). Agent idle; Workit owns the next check."
         if let checkDueAt {
             help += " Eligible from \(checkDueAt.formatted(date: .abbreviated, time: .shortened))."
@@ -176,8 +188,8 @@ struct SessionWorkDetailsView: View {
                     Button { openSession(entry.id) } label: {
                         HStack(alignment: .top, spacing: 8) {
                             WorkStatusBadge(category: entry.badgeCategory,
-                                emphasized: entry.needsAttention, label: entry.workStatusHelp,
-                                text: entry.waitingForWorkit ? (entry.checkIsDue ? "Check due" : "Waiting") : nil)
+                                emphasized: entry.badgeEmphasized, label: entry.workStatusHelp,
+                                text: entry.workitBadgeText)
                             Text(entry.title).lineLimit(2).multilineTextAlignment(.leading)
                             if entry.background {
                                 Image(systemName: "moon").foregroundStyle(.secondary)

@@ -28,7 +28,7 @@ extension SessionStore {
     func workNode(for session: BanyanSession, background: Bool = false) -> SessionWorkNode {
         SessionWorkNode(id: session.id, parentID: session.parentSessionID, title: session.displayTitle,
             status: session.status, workflow: session.workflow, background: background,
-            recoveryError: session.workflowRecoveryError != nil)
+            recoveryError: session.workflowRecoveryError != nil, wakeRefusal: session.workflowWakeRefusal)
     }
 
     var sessionWorkSummaries: [String: SessionWorkSummary] {
