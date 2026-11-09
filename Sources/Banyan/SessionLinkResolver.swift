@@ -60,11 +60,33 @@ enum SessionLinkResolver {
                 )
             } else {
                 destination = url(text, relativeTo: context.cwd, homeDirectory: context.homeDirectory)
+                // `example.com/path` is detected as a bare relative path. A real
+                // local file still wins; otherwise open the scheme-less web address.
+                if destination.map(isMissingFile) ?? true, let web = schemelessWebURL(text) { return web }
             }
         }
-        guard let destination else { return nil }
-        if destination.isFileURL, !FileManager.default.fileExists(atPath: destination.path) { return nil }
+        guard let destination, !isMissingFile(destination) else { return nil }
         return destination
+    }
+
+    private static func isMissingFile(_ url: URL) -> Bool {
+        url.isFileURL && !FileManager.default.fileExists(atPath: url.path)
+    }
+
+    private static let webLinkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    /// The whole reference must read as a web address with no scheme, such as
+    /// `example.com/docs`. The system detector knows real top-level domains, so
+    /// bundle-like paths (`Banyan.app/Contents`, `main.py/x`) stay file paths.
+    private static func schemelessWebURL(_ link: String) -> URL? {
+        let value = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.contains("://"), !value.hasPrefix("/"), !value.hasPrefix("."),
+              !value.hasPrefix("~"), let detector = webLinkDetector else { return nil }
+        let fullRange = NSRange(value.startIndex..., in: value)
+        guard let match = detector.firstMatch(in: value, range: fullRange), match.range == fullRange,
+              let url = match.url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              url.host != nil else { return nil }
+        return url
     }
 
     @MainActor

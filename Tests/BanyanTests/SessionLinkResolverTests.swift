@@ -46,6 +46,31 @@ struct SessionLinkResolverTests {
         #expect(await SessionLinkResolver.resolve(.reference("./missing.txt"), context: context) == nil)
     }
 
+    @Test func schemelessWebAddressesOpenUnlessALocalFileMatches() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("session-links-\(UUID())")
+        let localDirectory = root.appendingPathComponent("docs.rs")
+        try FileManager.default.createDirectory(at: localDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let localFile = localDirectory.appendingPathComponent("notes")
+        try Data().write(to: localFile)
+        let context = SessionLinkContext(cwd: root.path, environment: [:], homeDirectory: root.path)
+
+        for link in ["example.co/campaigns/refund-car-fee", "github.com/example/repo/pull/3?tab=files#top"] {
+            let nativeURL = try #require(SessionLinkResolver.referenceURL(link, environment: [:]))
+            #expect(await SessionLinkResolver.resolve(.reference(link), context: context)?.absoluteString
+                == "https://\(link)")
+            #expect(await SessionLinkResolver.resolve(.url(nativeURL), context: context)?.absoluteString
+                == "https://\(link)")
+        }
+        #expect(await SessionLinkResolver.resolve(.reference("docs.rs/notes"), context: context) == localFile)
+        for path in ["Banyan.app/Contents/MacOS", "Sources/Banyan/Missing.swift", "main.py/x", "./example.com/x"] {
+            #expect(await SessionLinkResolver.resolve(.reference(path), context: context) == nil)
+        }
+        // A Markdown destination without a scheme is still a relative file.
+        let markdown = try #require(URL(string: "example.com/page"))
+        #expect(await SessionLinkResolver.resolve(.url(markdown), context: context) == nil)
+    }
+
     @Test func explicitURLsStayIntactAndUnsupportedSchemesDoNotOpen() async throws {
         let context = SessionLinkContext(cwd: "/tmp", environment: [:], homeDirectory: "/tmp")
         let url = try #require(URL(string: "https://example.com/TASK-123?q=a%20b#456"))
