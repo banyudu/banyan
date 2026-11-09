@@ -53,10 +53,15 @@ struct PuckComposer: View {
 
     private var field: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !session.draftImages.isEmpty {
-                PuckImageThumbnailStrip(paths: session.draftImages.map(\.path), height: 56) { index in
-                    guard session.draftImages.indices.contains(index) else { return }
-                    session.removeDraftImage(session.draftImages[index])
+            let attached = session.attachedDraftImages
+            if !attached.isEmpty {
+                PuckImageThumbnailStrip(
+                    paths: attached.map(\.image.path),
+                    labels: attached.map { "#\($0.number)" },
+                    height: 56
+                ) { index in
+                    guard attached.indices.contains(index) else { return }
+                    session.removeDraftImage(attached[index].image)
                 }
             }
             HStack(alignment: .center, spacing: 10) {
@@ -72,9 +77,10 @@ struct PuckComposer: View {
                     font: typography.nsFont,
                     focusRequest: focusRequest + localFocusRequest,
                     acceptsImages: session.acceptsImages,
+                    imageCount: session.draftImages.count,
                     onKey: handle,
                     onImageData: { session.attachImage(pngData: $0) },
-                    onImageFiles: { $0.forEach(session.attachImageFile) },
+                    onImageFiles: { $0.compactMap(session.attachImageFile) },
                     onFocusChange: { focused in isFocused = focused }
                 )
                 .help("Return to send · Shift-Return for a new line · ↑ and ↓ recall sent messages")
@@ -280,7 +286,7 @@ struct PuckComposer: View {
     // MARK: Keys
 
     private var hasContent: Bool {
-        !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.draftImages.isEmpty
+        !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func handle(_ key: PuckComposerKey) -> Bool {
@@ -327,7 +333,7 @@ struct PuckComposer: View {
     }
 
     private func submit() {
-        if let command = PuckSlashCommand.exact(session.draft), session.draftImages.isEmpty {
+        if let command = PuckSlashCommand.exact(session.draft) {
             run(command)
             return
         }
@@ -343,7 +349,7 @@ struct PuckComposer: View {
         panel.canChooseDirectories = false
         panel.message = "Choose images to attach to the next message"
         guard panel.runModal() == .OK else { return }
-        panel.urls.forEach(session.attachImageFile)
+        session.appendImageFiles(panel.urls)
         localFocusRequest += 1
     }
 
@@ -372,13 +378,19 @@ struct PuckComposer: View {
                 || session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let prompt = promptHistory.previous(currentDraft: session.draft, prompts: promptHistoryEntries)
         else { return false }
-        session.draft = prompt
+        recall(prompt)
         return true
     }
 
     private func recallNextPrompt() -> Bool {
         guard let prompt = promptHistory.next() else { return false }
-        session.draft = prompt
+        recall(prompt)
         return true
+    }
+
+    /// A recalled message comes back without its images, so attachments
+    /// left from the blank draft must not answer its placeholders.
+    private func recall(_ prompt: String) {
+        session.replaceDraft(text: prompt, images: [])
     }
 }

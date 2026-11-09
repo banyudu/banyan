@@ -23,7 +23,7 @@ struct PuckSessionDetail: View {
     /// An ask takes the keyboard only when the composer is empty, so a key
     /// meant for a half-typed message cannot answer it.
     private var askTakesFocus: Bool {
-        session.draft.isEmpty && session.draftImages.isEmpty
+        session.draft.isEmpty
     }
 
     var body: some View {

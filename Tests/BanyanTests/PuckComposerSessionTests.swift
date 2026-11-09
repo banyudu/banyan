@@ -110,20 +110,69 @@ struct PuckComposerSessionTests {
 
         session.startFollowing()
         try await waitForPuckState { session.acceptsImages }
-        session.attachImageFile(image)
-        session.attachImage(pngData: Self.pngData())
+        #expect(session.attachImageFile(image) == "[Image #1]")
+        #expect(session.attachImage(pngData: Self.pngData()) == "[Image #2]")
         #expect(session.draftImages.count == 2)
         let staged = try #require(session.draftImages.last)
         #expect(staged.isStaged && FileManager.default.fileExists(atPath: staged.path))
 
-        session.send("What changed in this screenshot?")
+        session.draft = "What changed between [Image #1] and [Image #2]?"
+        session.send(session.draft)
         #expect(session.draftImages.isEmpty)
         #expect(session.timeline.items.last?.images == [image.path, staged.path])
         try await waitForPuckState { daemon.turns.count == 1 && !session.admissionTurnInFlight }
         #expect(daemon.turns.first?.images == [image.path, staged.path])
+        #expect(daemon.turns.first?.prompt == "What changed between [Image #1] and [Image #2]?")
         try await waitForPuckState { !FileManager.default.fileExists(atPath: staged.path) }
         #expect(FileManager.default.fileExists(atPath: image.path))
         session.stopFollowing()
+    }
+
+    @Test func onlyImagesTheTextNamesAreSentRenumberedFromOne() async throws {
+        let daemon = FakePuckDaemon()
+        let idle = puckSummary(engine: "codex", cwd: FileManager.default.temporaryDirectory.path)
+        let (fixture, _, session) = try openSession(idle, daemon: daemon)
+        _ = fixture
+        session.daemonCapabilities = try puckImageCapabilities()
+
+        let labels = (0..<3).compactMap { _ in session.attachImage(pngData: Self.pngData()) }
+        #expect(labels == ["[Image #1]", "[Image #2]", "[Image #3]"])
+        let images = session.draftImages
+        session.draft = "a [Image #1] b [Image #3]"
+        #expect(session.attachedDraftImages.map(\.number) == [1, 3])
+
+        session.removeDraftImage(images[0])
+        #expect(session.draft == "a b [Image #3]")
+        #expect(session.attachedDraftImages.map(\.number) == [3])
+
+        session.send(session.draft)
+        try await waitForPuckState { daemon.turns.count == 1 && !session.admissionTurnInFlight }
+        #expect(daemon.turns.first?.prompt == "a b [Image #1]")
+        #expect(daemon.turns.first?.images == [images[2].path])
+        try await waitForPuckState {
+            images.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
+        }
+    }
+
+    @Test func editingAQueuedMessageKeepsBothMessagesImagesApart() throws {
+        let daemon = FakePuckDaemon()
+        let running = puckSummary(engine: "codex", cwd: FileManager.default.temporaryDirectory.path,
+                                  position: "running")
+        let (fixture, _, session) = try openSession(running, daemon: daemon)
+        _ = fixture
+        session.daemonCapabilities = try puckImageCapabilities()
+
+        session.attachImage(pngData: Self.pngData())
+        session.send("[Image #1] first")
+        let queued = try #require(session.queuedPrompts.first)
+        session.attachImage(pngData: Self.pngData())
+        session.draft = "[Image #1] second"
+        let draftImage = try #require(session.draftImages.first)
+
+        session.editQueuedPrompt(queued)
+        #expect(session.draft == "[Image #1] first\n\n[Image #2] second")
+        #expect(session.draftImages.map(\.id) == queued.images.map(\.id) + [draftImage.id])
+        PuckDraftImage.discardStaged(session.draftImages)
     }
 
     @Test func nativeSessionsRefuseImagesWithAReason() async throws {

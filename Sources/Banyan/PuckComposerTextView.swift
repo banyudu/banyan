@@ -13,7 +13,9 @@ enum PuckComposerKey {
 /// The Puck message field. SwiftUI's `TextField` cannot take an image
 /// paste or a file drop, and cannot insert a newline at the caret, so the
 /// field is an `NSTextView`: Return sends, Shift/Option-Return inserts a
-/// newline, and pasted or dropped images become attachments.
+/// newline, and a pasted or dropped image becomes an attachment named by an
+/// `[Image #N]` placeholder at the caret. A placeholder edits as one unit:
+/// the caret steps over it and a deletion that touches it removes all of it.
 struct PuckComposerTextView: NSViewRepresentable {
     @Binding var text: String
     /// The current text as a plain value, so SwiftUI re-measures the field
@@ -25,10 +27,13 @@ struct PuckComposerTextView: NSViewRepresentable {
     var focusRequest: Int
     var maximumLines = 8
     var acceptsImages: Bool
+    /// Attachments in the draft; placeholders up to this number are live.
+    var imageCount: Int
     /// Returns true when the key was handled.
     var onKey: (PuckComposerKey) -> Bool
-    var onImageData: (Data) -> Void
-    var onImageFiles: ([URL]) -> Void
+    /// Attach an image; returns the placeholder to insert, or nil.
+    var onImageData: (Data) -> String?
+    var onImageFiles: ([URL]) -> [String]
     var onFocusChange: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -76,7 +81,10 @@ struct PuckComposerTextView: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            // Undo steps recorded against the old text no longer apply.
+            context.coordinator.undo.removeAllActions()
         }
+        context.coordinator.highlightPlaceholders()
         if textView.font != font { textView.font = font }
         textView.placeholder = placeholder
         textView.needsDisplay = true
@@ -99,6 +107,12 @@ struct PuckComposerTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: PuckComposerTextView
         weak var textView: PuckComposerNSTextView?
+        /// The field's own undo stack, so replacing the draft from outside
+        /// (a send, a restored message) can clear it.
+        let undo = UndoManager()
+        /// What the highlight was last drawn for; SwiftUI updates the field on
+        /// every published session change, streaming included.
+        private var highlighted: (text: String, imageCount: Int)?
         private var appliedFocusRequest: Int?
         private var pendingFocus = false
 
@@ -122,6 +136,49 @@ struct PuckComposerTextView: NSViewRepresentable {
             guard let textView else { return }
             if parent.text != textView.string { parent.text = textView.string }
             textView.invalidateIntrinsicContentSize()
+            highlightPlaceholders()
+        }
+
+        func undoManager(for view: NSTextView) -> UndoManager? { undo }
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange,
+                      replacementString: String?) -> Bool {
+            guard let replacement = replacementString, !textView.hasMarkedText() else { return true }
+            let atomic = PuckImagePlaceholders.atomicRange(for: range, in: textView.string)
+            guard atomic != range else { return true }
+            // Re-enters this method with the widened range, which passes.
+            if textView.shouldChangeText(in: atomic, replacementString: replacement) {
+                textView.textStorage?.replaceCharacters(in: atomic, with: replacement)
+                textView.didChangeText()
+                textView.setSelectedRange(NSRange(location: atomic.location + (replacement as NSString).length,
+                                                  length: 0))
+            }
+            return false
+        }
+
+        func textView(_ textView: NSTextView, willChangeSelectionFromCharacterRange old: NSRange,
+                      toCharacterRange new: NSRange) -> NSRange {
+            guard !textView.hasMarkedText() else { return new }
+            return PuckImagePlaceholders.snappedSelection(new, from: old, in: textView.string)
+        }
+
+        /// Placeholders that name an attachment read as chips. Temporary
+        /// attributes leave the plain-text storage and typing style alone.
+        func highlightPlaceholders() {
+            guard let textView, let layoutManager = textView.layoutManager else { return }
+            if let highlighted, highlighted.text == textView.string, highlighted.imageCount == parent.imageCount {
+                return
+            }
+            highlighted = (textView.string, parent.imageCount)
+            let all = NSRange(location: 0, length: (textView.string as NSString).length)
+            layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: all)
+            layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: all)
+            for token in PuckImagePlaceholders.references(in: textView.string, imageCount: parent.imageCount) {
+                layoutManager.addTemporaryAttributes([
+                    .foregroundColor: NSColor.controlAccentColor,
+                    .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.14),
+                ], forCharacterRange: token.range)
+            }
         }
 
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -154,8 +211,9 @@ struct PuckComposerTextView: NSViewRepresentable {
 
         func focusChanged(_ focused: Bool) { parent.onFocusChange(focused) }
 
-        /// Images become attachments; other files are inserted as paths, as
-        /// a terminal would. Returns false to let plain text paste normally.
+        /// Images become attachments named at the caret; other files are
+        /// inserted as paths, as a terminal would. Returns false to let plain
+        /// text paste normally.
         func handle(_ pasteboard: NSPasteboard, in textView: NSTextView) -> Bool {
             let urls = (pasteboard.readObjects(
                 forClasses: [NSURL.self],
@@ -164,7 +222,7 @@ struct PuckComposerTextView: NSViewRepresentable {
             if !urls.isEmpty {
                 let images = parent.acceptsImages ? urls.filter(PuckDraftImage.isImageFile) : []
                 let others = urls.filter { !images.contains($0) }
-                if !images.isEmpty { parent.onImageFiles(images) }
+                if !images.isEmpty { insertPlaceholders(parent.onImageFiles(images), in: textView) }
                 if !others.isEmpty {
                     textView.insertText(others.map { Self.shellQuoted($0.path) }.joined(separator: " "),
                                         replacementRange: textView.selectedRange())
@@ -173,10 +231,17 @@ struct PuckComposerTextView: NSViewRepresentable {
             }
             if pasteboard.string(forType: .string) != nil { return false }
             if let png = Self.pngData(from: pasteboard) {
-                parent.onImageData(png)
+                insertPlaceholders(parent.onImageData(png).map { [$0] } ?? [], in: textView)
                 return true
             }
             return false
+        }
+
+        private func insertPlaceholders(_ labels: [String], in textView: NSTextView) {
+            guard !labels.isEmpty else { return }
+            let range = textView.selectedRange()
+            textView.insertText(PuckImagePlaceholders.insertion(of: labels, at: range, in: textView.string),
+                                replacementRange: range)
         }
 
         private static func pngData(from pasteboard: NSPasteboard) -> Data? {

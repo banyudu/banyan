@@ -3,7 +3,7 @@
   "source_directory": "packages/PuckSwift",
   "sha256": {
     "Package.swift": "795ebc208f4bf0708b1f841046f41de03cadae014c43bc1aa701bb415422961a",
-    "README.md": "1fefa989478e7898ad29e8488175165c050b4a9490d2527c020e216b0430c6aa",
+    "README.md": "2515bbda01f8128f3365cb2d51d81de727da4a8897636c80ad4bcee81e2d63f2",
     "Sources/PuckSwift/BackgroundIO.swift": "e67edd8ff4d61859c8792c1be73f236a5c1e3f4382008e538e3c57f97f63c41a",
     "Sources/PuckSwift/Client.swift": "787ea34480942f26044df9b9ffd8922ae31425b4ab79bc4c5479295589dcde84",
     "Sources/PuckSwift/Events.swift": "54e01bfd99104e0599b200207ef49f92dc8d4e78fbf994defadc4a01dde749a7",

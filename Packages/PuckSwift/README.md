@@ -32,7 +32,9 @@ items carry `toolName` and the raw call input in `arguments` when known; a Codex
 command uses `exec_command` arguments, `{"cmd", "workdir"}`.
 
 A turn may attach local images with `turn(_:prompt:images:)`; puckd copies
-each one into its own store before the engine reads it. Check
+each one into its own store before the engine reads it. The engine sees the
+images before the prompt, so a prompt names them by position: `[Image #1]` is
+the first, as in Codex's own composer. Check
 `PuckCapabilities.acceptsImages(engine:)` first: a daemon without the
 `turn_images` feature ignores the parameter. `decide(_:callID:decision:reason:)`
 passes a denial's reason to engines that show it to the model.

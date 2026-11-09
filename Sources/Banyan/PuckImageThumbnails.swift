@@ -35,6 +35,8 @@ enum PuckImageThumbnailCache {
 struct PuckImageThumbnail: View {
     let path: String
     var height: CGFloat = 96
+    /// The placeholder number the message text uses for this image.
+    var label: String?
     var onRemove: (() -> Void)?
     @State private var image: NSImage?
     @State private var missing = false
@@ -57,6 +59,18 @@ struct PuckImageThumbnail: View {
                 }
         }
         .buttonStyle(.banyanPlainLabelOnly)
+        .overlay(alignment: .bottomLeading) {
+            if let label {
+                Text(label)
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(.black.opacity(0.6), in: Capsule())
+                    .padding(4)
+                    .accessibilityHidden(true)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if let onRemove {
                 Button(action: onRemove) {
@@ -72,7 +86,8 @@ struct PuckImageThumbnail: View {
             }
         }
         .help(isFile ? (path as NSString).lastPathComponent : "Attached image")
-        .accessibilityLabel("Image \((path as NSString).lastPathComponent)")
+        .accessibilityLabel(label.map { "Image \($0), \((path as NSString).lastPathComponent)" }
+            ?? "Image \((path as NSString).lastPathComponent)")
         .task(id: path) {
             guard isFile else { missing = true; return }
             image = PuckImageThumbnailCache.cached(path)
@@ -101,6 +116,8 @@ struct PuckImageThumbnail: View {
 
 struct PuckImageThumbnailStrip: View {
     let paths: [String]
+    /// One label per path, or none.
+    var labels: [String]?
     var height: CGFloat = 96
     var onRemove: ((Int) -> Void)?
 
@@ -111,6 +128,7 @@ struct PuckImageThumbnailStrip: View {
                     PuckImageThumbnail(
                         path: path,
                         height: height,
+                        label: labels.flatMap { $0.indices.contains(index) ? $0[index] : nil },
                         onRemove: onRemove.map { remove in { remove(index) } }
                     )
                 }

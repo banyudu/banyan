@@ -392,7 +392,12 @@ struct PuckTimelineRow: View {
                         .textSelection(.enabled)
                 }
                 if !item.images.isEmpty {
-                    PuckImageThumbnailStrip(paths: item.images, height: 96)
+                    PuckImageThumbnailStrip(
+                        paths: item.images,
+                        labels: PuckImagePlaceholders.tokens(in: text).isEmpty
+                            ? nil : item.images.indices.map { "#\($0 + 1)" },
+                        height: 96
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

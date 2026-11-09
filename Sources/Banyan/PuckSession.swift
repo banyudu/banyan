@@ -495,17 +495,23 @@ final class PuckSession: BanyanSession {
 
     /// Starts a turn, or queues the message while one is busy. The first
     /// prompt names an untitled session, as it does a terminal agent.
+    /// The draft's attachments go only where its text names them, renumbered
+    /// from `[Image #1]`.
     func send(_ prompt: String) {
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let images = draftImages
-        guard !text.isEmpty || !images.isEmpty else { return }
+        let message = PuckImagePlaceholders.normalized(
+            text: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            images: draftImages
+        )
+        guard !message.text.isEmpty else { return }
         if draft == prompt { draft = "" }
         draftImages = []
+        PuckDraftImage.discardStaged(message.unused)
+        let prompt = PuckQueuedPrompt(text: message.text, images: message.images)
         if isBusyForNewTurn {
-            queuedPrompts.append(PuckQueuedPrompt(text: text, images: images))
+            queuedPrompts.append(prompt)
             return
         }
-        dispatch(PuckQueuedPrompt(text: text, images: images), restoreToDraftOnRejection: true)
+        dispatch(prompt, restoreToDraftOnRejection: true)
     }
 
     /// Hands one message to the daemon. A definite rejection puts it back
@@ -521,9 +527,8 @@ final class PuckSession: BanyanSession {
                 self.daemonError = error.localizedDescription
                 if Self.definitelyRejected(error) {
                     self.withdrawOptimisticPrompt(optimisticID)
-                    if restoreToDraftOnRejection, self.draft.isEmpty, self.draftImages.isEmpty {
-                        self.draft = prompt.text
-                        self.draftImages = prompt.images
+                    if restoreToDraftOnRejection, self.draft.isEmpty {
+                        self.replaceDraft(text: prompt.text, images: prompt.images)
                     } else if !restoreToDraftOnRejection {
                         self.queuedPrompts.insert(prompt, at: 0)
                     }

@@ -86,6 +86,7 @@ struct PuckComposerUITests {
         screenshot.setData(PuckComposerSessionTests.pngData(), forType: .png)
         #expect(coordinator.handle(screenshot, in: field))
         #expect(session.draftImages.count == 1)
+        #expect(session.draft == "[Image #1] ")
 
         let notes = fixture.project.appendingPathComponent("notes file.txt")
         try "notes".write(to: notes, atomically: true, encoding: .utf8)
@@ -94,7 +95,7 @@ struct PuckComposerUITests {
         files.clearContents()
         files.writeObjects([notes as NSURL])
         #expect(coordinator.handle(files, in: field))
-        #expect(session.draft == "'\(notes.path)'")
+        #expect(session.draft == "[Image #1] '\(notes.path)'")
         #expect(session.draftImages.count == 1)
 
         let text = NSPasteboard(name: NSPasteboard.Name("banyan-test-\(UUID().uuidString)"))
@@ -102,6 +103,45 @@ struct PuckComposerUITests {
         text.clearContents()
         text.setString("plain words", forType: .string)
         #expect(!coordinator.handle(text, in: field))
+        session.stopFollowing()
+    }
+
+    @Test func anImagePlaceholderEditsAsOneUnit() async throws {
+        let daemon = FakePuckDaemon()
+        daemon.capabilitiesResult = try puckImageCapabilities()
+        let fixture = try PuckStoreFixture(daemon: daemon)
+        let store = fixture.makeStore()
+        let summary = puckSummary(engine: "codex", cwd: fixture.project.path, position: "idle")
+        daemon.put(summary)
+        store.openListedPuckSessions([summary])
+        let session = try #require(store.sessions.first as? PuckSession)
+        let (window, field) = try await mount(session, store: store)
+        defer { window.close() }
+        try await waitForPuckState { session.acceptsImages }
+        let coordinator = try #require(field.coordinator)
+
+        field.insertText("look here", replacementRange: field.selectedRange())
+        field.setSelectedRange(NSRange(location: 5, length: 0))
+        let screenshot = NSPasteboard(name: NSPasteboard.Name("banyan-test-\(UUID().uuidString)"))
+        defer { screenshot.releaseGlobally() }
+        screenshot.clearContents()
+        screenshot.setData(PuckComposerSessionTests.pngData(), forType: .png)
+        #expect(coordinator.handle(screenshot, in: field))
+        #expect(session.draft == "look [Image #1] here")
+        #expect(session.attachedDraftImages.map(\.number) == [1])
+
+        // The caret steps over the placeholder instead of landing inside it.
+        field.setSelectedRange(NSRange(location: 15, length: 0))
+        field.setSelectedRange(NSRange(location: 12, length: 0))
+        #expect(field.selectedRange() == NSRange(location: 5, length: 0))
+
+        // Backspace at its end removes all of it.
+        field.setSelectedRange(NSRange(location: 15, length: 0))
+        field.deleteBackward(nil)
+        #expect(session.draft == "look  here")
+        #expect(session.attachedDraftImages.isEmpty)
+        #expect(session.draftImages.count == 1, "kept so undo can bring it back")
+        PuckDraftImage.discardStaged(session.draftImages)
         session.stopFollowing()
     }
 

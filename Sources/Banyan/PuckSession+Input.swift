@@ -93,30 +93,61 @@ extension PuckSession {
 
     // MARK: Attachments
 
-    func attachImage(pngData: Data) {
+    /// The attachments the draft's text names, by placeholder number. An
+    /// attachment whose placeholder was deleted stays in `draftImages`, so
+    /// undo can bring it back, but is not shown or sent.
+    var attachedDraftImages: [(number: Int, image: PuckDraftImage)] {
+        PuckImagePlaceholders.referencedNumbers(in: draft, imageCount: draftImages.count)
+            .map { ($0, draftImages[$0 - 1]) }
+    }
+
+    /// Adds an image and returns the placeholder that names it. The caller
+    /// puts the placeholder in the draft: the field inserts it at the caret.
+    @discardableResult
+    func attachImage(pngData: Data) -> String? {
         attach { try PuckDraftImage.stage(pngData: pngData) }
     }
 
-    func attachImageFile(_ url: URL) {
+    @discardableResult
+    func attachImageFile(_ url: URL) -> String? {
         attach { try PuckDraftImage.file(url) }
     }
 
-    private func attach(_ make: () throws -> PuckDraftImage) {
+    /// Images chosen outside the field are named at the end of the draft.
+    func appendImageFiles(_ urls: [URL]) {
+        let labels = urls.compactMap(attachImageFile)
+        guard !labels.isEmpty else { return }
+        let end = NSRange(location: (draft as NSString).length, length: 0)
+        draft += PuckImagePlaceholders.insertion(of: labels, at: end, in: draft)
+    }
+
+    private func attach(_ make: () throws -> PuckDraftImage) -> String? {
         guard acceptsImages else {
             daemonError = PuckImageAttachmentError.unsupported.localizedDescription
-            return
+            return nil
         }
         do {
             draftImages.append(try make())
             daemonError = nil
+            return PuckImagePlaceholders.label(draftImages.count)
         } catch {
             daemonError = error.localizedDescription
+            return nil
         }
     }
 
+    /// Removing an image deletes its placeholders from the draft.
     func removeDraftImage(_ image: PuckDraftImage) {
-        draftImages.removeAll { $0.id == image.id }
-        PuckDraftImage.discardStaged([image])
+        guard let index = draftImages.firstIndex(where: { $0.id == image.id }) else { return }
+        draft = PuckImagePlaceholders.removing(index + 1, from: draft)
+    }
+
+    /// Replaces the whole draft, discarding staged images it no longer holds.
+    func replaceDraft(text: String, images: [PuckDraftImage]) {
+        let kept = Set(images.map(\.id))
+        PuckDraftImage.discardStaged(draftImages.filter { !kept.contains($0.id) })
+        draft = text
+        draftImages = images
     }
 
     // MARK: Queue
@@ -130,8 +161,9 @@ extension PuckSession {
     func editQueuedPrompt(_ prompt: PuckQueuedPrompt) {
         guard queuedPrompts.contains(where: { $0.id == prompt.id }) else { return }
         queuedPrompts.removeAll { $0.id == prompt.id }
-        draft = [prompt.text, draft].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        draftImages = prompt.images + draftImages
+        let merged = PuckImagePlaceholders.merged([(prompt.text, prompt.images), (draft, draftImages)])
+        draft = merged.text
+        draftImages = merged.images
     }
 
     /// Sends the next queued message once the daemon would take a turn. A
@@ -144,8 +176,9 @@ extension PuckSession {
             restoreQueueOnStop = false
             let queued = queuedPrompts
             queuedPrompts = []
-            draft = (queued.map(\.text) + [draft]).filter { !$0.isEmpty }.joined(separator: "\n\n")
-            draftImages = queued.flatMap(\.images) + draftImages
+            let merged = PuckImagePlaceholders.merged(queued.map { ($0.text, $0.images) } + [(draft, draftImages)])
+            draft = merged.text
+            draftImages = merged.images
             return
         }
         let next = queuedPrompts.removeFirst()
