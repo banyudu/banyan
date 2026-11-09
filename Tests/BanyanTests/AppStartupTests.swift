@@ -13,6 +13,7 @@ struct AppStartupTests {
         let ownerStore = ownerFixture.makeStore()
         defer { ownerFixture.stop(ownerStore) }
         ownerStore.startRuntimeIfNeeded()
+        try await ownerFixture.waitForLaunches(ownerStore)
         let owner = try #require(ownerFixture.server)
         try await waitForPuckState { owner.listeningPort != nil }
         let port = NWEndpoint.Port(rawValue: try #require(owner.listeningPort))!
@@ -114,6 +115,7 @@ struct AppStartupTests {
         let launch = Notification(name: NSApplication.willFinishLaunchingNotification)
 
         delegate.applicationWillFinishLaunching(launch)
+        try await fixture.waitForLaunches(store)
 
         let session = try #require(store.sessions.first)
         #expect(store.sessions.count == 1)
@@ -162,6 +164,13 @@ private final class StartupFixture {
                            socketName: "banyan-startup-test-\(UUID().uuidString)")
     }
 
+    deinit {
+        // Each fixture owns its server; left running, it outlives `swift test`.
+        tmux.killPrivateTestServer()
+        killFixtureProcesses(namingPath: home)
+        try? FileManager.default.removeItem(at: home)
+    }
+
     func makeStore() -> SessionStore {
         SessionStore(
             persistence: persistence, tmuxBackend: tmux, sessionBackend: tmux,
@@ -192,6 +201,13 @@ private final class StartupFixture {
         let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let payload = try #require(json["data"] as? [String: Any])
         return try #require(payload["sessions"] as? [[String: Any]])
+    }
+
+    /// Spawns create their tmux session off the main actor. One still in flight
+    /// when the test ends restarts the server teardown just killed, and nothing
+    /// is left to remove the session it creates.
+    func waitForLaunches(_ store: SessionStore) async throws {
+        try await waitForPuckState { store.terminalSessions.allSatisfy { !$0.backingLaunchInFlight } }
     }
 
     func stop(_ store: SessionStore) {

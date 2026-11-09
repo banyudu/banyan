@@ -615,8 +615,13 @@ private struct DeepSuspendFixture {
                 + AgentLaunchCommand.shellQuote(backgroundCommand) + " background shell &!\nfi\n"
             try script.write(to: fixture.home.appendingPathComponent(".zprofile"), atomically: true, encoding: .utf8)
         }
-        backend = TmuxBackend(environment: environment, workingDirectory: fixture.project.path,
+        let backend = TmuxBackend(environment: environment, workingDirectory: fixture.project.path,
             socketName: "banyan-deep-test-\(UUID().uuidString)")
+        self.backend = backend
+        // A throw below skips the test's `defer { cleanup() }`.
+        let root = fixture.root
+        var isReady = false
+        defer { if !isReady { Self.reap(backend: backend, root: root) } }
         let history = SyntheticDeepHistory(transcript: transcript, provider: provider, id: diskID, cwd: fixture.project.path)
         let preferences = try #require(UserDefaults(suiteName: backend.socketName))
         preferences.set(admissionLimit, forKey: AgentAdmissionController.defaultsKey)
@@ -648,6 +653,14 @@ private struct DeepSuspendFixture {
         session.status = .idle
         session.lastFreezeInteractionAt = .distantPast
         try await Task.sleep(for: .seconds(2.1))
+        isReady = true
+    }
+
+    /// The private server goes first so no pane respawns what is killed next.
+    private static func reap(backend: TmuxBackend, root: URL) {
+        backend.killPrivateTestServer()
+        killFixtureProcesses(namingPath: root)
+        try? FileManager.default.removeItem(at: root)
     }
 
     func currentAgentPID() -> Int32? {
@@ -684,7 +697,7 @@ private struct DeepSuspendFixture {
             _ = kill(background.pid, SIGKILL)
         }
         store.freezePreferences.removePersistentDomain(forName: backend.socketName)
-        try? FileManager.default.removeItem(at: fixture.root)
+        Self.reap(backend: backend, root: fixture.root)
     }
 
     private static let script = #"""
