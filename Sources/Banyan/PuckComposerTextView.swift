@@ -95,13 +95,31 @@ struct PuckComposerTextView: NSViewRepresentable {
         guard let textView = context.coordinator.textView,
               let layoutManager = textView.layoutManager,
               let container = textView.textContainer else { return nil }
-        let width = max(proposal.width ?? 320, 40)
-        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        let widths = Self.widths(proposed: proposal.width ?? 0, actual: nsView.frame.width)
+        if container.containerSize.width != widths.measure {
+            container.containerSize = NSSize(width: widths.measure, height: .greatestFiniteMagnitude)
+        }
         layoutManager.ensureLayout(for: container)
         let lineHeight = layoutManager.defaultLineHeight(for: font)
         let used = layoutManager.usedRect(for: container).height
         let height = min(max(used, lineHeight), lineHeight * CGFloat(maximumLines))
-        return CGSize(width: width, height: ceil(height))
+        return CGSize(width: widths.report, height: ceil(height))
+    }
+
+    /// Widths to measure the field at and to report back to SwiftUI.
+    ///
+    /// SwiftUI probes the field with an infinite or zero width, meaning
+    /// "whatever fits", and with small widths while it looks for an ideal
+    /// size. Measuring at a probe width rewraps the live text and resizes the
+    /// text view, so the next pass measures a different height and rewraps
+    /// again. The layout never settles and AppKit aborts the window once it
+    /// has run more constraint passes than it has views. Measure at the width
+    /// the field actually has, and let the next pass correct the height after
+    /// SwiftUI lays the field out at its real width.
+    static func widths(proposed: CGFloat, actual: CGFloat) -> (measure: CGFloat, report: CGFloat) {
+        let measure = actual >= 40 ? actual : (proposed.isFinite && proposed >= 40 ? proposed : 320)
+        let report = proposed.isFinite && proposed >= 40 ? proposed : measure
+        return (measure: measure, report: report)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
