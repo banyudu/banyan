@@ -106,6 +106,18 @@ public enum AgentProviderIdentity {
         })
     }
 
+    /// The dormant `wait` helper this pane's adapter keeps under its agent. Claude
+    /// renews it every nine minutes for the whole session, so status supervision
+    /// treats it as plumbing, like an MCP server, not a command in flight. The
+    /// bridge directory names the pane's own root, so an unrelated child with the
+    /// same verb still counts as work; freezing keeps `ownedWaitHelpers`' checks.
+    static func isWaitHelper(_ process: ProcessInfoRow, paneRootPID: Int) -> Bool {
+        let argv = process.argumentVector
+            ?? process.arguments.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !process.isExited, argv.count >= 4, argv[1] == helper, argv[2] == "wait" else { return false }
+        return (argv[3] as NSString).lastPathComponent.hasPrefix("banyan-provider-\(getuid())-\(paneRootPID)-")
+    }
+
     /// Helper invoked by Claude's supported process API once, at plugin load.
     /// Walk kernel ancestry rather than trusting a PID from provider JSON.
     public static func owningProviderPID() throws -> Int32 {

@@ -152,7 +152,7 @@ public struct AgentSupervisor: Sendable {
         // an `opencode` child of the shell). Do not count that representation
         // twice, but do count the pane's agent when a different agent appears
         // below it.
-        let helperPIDs = Self.agentHelperPIDs(in: descendants)
+        let helperPIDs = Self.agentHelperPIDs(in: descendants, paneRootPID: pane.rootPID)
         let agentCandidates = descendants.filter { !helperPIDs.contains($0.pid) }
         let rootAgentProvider = CodingAgentProvider.detect(in: pane.currentCommand)
         let rootAgentProcessCount = if let rootAgentProvider,
@@ -342,7 +342,7 @@ public struct AgentSupervisor: Sendable {
     /// session to `.executing` and hide idle-only affordances like the handoff
     /// button. We match them by name rather than by "any non-shell child" so a
     /// real foreground command the agent runs directly is still seen as work.
-    static func agentHelperPIDs(in descendants: [ProcessInfoRow]) -> Set<Int> {
+    static func agentHelperPIDs(in descendants: [ProcessInfoRow], paneRootPID: Int) -> Set<Int> {
         let agentPIDs = Set(descendants.filter(\.isSupportedAgent).map(\.pid))
         guard !agentPIDs.isEmpty else { return [] }
         let runtimeHelperPIDs = Set(descendants.filter(\.isCodexRuntimeHelper).map(\.pid))
@@ -358,6 +358,8 @@ public struct AgentSupervisor: Sendable {
                         // across turns. Only that server subtree is plumbing:
                         // real CLI agents/commands launched by the runtime count.
                         || (runtimeHelperPIDs.contains(process.parentPID) && process.isCodexServer(subcommand: "app-server"))
+                        // Banyan's own provider-identity bridge sleeps here between queries.
+                        || (agentPIDs.contains(process.parentPID) && AgentProviderIdentity.isWaitHelper(process, paneRootPID: paneRootPID))
                 }
                 .map(\.pid)
         )
