@@ -428,10 +428,17 @@ final class PuckSession: BanyanSession {
         let id = self.id
         followTask = Task { [weak self] in
             var delay: UInt64 = 1
+            var reattaching = false
             while !Task.isCancelled {
                 do {
                     for try await update in daemon.follow(id) {
                         guard let self, self.followGeneration == generation, !Task.isCancelled else { return }
+                        if reattaching {
+                            // The daemon that answered may be a new build
+                            // (a local deploy restarts it), with new features.
+                            reattaching = false
+                            self.refreshDaemonCapabilities()
+                        }
                         self.receive(update)
                         delay = 1
                     }
@@ -447,6 +454,7 @@ final class PuckSession: BanyanSession {
                 catch { return }
                 guard self.followGeneration == generation else { return }
                 self.followState = .connecting
+                reattaching = true
                 delay = min(delay * 2, 30)
             }
         }

@@ -175,6 +175,22 @@ struct PuckComposerSessionTests {
         PuckDraftImage.discardStaged(session.draftImages)
     }
 
+    @Test func reconnectingAfterADaemonRestartPicksUpItsNewCapabilities() async throws {
+        let daemon = FakePuckDaemon()
+        let idle = puckSummary(engine: "codex", cwd: FileManager.default.temporaryDirectory.path)
+        let (fixture, _, session) = try openSession(idle, daemon: daemon)
+        _ = fixture
+
+        session.startFollowing()
+        try await waitForPuckState { daemon.isFollowed(idle.id) && daemon.capabilitiesRequested == 1 }
+        #expect(!session.acceptsImages, "the old daemon reports no image input")
+
+        daemon.capabilitiesResult = try puckImageCapabilities()
+        daemon.dropFollowers()
+        try await waitForPuckState { session.acceptsImages }
+        session.stopFollowing()
+    }
+
     @Test func nativeSessionsRefuseImagesWithAReason() async throws {
         let daemon = FakePuckDaemon()
         daemon.capabilitiesResult = try puckImageCapabilities()

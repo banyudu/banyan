@@ -34,6 +34,7 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
     private var recordedReasons: [String?] = []
     private var recordedCompactions: [String] = []
     private var reportedCapabilities: PuckCapabilities?
+    private var capabilityRequests = 0
     private var recordedAnswers: [[PuckQuestionSelection]] = []
     private var reachable = true
     private var turnGate: DispatchSemaphore?
@@ -76,6 +77,7 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
         get { locked { reportedCapabilities } }
         set { locked { reportedCapabilities = newValue } }
     }
+    var capabilitiesRequested: Int { locked { capabilityRequests } }
     var answers: [[PuckQuestionSelection]] { locked { recordedAnswers } }
 
     var isReachable: Bool {
@@ -272,7 +274,11 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
     }
 
     func capabilities() throws -> PuckCapabilities {
-        guard let capabilities = locked({ reportedCapabilities }) else {
+        let reported: PuckCapabilities? = locked {
+            capabilityRequests += 1
+            return reportedCapabilities
+        }
+        guard let capabilities = reported else {
             throw PuckDaemonError.rejected("fake puckd reports no capabilities")
         }
         return capabilities
@@ -321,6 +327,14 @@ final class FakePuckDaemon: PuckDaemonService, PuckRecentHistoryReading, @unchec
 
     func publishWatch(_ update: PuckDaemonWatchUpdate) {
         for observer in locked({ watchers }) { observer.continuation.yield(update) }
+    }
+
+    /// Ends every follow stream, as a daemon restart does.
+    func dropFollowers() {
+        let continuations = locked { followers.values.map { $0 } }
+        for continuation in continuations {
+            continuation.finish(throwing: PuckDaemonError.unavailable("fake puckd restarted"))
+        }
     }
 
     func dropWatchers() {
