@@ -258,6 +258,11 @@ public struct TmuxBackend: Sendable, TmuxClientBackend, TmuxSessionStoreBackend,
         return (try? run(["capture-pane", "-p", "-J", "-t", paneID, "-S", start])) ?? ""
     }
 
+    public func captureStyledVisibleText(paneID: String, lineLimit: Int) -> String {
+        let start = "-\(max(1, lineLimit))"
+        return (try? run(["capture-pane", "-e", "-p", "-J", "-t", paneID, "-S", start])) ?? ""
+    }
+
     public func captureCurrentVisibleText(paneID: String) -> String {
         (try? run(["capture-pane", "-p", "-J", "-t", paneID])) ?? ""
     }

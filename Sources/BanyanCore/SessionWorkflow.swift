@@ -118,23 +118,33 @@ public enum SessionWorkflowPolicy {
 
     /// Used turns are need-input in the process supervisor. Require an empty
     /// native input row; never infer readiness merely from a quiet process.
+    ///
+    /// `text` may be a styled capture (`capture-pane -e`): faint placeholder or
+    /// prompt-suggestion text inside Claude's input box then counts as empty.
     public static func hasEmptyInput(_ text: String) -> Bool {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let capture = TerminalStyledCapture(text)
+        let lines = capture.rows.map { $0.text.trimmingCharacters(in: .whitespaces) }
         if let index = lines.indices.last(where: { lines[$0].hasPrefix("›") || lines[$0].hasPrefix("❯") }) {
             let isCodexComposer = lines[index].hasPrefix("›")
             let draft = lines[index].dropFirst().trimmingCharacters(in: .whitespaces)
-            guard index >= max(0, lines.count - 12),
-                  draft.isEmpty || (isCodexComposer && draft == "Ask Codex to do anything") else { return false }
+            // Inline TUIs leave blank rows below their output when the pane is
+            // taller than the content; only drawn rows count toward the window.
+            let drawnRows = (lines.lastIndex(where: { !$0.isEmpty }) ?? 0) + 1
+            guard index >= max(0, drawnRows - 12) else { return false }
+            if !isCodexComposer, isClaudeInputBox(lines, composer: index) {
+                return isGhostOrEmpty(capture.rows[index].solidText)
+                    && isClaudeFooter(lines.dropFirst(index + 2))
+            }
+            guard draft.isEmpty || (isCodexComposer && draft == "Ask Codex to do anything") else { return false }
             return lines.dropFirst(index + 1).allSatisfy {
                 // Footer-shaped rows must match the known layout, or a clipped
                 // prefix that still identifies the footer. Arbitrary overlay
                 // text is not allowed.
-                if isCodexComposer && $0.contains(" · ") && !$0.hasPrefix("? for shortcuts") {
-                    return isCompleteCodexFooter($0) || isClippedCodexFooter($0)
+                let row = isCodexComposer ? withoutCodexAgentsHint($0) : $0
+                if isCodexComposer && row.contains(" · ") && !row.hasPrefix("? for shortcuts") {
+                    return isCompleteCodexFooter(row) || isClippedCodexFooter(row)
                 }
-                return $0.isEmpty || $0.contains("for shortcuts") || $0.contains("context left")
-                    || $0.contains("shift+tab to cycle") || $0.contains("ctrl+t to hide")
+                return isKnownHintRow(row)
             }
         }
         // OpenCode's input block ends with its model/footer line. A draft,
@@ -144,6 +154,49 @@ public enum SessionWorkflowPolicy {
         return block.count >= 2 && block.contains("") && block.allSatisfy {
             $0.isEmpty || $0.hasPrefix("Ask anything...") || ($0.contains(" · ") && !$0.contains("?"))
         }
+    }
+
+    private static func isKnownHintRow(_ row: String) -> Bool {
+        row.isEmpty || row.contains("for shortcuts") || row.contains("context left")
+            || row.contains("shift+tab to cycle") || row.contains("ctrl+t to hide")
+    }
+
+    /// Claude draws its input row between two horizontal rules. Dialogs and
+    /// pickers also mark a row with ❯, but never between rules, and a multi-line
+    /// draft pushes the bottom rule away from the ❯ row.
+    private static func isClaudeInputBox(_ lines: [String], composer index: Int) -> Bool {
+        func isRule(_ position: Int) -> Bool {
+            lines.indices.contains(position) && !lines[position].isEmpty && lines[position].allSatisfy { $0 == "─" }
+        }
+        return isRule(index - 1) && isRule(index + 1)
+    }
+
+    /// Only faint text may follow the prompt glyph: a placeholder or a
+    /// suggestion, which the first typed character replaces. Plain captures
+    /// carry no styling, so any text there still counts as a draft.
+    private static func isGhostOrEmpty(_ solidRow: String) -> Bool {
+        var row = solidRow.trimmingCharacters(in: .whitespaces)
+        if row.hasPrefix("❯") { row = String(row.dropFirst()).trimmingCharacters(in: .whitespaces) }
+        return row.isEmpty
+    }
+
+    /// Below the rule Claude may print a user-configured status line before its
+    /// mode/shortcut hint row. The status line is free text, so it is accepted
+    /// only above a recognised hint row; nothing but blank rows may follow it.
+    private static func isClaudeFooter(_ rows: ArraySlice<String>) -> Bool {
+        guard let hint = rows.lastIndex(where: { !$0.isEmpty }) else { return true }
+        guard isKnownHintRow(rows[hint]) else { return false }
+        return rows[rows.startIndex..<hint].filter { !isKnownHintRow($0) }.count <= maxClaudeStatusLineRows
+    }
+
+    private static let maxClaudeStatusLineRows = 3
+
+    /// Codex prefixes its empty-composer shortcut hint with the agents key
+    /// (`← for agents · ? for shortcuts`).
+    private static func withoutCodexAgentsHint(_ row: String) -> String {
+        guard let range = row.range(of: #"\A\S{1,4} for agents · (?=\? for shortcuts)"#, options: .regularExpression)
+        else { return row }
+        return String(row[range.upperBound...])
     }
 
     private static func isCompleteCodexFooter(_ line: String) -> Bool {

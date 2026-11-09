@@ -115,6 +115,10 @@ extension SessionStore {
             try await resumeWorkflowConversation(terminal, workflow: workflow, wakeID: wakeID, text: text, observedPane: pane, coordination: coordination)
         case .present(let snapshot):
             let reading = try await readPaneOutput(id: id, lines: nil)
+            // Styling separates a faint prompt suggestion from a typed draft.
+            let styledText = await Task.detached {
+                backend.captureStyledVisibleText(paneID: snapshot.paneID, lineLimit: AgentSupervisor.captureLineLimit)
+            }.value
             let table = processTable
             let agentIdentity = await Task.detached {
                 let agents = AgentDeepSuspend.deepestProviderProcesses(in: table.snapshot().descendants(of: snapshot.rootPID))
@@ -126,7 +130,7 @@ extension SessionStore {
                     isFrozen: terminal.isFrozen, isDeepSuspended: terminal.isDeepSuspended,
                     hasObservation: reading.observation != nil, isAgent: reading.observation?.provider != nil,
                     hasHumanPrompt: reading.prompt != nil,
-                    hasEmptyInput: SessionWorkflowPolicy.hasEmptyInput(reading.visibleText)),
+                    hasEmptyInput: SessionWorkflowPolicy.hasEmptyInput(styledText)),
                   !snapshot.isInMode, let agentIdentity else { throw WorkflowError.refused("agent is busy, unobserved, or awaiting human input") }
             try recordWorkflowWake(terminal, workflow: workflow, id: wakeID, status: .pending, coordination: coordination)
             do {
@@ -137,6 +141,8 @@ extension SessionStore {
                           current.paneID == snapshot.paneID, current.rootPID == snapshot.rootPID,
                           current.lastActivityAt == snapshot.lastActivityAt, !current.isDead, !current.isInMode,
                           backend.captureVisibleText(paneID: snapshot.paneID, lineLimit: AgentSupervisor.captureLineLimit) == reading.visibleText,
+                          // Accepting a suggestion (Tab) keeps the text but drops the faint style.
+                          backend.captureStyledVisibleText(paneID: snapshot.paneID, lineLimit: AgentSupervisor.captureLineLimit) == styledText,
                           AgentProcessSample.presence(of: agentIdentity) == .alive else {
                         throw WorkflowError.notDelivered("pane changed before input")
                     }

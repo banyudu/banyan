@@ -66,9 +66,18 @@ public protocol TmuxSessionBackend: TmuxSessionLookupBackend {
     /// test and alternate backends source-compatible.
     func primaryPaneSnapshots(named names: Set<String>) -> [String: TmuxPaneSnapshot]
     func captureVisibleText(paneID: String, lineLimit: Int) -> String
+    /// Same rows with SGR/OSC escapes (`capture-pane -e`), for decisions that
+    /// depend on how text is drawn rather than only what it says.
+    func captureStyledVisibleText(paneID: String, lineLimit: Int) -> String
 }
 
 public extension TmuxSessionBackend {
+    /// Backends without styling return plain text, which every styled reader
+    /// treats as fully drawn: the conservative interpretation.
+    func captureStyledVisibleText(paneID: String, lineLimit: Int) -> String {
+        captureVisibleText(paneID: paneID, lineLimit: lineLimit)
+    }
+
     func agentAdmissionPane(named name: String) -> AgentAdmissionPaneInspection {
         if let pane = primaryPaneSnapshot(named: name) { return .present(pane) }
         // Legacy Bool/optional lookups conflate absence with command failure.
