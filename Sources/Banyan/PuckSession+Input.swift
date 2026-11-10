@@ -53,13 +53,11 @@ struct PuckDraftImage: Identifiable, Equatable, Sendable {
 enum PuckImageAttachmentError: LocalizedError {
     case tooLarge
     case notAnImage(String)
-    case unsupported
 
     var errorDescription: String? {
         switch self {
         case .tooLarge: "Images must be 20 MB or smaller."
         case .notAnImage(let name): "\(name) is not an image."
-        case .unsupported: "This session can't take images. Image input needs an updated puckd and a Codex-engine session."
         }
     }
 }
@@ -75,6 +73,38 @@ extension PuckSession {
     /// daemon has reported its capabilities.
     var acceptsImages: Bool {
         daemonCapabilities?.acceptsImages(engine: engine) ?? false
+    }
+
+    /// Why `attach` refuses an image, naming the daemon or engine that limits
+    /// it. Capabilities arrive asynchronously, so "not loaded yet" must not
+    /// read as "puckd is outdated"; a native engine and an old puckd fail for
+    /// different reasons and need different fixes.
+    var imageInputUnavailableReason: String {
+        guard let capabilities = daemonCapabilities else {
+            return "Banyan hasn't received puckd's image capabilities yet. Reconnect this session, or update and restart puckd, then try again."
+        }
+        guard capabilities.features.contains("turn_images") else {
+            return "This puckd version can't take images. Update and restart puckd, then try again."
+        }
+        guard let engineCapabilities = capabilities.engineCapabilities?.first(where: { $0.engine.rawValue == engine }) else {
+            return "puckd doesn't report image input for the \(engine) engine. Update and restart puckd, or start a Codex-engine session."
+        }
+        guard engineCapabilities.imageInput == true else {
+            if engine == "codex" {
+                return "This puckd version can't take images for Codex sessions. Update and restart puckd, then try again."
+            }
+            return "This \(providerLabel) session runs the native engine, which can't take images. Start a Codex-engine session to paste images."
+        }
+        return "This session can't take images."
+    }
+
+    private var providerLabel: String {
+        switch binding.provider {
+        case "opencode-go": "OpenCode Go"
+        case "anthropic": "Anthropic"
+        case "gemini": "Gemini"
+        default: binding.provider
+        }
     }
 
     /// A new message waits in the queue rather than starting a turn now.
@@ -123,7 +153,7 @@ extension PuckSession {
 
     private func attach(_ make: () throws -> PuckDraftImage) -> String? {
         guard acceptsImages else {
-            daemonError = PuckImageAttachmentError.unsupported.localizedDescription
+            daemonError = imageInputUnavailableReason
             return nil
         }
         do {

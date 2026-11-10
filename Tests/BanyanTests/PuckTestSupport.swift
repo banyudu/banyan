@@ -560,18 +560,21 @@ extension SessionStore {
     }
 }
 
-/// Capabilities of a daemon that takes images on the Codex engine.
-func puckImageCapabilities() throws -> PuckCapabilities {
+/// Capabilities of a daemon that takes images on the Codex engine. The knobs
+/// model an older daemon (no `turn_images` feature) and per-engine limits.
+func puckImageCapabilities(turnImages: Bool = true,
+                           codexImageInput: Bool = true,
+                           nativeImageInput: Bool = false) throws -> PuckCapabilities {
     let object: [String: Any] = [
         "protocol": ["major": 2, "minor": 3], "engines": ["codex", "native"], "default_engine": "codex",
-        "features": ["paged_history", "turn_images"],
+        "features": turnImages ? ["paged_history", "turn_images"] : ["paged_history"],
         "engine_capabilities": [
             ["engine": "codex", "owns_coding_loop": true, "replaces_builtin_tools": false,
              "exact_parked_recovery": false, "paged_history": "engine history",
-             "adding_custom_tools": false, "image_input": true],
+             "adding_custom_tools": false, "image_input": codexImageInput],
             ["engine": "native", "owns_coding_loop": false, "replaces_builtin_tools": true,
              "exact_parked_recovery": true, "paged_history": "native history",
-             "adding_custom_tools": true, "image_input": false],
+             "adding_custom_tools": true, "image_input": nativeImageInput],
         ],
     ]
     return try JSONDecoder().decode(PuckCapabilities.self, from: JSONSerialization.data(withJSONObject: object))

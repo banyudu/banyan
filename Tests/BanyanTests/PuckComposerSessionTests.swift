@@ -191,10 +191,11 @@ struct PuckComposerSessionTests {
         session.stopFollowing()
     }
 
-    @Test func nativeSessionsRefuseImagesWithAReason() async throws {
+    @Test func nativeSessionsRefuseImagesWithAnEngineReason() async throws {
         let daemon = FakePuckDaemon()
         daemon.capabilitiesResult = try puckImageCapabilities()
-        let idle = puckSummary(engine: "native", cwd: FileManager.default.temporaryDirectory.path)
+        let idle = puckSummary(engine: "native", provider: "opencode-go",
+                               cwd: FileManager.default.temporaryDirectory.path)
         let (fixture, _, session) = try openSession(idle, daemon: daemon)
         _ = fixture
 
@@ -202,8 +203,62 @@ struct PuckComposerSessionTests {
         try await waitForPuckState { session.daemonCapabilities != nil }
         session.attachImage(pngData: Self.pngData())
         #expect(session.draftImages.isEmpty)
-        #expect(session.daemonError?.contains("Codex-engine") == true)
+        let reason = try #require(session.daemonError)
+        #expect(reason.contains("OpenCode Go"))
+        #expect(reason.contains("native engine"))
+        #expect(reason.contains("Codex-engine session"))
+        // A current puckd is not the problem here; saying so would send the
+        // user looking for an update that does not exist.
+        #expect(!reason.contains("updated puckd"))
         session.stopFollowing()
+    }
+
+    @Test func anOlderPuckdRefusesImagesWithAnUpdateReason() async throws {
+        let daemon = FakePuckDaemon()
+        daemon.capabilitiesResult = try puckImageCapabilities(turnImages: false)
+        let idle = puckSummary(engine: "codex", cwd: FileManager.default.temporaryDirectory.path)
+        let (fixture, _, session) = try openSession(idle, daemon: daemon)
+        _ = fixture
+
+        session.startFollowing()
+        try await waitForPuckState { session.daemonCapabilities != nil }
+        session.attachImage(pngData: Self.pngData())
+        #expect(session.draftImages.isEmpty)
+        #expect(session.daemonError?.contains("Update and restart puckd") == true)
+        #expect(session.daemonError?.contains("Codex-engine session") == false)
+        session.stopFollowing()
+    }
+
+    @Test func aCodexSessionWithoutImageInputAsksForAPuckdUpdate() async throws {
+        let daemon = FakePuckDaemon()
+        daemon.capabilitiesResult = try puckImageCapabilities(codexImageInput: false)
+        let idle = puckSummary(engine: "codex", cwd: FileManager.default.temporaryDirectory.path)
+        let (fixture, _, session) = try openSession(idle, daemon: daemon)
+        _ = fixture
+
+        session.startFollowing()
+        try await waitForPuckState { session.daemonCapabilities != nil }
+        session.attachImage(pngData: Self.pngData())
+        #expect(session.draftImages.isEmpty)
+        #expect(session.daemonError?.contains("Update and restart puckd") == true)
+        #expect(session.daemonError?.contains("Codex sessions") == true)
+        session.stopFollowing()
+    }
+
+    @Test func unknownCapabilitiesAskToReconnectRatherThanToUpdate() throws {
+        let daemon = FakePuckDaemon()
+        let idle = puckSummary(engine: "codex", cwd: FileManager.default.temporaryDirectory.path)
+        let (fixture, _, session) = try openSession(idle, daemon: daemon)
+        _ = fixture
+
+        // Capabilities have not arrived yet: this is not proof that puckd is
+        // outdated, so the message must not send the user to update it.
+        session.attachImage(pngData: Self.pngData())
+        #expect(session.draftImages.isEmpty)
+        let reason = try #require(session.daemonError)
+        #expect(reason.contains("hasn't received puckd's image capabilities"))
+        #expect(reason.contains("Reconnect"))
+        #expect(!reason.contains("Update and restart puckd"))
     }
 
     @Test func compactRunsInPuckdAndReportsWhenItSettles() async throws {
