@@ -121,6 +121,55 @@ import Testing
     }
 }
 
+extension StartupResumeRecoveryTests {
+    /// A wrapper (`my-claude`, ending in `exec claude "$@"`) names no provider,
+    /// so launch recovery used to skip it and Recover failed without a word.
+    @Test func launchRecoversAClaudeWrapperThroughTheWrapperWhenItsTranscriptExists() throws {
+        let fixture = try PuckStoreFixture(daemon: FakePuckDaemon())
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let backend = StartupResumeTestBackend()
+        let now = Date()
+        let savedID = "00000000-0000-4000-8000-000000000007"
+        let unknownID = "00000000-0000-4000-8000-000000000008"
+        let projectName = String(fixture.project.path.map { $0.isLetter || $0.isNumber ? $0 : "-" })
+        let transcripts = fixture.home.appendingPathComponent(".claude/projects/\(projectName)")
+        try FileManager.default.createDirectory(at: transcripts, withIntermediateDirectories: true)
+        try Data("{}\n".utf8).write(to: transcripts.appendingPathComponent("\(savedID).jsonl"))
+        fixture.persistence.save([
+            SessionSnapshot(
+                id: "wrapped", tmuxSessionName: "banyan-wrapped", title: "Wrapped Claude",
+                reportedTitle: nil, cwd: fixture.project.path, command: "my-claude",
+                status: .needInput, tone: .purple, agentSessionID: savedID, createdAt: now, updatedAt: now
+            ),
+            SessionSnapshot(
+                id: "unproven", tmuxSessionName: "banyan-unproven", title: "Unproven wrapper",
+                reportedTitle: nil, cwd: fixture.project.path, command: "my-claude",
+                status: .needInput, tone: .purple, agentSessionID: unknownID, createdAt: now, updatedAt: now
+            )
+        ])
+
+        let store = fixture.makeStore(
+            historyBackend: DefaultSessionHistoryBackend(homeDirectory: fixture.home),
+            tmuxBackend: backend,
+            sessionBackend: backend
+        )
+        defer { store.flushPendingSessionSaves() }
+        store.loadPersistedSessionsIfNeeded()
+        #expect(store.autoRecoverRestoredAgentSessionsIfNeeded() == ["wrapped"])
+
+        let wrapped = try #require(store.sessions.first { $0.id == "wrapped" } as? TerminalSession)
+        #expect(wrapped.command == "'my-claude' '--resume' '\(savedID)'")
+        #expect(!wrapped.needsRecovery)
+
+        // Without a Claude transcript nothing says the wrapper ran Claude. The
+        // row stays for manual recovery, and Recover now says why it refused.
+        let unproven = try #require(store.sessions.first { $0.id == "unproven" } as? TerminalSession)
+        #expect(unproven.needsRecovery && unproven.command == "my-claude")
+        #expect(throws: (any Error).self) { try store.recover(id: "unproven") }
+        #expect(store.historyResumeError(id: "unproven")?.contains("provider is unresolved") == true)
+    }
+}
+
 private final class StartupResumeTestBackend: TmuxSessionStoreBackend, TmuxClientBackend, @unchecked Sendable {
     var launched: [String] = []
     var launchedNames: [String] = []

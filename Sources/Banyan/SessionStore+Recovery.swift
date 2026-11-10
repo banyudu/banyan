@@ -141,6 +141,7 @@ extension SessionStore {
         for session in terminalSessions where session.needsRecovery
             && !session.isImportedHistory
             && !session.isSuspended {
+            resolveProviderFromTranscriptIfNeeded(session)
             guard SessionRecoveryPolicy.allowsAutomaticBackendRecovery(
                 status: session.status,
                 provider: session.agentProvider,
@@ -160,6 +161,20 @@ extension SessionStore {
             }
         }
         return recoveredIDs
+    }
+
+    /// A wrapper launch (`my-claude`) does not name its provider. The
+    /// supervisor learns it from the live pane, but a session that needs
+    /// recovery has no pane left, and launch recovery runs before any history
+    /// import. The saved conversation ID is exact evidence instead: a Claude
+    /// transcript with that ID exists for this folder.
+    func resolveProviderFromTranscriptIfNeeded(_ session: TerminalSession) {
+        guard session.agentProvider == nil, session.codexBinding == nil,
+              let sourceID = session.agentSessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sourceID.isEmpty,
+              historyBackend.transcriptURL(provider: .claude, sourceID: sourceID,
+                  cwd: session.cwd, createdAt: session.createdAt) != nil else { return }
+        session.markDetectedAgentProvider(.claude)
     }
 
     @discardableResult

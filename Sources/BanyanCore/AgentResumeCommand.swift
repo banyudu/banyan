@@ -27,18 +27,21 @@ public enum AgentResumeCommand {
         ) else {
             throw AgentFreezeError.unsafe("No provider resume command could be constructed; the original command was not restarted.")
         }
-        guard let launchWords = AgentSessionHistory.providerLaunchWords(
-            in: launchCommand,
-            provider: provider,
-            cwd: cwd
-        ) else {
-            throw AgentFreezeError.unsafe("The launch command has an unsupported wrapper or shell syntax; the original command was not restarted.")
-        }
         let executableName = provider.isOpencodeBacked ? "opencode" : provider.defaultExecutableName
-        guard let executableIndex = launchWords.firstIndex(where: {
-            ($0 as NSString).lastPathComponent == executableName
-        }) else {
-            throw AgentFreezeError.unsafe("The launch command does not contain the expected provider executable.")
+        let launchWords: [String]
+        let executableIndex: Int
+        let isWrapper: Bool
+        if let words = AgentSessionHistory.providerLaunchWords(in: launchCommand, provider: provider, cwd: cwd) {
+            guard let index = words.firstIndex(where: {
+                ($0 as NSString).lastPathComponent == executableName
+            }) else {
+                throw AgentFreezeError.unsafe("The launch command does not contain the expected provider executable.")
+            }
+            (launchWords, executableIndex, isWrapper) = (words, index, false)
+        } else if let wrapper = wrapperLaunchWords(launchCommand, provider: provider) {
+            (launchWords, executableIndex, isWrapper) = (wrapper.words, wrapper.executableIndex, true)
+        } else {
+            throw AgentFreezeError.unsafe("The launch command has an unsupported wrapper or shell syntax; the original command was not restarted.")
         }
         let executable = launchWords[executableIndex]
         guard !containsShellExpansion(executable) else {
@@ -62,7 +65,8 @@ public enum AgentResumeCommand {
         }
         let options = try preservedOptions(
             provider: provider.isOpencodeBacked ? .opencode : provider,
-            arguments: arguments
+            arguments: arguments,
+            allowsInitialPrompt: !isWrapper
         )
         let command = (environment + [AgentLaunchCommand.shellQuote(executable)]
             + (options + resumeTail).map(AgentLaunchCommand.shellQuote))
@@ -91,9 +95,55 @@ public enum AgentResumeCommand {
         }
     }
 
+    /// A launch that is a single wrapper executable around Claude, such as a
+    /// personal script ending in `exec claude "$@"` that swaps credentials or
+    /// the API endpoint. Rerunning the wrapper keeps that setup; resuming with
+    /// plain `claude` would continue the conversation under another account.
+    ///
+    /// Accepted only when the launch cannot be anything else: literal words,
+    /// no shell operators, an optional `exec` and literal environment prefix,
+    /// and an executable that is neither another provider nor a shell or
+    /// launcher that could have run anything. The caller then requires every
+    /// remaining word to be a known provider option, so a positional argument
+    /// (a package name, a script, a prompt) is never mistaken for one. That
+    /// the wrapper ran Claude at all comes from the caller's provider, which
+    /// for an unknown name Banyan learns from the live pane or a transcript.
+    private static func wrapperLaunchWords(
+        _ command: String,
+        provider: CodingAgentProvider
+    ) -> (words: [String], executableIndex: Int)? {
+        guard provider == .claude, let words = AgentSessionHistory.literalArguments(command) else { return nil }
+        var index = words.first == "exec" ? 1 : 0
+        while index < words.count, isEnvironmentAssignment(words[index]) {
+            guard !containsShellExpansion(words[index]) else { return nil }
+            index += 1
+        }
+        guard index < words.count else { return nil }
+        let executable = words[index]
+        let name = (executable as NSString).lastPathComponent.lowercased()
+        // A name Banyan maps to Claude (`opus`) is a wrapper too; one it maps
+        // to any other provider is not a Claude wrapper at all.
+        let namedProvider = CodingAgentProvider.detect(in: AgentLaunchCommand.shellQuote(executable))
+        guard !name.isEmpty, name != provider.defaultExecutableName, !executable.hasPrefix("-"),
+              !containsShellExpansion(executable), !wrapperLaunchers.contains(name),
+              namedProvider == nil || namedProvider == provider else { return nil }
+        return (words, index)
+    }
+
+    /// Programs that run another program they are given, rather than wrapping
+    /// one fixed agent. A pane started by one of these may have run anything.
+    private static let wrapperLaunchers: Set<String> = [
+        "sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "xonsh", "elvish", "pwsh", "login",
+        "env", "exec", "command", "builtin", "sudo", "doas", "nohup", "nice", "time", "timeout", "caffeinate",
+        "script", "tmux", "screen", "ssh", "mosh", "docker", "podman", "npx", "bunx", "pnpm", "pnpx", "yarn",
+        "npm", "uvx", "uv", "pipx", "node", "bun", "deno", "python", "python3", "ruby", "perl", "mise", "asdf",
+        "direnv", "op", "dotenv", "arch", "open"
+    ]
+
     private static func preservedOptions(
         provider: CodingAgentProvider,
-        arguments: [String]
+        arguments: [String],
+        allowsInitialPrompt: Bool = true
     ) throws -> [String] {
         let takesValue: Set<String>
         let switches: Set<String>
@@ -169,7 +219,7 @@ public enum AgentResumeCommand {
                 index += 1
                 continue
             }
-            guard index == arguments.count - 1, !word.hasPrefix("-"),
+            guard allowsInitialPrompt, index == arguments.count - 1, !word.hasPrefix("-"),
                   !["exec", "run", "attach", "serve", "web", "app-server", "--fork"].contains(word) else {
                 throw AgentFreezeError.unsafe("Launch options cannot be safely preserved on resume")
             }

@@ -318,6 +318,7 @@ extension SessionStore {
         if let binding = session.codexBinding {
             return try CodexCLIFallback.command(binding: binding)
         }
+        resolveProviderFromTranscriptIfNeeded(session)
         let agentSessionID = session.agentSessionID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard let provider = session.agentProvider else {
             if !agentSessionID.isEmpty, !allowUnresolvedIdentity {

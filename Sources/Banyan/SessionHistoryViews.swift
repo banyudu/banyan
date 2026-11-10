@@ -261,10 +261,12 @@ struct TerminalReconnectBanner: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
-            // Attach cannot succeed while the folder is missing, so say why
-            // rather than leaving a button that only ever re-fails.
-            if let failure = store.worktreeRecoveryError(id: session.id) {
-                Text(failure.message)
+            // Attach cannot succeed while the folder is missing or the agent
+            // cannot be resumed safely, so say why rather than leaving a
+            // button that only ever re-fails without a trace.
+            if let message = store.worktreeRecoveryError(id: session.id)?.message
+                ?? store.historyResumeError(id: session.id) {
+                Text(message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
