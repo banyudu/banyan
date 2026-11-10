@@ -491,6 +491,13 @@ identity so the session lands at the top level; `current` instead parents it to
 the session selected at launch time. The built-in quick-open
 "Start Session for `<ID>`" row always lands top-level.
 
+When the query names an issue that already has sessions, built-in **Switch to
+Session**, **Reopen Session**, and **Resume Session** rows appear above the
+other quick actions: a live session is selected, a closed session reopens and
+resumes its agent conversation, and an imported agent history item resumes as
+a new session. Up to five matches are listed, live first, then closed history,
+then imported history.
+
 The same `palette.yml` can customize the prompt used by the built-in **Discuss
 `<Linear ID>`** command. Use a literal block so the template can span lines:
 `linear_discussion_prompt` is also read from `config.yml` as a fallback, but

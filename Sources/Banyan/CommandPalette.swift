@@ -8,7 +8,30 @@ struct CommandPaletteItem: Identifiable {
     let title: String
     let detail: String?
     let shortcut: String?
+    /// Ranks above other query matches regardless of match score; rows with the
+    /// same priority keep their insertion order. The Linear existing-session
+    /// rows use this: their longer category would otherwise score below the
+    /// shorter quick actions for an exact issue ID.
+    let priority: Int
     let action: () -> Void
+
+    init(
+        id: String,
+        category: String,
+        title: String,
+        detail: String?,
+        shortcut: String?,
+        priority: Int = 0,
+        action: @escaping () -> Void
+    ) {
+        self.id = id
+        self.category = category
+        self.title = title
+        self.detail = detail
+        self.shortcut = shortcut
+        self.priority = priority
+        self.action = action
+    }
 }
 
 /// The Navigation rows of the command palette.
@@ -102,6 +125,11 @@ struct CommandPaletteView: View {
     let onOpenLinearIssue: (String) -> Void
     let onDiscussLinearIssue: (String) -> Void
     let onStartLinearIssue: (String) -> Void
+    /// Opens an existing session that already tracks the query's Linear issue.
+    let onOpenLinearIssueSession: (LinearIssueSessionMatch) -> Void
+    /// Existing sessions tracking the query's Linear issue. Called lazily so
+    /// the scan runs only while the query names an issue.
+    let linearIssueSessions: (String) -> [LinearIssueSessionMatch]
     let onOpenPullRequest: (URL) -> Void
     let fallbackPullRequestURL: URL?
     let paletteCommands: [PaletteCommand]
@@ -175,6 +203,16 @@ struct CommandPaletteView: View {
                 ),
                 at: 1
             )
+            // Above Open/Start: when the issue already has a session, continuing
+            // that work is the more likely intent than starting another one.
+            items.insert(
+                contentsOf: LinearIssueSessionPaletteItems.items(
+                    issueID: linearID,
+                    matches: linearIssueSessions(linearID),
+                    onOpen: onOpenLinearIssueSession
+                ),
+                at: 0
+            )
         }
         if let pullRequestURL = CommandPaletteTargetResolver.pullRequestURL(
             in: query,
@@ -196,19 +234,25 @@ struct CommandPaletteView: View {
     }
 
     private var filteredItems: [CommandPaletteItem] {
+        Self.orderedItems(query: query, items: resolvedItems)
+    }
+
+    /// Filters `items` to those matching `query` and ranks them. Promoted rows
+    /// come first and keep their insertion order (their provider already ranked
+    /// them); everything else ranks by match score, then by position.
+    static func orderedItems(query: String, items: [CommandPaletteItem]) -> [CommandPaletteItem] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return resolvedItems }
-        let scoredItems: [ScoredCommandItem] = resolvedItems
+        guard !query.isEmpty else { return items }
+        let scoredItems: [ScoredCommandItem] = items
             .enumerated()
             .compactMap { entry in
-                let offset = entry.offset
-                let item = entry.element
-                guard let score = Self.matchScore(query, item: item) else { return nil }
-                return ScoredCommandItem(score: score, offset: offset, item: item)
+                guard let score = Self.matchScore(query, item: entry.element) else { return nil }
+                return ScoredCommandItem(score: score, offset: entry.offset, item: entry.element)
             }
         return scoredItems
             .sorted { (lhs: ScoredCommandItem, rhs: ScoredCommandItem) in
-                if lhs.score != rhs.score { return lhs.score > rhs.score }
+                if lhs.item.priority != rhs.item.priority { return lhs.item.priority > rhs.item.priority }
+                if lhs.item.priority == 0, lhs.score != rhs.score { return lhs.score > rhs.score }
                 return lhs.offset < rhs.offset
             }
             .map(\.item)

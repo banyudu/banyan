@@ -188,6 +188,78 @@ extension SessionStore {
         paletteCommandRun = nil
     }
 
+    // MARK: - Existing sessions for a Linear issue
+
+    /// Existing sessions that already track `issueID`, for the command palette's
+    /// resume rows. Live sessions come first, then closed history, then imported
+    /// transcripts, each most recently updated first.
+    ///
+    /// The selected session is skipped: offering to switch to the session the
+    /// user is already in does nothing.
+    func paletteLinearIssueSessions(
+        tracking issueID: String,
+        limit: Int = 5
+    ) -> [LinearIssueSessionMatch] {
+        let target = issueID.uppercased()
+        let matches = sessions.compactMap { session -> LinearIssueSessionMatch? in
+            guard session.id != selectedSessionID,
+                  session.titleLinkLabel == target else { return nil }
+            let state: LinearIssueSessionMatch.State
+            if session.isImportedHistory {
+                state = .importedHistory
+            } else if session.status == .closed {
+                state = .closed
+            } else {
+                state = .live
+            }
+            return LinearIssueSessionMatch(
+                id: session.id,
+                title: session.displayTitle,
+                state: state,
+                updatedAt: session.updatedAt
+            )
+        }
+        return matches
+            .sorted { lhs, rhs in
+                let lhsRank = Self.paletteSessionRank(lhs.state)
+                let rhsRank = Self.paletteSessionRank(rhs.state)
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    private static func paletteSessionRank(_ state: LinearIssueSessionMatch.State) -> Int {
+        switch state {
+        case .live: return 0
+        case .closed: return 1
+        case .importedHistory: return 2
+        }
+    }
+
+    /// Opens a session the palette offered for the query's Linear issue: switch
+    /// to a live one, reopen a closed one, or resume an imported transcript.
+    ///
+    /// The row is selected before a closed or imported session is resumed, so a
+    /// resume that fails publishes its error in the session detail instead of
+    /// disappearing with the dismissed palette.
+    func openPaletteLinearIssueSession(_ match: LinearIssueSessionMatch) {
+        // The palette captured this row when it rendered; the session may have
+        // been removed since. Do not select an ID that no longer exists.
+        guard sessions.contains(where: { $0.id == match.id }) else { return }
+        switch match.state {
+        case .live:
+            userSelect(id: match.id)
+        case .closed:
+            userSelect(id: match.id)
+            try? respawn(id: match.id)
+        case .importedHistory:
+            userSelect(id: match.id)
+            _ = try? resumeImportedHistory(id: match.id)
+        }
+    }
+
     // MARK: - Inbound suggestions
 
     /// Offers an inbound suggestion the pending slot, and republishes whatever

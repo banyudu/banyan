@@ -201,6 +201,12 @@ struct ContentView: View {
                         },
                         onDiscussLinearIssue: store.discussLinearIssue,
                         onStartLinearIssue: store.startLinearIssueSession,
+                        onOpenLinearIssueSession: { match in
+                            store.openPaletteLinearIssueSession(match)
+                        },
+                        linearIssueSessions: { issueID in
+                            store.paletteLinearIssueSessions(tracking: issueID)
+                        },
                         onOpenPullRequest: { url in NSWorkspace.shared.open(url) },
                         fallbackPullRequestURL: store.selectedPullRequestURL,
                         paletteCommands: store.paletteCommands,
