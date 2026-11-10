@@ -145,6 +145,48 @@ struct PuckComposerUITests {
         session.stopFollowing()
     }
 
+    /// The field reports a concrete width for every probe SwiftUI measures it
+    /// with, which makes it fixed-width unless the composer stretches it. When
+    /// it was not stretched, the whole input box stopped at half the pane and
+    /// never reached the send button's side of the row.
+    @Test func theFieldFillsTheComposerAndGrowsWithThePane() async throws {
+        let daemon = FakePuckDaemon()
+        let fixture = try PuckStoreFixture(daemon: daemon)
+        let store = fixture.makeStore()
+        let summary = puckSummary(cwd: fixture.project.path, position: "idle")
+        daemon.put(summary)
+        store.openListedPuckSessions([summary])
+        let session = try #require(store.sessions.first as? PuckSession)
+        let (window, field) = try await mount(session, store: store)
+        defer { window.close() }
+        let scroll = try #require(field.enclosingScrollView)
+        let host = try #require(window.contentView)
+
+        try await waitForStableWidth(scroll)
+        let narrow = scroll.frame.width
+        #expect(narrow >= host.bounds.width - 150, "the field left \(host.bounds.width - narrow) points unused")
+
+        host.frame.size.width = 1_600
+        window.setContentSize(NSSize(width: 1_600, height: 640))
+        try await waitForStableWidth(scroll)
+        #expect(scroll.frame.width > narrow + 500, "the field did not grow with the pane")
+        #expect(scroll.frame.width >= host.bounds.width - 150)
+        session.stopFollowing()
+    }
+
+    /// Waits until the field's laid-out width stops changing, so the
+    /// assertions see SwiftUI's settled frame rather than a first probe.
+    private func waitForStableWidth(_ scroll: NSScrollView) async throws {
+        var last: CGFloat = -1
+        var stableTicks = 0
+        try await waitForPuckState {
+            let width = scroll.frame.width
+            stableTicks = width > 0 && width == last ? stableTicks + 1 : 0
+            last = width
+            return stableTicks >= 3
+        }
+    }
+
     private func sendReturn(modifiers: NSEvent.ModifierFlags, to window: NSWindow) throws {
         try sendKey("\r", keyCode: 36, modifiers: modifiers, to: window)
     }

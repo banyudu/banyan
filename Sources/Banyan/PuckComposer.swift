@@ -83,6 +83,10 @@ struct PuckComposer: View {
                     onImageFiles: { $0.compactMap(session.attachImageFile) },
                     onFocusChange: { focused in isFocused = focused }
                 )
+                // The field reports a concrete width for every probe it is
+                // measured with, so SwiftUI would otherwise pin it to its
+                // current width instead of filling the row.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .help("Return to send · Shift-Return for a new line · ↑ and ↓ recall sent messages")
                 if session.acceptsImages {
                     Button(action: chooseImages) {

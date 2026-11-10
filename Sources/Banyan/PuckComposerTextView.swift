@@ -116,6 +116,11 @@ struct PuckComposerTextView: NSViewRepresentable {
     /// has run more constraint passes than it has views. Measure at the width
     /// the field actually has, and let the next pass correct the height after
     /// SwiftUI lays the field out at its real width.
+    ///
+    /// Because the reported width is a concrete number for every probe, SwiftUI
+    /// treats the field as fixed-width: the host must stretch it with
+    /// `.frame(maxWidth: .infinity)`, or it never grows past its current frame
+    /// and the composer only fills part of the pane.
     static func widths(proposed: CGFloat, actual: CGFloat) -> (measure: CGFloat, report: CGFloat) {
         let measure = actual >= 40 ? actual : (proposed.isFinite && proposed >= 40 ? proposed : 320)
         let report = proposed.isFinite && proposed >= 40 ? proposed : measure
